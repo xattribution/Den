@@ -3,7 +3,9 @@ import 'package:flutter/widgets.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 /// One icon set (Phosphor). Fill weight for pictograms people recognize before they can read;
-/// regular weight for interface glyphs. Chore, list and category records store the key.
+/// regular weight for interface glyphs. Records store a short key; Phosphor-style names
+/// (`fork-knife`) are accepted too, so data from any client resolves. An unknown key draws
+/// nothing rather than a check mark, which would read as "done".
 abstract final class Pictograms {
   static IconData animal(Animal a) => switch (a) {
         Animal.cat => PhosphorIconsFill.cat,
@@ -17,15 +19,15 @@ abstract final class Pictograms {
         Animal.bug => PhosphorIconsFill.bug,
       };
 
-  /// Chore pictograms, keyed by the value stored in `chore.icon`.
+  /// Chore pictograms by canonical key, in the order the picker shows them.
   static const Map<String, IconData> chores = {
-    'check': PhosphorIconsFill.checkCircle,
+    'check': PhosphorIconsFill.checkSquareOffset,
     'bed': PhosphorIconsFill.bed,
     'tooth': PhosphorIconsFill.tooth,
     'broom': PhosphorIconsFill.broom,
     'trash': PhosphorIconsFill.trash,
     'recycle': PhosphorIconsFill.recycle,
-    'dishes': PhosphorIconsFill.bowlFood,
+    'dishes': PhosphorIconsFill.forkKnife,
     'cooking': PhosphorIconsFill.cookingPot,
     'laundry': PhosphorIconsFill.tShirt,
     'hanger': PhosphorIconsFill.coatHanger,
@@ -38,6 +40,7 @@ abstract final class Pictograms {
     'leaf': PhosphorIconsFill.leaf,
     'book': PhosphorIconsFill.bookOpen,
     'homework': PhosphorIconsFill.pencilSimple,
+    'science': PhosphorIconsFill.flask,
     'backpack': PhosphorIconsFill.backpack,
     'music': PhosphorIconsFill.musicNotes,
     'shoes': PhosphorIconsFill.sneaker,
@@ -47,16 +50,7 @@ abstract final class Pictograms {
     'pill': PhosphorIconsFill.pill,
   };
 
-  static IconData chore(String key) => chores[key] ?? PhosphorIconsFill.checkCircle;
-
-  static IconData listKind(ListKind kind) => switch (kind) {
-        ListKind.shopping => PhosphorIconsRegular.shoppingCart,
-        ListKind.checklist => PhosphorIconsRegular.listChecks,
-        ListKind.packing => PhosphorIconsRegular.suitcase,
-        ListKind.meal => PhosphorIconsRegular.cookingPot,
-      };
-
-  /// Event category icons, keyed by `category.icon`.
+  /// Event category icons by canonical key.
   static const Map<String, IconData> categories = {
     'calendar': PhosphorIconsRegular.calendarBlank,
     'school': PhosphorIconsRegular.student,
@@ -71,8 +65,6 @@ abstract final class Pictograms {
     'party': PhosphorIconsRegular.balloon,
   };
 
-  static IconData category(String? key) => categories[key] ?? PhosphorIconsRegular.calendarBlank;
-
   static const Map<String, IconData> rewards = {
     'gift': PhosphorIconsFill.gift,
     'film': PhosphorIconsFill.filmSlate,
@@ -81,8 +73,67 @@ abstract final class Pictograms {
     'moon': PhosphorIconsFill.moonStars,
     'money': PhosphorIconsFill.coins,
     'ticket': PhosphorIconsFill.ticket,
-    'ice': PhosphorIconsFill.cookie,
+    'treat': PhosphorIconsFill.iceCream,
   };
 
-  static IconData reward(String key) => rewards[key] ?? PhosphorIconsFill.gift;
+  /// Phosphor-style names written by earlier data, mapped to canonical keys.
+  static const Map<String, String> _aliases = {
+    'fork-knife': 'dishes',
+    'bowl-food': 'dishes',
+    'cooking-pot': 'cooking',
+    't-shirt': 'laundry',
+    'coat-hanger': 'hanger',
+    'bathtub': 'bath',
+    'spray-bottle': 'spray',
+    'paw-print': 'pet',
+    'cat': 'pet',
+    'dog': 'pet',
+    'potted-plant': 'plant',
+    'books': 'book',
+    'book-open': 'book',
+    'pencil': 'homework',
+    'pencil-simple': 'homework',
+    'flask': 'science',
+    'music-notes': 'music',
+    'sneaker': 'shoes',
+    'envelope': 'mail',
+    'envelope-simple': 'mail',
+    'wrench': 'tools',
+    'check-circle': 'check',
+    'graduation-cap': 'school',
+    'student': 'school',
+    'soccer-ball': 'sports',
+    'basketball': 'sports',
+    'briefcase': 'work',
+    'first-aid': 'health',
+    'first-aid-kit': 'health',
+    'stethoscope': 'health',
+    'cake': 'birthday',
+    'tree': 'holiday',
+    'house': 'family',
+    'airplane': 'travel',
+    'balloon': 'party',
+    'film-slate': 'film',
+    'game-controller': 'game',
+    'moon-stars': 'moon',
+    'coins': 'money',
+    'ice-cream': 'treat',
+    'cookie': 'treat',
+  };
+
+  static String canonical(String key) => _aliases[key] ?? key;
+
+  static IconData? chore(String key) => chores[canonical(key)];
+
+  static IconData listKind(ListKind kind) => switch (kind) {
+        ListKind.shopping => PhosphorIconsRegular.shoppingCart,
+        ListKind.checklist => PhosphorIconsRegular.listChecks,
+        ListKind.packing => PhosphorIconsRegular.suitcase,
+        ListKind.meal => PhosphorIconsRegular.cookingPot,
+      };
+
+  static IconData category(String? key) =>
+      categories[canonical(key ?? '')] ?? PhosphorIconsRegular.calendarBlank;
+
+  static IconData reward(String key) => rewards[canonical(key)] ?? PhosphorIconsFill.gift;
 }

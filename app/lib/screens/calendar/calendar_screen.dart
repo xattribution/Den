@@ -5,7 +5,10 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
+import 'agenda_view.dart';
+import 'day_view.dart';
 import 'family_week.dart';
+import 'month_view.dart';
 
 enum CalendarView { family, month, day, agenda }
 
@@ -77,9 +80,9 @@ class CalendarScreen extends StatelessWidget {
         Expanded(
           child: switch (view) {
             CalendarView.family => FamilyWeek(startDate: weekStart),
-            CalendarView.month => MonthViewSlot(anchor: anchor),
-            CalendarView.day => DayViewSlot(date: anchor),
-            CalendarView.agenda => AgendaViewSlot(start: anchor),
+            CalendarView.month => MonthView(anchor: anchor),
+            CalendarView.day => DayView(date: anchor),
+            CalendarView.agenda => AgendaView(start: anchor),
           },
         ),
       ],
@@ -94,26 +97,26 @@ class CalendarScreen extends StatelessWidget {
   }
 }
 
-/// Month grid. Replaced by the full implementation in month_view.dart.
+/// Month grid; the implementation is [MonthView] in month_view.dart.
 class MonthViewSlot extends StatelessWidget {
   const MonthViewSlot({super.key, required this.anchor});
   final String anchor;
   @override
-  Widget build(BuildContext context) => const SizedBox.shrink();
+  Widget build(BuildContext context) => MonthView(anchor: anchor);
 }
 
-/// Single day timeline. Replaced by the full implementation in day_view.dart.
+/// Single day timeline; the implementation is [DayView] in day_view.dart.
 class DayViewSlot extends StatelessWidget {
   const DayViewSlot({super.key, required this.date});
   final String date;
   @override
-  Widget build(BuildContext context) => const SizedBox.shrink();
+  Widget build(BuildContext context) => DayView(date: date);
 }
 
-/// Agenda list. Replaced by the full implementation in agenda_view.dart.
+/// Agenda list; the implementation is [AgendaView] in agenda_view.dart.
 class AgendaViewSlot extends StatelessWidget {
   const AgendaViewSlot({super.key, required this.start});
   final String start;
   @override
-  Widget build(BuildContext context) => const SizedBox.shrink();
+  Widget build(BuildContext context) => AgendaView(start: start);
 }

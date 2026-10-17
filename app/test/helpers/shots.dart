@@ -36,10 +36,12 @@ Future<void> loadFonts() async {
   _fontsLoaded = true;
 }
 
-/// A demo family as the acting parent sees it.
-Future<AppState> demoState({bool wall = false}) async {
-  final den = await createDemoFamily(now: demoNow);
-  return AppState(den, wall: wall);
+/// A demo family as the acting parent sees it. The engine signs changes with real async
+/// crypto, which never completes inside a widget test's fake clock, so the family is built on
+/// the real event loop through [WidgetTester.runAsync].
+Future<AppState> demoState(WidgetTester tester, {bool wall = false}) async {
+  final den = await tester.runAsync(() => createDemoFamily(now: demoNow));
+  return AppState(den!, wall: wall);
 }
 
 /// Renders [screen] inside the app's theme at [size] and compares it with

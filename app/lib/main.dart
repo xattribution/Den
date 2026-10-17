@@ -9,5 +9,5 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   tzdata.initializeTimeZones();
   final den = await Boot.start();
-  runApp(DenApp(state: AppState(den)));
+  runApp(DenApp(state: await AppState.load(den)));
 }

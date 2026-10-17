@@ -31,14 +31,12 @@ class TodayScreen extends StatelessWidget {
     final chores = view.chores;
     final doneCount = chores.where((d) => d.done).length;
 
-    return ListView(
-      padding: const EdgeInsets.only(bottom: Sp.xxxl),
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.l, 0),
-          child: Semantics(header: true, child: Text(f.long(view.date), style: context.type.heading(c.ink))),
-        ),
-        const SizedBox(height: Sp.m),
+    final heading = Padding(
+      padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.l, Sp.m),
+      child: Semantics(header: true, child: Text(f.long(view.date), style: context.type.heading(c.ink))),
+    );
+
+    final calendar = <Widget>[
         if (view.events.isEmpty)
           EmptyLine(
             message: 'Nothing on the calendar today.',
@@ -67,15 +65,47 @@ class TodayScreen extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: Sp.l),
             child: AttentionLine(message: gap.message),
           ),
-        if (chores.isNotEmpty) ...[
-          SectionHeader('Chores', trailing: '$doneCount of ${chores.length} done'),
-          ..._choreGroups(context, chores),
-        ],
-        if (view.lists.isNotEmpty) ...[
-          const SectionHeader('Lists'),
-          for (final lv in view.lists) _ListRow(lv),
-        ],
+    ];
+    final choreSection = <Widget>[
+      if (chores.isNotEmpty) ...[
+        SectionHeader('Chores', trailing: '$doneCount of ${chores.length} done'),
+        ..._choreGroups(context, chores),
       ],
+    ];
+    final listSection = <Widget>[
+      if (view.lists.isNotEmpty) ...[
+        const SectionHeader('Lists'),
+        for (final lv in view.lists) _ListRow(lv),
+      ],
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const bottom = EdgeInsets.only(bottom: Sp.xxxl);
+        if (constraints.maxWidth < 900) {
+          return ListView(
+            padding: bottom,
+            children: [heading, ...calendar, ...choreSection, ...listSection],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: ListView(padding: bottom, children: [heading, ...calendar, ...listSection]),
+            ),
+            VerticalDivider(width: 1, color: c.rule),
+            Expanded(
+              child: ListView(
+                padding: bottom,
+                children: choreSection.isEmpty
+                    ? [const EmptyLine(message: 'No chores today.')]
+                    : choreSection,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -83,7 +113,7 @@ class TodayScreen extends StatelessWidget {
     final den = context.den;
     final me = context.app.me;
     final open = occ.event.rides.firstWhere((r) => r.driver == null, orElse: () => const Ride('to', null));
-    await attempt(context, () => den.claimRide(occ.event.id, occurrence: occ.start, leg: open.leg, driver: me?.id));
+    await attempt(context, () => den.claimRide(occ.event.id, occurrence: occ.seriesStart, leg: open.leg, driver: me?.id));
   }
 
   List<Widget> _choreGroups(BuildContext context, List<ChoreDay> chores) {
@@ -223,7 +253,7 @@ class ChoreRow extends StatelessWidget {
               )
             else
               StepRing(done: day.stepsDone, total: day.stepCount),
-            Icon(Pictograms.chore(chore.icon), size: 20, color: c.ink2),
+            SizedBox(width: 20, child: Icon(Pictograms.chore(chore.icon), size: 20, color: c.ink2)),
             const SizedBox(width: Sp.s),
             Expanded(child: Text(chore.title, style: titleStyle)),
             if (day.late && !day.done) ...[

@@ -1,6 +1,7 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../design/pictograms.dart';
 import '../../design/tokens.dart';
@@ -11,11 +12,20 @@ import '../../state/app_state.dart';
 /// day. Each cell holds that person's events and chores in their marker; events for everyone
 /// span the row.
 class FamilyWeek extends StatelessWidget {
-  const FamilyWeek({super.key, required this.startDate, this.days = 7, this.showChores = true});
+  const FamilyWeek({
+    super.key,
+    required this.startDate,
+    this.days = 7,
+    this.showChores = true,
+    this.fillHeight = false,
+  });
 
   final String startDate;
   final int days;
   final bool showChores;
+
+  /// Stretch the day rows to fill the height instead of scrolling, as on the wall.
+  final bool fillHeight;
 
   static const double _dayColumn = 92;
   static const double _minPersonColumn = 150;
@@ -40,23 +50,38 @@ class FamilyWeek extends StatelessWidget {
             children: [
               _HeaderRow(people: people, dayWidth: _dayColumn, personWidth: personWidth),
               Divider(height: 1, color: c.rule),
-              Expanded(
-                child: ListView.separated(
-                  itemCount: grid.days.length,
-                  separatorBuilder: (_, _) => Divider(height: 1, color: c.rule),
-                  itemBuilder: (context, i) {
-                    final date = grid.days[i];
-                    return _DayRow(
-                      date: date,
+              if (fillHeight)
+                for (final (i, date) in grid.days.indexed) ...[
+                  if (i > 0) Divider(height: 1, color: c.rule),
+                  Expanded(
+                    child: ClipRect(
+                      child: _DayRow(
+                        date: date,
+                        people: people,
+                        grid: grid,
+                        dayWidth: _dayColumn,
+                        personWidth: personWidth,
+                        showChores: showChores,
+                        fill: true,
+                      ),
+                    ),
+                  ),
+                ]
+              else
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: grid.days.length,
+                    separatorBuilder: (_, _) => Divider(height: 1, color: c.rule),
+                    itemBuilder: (context, i) => _DayRow(
+                      date: grid.days[i],
                       people: people,
                       grid: grid,
                       dayWidth: _dayColumn,
                       personWidth: personWidth,
                       showChores: showChores,
-                    );
-                  },
+                    ),
+                  ),
                 ),
-              ),
             ],
           ),
         );
@@ -112,6 +137,7 @@ class _DayRow extends StatelessWidget {
     required this.dayWidth,
     required this.personWidth,
     required this.showChores,
+    this.fill = false,
   });
 
   final String date;
@@ -120,6 +146,7 @@ class _DayRow extends StatelessWidget {
   final double dayWidth;
   final double personWidth;
   final bool showChores;
+  final bool fill;
 
   @override
   Widget build(BuildContext context) {
@@ -129,10 +156,24 @@ class _DayRow extends StatelessWidget {
     final isToday = date == app.today;
     final everyone = grid.everyone[date] ?? const <Occurrence>[];
 
+    final cells = Row(
+      crossAxisAlignment: fill ? CrossAxisAlignment.stretch : CrossAxisAlignment.start,
+      children: [
+        for (final m in people)
+          Container(
+            width: personWidth,
+            constraints: const BoxConstraints(minHeight: 72),
+            decoration: BoxDecoration(border: Border(left: BorderSide(color: c.rule))),
+            padding: const EdgeInsets.all(Sp.xs),
+            child: _Cell(cell: grid.cells[(date, m.id)], showChores: showChores),
+          ),
+      ],
+    );
+
     return Container(
       color: isToday ? c.well : null,
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: fill ? CrossAxisAlignment.stretch : CrossAxisAlignment.start,
         children: [
           SizedBox(
             width: dayWidth,
@@ -157,19 +198,7 @@ class _DayRow extends StatelessWidget {
                     padding: const EdgeInsets.fromLTRB(Sp.s, Sp.xs, Sp.s, 0),
                     child: _EventChip(occ, spanning: true),
                   ),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    for (final m in people)
-                      Container(
-                        width: personWidth,
-                        constraints: const BoxConstraints(minHeight: 72),
-                        decoration: BoxDecoration(border: Border(left: BorderSide(color: c.rule))),
-                        padding: const EdgeInsets.all(Sp.xs),
-                        child: _Cell(cell: grid.cells[(date, m.id)], showChores: showChores),
-                      ),
-                  ],
-                ),
+                if (fill) Expanded(child: cells) else cells,
               ],
             ),
           ),
@@ -250,7 +279,7 @@ class _ChoreLine extends StatelessWidget {
         child: Row(
           children: [
             Icon(
-              day.done ? Icons.check_circle : Pictograms.chore(day.chore.icon),
+              day.done ? PhosphorIconsFill.checkCircle : Pictograms.chore(day.chore.icon),
               size: 15,
               color: day.done ? c.ink : c.ink2,
             ),

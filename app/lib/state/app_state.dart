@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'format.dart';
 
@@ -10,27 +11,70 @@ enum ThemeChoice { auto, day, night }
 /// The app's live state: the device's [Den] engine plus UI preferences. Rebuilds listeners on
 /// every change the engine applies, whether made here or synced from another device.
 class AppState extends ChangeNotifier {
-  AppState(this.den, {this.wall = false}) {
-    _sub = den.onChange.listen((_) {
-      _formats = null;
-      notifyListeners();
-    });
+  AppState(Den den, {bool wall = false, ThemeChoice theme = ThemeChoice.auto})
+      : _den = den,
+        _wall = wall,
+        _theme = theme {
+    _listen();
   }
 
-  final Den den;
+  /// Restores the saved theme and wall preferences for this device.
+  static Future<AppState> load(Den den) async {
+    final prefs = await SharedPreferences.getInstance();
+    return AppState(
+      den,
+      wall: prefs.getBool(_wallKey) ?? false,
+      theme: ThemeChoice.values.asNameMap()[prefs.getString(_themeKey)] ?? ThemeChoice.auto,
+    );
+  }
+
+  static const _wallKey = 'den.wall';
+  static const _themeKey = 'den.theme';
+
+  Den _den;
+  Den get den => _den;
+
+  /// Swaps the engine, for example when entering or leaving the demo family.
+  void replaceDen(Den den) {
+    _sub?.cancel();
+    _den = den;
+    _formats = null;
+    _listen();
+    notifyListeners();
+  }
+
+  bool _wall;
 
   /// Running as a shared wall display: larger type, the week grid first, "who's doing this?".
-  bool wall;
+  bool get wall => _wall;
+  set wall(bool value) {
+    if (value == _wall) return;
+    _wall = value;
+    notifyListeners();
+    _save((p) => p.setBool(_wallKey, value));
+  }
 
-  ThemeChoice _theme = ThemeChoice.auto;
+  ThemeChoice _theme;
   ThemeChoice get theme => _theme;
   set theme(ThemeChoice value) {
     _theme = value;
     notifyListeners();
+    _save((p) => p.setString(_themeKey, value.name));
   }
 
   StreamSubscription<Set<String>>? _sub;
   Formats? _formats;
+
+  void _listen() {
+    _sub = _den.onChange.listen((types) {
+      if (types.contains(RecordType.family)) _formats = null;
+      notifyListeners();
+    });
+  }
+
+  static void _save(Future<bool> Function(SharedPreferences) write) {
+    unawaited(SharedPreferences.getInstance().then(write).catchError((Object _) => false));
+  }
 
   Formats get formats => _formats ??= Formats(den.family?.timezone ?? 'UTC');
 
