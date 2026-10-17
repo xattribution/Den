@@ -1,5 +1,5 @@
 name: den_core
-description: A starting point for Dart libraries or applications.
+description: "The Den engine: family data model, signed change log, permissions, recurrence, chores, points and views."
 version: 1.0.0
 # repository: https://github.com/my_org/my_repo
 
@@ -10,8 +10,7 @@ environment:
 dependencies:
   collection: ^1.19.1
   cryptography: ^2.9.0
-  meta: ^1.19.0
-  rrule: ^0.2.18
+  meta: ">=1.15.0 <2.0.0"
   timezone: ^0.11.2
   # path: ^1.9.0
 

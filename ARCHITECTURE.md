@@ -50,9 +50,20 @@ Canonical bytes: UTF-8 JSON of `[id, space, hlc, type, rid, fields, device, acto
 keys sorted recursively and no whitespace.
 
 **Merging.** Each field of a record takes the value from the valid change with the greatest HLC
-that set it (last-writer-wins per field). HLC order is `(millis, counter, deviceId)`. A record is
-deleted when its winning `_deleted` is true. Merging is commutative and idempotent: every device
-that holds the same set of changes computes the same state.
+that set it (last-writer-wins per field). HLC order is `(millis, counter, deviceId)`, with the
+change id as the final tiebreak. A record is deleted when its winning `_deleted` is true. Merging
+is commutative and idempotent: every device that holds the same set of changes computes the same
+state.
+
+A field named `"<field>.<key>"` sets one entry of a map field, so concurrent edits of different
+entries merge instead of overwriting each other. Den writes `completion.steps` (`steps.<stepId>`),
+`eventException.patch` (`patch.<eventField>`, null clears an override) and `family.oversight`
+(`oversight.<memberId>`) this way; a write of the whole map replaces it.
+
+A record is identified by `(space, type, id)`: a change's validity depends only on its own space
+and `f`, which every replica holding it also holds. Changing who can see an event, chore or list
+writes a copy (and its exceptions, completions or items) with the same id into the new space and
+removes the old one.
 
 **Validity.** A change counts only if, replayed in HLC order:
 
@@ -66,21 +77,38 @@ Invalid changes stay in the log so every replica agrees on what was rejected, bu
 affect state. The materializer re-sorts and replays from scratch when a change arrives older than
 the newest one applied; family-sized logs make that cheap.
 
+Signatures are checked when a change arrives, before it is stored. A change whose signature fails
+is refused and never stored, so a forged copy can't occupy the genuine change's id. A device's key
+is learned from any `device` record whose `pubkey` hashes to the record's id (ids are hashes of
+keys); a change from a device whose key isn't known yet waits in memory until it is. A device's
+clock moves past valid changes only, so a device nobody approved can't push the family's clocks
+ahead.
+
 **Version vectors.** Because change ids are `<deviceId>:<counter>`, "what I have" is a map of
-device id to the highest contiguous counter held. Sync sends whatever the peer lacks.
+device id to the highest contiguous counter held. Sync sends whatever the peer lacks. A device
+that receives only some spaces would see holes where other spaces' changes go, so a sender whose
+spaces include the receiver's also sends its `completeVector` (counters up to which it holds every
+change in every space); after a clean batch the receiver counts those counters as held
+(`Den.ingest(changes, through: ...)`).
 
 ### Genesis and trust
 
 Creating a family writes, signed by the founding device: the `family` record (with
 `founderDevice`), the founder's `member` record (role `parent`), and the founder's `device`
 record with `approved: true`. These are valid because the family's id commits to them: `familyId`
-is base32 of the first 10 bytes of SHA-256 of the founder device's public key and the creation
-time, and every joining device receives the family id and founder key out of band (the QR code).
+is base32 of the first 10 bytes of SHA-256 of the founder device's public key bytes followed by
+the creation time (the family change's HLC milliseconds, as a decimal string), and every joining
+device receives the family id and founder key out of band (the QR code). Genesis is open only
+until the founder's device record exists.
 
-A new device writes its own `device` record with `approved: false` (its join request). It becomes
-approved only when a change setting `approved: true` is signed by an already approved device
-whose actor is a parent. **A device can never approve itself**: a change approving device X
-signed by device X is invalid (Sett's self-approval bug, closed by construction).
+A new device writes its own `device` record with `approved: false` (its join request), signed by
+itself, with no actor, and with a `pubkey` that hashes to its id. While it waits it may only
+rename itself or withdraw. It becomes approved only when a change setting `approved: true` is
+signed by an already approved, non-shared device whose actor is a parent; the approval also pins
+the device's `mode` and `member`. **A device can never approve itself**: a change approving device
+X signed by device X is invalid (Sett's self-approval bug, closed by construction), and no device
+may change its own `approved`, `approvedBy`, `member`, `mode` or un-revoke itself. A device may
+revoke itself. Changes signed after a device's revocation (by HLC) are invalid.
 
 ### Record types and fields
 
@@ -94,9 +122,9 @@ time zone. Ids are 16-char base32 random unless noted.
 | `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`) |
 | `category` | `f` | `name`, `icon` |
 | `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `rides` (list of `{leg: to\|from, driver: memberId\|null}`), `countdown` (bool) |
-| `eventException` | same as event | `event`, `occurrence` (original start), `cancelled`, `patch` (map of event fields) |
+| `eventException` | same as event | id `"<eventId>@<occurrence>"`: `event`, `occurrence` (original start), `cancelled`, `patch` (map of event fields: `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `assignees`, `reminders`, `rides`) |
 | `chore` | any | `title`, `notes`, `icon`, `owner` (`{kind: member, id}`\|`{kind: anyone}`\|`{kind: rotation, ids, every: day\|week, anchor: local date}`), `schedule` (`{rrule, start: local date}` or `{once: local date}`), `dueTime` (`HH:mm` or null), `points`, `steps` (list of `{id, text, owner, points}`), `reminders`, `active` |
-| `completion` | same as chore | id `"<choreId>@<date>"`: `chore`, `date`, `done`, `doneBy`, `owner` (one-day swap) , `steps` (map stepId -> memberId who checked, or null when unchecked) |
+| `completion` | same as chore | id `"<choreId>@<date>"`: `chore`, `date`, `done`, `doneBy`, `owner` (one-day swap; present and null means swapped to anyone) , `steps` (map stepId -> memberId who checked, `""` when checked by open check-off with no owner to credit, or null when unchecked). Done when `done`, or when every step is checked |
 | `adjustment` | `f` | Append-only. `member`, `delta`, `reason`, `by` |
 | `goal` | `f` | `title`, `mode` (`target`\|`race`), `target`, `members` (ids, or null for every kid), `start` (local date), `end` (local date or null), `repeat` (`none`\|`weekly`\|`monthly`), `reward` (text) |
 | `reward` | `f` | `title`, `cost`, `icon`, `needsApproval`, `active` |
@@ -110,7 +138,21 @@ time zone. Ids are 16-char base32 random unless noted.
 (`completion.owner`, else the rotation's owner that day, else the chore owner, else `doneBy`) and
 each checked step's points to the step's owner, else whoever checked it. Totals add
 `adjustment.delta` and subtract approved redemptions' `cost`. Concurrent devices can't double
-award, and undoing a chore undoes its points with no compensating rows.
+award, and undoing a chore undoes its points with no compensating rows. Each line is dated by the
+change behind it (when `done` or the step was set, the adjustment made, the redemption approved).
+A goal counts chore, step and adjustment lines whose time falls, in the family's time zone, in its
+window: `start` to `end` inclusive, or the current week (by `weekStart`) or month for repeating
+goals. A member reaches a goal when their running total crosses the target and stays there;
+deductions can un-cross it, and a race goes to the earliest such crossing.
+
+Recurrence is expanded in the event's own `tz` (the family's when unset) as wall-clock time, then
+each occurrence is converted to UTC, so a 7:00 AM series stays at 7:00 AM across DST. All-day
+events start and end at local midnight in that zone. Supported RRULE parts: `FREQ`
+(`DAILY`\|`WEEKLY`\|`MONTHLY`\|`YEARLY`), `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY` (with ordinals such
+as `2TU`), `BYMONTHDAY`, `BYMONTH`, `BYSETPOS`, `WKST`; others are refused by the schema. Editing
+"this and following" ends the original series just before the occurrence (`UNTIL`, or a shortened
+`COUNT`) and starts a new event there; editing "all" with a new time shifts the whole series,
+and its exceptions, by the same wall-clock delta.
 
 **History is derived.** Every valid change renders as an entry: who (actor name, or the device
 name), on which device, when, what record, and each field's old and new value. A viewer sees only
@@ -134,7 +176,20 @@ entries for records in spaces they hold.
 | Members, devices, family settings, approve or revoke devices | yes | no | no | no | no |
 
 The same `can()` function runs in the UI (to hide what you can't do), on every replica when
-validating, and in the hub for API and MCP calls.
+validating, and in the hub for API and MCP calls. Validation adds the context `can()` can't see:
+
+- A personal device acts only for its owner. A shared display acts for any member who verified on
+  it, or for nobody (then only open check-off, when its `display.openCheckoff` is on), and never
+  administers the family. A hub acts for a token's member, or for nobody: then it has parent-level
+  permissions except family administration and activating or re-scoping connections, and it
+  records the caller's label in `_via` (only hubs may write `_via`).
+- Writes into `p` need a parent or a hub; writes into `m:X` need X, a parent the oversight policy
+  allows, or a hub.
+- Kids complete only chores they own that day, "anyone" chores, and steps they own (checking the
+  last one may complete the chore); they swap only their own chores and name only themselves as
+  `doneBy`, step checker or reward requester. A redemption is created `requested`, or `approved`
+  when its reward needs no approval; only points managers decide it.
+- Members may change their own `signIn`. The family always keeps at least one parent.
 
 ## Network
 

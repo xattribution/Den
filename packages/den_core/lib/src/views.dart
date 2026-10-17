@@ -32,7 +32,10 @@ class Occurrence {
     required this.assignees,
     required this.allDay,
     this.exceptionId,
-  });
+    int? seriesStart,
+    this.rides = const [],
+    this.reminders = const [],
+  }) : seriesStart = seriesStart ?? start;
 
   final Event event;
 
@@ -49,7 +52,14 @@ class Occurrence {
   final String? exceptionId;
 
   /// The original start of the occurrence in the series, used to address it in edits.
-  int get seriesStart => start;
+  final int seriesStart;
+
+  /// Ride legs for this occurrence, with any per-occurrence drivers applied.
+  final List<Ride> rides;
+
+  /// Minutes before the start to remind, for this occurrence.
+  final List<int> reminders;
+
   bool get isRepeating => event.rrule != null;
   bool get forEveryone => assignees.isEmpty;
 }
@@ -86,8 +96,8 @@ class ChoreDay {
 }
 
 /// A list with its live items, in display order.
-class ListView {
-  const ListView(this.list, this.items);
+class ListState {
+  const ListState(this.list, this.items);
   final DenList list;
   final List<Item> items;
   int get open => items.where((i) => !i.checked).length;
@@ -207,7 +217,7 @@ class HistoryEntry {
   final String title;
 
   /// Short past-tense verb: added, changed, removed, completed, reopened, checked, unchecked,
-  /// approved, swapped, requested, gave, took.
+  /// approved, declined, swapped, requested, gave, took.
   final String verb;
   final List<FieldDiff> diffs;
   final String space;
@@ -250,7 +260,7 @@ class TodayView {
   final List<ChoreDay> chores;
 
   /// Pinned lists, dated lists due today, and lists linked to today's events.
-  final List<ListView> lists;
+  final List<ListState> lists;
   final List<Gap> gaps;
 }
 
@@ -286,10 +296,25 @@ class SearchHit {
 
 /// Result of [Den.ingest].
 class IngestResult {
-  const IngestResult({required this.added, required this.duplicate, required this.invalid});
+  const IngestResult({
+    required this.added,
+    required this.duplicate,
+    required this.invalid,
+    this.rejected = const {},
+    this.pending = 0,
+  });
+
+  /// Changes newly stored, valid or not.
   final int added;
   final int duplicate;
 
   /// Changes kept in the log but not applied, with the reason.
   final Map<String, String> invalid;
+
+  /// Changes refused outright and not stored, with the reason: a signature that doesn't verify.
+  /// A forged copy is never stored, so it can't shadow the genuine change with the same id.
+  final Map<String, String> rejected;
+
+  /// Changes held back until the record of the device that signed them arrives.
+  final int pending;
 }

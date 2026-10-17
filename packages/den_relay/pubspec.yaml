@@ -1,0 +1,25 @@
+name: den_relay
+description: Den's relay. Tunnels, sealed mailboxes and pairing rendezvous for devices that can't reach each other directly. Sees only ciphertext.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  args: ^2.7.0
+  async: ^2.13.0
+  den_core:
+    path: ../den_core
+  den_net:
+    path: ../den_net
+  path: ^1.9.1
+  shelf: ^1.4.2
+  shelf_web_socket: ^3.0.0
+  web_socket_channel: ^3.0.3
+
+dev_dependencies:
+  http: ^1.5.0
+  stream_channel: ^2.1.4
+  lints: ^6.1.0
+  test: ^1.31.1

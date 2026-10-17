@@ -59,17 +59,24 @@ class HlcClock {
     if (wall > _millis) {
       _millis = wall;
       _counter = 0;
+    } else if (_counter >= maxCounter) {
+      _millis++;
+      _counter = 0;
     } else {
       _counter++;
     }
     return Hlc(_millis, _counter, device);
   }
 
+  /// The largest counter the 4-hex-digit string form holds; the clock moves to the next
+  /// millisecond instead of passing it.
+  static const int maxCounter = 0xffff;
+
   /// Moves the clock past a timestamp received from another device.
   void observe(Hlc remote) {
     if (remote.millis > _millis || (remote.millis == _millis && remote.counter > _counter)) {
       _millis = remote.millis;
-      _counter = remote.counter;
+      _counter = remote.counter > maxCounter ? maxCounter : remote.counter;
     }
   }
 }

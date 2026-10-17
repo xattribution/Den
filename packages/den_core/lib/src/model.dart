@@ -62,7 +62,7 @@ enum Tier { preReader, little, big, teen }
 
 enum Marker { blue, green, orange, pink, teal, plum, brown, olive, sky, slate }
 
-enum Animal { cat, dog, rabbit, fox, owl, fish, horse, bear, turtle }
+enum Animal { cat, dog, rabbit, bird, butterfly, fish, horse, cow, bug }
 
 enum DeviceKind { phone, tablet, desktop, browser, hub, display }
 
@@ -97,12 +97,17 @@ class Rec {
     required this.updated,
     required this.createdBy,
     required this.updatedBy,
+    this.fieldTimes = const {},
   });
 
   final String type;
   final String id;
   final String space;
   final Map<String, Object?> fields;
+
+  /// HLC of the change that set each field's current value. Keys of map fields written one entry
+  /// at a time appear as `"<field>.<key>"`.
+  final Map<String, Hlc> fieldTimes;
 
   /// HLC of the first valid change to this record.
   final Hlc created;
@@ -194,8 +199,8 @@ class Device extends RecordView {
   bool get isShared => mode != DeviceMode.personal;
 }
 
-class Category extends RecordView {
-  const Category(super.rec);
+class EventCategory extends RecordView {
+  const EventCategory(super.rec);
   String get name => rec.str('name');
   String get icon => rec.str('icon', 'calendar');
 }

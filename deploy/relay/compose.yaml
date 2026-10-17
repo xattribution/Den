@@ -1,0 +1,30 @@
+# Den relay. From the repository root:
+#   docker compose -f deploy/relay/compose.yaml up -d
+# Put it behind a TLS reverse proxy (Caddy, Traefik, nginx) so devices reach it as wss:// and
+# https://. When the proxy sets X-Forwarded-For, add "--trust-proxy" to command and publish the
+# port only to the proxy, so clients can't choose their own rate-limit key.
+services:
+  den-relay:
+    build:
+      context: ../..
+      dockerfile: deploy/relay/Dockerfile
+    image: den-relay:latest
+    restart: unless-stopped
+    ports:
+      - "47734:47734"
+    environment:
+      DEN_RELAY_PORT: "47734"
+    command: ["--data-dir", "/data"]
+    volumes:
+      - den-relay-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+
+volumes:
+  den-relay-data:

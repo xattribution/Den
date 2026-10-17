@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:cryptography/dart.dart';
 
 import 'hlc.dart';
 import 'ids.dart';
@@ -138,6 +139,30 @@ Future<String> deviceIdFor(List<int> ed25519PublicKey) async {
   final digest = await Sha256().hash(ed25519PublicKey);
   return base32(digest.bytes.sublist(0, 10));
 }
+
+/// [deviceIdFor] from a base64url public key, synchronously; null when the key isn't base64url.
+String? deviceIdOf(String pubkey) {
+  try {
+    return base32(const DartSha256().hashSync(_b64d(pubkey)).bytes.sublist(0, 10));
+  } on FormatException {
+    return null;
+  }
+}
+
+/// The family id a founder's key and the family's creation time commit to: base32 of the first
+/// 10 bytes of SHA-256 over the founder's Ed25519 public key bytes followed by the creation time
+/// in UTC milliseconds as a decimal string.
+String familyIdFor(String founderPubkey, int createdMillis) => base32(const DartSha256()
+    .hashSync([..._b64d(founderPubkey), ...utf8.encode('$createdMillis')])
+    .bytes
+    .sublist(0, 10));
+
+/// Lowercase hex SHA-256 of a string's UTF-8 bytes; how bearer tokens are stored.
+String sha256Hex(String value) => const DartSha256()
+    .hashSync(utf8.encode(value))
+    .bytes
+    .map((b) => b.toRadixString(16).padLeft(2, '0'))
+    .join();
 
 /// Verifies [signature] (base64url) by [pubkey] (base64url Ed25519) over [bytes].
 Future<bool> verifySignature(List<int> bytes, String signature, String pubkey) async {

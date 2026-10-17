@@ -1,0 +1,9 @@
+**/.dart_tool
+**/build
+**/*.exe
+packages/den_relay/data
+.git
+app
+integrations
+docs
+deploy
