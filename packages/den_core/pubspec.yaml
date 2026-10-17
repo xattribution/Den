@@ -1,0 +1,20 @@
+name: den_core
+description: A starting point for Dart libraries or applications.
+version: 1.0.0
+# repository: https://github.com/my_org/my_repo
+
+environment:
+  sdk: ^3.10.4
+
+# Add regular dependencies here.
+dependencies:
+  collection: ^1.19.1
+  cryptography: ^2.9.0
+  meta: ^1.19.0
+  rrule: ^0.2.18
+  timezone: ^0.11.2
+  # path: ^1.9.0
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.31.1

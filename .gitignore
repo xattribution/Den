@@ -1,0 +1,10 @@
+.dart_tool/
+build/
+.packages
+*.iml
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+/data/
+.env
