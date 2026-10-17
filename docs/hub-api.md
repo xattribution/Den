@@ -148,9 +148,11 @@ The hub advertises one DNS-SD service while it serves HTTP:
 | `name` | yes | The hub device's name |
 | `version` | yes | `den_hub` version, semver (`"0.1.0"`) |
 | `api` | yes | `"1"`, the major version of this API |
+| `f` | yes | The family id, so a device ignores hubs of other families on the same network |
 | `tls` | no | `"1"` when the advertised port speaks HTTPS; absent or `"0"` means plain HTTP |
 
-The TXT record carries no family name, member names or other family data.
+The TXT record carries no family name, member names or other family data beyond the family id,
+which is a random identifier.
 
 ## Shared objects
 
@@ -182,7 +184,7 @@ From den_core's `Member`; sign-in salts and hashes are never sent.
   "role": "kid",
   "tier": "big",
   "marker": "orange",
-  "animal": "fox",
+  "animal": "bird",
   "birthday": "2017-04-02",
   "grants": ["lists"],
   "order": 2
@@ -194,7 +196,7 @@ From den_core's `Member`; sign-in salts and hashes are never sent.
 | `role` | string | `parent` \| `adult` \| `kid` \| `guest` |
 | `tier` | string? | `preReader` \| `little` \| `big` \| `teen` |
 | `marker` | string | `blue` `green` `orange` `pink` `teal` `plum` `brown` `olive` `sky` `slate` |
-| `animal` | string | `cat` `dog` `rabbit` `fox` `owl` `fish` `horse` `bear` `turtle` |
+| `animal` | string | `cat` `dog` `rabbit` `bird` `butterfly` `fish` `horse` `cow` `bug` |
 | `birthday` | date? | |
 | `grants` | string[] | Subset of `events`, `chores`, `lists`, `points` |
 | `order` | int | Display order; members arrays are sorted by it |
@@ -280,8 +282,8 @@ has every Event field with this occurrence's values, except that `id` is replace
 | `recurring` | bool | The series has an `rrule` |
 | `edited` | bool | This occurrence was changed on its own (an `eventException` applies) |
 
-Note for the hub: den_core's `Occurrence.seriesStart` currently returns the moved start; for an
-occurrence moved by an exception, `occurrence` must be the exception's `occurrence` field.
+`occurrence` is always the occurrence's original start in its series (den_core's
+`Occurrence.seriesStart`), even when an exception moved it.
 
 ### ChoreDay
 
@@ -430,8 +432,8 @@ names to ids.
     "expires_ms": null
   },
   "members": [
-    {"id": "M3MOMQ7K2XN4B5TA", "name": "Mom", "role": "parent", "tier": null, "marker": "teal", "animal": "owl", "birthday": null, "grants": [], "order": 0},
-    {"id": "M5LEOW3H7ZQ2D4VC", "name": "Leo", "role": "kid", "tier": "big", "marker": "orange", "animal": "fox", "birthday": "2017-04-02", "grants": ["lists"], "order": 2}
+    {"id": "M3MOMQ7K2XN4B5TA", "name": "Mom", "role": "parent", "tier": null, "marker": "teal", "animal": "butterfly", "birthday": null, "grants": [], "order": 0},
+    {"id": "M5LEOW3H7ZQ2D4VC", "name": "Leo", "role": "kid", "tier": "big", "marker": "orange", "animal": "bird", "birthday": "2017-04-02", "grants": ["lists"], "order": 2}
   ],
   "categories": [{"id": "CAT2SPORT5QK4MXN", "name": "Sports", "icon": "ball"}]
 }
@@ -1078,3 +1080,11 @@ Suggested refetch by type, for clients that cache:
 | `adjustment`, `goal`, `reward`, `redemption` | `/api/v1/points` |
 | `list`, `item` | `/api/v1/lists` |
 | `member`, `family` | `/api/v1/members`, then everything (names, time zone, points switch) |
+
+
+## Hub setup and browser linking
+
+These endpoints let a fresh hub join a family and let a browser link to it. They're specified in
+`packages/den_hub/README.md`: `GET /api/v1/hub/status`, `POST /api/v1/hub/setup`,
+`GET /api/v1/hub/setup/ws`, `POST /api/v1/link`, `POST /api/v1/link/{slot}` and
+`GET /api/v1/link/{slot}`.

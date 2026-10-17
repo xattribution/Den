@@ -386,6 +386,43 @@ class SyncNode {
     return invite;
   }
 
+  /// Creates an invite naming [hubDevice], this family's hub, as the inviting device, for a
+  /// joiner the hub admits on this device's behalf. Hand it to the hub with [InviteGrant.sign];
+  /// this device doesn't accept it itself.
+  Invite createHubInvite(
+    String hubDevice, {
+    List<Uri> hubs = const [],
+    Uri? relay,
+    Duration validFor = const Duration(minutes: 15),
+  }) {
+    final familyId = den.familyId;
+    final family = den.family;
+    if (familyId == null || family == null) throw StateError('no family');
+    final hub = den.device(hubDevice);
+    if (hub == null || hub.mode != DeviceMode.hub || !hub.approved || hub.revoked) {
+      throw StateError('that device isn\'t this family\'s hub');
+    }
+    final founder = family.founderDevice == den.deviceId ? den.keys.pubkey : den.device(family.founderDevice)?.pubkey;
+    if (founder == null || founder.isEmpty) throw StateError('founding device unknown');
+    return Invite.create(
+      familyId: familyId,
+      founderPubkey: founder,
+      inviterDevice: hubDevice,
+      inviterPubkey: hub.pubkey,
+      hubs: hubs,
+      relay: relay,
+      validFor: validFor,
+    );
+  }
+
+  /// Hub side: checks [grant] for [context] (see [InviteGrant.problem]) and starts accepting
+  /// its invite. Returns null when accepted, else the reason it was refused.
+  Future<String?> acceptInviteGrant(InviteGrant grant, {required String context}) async {
+    final problem = await grant.problem(den, expectedContext: context);
+    if (problem == null) invites.add(grant.invite);
+    return problem;
+  }
+
   /// Issues a spoken code this device accepts for the next 10 minutes.
   SpokenCode createSpokenCode() => codes.issue();
 

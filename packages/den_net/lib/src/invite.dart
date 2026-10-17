@@ -171,6 +171,79 @@ class Invite {
       hexEncode(await sha256(concatBytes([utf8Bytes('den/rendezvous/v1/qr|'), secret])));
 }
 
+/// A QR invite that an approved parent device hands to the family's hub, so the hub admits the
+/// joiner on its behalf (a browser linking through the hub, say). The invite names the hub as
+/// the inviting device, so the joiner pins the hub's key; the grant is the parent device's
+/// Ed25519 signature over the invite and a [context] the hub checks (such as a link slot), so
+/// nobody else can make the hub accept invites.
+///
+/// Signed bytes: `"den/invite-grant/v1" 0x00 | canonical JSON [invite URL, grantor, context]`.
+class InviteGrant {
+  /// Creates a grant; prefer [InviteGrant.sign].
+  const InviteGrant({required this.invite, required this.grantor, required this.context, required this.sig});
+
+  /// Signs [invite] for [context] with the granting device's [keys].
+  static Future<InviteGrant> sign(Invite invite, {required DeviceKeys keys, required String context}) async {
+    final grantor = await keys.deviceId();
+    return InviteGrant(
+      invite: invite,
+      grantor: grantor,
+      context: context,
+      sig: await keys.sign(_grantBytes(invite.toUrl(), grantor, context)),
+    );
+  }
+
+  /// The invite, naming the hub as the inviting device.
+  final Invite invite;
+
+  /// The parent device that signed the grant.
+  final String grantor;
+
+  /// What the grant is for, chosen by the hub (for example `link:<slot>`).
+  final String context;
+
+  /// base64url Ed25519 signature by [grantor].
+  final String sig;
+
+  /// `{invite, device, context, sig}`.
+  Map<String, Object?> toJson() => {'invite': invite.toUrl(), 'device': grantor, 'context': context, 'sig': sig};
+
+  /// Reads [toJson] output; throws [FormatException] when it is malformed.
+  static InviteGrant fromJson(Map<String, Object?> json) {
+    final url = json['invite'], device = json['device'], context = json['context'], sig = json['sig'];
+    if (url is! String || device is! String || context is! String || sig is! String) {
+      throw const FormatException('Not an invite grant');
+    }
+    return InviteGrant(invite: Invite.decode(url), grantor: device, context: context, sig: sig);
+  }
+
+  /// Why [den] (the hub the invite names) must refuse this grant for [expectedContext], or
+  /// null when it is good: signed by an approved, unrevoked personal device whose owner is a
+  /// parent, for this family, naming this device and its key, unexpired.
+  Future<String?> problem(Den den, {required String expectedContext, DateTime? now}) async {
+    if (context != expectedContext) return 'wrong-context';
+    if (invite.isExpired(now)) return 'expired';
+    if (!den.hasFamily || invite.familyId != den.familyId || invite.founderPubkey != den.founderPubkey) {
+      return 'wrong-family';
+    }
+    if (invite.inviterDevice != den.deviceId || invite.inviterPubkey != den.keys.pubkey) return 'wrong-device';
+    final device = den.device(grantor);
+    if (device == null || !device.approved || device.revoked || device.mode != DeviceMode.personal) {
+      return 'not-a-parent-device';
+    }
+    final owner = device.member == null ? null : den.member(device.member!);
+    if (owner == null || !owner.isParent) return 'not-a-parent-device';
+    final ok = await verifySignature(_grantBytes(invite.toUrl(), grantor, context), sig, device.pubkey);
+    return ok ? null : 'bad-signature';
+  }
+}
+
+Uint8List _grantBytes(String inviteUrl, String grantor, String context) => concatBytes([
+      utf8Bytes('den/invite-grant/v1'),
+      [0],
+      utf8Bytes(canonicalJson([inviteUrl, grantor, context])),
+    ]);
+
 /// The inviting side's live QR invites. Each works once and only until it expires.
 class InviteBook {
   /// Creates an empty book; [now] is injectable for tests.
