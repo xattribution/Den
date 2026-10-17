@@ -19,16 +19,10 @@ class DenNetwork extends ChangeNotifier {
         localHub = localHub ?? LocalHub.create(),
         _hubs = [...hubs] {
     this.localHub.addListener(notifyListeners);
-    _engine = den.onChange.listen((_) => _keepActingAsOwner());
-    // Before the first screen: a device that is the hub opens as its owner's, not as a display.
-    _keepActingAsOwner();
   }
 
   static const _hubsKey = 'den.hubs';
   static const _relayKey = 'den.relay';
-
-  /// Acting window for the owner of a device running as the hub, renewed whenever it lapses.
-  static const _ownerWindow = Duration(days: 30);
 
   /// Restores the saved hub addresses and relay for this device.
   static Future<DenNetwork> load(Den den) async {
@@ -47,7 +41,6 @@ class DenNetwork extends ChangeNotifier {
   /// The hub this app runs in-process when this device is the family's hub.
   final LocalHub localHub;
   final List<Uri> _hubs;
-  late final StreamSubscription<Set<String>> _engine;
 
   /// The relay this family uses to reach the hub from outside the house, if any.
   Uri? relay;
@@ -85,7 +78,6 @@ class DenNetwork extends ChangeNotifier {
       return;
     }
     if (isHub) {
-      _keepActingAsOwner();
       if (LocalHub.supported) await localHub.start(den, relay: relay);
       _setStatus(const SyncStatus(SyncState.live));
       return;
@@ -121,7 +113,6 @@ class DenNetwork extends ChangeNotifier {
         if (isHub && localHub.state == LocalHubState.running) return;
         await _stopClient();
         await den.setThisDeviceMode(DeviceMode.hub);
-        _keepActingAsOwner();
         await localHub.start(den, relay: relay);
         if (localHub.state == LocalHubState.failed) {
           // Don't leave the family pointing at a hub that isn't running.
@@ -133,7 +124,6 @@ class DenNetwork extends ChangeNotifier {
       } else {
         await localHub.stop();
         if (isHub) {
-          _keepActingAsOwner();
           await den.setThisDeviceMode(DeviceMode.personal);
         }
         await start();
@@ -141,20 +131,6 @@ class DenNetwork extends ChangeNotifier {
     } finally {
       _switching = false;
       notifyListeners();
-    }
-  }
-
-  /// A device running as the hub still belongs to the parent who turned it on: the app acts for
-  /// them, so their own screens keep working.
-  void _keepActingAsOwner() {
-    final device = den.thisDevice;
-    final owner = device?.member;
-    if (device == null || device.mode != DeviceMode.hub || owner == null || den.member(owner) == null) return;
-    if (den.actor?.id == owner) return;
-    try {
-      den.actAs(owner, window: _ownerWindow);
-    } on Object {
-      return;
     }
   }
 
@@ -264,7 +240,6 @@ class DenNetwork extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    unawaited(_engine.cancel());
     localHub.removeListener(notifyListeners);
     unawaited(localHub.stop());
     unawaited(_stopClient());

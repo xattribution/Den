@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [den_core, den_net, den_relay, den_hub, den_sett_import]
+        package: [den_core, den_net, den_relay, den_hub, den_hub_cli, den_sett_import]
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
@@ -37,8 +37,8 @@ jobs:
         working-directory: packages/${{ matrix.package }}
         run: dart test
       - name: Build the hub binary
-        if: matrix.package == 'den_hub'
-        working-directory: packages/den_hub
+        if: matrix.package == 'den_hub_cli'
+        working-directory: packages/den_hub_cli
         run: dart build cli
 
   app:

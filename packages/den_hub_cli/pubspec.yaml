@@ -1,0 +1,26 @@
+name: den_hub_cli
+description: "The den_hub command line: serve, MCP over stdio, Sett import, setup code, status, backup and restore."
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.10.4
+
+executables:
+  den_hub: den_hub
+
+dependencies:
+  args: ^2.7.0
+  den_core:
+    path: ../den_core
+  den_hub:
+    path: ../den_hub
+  den_net:
+    path: ../den_net
+  den_sett_import:
+    path: ../den_sett_import
+  http: ^1.5.0
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.31.1

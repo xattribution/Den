@@ -157,21 +157,23 @@ class Den {
 
   Device? get thisDevice => device(deviceId);
 
-  /// The owner of a personal device.
+  /// The person this device belongs to: the owner of a personal device, or the parent whose
+  /// device is running as the family's hub. Shared displays and hubs nobody owns have none.
   Member? get owner {
     final d = thisDevice;
-    if (d == null || d.mode != DeviceMode.personal || d.member == null) return null;
+    if (d == null || d.mode == DeviceMode.shared || d.member == null) return null;
     return member(d.member!);
   }
 
   /// Who changes are made as right now: the owner on a personal device; on a shared display, the
-  /// member who verified within the acting window, else null (open check-off rules apply).
+  /// member who verified within the acting window, else null (open check-off rules apply); on a
+  /// hub, whoever an API or MCP call is acting as, else the hub's owner.
   Member? get actor {
     final d = thisDevice;
     if (d == null) return null;
     if (d.mode == DeviceMode.personal) return owner;
-    final until = actingUntil;
-    return until == null || _actingMember == null ? null : member(_actingMember!);
+    if (actingUntil != null) return _actingMember == null ? null : member(_actingMember!);
+    return d.mode == DeviceMode.hub ? owner : null;
   }
 
   /// UTC milliseconds when the acting window on a shared device ends, or null.

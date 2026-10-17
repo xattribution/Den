@@ -22,8 +22,10 @@ name: Home Assistant notify service and ntfy topic), `publicUrl`, `allowedOrigin
 
 ## Command line
 
-`dart build cli` (not `dart compile exe`: den_sett_import links SQLite through a build hook)
-makes `bundle/bin/den_hub` with `bundle/lib/` beside it.
+The command line lives in `packages/den_hub_cli`, so this library carries no SQLite and the app
+can run the hub in-process. In that package, `dart build cli` (not `dart compile exe`:
+den_sett_import links SQLite through a build hook) makes `bundle/bin/den_hub` with `bundle/lib/`
+beside it.
 
 | Command | |
 | --- | --- |

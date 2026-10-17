@@ -24,13 +24,20 @@ void main() {
       expect(tablet.readableSpaces, {Space.family, Space.parents, Space.member(dana), Space.member(leo)});
       await tablet.setThisDeviceMode(DeviceMode.hub);
       expect(tablet.thisDevice!.mode, DeviceMode.hub);
-      expect(tablet.actor, isNull, reason: 'a hub acts for nobody until someone signs in');
+      expect(tablet.owner?.name, 'Dana', reason: "it is still Dana's tablet");
+      expect(tablet.actor?.name, 'Dana', reason: 'with no call acting through it, the hub acts as its owner');
       tablet.actAs(null, via: 'Home Assistant');
+      expect(tablet.actor, isNull, reason: 'an automation acting through the hub is not Dana');
       await tablet.addEvent(title: 'Trash pickup', start: clock.now, end: clock.now + 600000);
+      tablet.actAs(null);
+      expect(tablet.actor?.name, 'Dana');
+      await tablet.addEvent(title: 'Dentist', start: clock.now, end: clock.now + 600000);
       await sync(tablet, parent);
       expect(parent.device(tablet.deviceId)!.mode, DeviceMode.hub);
       expect(parent.spacesForDevice(tablet.deviceId), contains(Space.parents));
-      expect(parent.history().first.via, 'Home Assistant');
+      final history = parent.history();
+      expect(history.firstWhere((h) => h.title == 'Trash pickup').via, 'Home Assistant');
+      expect(history.firstWhere((h) => h.title == 'Dentist').actorName, 'Dana');
     });
 
     test('a parent switches their own device to a shared display and renames it', () async {
@@ -267,3 +274,4 @@ void main() {
     });
   });
 }
+

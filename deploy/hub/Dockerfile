@@ -5,8 +5,7 @@
 
 FROM ghcr.io/cirruslabs/flutter:3.38.5 AS web
 WORKDIR /src
-COPY packages/den_core packages/den_core
-COPY packages/den_net packages/den_net
+COPY packages packages
 COPY app app
 WORKDIR /src/app
 RUN flutter pub get && flutter build web --release
@@ -19,7 +18,8 @@ COPY packages/den_net/pubspec.yaml packages/den_net/pubspec.lock* packages/den_n
 COPY packages/den_relay/pubspec.yaml packages/den_relay/pubspec.lock* packages/den_relay/
 COPY packages/den_sett_import/pubspec.yaml packages/den_sett_import/pubspec.lock* packages/den_sett_import/
 COPY packages/den_hub/pubspec.yaml packages/den_hub/pubspec.lock* packages/den_hub/
-RUN cd packages/den_hub && dart pub get
+COPY packages/den_hub_cli/pubspec.yaml packages/den_hub_cli/pubspec.lock* packages/den_hub_cli/
+RUN cd packages/den_hub_cli && dart pub get
 COPY packages packages
 # den_sett_import links SQLite through a build hook, which `dart compile exe` doesn't run;
 # `dart build cli` does, and bundles the library next to the binary (bundle/lib).
