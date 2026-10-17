@@ -1,0 +1,24 @@
+# The family's hub, and optionally your own relay for reaching it from outside the house.
+#   docker compose up -d hub
+#   docker compose --profile relay up -d
+services:
+  hub:
+    image: ghcr.io/xattribution/den-hub:latest
+    restart: unless-stopped
+    # Host networking lets phones and Home Assistant find the hub by mDNS; it listens on 47733.
+    network_mode: host
+    volumes:
+      - den-hub:/data
+
+  relay:
+    profiles: [relay]
+    image: ghcr.io/xattribution/den-relay:latest
+    restart: unless-stopped
+    ports:
+      - "47734:47734"
+    volumes:
+      - den-relay:/data
+
+volumes:
+  den-hub:
+  den-relay:
