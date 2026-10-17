@@ -1,0 +1,160 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.38.5'
+
+jobs:
+  packages:
+    name: Dart packages
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [den_core, den_net, den_relay, den_hub]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: '3.10.4'
+      - name: Resolve
+        working-directory: packages/${{ matrix.package }}
+        run: dart pub get
+      - name: Analyze
+        working-directory: packages/${{ matrix.package }}
+        run: dart analyze --fatal-infos
+      - name: Test
+        working-directory: packages/${{ matrix.package }}
+        run: dart test
+
+  app:
+    name: App analyze and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - working-directory: app
+        run: flutter pub get
+      - working-directory: app
+        run: flutter analyze
+      # Golden images are rendered on Windows by the people reviewing them; other platforms
+      # rasterize fonts differently, so CI runs the behavior tests only.
+      - working-directory: app
+        run: flutter test --exclude-tags golden
+
+  homeassistant:
+    name: Home Assistant integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+        with:
+          path: integrations/homeassistant/custom_components/den
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Test
+        working-directory: integrations/homeassistant
+        run: |
+          python -m pip install -r requirements_test.txt
+          python -m pytest -q
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: [packages, app]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: android
+            os: ubuntu-latest
+            command: flutter build apk --release
+            artifact: app/build/app/outputs/flutter-apk/app-release.apk
+          - target: web
+            os: ubuntu-latest
+            command: flutter build web --release
+            artifact: app/build/web
+          - target: linux
+            os: ubuntu-latest
+            command: flutter build linux --release
+            artifact: app/build/linux/x64/release/bundle
+          - target: windows
+            os: windows-latest
+            command: flutter build windows --release
+            artifact: app/build/windows/x64/runner/Release
+          - target: macos
+            os: macos-latest
+            command: flutter build macos --release
+            artifact: app/build/macos/Build/Products/Release
+          - target: ios
+            os: macos-latest
+            command: flutter build ios --release --no-codesign
+            artifact: app/build/ios/iphoneos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev libsecret-1-dev
+      - uses: actions/setup-java@v4
+        if: matrix.target == 'android'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - working-directory: app
+        run: flutter pub get
+      - working-directory: app
+        run: ${{ matrix.command }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: den-${{ matrix.target }}
+          path: ${{ matrix.artifact }}
+
+  images:
+    name: Docker images
+    needs: [packages]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [hub, relay]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/${{ matrix.image }}/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/den-${{ matrix.image }}:latest
+            ghcr.io/${{ github.repository_owner }}/den-${{ matrix.image }}:${{ github.ref_name }}
