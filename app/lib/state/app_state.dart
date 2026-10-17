@@ -4,6 +4,7 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../net/den_network.dart';
 import 'format.dart';
 
 enum ThemeChoice { auto, day, night }
@@ -11,7 +12,7 @@ enum ThemeChoice { auto, day, night }
 /// The app's live state: the device's [Den] engine plus UI preferences. Rebuilds listeners on
 /// every change the engine applies, whether made here or synced from another device.
 class AppState extends ChangeNotifier {
-  AppState(Den den, {bool wall = false, ThemeChoice theme = ThemeChoice.auto})
+  AppState(Den den, {bool wall = false, ThemeChoice theme = ThemeChoice.auto, this.network})
       : _den = den,
         _wall = wall,
         _theme = theme {
@@ -19,14 +20,18 @@ class AppState extends ChangeNotifier {
   }
 
   /// Restores the saved theme and wall preferences for this device.
-  static Future<AppState> load(Den den) async {
+  static Future<AppState> load(Den den, {DenNetwork? network}) async {
     final prefs = await SharedPreferences.getInstance();
     return AppState(
       den,
       wall: prefs.getBool(_wallKey) ?? false,
       theme: ThemeChoice.values.asNameMap()[prefs.getString(_themeKey)] ?? ThemeChoice.auto,
+      network: network,
     );
   }
+
+  /// This device's sync with the hub and other devices; null for the demo family and in tests.
+  final DenNetwork? network;
 
   static const _wallKey = 'den.wall';
   static const _themeKey = 'den.theme';
