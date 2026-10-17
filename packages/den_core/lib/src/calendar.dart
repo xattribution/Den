@@ -97,6 +97,7 @@ Occurrence buildOccurrence(Event e, int seriesStart, EventException? exception) 
     reminders: patch.containsKey('reminders')
         ? [...(patch['reminders'] as List? ?? const []).map((v) => (v as num).toInt())]
         : e.reminders,
+    category: pick<String?>('category', null) ?? e.category,
   );
 }
 

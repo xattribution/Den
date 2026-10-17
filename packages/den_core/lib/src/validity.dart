@@ -326,16 +326,24 @@ class Validator {
   Rejection? _device(_Ctx x) {
     final c = x.c;
     if (x.creating) return _trust('A device joins by sending its own request');
+    final target = Device(x.existing!.rec);
+    final mode = c.fields.containsKey('mode') ? c.fields['mode'] : target.mode.name;
+    final owner = c.fields.containsKey('member') ? c.fields['member'] : target.member;
+    if (c.fields.containsKey('mode') && mode == DeviceMode.personal.name && owner == null) {
+      return _schema('A personal device needs an owner');
+    }
     if (c.rid == c.device) {
       final f = c.fields;
       if (f.containsKey('approved') ||
           f.containsKey('approvedBy') ||
           f.containsKey('member') ||
-          f.containsKey('mode') ||
           (f.containsKey('revoked') && f['revoked'] != true)) {
-        return _trust('A device can never approve itself or change its own access');
+        return _trust('A device can never approve itself or change who owns it');
       }
       if (x.only({'revoked'}) || c.isDelete) return null;
+      final parent = x.actor?.isParent ?? false;
+      if (f.containsKey('mode') && !parent) return _deny('Only a parent can change what this device is for');
+      if (parent && x.only({'mode', 'name', 'display', 'kind', 'xpub', 'revoked'})) return null;
     }
     if (!x.has(DenAction.manageFamily)) return _deny('Only parents can approve or change devices');
     if (c.fields['approved'] == true && !(x.actor?.isParent ?? false)) {

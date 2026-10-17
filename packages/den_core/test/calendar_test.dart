@@ -129,6 +129,17 @@ void main() {
       expect(there.single.seriesStart, third.seriesStart);
     });
 
+    test('an occurrence carries its own category after a change', () async {
+      final sports = await den.addCategory(name: 'Sports', icon: 'sports');
+      final school = await den.addCategory(name: 'School', icon: 'school');
+      await den.updateEvent(id, {'category': sports});
+      final third = month()[2];
+      await den.updateEvent(id, {'category': school}, scope: EditScope.one, occurrence: third.seriesStart);
+      final occ = month();
+      expect(occ[1].category, sports);
+      expect(occ[2].category, school);
+    });
+
     test('canceling one occurrence and claiming a ride for one', () async {
       final occ = month();
       await den.deleteEvent(id, scope: EditScope.one, occurrence: occ[1].seriesStart);

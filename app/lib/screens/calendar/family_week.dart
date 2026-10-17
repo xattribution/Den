@@ -30,6 +30,9 @@ class FamilyWeek extends StatelessWidget {
   static const double _dayColumn = 92;
   static const double _minPersonColumn = 150;
 
+  /// Below this row height the grid scrolls instead of stretching to fill.
+  static const double _minFilledRow = 96;
+
   @override
   Widget build(BuildContext context) {
     final app = context.app;
@@ -42,6 +45,9 @@ class FamilyWeek extends StatelessWidget {
         final natural = _dayColumn + people.length * _minPersonColumn;
         final width = natural > constraints.maxWidth ? natural : constraints.maxWidth;
         final personWidth = (width - _dayColumn) / (people.isEmpty ? 1 : people.length);
+        final fill = fillHeight &&
+            constraints.hasBoundedHeight &&
+            (constraints.maxHeight - 56) / grid.days.length >= _minFilledRow;
 
         final table = SizedBox(
           width: width,
@@ -50,7 +56,7 @@ class FamilyWeek extends StatelessWidget {
             children: [
               _HeaderRow(people: people, dayWidth: _dayColumn, personWidth: personWidth),
               Divider(height: 1, color: c.rule),
-              if (fillHeight)
+              if (fill)
                 for (final (i, date) in grid.days.indexed) ...[
                   if (i > 0) Divider(height: 1, color: c.rule),
                   Expanded(
@@ -165,7 +171,12 @@ class _DayRow extends StatelessWidget {
             constraints: const BoxConstraints(minHeight: 72),
             decoration: BoxDecoration(border: Border(left: BorderSide(color: c.rule))),
             padding: const EdgeInsets.all(Sp.xs),
-            child: _Cell(cell: grid.cells[(date, m.id)], showChores: showChores),
+            child: fill
+                ? SingleChildScrollView(
+                    physics: const NeverScrollableScrollPhysics(),
+                    child: _Cell(cell: grid.cells[(date, m.id)], showChores: showChores),
+                  )
+                : _Cell(cell: grid.cells[(date, m.id)], showChores: showChores),
           ),
       ],
     );

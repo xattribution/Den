@@ -186,7 +186,7 @@ void main() {
       final overlap = gaps.singleWhere((g) => g.kind == GapKind.overlap);
       expect(overlap.message, 'Leo has Soccer and Piano at the same time');
       expect(overlap.members, [leo]);
-      expect(gaps.singleWhere((g) => g.kind == GapKind.unowned).message, 'Nobody has taken Water the plants');
+      expect(gaps.singleWhere((g) => g.kind == GapKind.unowned).message, 'Water the plants is up for grabs');
       await den.claimRide(soccer, occurrence: at('2026-10-16', '17:00'), leg: 'from', driver: priya);
       expect(den.today().gaps.where((g) => g.message.contains('picking up')), isEmpty);
       expect(den.gaps(den.dayStart('2026-10-17'), den.dayStart('2026-10-18')), isEmpty,

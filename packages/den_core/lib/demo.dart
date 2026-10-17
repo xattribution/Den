@@ -94,12 +94,12 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
     await phone.setSignIn(e.key, kind: e.key == zoe ? 'pattern' : 'pin', secret: demoSignIns[e.value]);
   }
 
-  final school = await phone.addCategory(name: 'School', icon: 'graduation-cap');
-  final sports = await phone.addCategory(name: 'Sports', icon: 'soccer-ball');
-  final health = await phone.addCategory(name: 'Health', icon: 'first-aid-kit');
-  final family = await phone.addCategory(name: 'Family', icon: 'house');
-  final party = await phone.addCategory(name: 'Birthdays', icon: 'cake');
-  final travel = await phone.addCategory(name: 'Travel', icon: 'airplane');
+  final school = await phone.addCategory(name: 'School', icon: 'school');
+  final sports = await phone.addCategory(name: 'Sports', icon: 'sports');
+  final health = await phone.addCategory(name: 'Health', icon: 'health');
+  final family = await phone.addCategory(name: 'Family', icon: 'family');
+  final party = await phone.addCategory(name: 'Birthdays', icon: 'birthday');
+  final travel = await phone.addCategory(name: 'Travel', icon: 'travel');
 
   await phone.addEvent(
     title: 'School drop-off',
@@ -193,20 +193,20 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
     title: 'Dishes',
     owner: OwnerRotation([maya, leo], 'week', day(-14)),
     schedule: daily,
-    icon: 'fork-knife',
+    icon: 'dishes',
     dueTime: '20:00',
     points: 2,
     steps: const [
-      ChoreStep(id: 'clear', text: 'Clear the table'),
-      ChoreStep(id: 'load', text: 'Load the dishwasher'),
-      ChoreStep(id: 'wipe', text: 'Wipe the counters'),
+      ChoreStep(id: 'clear', text: 'Clear the table', icon: 'dishes'),
+      ChoreStep(id: 'load', text: 'Load the dishwasher', icon: 'dishes'),
+      ChoreStep(id: 'wipe', text: 'Wipe the counters', icon: 'spray'),
     ],
   );
   final cat = await phone.addChore(
     title: 'Feed the cat',
     owner: OwnerMember(leo),
     schedule: daily,
-    icon: 'cat',
+    icon: 'pet',
     dueTime: '07:30',
     points: 1,
     reminders: [10],
@@ -218,17 +218,17 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
     icon: 'broom',
     dueTime: '19:30',
     steps: [
-      ChoreStep(id: 'sweep', text: 'Sweep the floor', owner: maya, points: 2),
-      ChoreStep(id: 'table', text: 'Wipe the table', owner: leo, points: 1),
-      ChoreStep(id: 'toys', text: 'Put away toys', owner: zoe, points: 1),
-      ChoreStep(id: 'run', text: 'Run the dishwasher', owner: priya),
+      ChoreStep(id: 'sweep', text: 'Sweep the floor', owner: maya, points: 2, icon: 'broom'),
+      ChoreStep(id: 'table', text: 'Wipe the table', owner: leo, points: 1, icon: 'spray'),
+      ChoreStep(id: 'plant', text: 'Water the plant', owner: zoe, points: 1, icon: 'plant'),
+      ChoreStep(id: 'run', text: 'Run the dishwasher', owner: priya, icon: 'dishes'),
     ],
   );
   await phone.addChore(
     title: 'Bring in the mail',
     owner: const OwnerAnyone(),
     schedule: daily,
-    icon: 'envelope',
+    icon: 'mail',
     points: 1,
   );
   final trash = await phone.addChore(
@@ -244,11 +244,11 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
     title: 'Return library books',
     owner: OwnerMember(leo),
     schedule: ChoreSchedule.once(addDays(today, -2)),
-    icon: 'books',
+    icon: 'book',
     points: 1,
   );
 
-  final groceries = await phone.addList(title: 'Groceries', kind: ListKind.shopping, icon: 'shopping-cart', pinned: true);
+  final groceries = await phone.addList(title: 'Groceries', kind: ListKind.shopping, icon: 'shopping', pinned: true);
   final groceryItems = <String, String>{};
   for (final (text, qty, store) in [
     ('Paper towels', null, 'Costco'),
@@ -273,12 +273,12 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
     kind: ListKind.packing,
     lifecycle: ListLifecycle.event,
     event: beach,
-    icon: 'suitcase',
+    icon: 'packing',
   );
   for (final text in ['Sunscreen', 'Swimsuits', 'Beach towels', 'Sand toys', 'Snacks for the car', 'Chargers']) {
     await phone.addItem(packing, text: text);
   }
-  final meals = await phone.addList(title: 'Meal plan', kind: ListKind.meal, icon: 'cooking-pot');
+  final meals = await phone.addList(title: 'Meal plan', kind: ListKind.meal, icon: 'meal');
   for (final (text, toGroceries) in [
     ('Sunday: Pancakes', false),
     ('Monday: Sheet-pan chicken', false),
@@ -295,14 +295,14 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
     kind: ListKind.checklist,
     lifecycle: ListLifecycle.dated,
     needBy: addDays(today, 3),
-    icon: 'flask',
+    icon: 'checklist',
   );
   for (final text in ['Poster board', 'Glue sticks', 'Markers', 'Baking soda', 'Vinegar']) {
     await phone.addItem(science, text: text);
   }
 
   final later = await phone.addReward(title: 'Later bedtime', cost: 20, icon: 'moon', needsApproval: false);
-  await phone.addReward(title: 'Pick dinner', cost: 30, icon: 'fork-knife', needsApproval: false);
+  await phone.addReward(title: 'Pick dinner', cost: 30, icon: 'pizza', needsApproval: false);
   final five = await phone.addReward(title: '\$5', cost: 30, icon: 'money', needsApproval: true);
   await phone.addGoal(
     title: 'Movie night pick',
@@ -383,7 +383,7 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
     moveTo(at(d, '19:20'));
     await as(maya, () => display.setStep(kitchen, d, 'sweep', true));
     if (weekday != DateTime.monday) await as(leo, () => display.setStep(kitchen, d, 'table', true));
-    await as(zoe, () => display.setStep(kitchen, d, 'toys', true));
+    await as(zoe, () => display.setStep(kitchen, d, 'plant', true));
     moveTo(at(d, '19:35'));
     await toPhone();
     await phone.setStep(kitchen, d, 'run', true);

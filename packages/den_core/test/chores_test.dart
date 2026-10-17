@@ -80,7 +80,49 @@ void main() {
     await den.swapForDay(cat, '2026-10-15', null);
     expect(on('2026-10-15', cat).owner, isNull);
     clock.set(DateTime.fromMillisecondsSinceEpoch(wallToUtc(zone, DateTime.utc(2026, 10, 15, 9)), isUtc: true));
-    expect(den.today().gaps.map((g) => g.message), ['Nobody has taken Feed the cat']);
+    expect(den.today().gaps.map((g) => g.message), ['Feed the cat is up for grabs']);
+  });
+
+  test('a chore\'s completions by date range, and whether a day was swapped', () async {
+    final cat = await den.addChore(
+      title: 'Feed the cat',
+      owner: OwnerMember(leo),
+      schedule: const ChoreSchedule.repeating('FREQ=DAILY', '2026-10-01'),
+    );
+    for (final d in ['2026-10-10', '2026-10-12', '2026-10-13']) {
+      await den.setChoreDone(cat, d, true);
+    }
+    await den.swapForDay(cat, '2026-10-11', maya);
+    expect(den.completionsFor(cat).map((c) => c.date), ['2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13']);
+    expect(den.completionsFor(cat, from: '2026-10-11', to: '2026-10-12').map((c) => c.date), ['2026-10-11', '2026-10-12']);
+    expect(den.completionsFor('nosuchchoreabcd'), isEmpty);
+    expect(on('2026-10-11', cat).swapped, isTrue);
+    expect(on('2026-10-11', cat).owner, maya);
+    expect(on('2026-10-12', cat).swapped, isFalse);
+  });
+
+  test('steps carry a pictogram for people who can\'t read yet', () async {
+    final kitchen = await den.addChore(
+      title: 'Clean the kitchen',
+      owner: OwnerMember(zoe),
+      schedule: const ChoreSchedule.once('2026-10-14'),
+      steps: const [
+        ChoreStep(id: 'sweep', text: 'Sweep', icon: 'broom'),
+        ChoreStep(id: 'wipe', text: 'Wipe the table'),
+      ],
+    );
+    final steps = den.chore(kitchen)!.steps;
+    expect(steps.map((s) => s.icon), ['broom', null]);
+    expect(steps.first.toJson(), containsPair('icon', 'broom'));
+    expect(steps.last.toJson().containsKey('icon'), isFalse);
+    await expectLater(
+      den.updateChore(kitchen, {
+        'steps': [
+          {'id': 'x', 'text': 'Long', 'icon': 'i' * 41},
+        ],
+      }),
+      throwsA(isA<InvalidInput>()),
+    );
   });
 
   test('anyone chores credit whoever did them', () async {

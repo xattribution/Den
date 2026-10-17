@@ -135,6 +135,14 @@ void main() {
       expect(den.history().first.actorName, 'Leo');
     });
 
+    test('a list\'s icon defaults to its kind', () async {
+      final packing = await den.addList(title: 'Beach bag', kind: ListKind.packing);
+      expect(den.list(packing)!.list.icon, 'packing');
+      expect(den.list(groceries)!.list.icon, 'shopping');
+      final custom = await den.addList(title: 'Dinners', kind: ListKind.meal, icon: 'meal');
+      expect(den.list(custom)!.list.icon, 'meal');
+    });
+
     test('lists sort pinned first, then in the order they were added', () async {
       await den.addList(title: 'Packing');
       await den.addList(title: 'Chores for the sitter');

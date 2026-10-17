@@ -80,5 +80,6 @@ ChoreDay choreDay({
     doneBy: completion?.doneBy,
     steps: {for (final s in chore.steps) s.id: completion?.steps[s.id]},
     late: late,
+    swapped: isSwapped(completion),
   );
 }

@@ -101,7 +101,7 @@ class _WallScreenState extends State<WallScreen> {
       DisplayLayout.today => _TodayBoard(onAct: () => setState(() {})),
       DisplayLayout.month => MonthViewSlot(anchor: today),
       DisplayLayout.lists => const _ListsBoard(),
-      DisplayLayout.week || DisplayLayout.photos => FamilyWeek(startDate: today, showChores: false),
+      DisplayLayout.week || DisplayLayout.photos => FamilyWeek(startDate: today, showChores: false, fillHeight: true),
     };
 
     final onlyAnyone = layout == DisplayLayout.today;

@@ -107,13 +107,36 @@ rename itself or withdraw. It becomes approved only when a change setting `appro
 signed by an already approved, non-shared device whose actor is a parent; the approval also pins
 the device's `mode` and `member`. **A device can never approve itself**: a change approving device
 X signed by device X is invalid (Sett's self-approval bug, closed by construction), and no device
-may change its own `approved`, `approvedBy`, `member`, `mode` or un-revoke itself. A device may
-revoke itself. Changes signed after a device's revocation (by HLC) are invalid.
+may change its own `approved`, `approvedBy` or `member`, or un-revoke itself. A device may revoke
+itself. A parent acting on their own approved device (its owner, or a parent who verified on it)
+may change that device's `mode`, `name` and `display`: this is how "Keep the family online" turns
+a parent's tablet into the hub; nobody else may change a device's mode from the device itself,
+and a personal device always needs an owner. Changes signed after a device's revocation (by HLC)
+are invalid.
+
+Each space has a key for sealing changes on the relay, with an epoch. The founder's device makes
+the first keys at genesis and a parent's device makes one for each member it adds. When a parent's
+device revokes another device (directly or by removing its member), it rotates the key of every
+space that device held: a new random key, epoch plus one. Older epochs are kept for reading what
+was sealed with them. A device that leaves its family wipes its log and metadata and starts over
+as a fresh device; it joins again with new keys, since the family remembers devices it declined
+or removed.
 
 ### Record types and fields
 
 Times are UTC milliseconds unless noted. Local dates are `YYYY-MM-DD` strings in the family's
-time zone. Ids are 16-char base32 random unless noted.
+time zone. Ids are 16-char base32 random unless noted. Icons are short pictogram keys
+(`PictogramKeys` in `den_core`): chores `check`, `bed`, `tooth`, `broom`, `trash`, `recycle`,
+`dishes`, `cooking`, `laundry`, `hanger`, `bath`, `shower`, `toilet`, `spray`, `pet`, `plant`,
+`leaf`, `book`, `homework`, `backpack`, `music`, `shoes`, `car`, `mail`, `tools`, `pill`,
+`science`; categories `calendar`, `school`, `sports`, `work`, `health`, `birthday`, `holiday`,
+`family`, `travel`, `music`, `party`; rewards `gift`, `film`, `game`, `pizza`, `moon`, `money`,
+`ticket`, `treat`; lists one per kind (`shopping`, `checklist`, `packing`, `meal`). A key a
+client doesn't know draws nothing.
+
+Removing a record sets `_deleted`; restoring it sets `_deleted` back to false, so undo is exact:
+removing an event, chore or list leaves its exceptions, completions or items in place, unseen
+while it's gone and back with it.
 
 | Type | Space | Fields |
 | --- | --- | --- |
@@ -123,7 +146,7 @@ time zone. Ids are 16-char base32 random unless noted.
 | `category` | `f` | `name`, `icon` |
 | `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `rides` (list of `{leg: to\|from, driver: memberId\|null}`), `countdown` (bool) |
 | `eventException` | same as event | id `"<eventId>@<occurrence>"`: `event`, `occurrence` (original start), `cancelled`, `patch` (map of event fields: `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `assignees`, `reminders`, `rides`) |
-| `chore` | any | `title`, `notes`, `icon`, `owner` (`{kind: member, id}`\|`{kind: anyone}`\|`{kind: rotation, ids, every: day\|week, anchor: local date}`), `schedule` (`{rrule, start: local date}` or `{once: local date}`), `dueTime` (`HH:mm` or null), `points`, `steps` (list of `{id, text, owner, points}`), `reminders`, `active` |
+| `chore` | any | `title`, `notes`, `icon`, `owner` (`{kind: member, id}`\|`{kind: anyone}`\|`{kind: rotation, ids, every: day\|week, anchor: local date}`), `schedule` (`{rrule, start: local date}` or `{once: local date}`), `dueTime` (`HH:mm` or null), `points`, `steps` (list of `{id, text, owner, points, icon}`, `icon` a chore pictogram key or absent), `reminders`, `active` |
 | `completion` | same as chore | id `"<choreId>@<date>"`: `chore`, `date`, `done`, `doneBy`, `owner` (one-day swap; present and null means swapped to anyone) , `steps` (map stepId -> memberId who checked, `""` when checked by open check-off with no owner to credit, or null when unchecked). Done when `done`, or when every step is checked |
 | `adjustment` | `f` | Append-only. `member`, `delta`, `reason`, `by` |
 | `goal` | `f` | `title`, `mode` (`target`\|`race`), `target`, `members` (ids, or null for every kid), `start` (local date), `end` (local date or null), `repeat` (`none`\|`weekly`\|`monthly`), `reward` (text) |
@@ -215,8 +238,9 @@ approved gets only the pairing messages below.
 - `have {vv}`: my version vector, per space I'm entitled to.
 - `changes {list}`: changes the peer lacks, filtered to spaces the peer's member may read.
 - `push {list}`: live changes as they're made.
-- `keys {space, epoch, key}`: space keys sent to a newly approved device (sealed to its `xpub`
-  and signed by a parent device when sent through the relay).
+- `keys {space, epoch, key}`: space keys sent to a newly approved device, and to the remaining
+  devices after a revocation rotates them (sealed to its `xpub` and signed by a parent device when
+  sent through the relay).
 
 ### Pairing
 

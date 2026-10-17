@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../../design/mark.dart';
 import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import 'demo_session.dart';
@@ -42,7 +43,13 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(Sp.l, 0, Sp.l, Sp.l),
-                  child: Semantics(header: true, child: Text('Set up Den', style: context.type.heading(c.ink))),
+                  child: Row(
+                    children: [
+                      const DenMark(size: 40),
+                      const SizedBox(width: Sp.m),
+                      Semantics(header: true, child: Text('Set up Den', style: context.type.heading(c.ink))),
+                    ],
+                  ),
                 ),
                 Divider(color: c.rule),
                 _ChoiceRow(

@@ -100,6 +100,26 @@ void main() {
     expect(log().readAsStringSync(), endsWith('\n'));
   });
 
+  test('clearing removes the log and metadata', () async {
+    final storage = FileStorage(dir.path);
+    final clock = TestClock.at(DateTime.utc(2026, 2, 1, 15));
+    final den = await openDen(clock, storage: storage);
+    await den.createFamily(
+      familyName: 'Park family',
+      timezone: 'UTC',
+      yourName: 'Jin',
+      marker: Marker.sky,
+      animal: Animal.bird,
+      deviceName: 'Phone',
+      deviceKind: DeviceKind.phone,
+    );
+    await storage.clear();
+    expect(await storage.loadChanges(), isEmpty);
+    expect(await storage.loadMeta(), isNull);
+    expect(dir.listSync(), isEmpty);
+    await storage.clear();
+  });
+
   test('metadata is replaced atomically', () async {
     final storage = FileStorage(dir.path);
     await storage.saveMeta({'counter': 1});

@@ -101,6 +101,13 @@ class FileStorage implements DenStorage {
       });
 
   @override
+  Future<void> clear() => _locked(() async {
+        for (final file in [_log, _meta, _metaTemp]) {
+          if (await file.exists()) await file.delete();
+        }
+      });
+
+  @override
   Future<void> saveMeta(Map<String, Object?> meta) => _locked(() async {
         await _ensureDirectory();
         final temp = _metaTemp;

@@ -28,6 +28,24 @@ abstract final class RecordType {
   };
 }
 
+/// The pictogram keys records use for icons. The app maps each to a drawing; other clients may
+/// store other names, which draw nothing.
+abstract final class PictogramKeys {
+  static const chores = [
+    'check', 'bed', 'tooth', 'broom', 'trash', 'recycle', 'dishes', 'cooking', 'laundry', 'hanger',
+    'bath', 'shower', 'toilet', 'spray', 'pet', 'plant', 'leaf', 'book', 'homework', 'backpack',
+    'music', 'shoes', 'car', 'mail', 'tools', 'pill', 'science',
+  ];
+  static const categories = [
+    'calendar', 'school', 'sports', 'work', 'health', 'birthday', 'holiday', 'family', 'travel',
+    'music', 'party',
+  ];
+  static const rewards = ['gift', 'film', 'game', 'pizza', 'moon', 'money', 'ticket', 'treat'];
+
+  /// One per [ListKind], by name.
+  static const lists = ['shopping', 'checklist', 'packing', 'meal'];
+}
+
 /// Space ids. A record lives in exactly one space; devices receive only the spaces they may read.
 abstract final class Space {
   static const family = 'f';
@@ -305,20 +323,25 @@ class ChoreSchedule {
 }
 
 class ChoreStep {
-  const ChoreStep({required this.id, required this.text, this.owner, this.points = 0});
+  const ChoreStep({required this.id, required this.text, this.owner, this.points = 0, this.icon});
   final String id;
   final String text;
   final String? owner;
   final int points;
+
+  /// A chore pictogram key ([PictogramKeys.chores]) shown to people who can't read yet.
+  final String? icon;
 
   static ChoreStep parse(Map<String, Object?> raw) => ChoreStep(
         id: raw['id']! as String,
         text: raw['text'] as String? ?? '',
         owner: raw['owner'] as String?,
         points: (raw['points'] as num?)?.toInt() ?? 0,
+        icon: raw['icon'] as String?,
       );
 
-  Map<String, Object?> toJson() => {'id': id, 'text': text, 'owner': owner, 'points': points};
+  Map<String, Object?> toJson() =>
+      {'id': id, 'text': text, 'owner': owner, 'points': points, if (icon != null) 'icon': icon};
 }
 
 class Chore extends RecordView {
@@ -394,7 +417,7 @@ class Redemption extends RecordView {
 class DenList extends RecordView {
   const DenList(super.rec);
   String get title => rec.str('title');
-  String get icon => rec.str('icon', 'list');
+  String get icon => rec.str('icon', kind.name);
   ListKind get kind => _enum(ListKind.values, rec.fields['kind']) ?? ListKind.checklist;
   ListLifecycle get lifecycle =>
       _enum(ListLifecycle.values, rec.fields['lifecycle']) ?? ListLifecycle.running;

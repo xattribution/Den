@@ -218,6 +218,7 @@ String? _steps(String label, Object? v) {
       'text': text(min: 1, max: maxTitle),
       'owner': id(nullable: true),
       'points': number(min: 0, max: 1000),
+      'icon': text(max: 40, nullable: true),
     }, required: {'id', 'text'}),
     max: maxSteps,
   )(label, v);

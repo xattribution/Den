@@ -42,6 +42,7 @@ void main() {
     final state = await kitchen(tester);
     state.den.actAs(kidOf(state).id);
     await shoot(tester, 'wall_acting_1080p', wallAt(), state: state, size: wall);
+    state.den.actAs(null);
   });
 
   testWidgets("Who's doing this?", (tester) async {

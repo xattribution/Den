@@ -24,7 +24,7 @@ void main() {
     expect(today.lists.map((l) => l.list.title), contains('Groceries'));
     expect(today.gaps, isNotEmpty);
     expect(today.gaps.map((g) => g.message), contains('Nobody is driving Zoe to Swim lesson'));
-    expect(today.gaps.map((g) => g.message), contains('Nobody has taken Bring in the mail'));
+    expect(today.gaps.map((g) => g.message), contains('Bring in the mail is up for grabs'));
   });
 
   test('the week has soccer with nobody picking up, and family columns', () {
@@ -65,6 +65,26 @@ void main() {
     expect(den.stores.take(3).toSet(), {'Costco', 'Target', 'Trader Joe\'s'});
     final science = den.lists.firstWhere((l) => l.list.title == 'Science fair supplies');
     expect(science.list.needBy, '2026-10-19');
+  });
+
+  test('uses the app\'s pictogram keys everywhere, with pictures on steps', () {
+    for (final c in den.chores) {
+      expect(PictogramKeys.chores, contains(c.icon), reason: c.title);
+      for (final s in c.steps) {
+        expect(s.icon, isNotNull, reason: '${c.title}: ${s.text}');
+        expect(PictogramKeys.chores, contains(s.icon), reason: s.text);
+      }
+    }
+    for (final c in den.categories) {
+      expect(PictogramKeys.categories, contains(c.icon), reason: c.name);
+    }
+    for (final r in den.points().rewards) {
+      expect(PictogramKeys.rewards, contains(r.icon), reason: r.title);
+    }
+    for (final l in den.lists) {
+      expect(PictogramKeys.lists, contains(l.list.icon), reason: l.list.title);
+    }
+    expect(den.devices.firstWhere((d) => d.name == 'Kitchen display').layout, DisplayLayout.week);
   });
 
   test('builds quickly enough for screenshots', () {

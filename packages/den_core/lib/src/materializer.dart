@@ -92,6 +92,14 @@ class Materializer {
     replay();
   }
 
+  /// Forgets every change.
+  void clear() {
+    _log.clear();
+    _byId.clear();
+    _counters.clear();
+    replay();
+  }
+
   void replay() {
     replays++;
     store.clear();
@@ -115,6 +123,7 @@ class Materializer {
 String verbFor(Change c, Map<String, Object?> before, bool created) {
   final f = c.fields;
   if (c.isDelete) return 'removed';
+  if (f['_deleted'] == false) return 'restored';
   switch (c.type) {
     case RecordType.adjustment:
       return ((f['delta'] as num?) ?? 0) < 0 ? 'took' : 'gave';

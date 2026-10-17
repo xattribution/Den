@@ -78,10 +78,12 @@ class Den {
   final Map<String, int> _floor = {};
   final Map<String, Change> _pending = {};
   final Map<String, String> _pubkeys = {};
-  final StreamController<Set<String>> _changes = StreamController.broadcast();
+  late final StreamController<Set<String>> _changes =
+      StreamController.broadcast(onListen: _scheduleActingTimer, onCancel: _cancelActingTimer);
   String? _actingMember;
   int? _actingUntil;
   String? _actingVia;
+  Timer? _actingTimer;
   Future<void> _tail = Future.value();
   int _cacheVersion = -1;
   String? _cacheActor;
@@ -125,8 +127,19 @@ class Den {
     if (applied.isNotEmpty) _clock.observe(applied.last.change.hlc);
   }
 
-  /// Ends the [onChange] stream.
-  Future<void> close() => _changes.close();
+  /// Ends the [onChange] stream and the acting window's timer.
+  Future<void> close() {
+    _actingTimer?.cancel();
+    _actingTimer = null;
+    return _changes.close();
+  }
+
+  /// The engine's clock: UTC milliseconds now.
+  int now() => _now();
+
+  /// What [onChange] reports, besides record types, when who is acting changes or the acting
+  /// window ends.
+  static const String actingChanged = 'acting';
 
   final String deviceId;
   DeviceKeys get keys => _keys;
@@ -173,7 +186,8 @@ class Den {
 
   /// Sets who is acting on a shared device after [verifySignIn] succeeded; null ends it. On a hub,
   /// [via] names the API token or MCP connection making the calls, recorded as `_via` on every
-  /// change in the window. On a personal device only its owner can act.
+  /// change in the window. On a personal device only its owner can act. [onChange] fires with
+  /// [actingChanged] now and again when the window ends.
   void actAs(String? memberId, {Duration window = const Duration(seconds: 60), String? via}) {
     final d = thisDevice;
     if (d != null && d.mode == DeviceMode.personal) {
@@ -184,14 +198,41 @@ class Den {
     }
     if (memberId != null && member(memberId) == null) throw const InvalidInput('That person isn\'t in the family');
     if (memberId == null && via == null) {
-      _actingMember = null;
-      _actingUntil = null;
-      _actingVia = null;
-      return;
+      _endActing();
+    } else {
+      _actingMember = memberId;
+      _actingVia = via;
+      _actingUntil = _now() + window.inMilliseconds;
     }
-    _actingMember = memberId;
-    _actingVia = via;
-    _actingUntil = _now() + window.inMilliseconds;
+    _scheduleActingTimer();
+    _emit({actingChanged});
+  }
+
+  /// Times the end of the acting window, only while someone listens to [onChange], so an
+  /// engine nobody watches leaves no timer behind.
+  void _scheduleActingTimer() {
+    _cancelActingTimer();
+    final until = _actingUntil;
+    if (until == null || _changes.isClosed || !_changes.hasListener) return;
+    final left = until - _now();
+    _actingTimer = Timer(Duration(milliseconds: left < 0 ? 0 : left), _actingWindowEnded);
+  }
+
+  void _cancelActingTimer() {
+    _actingTimer?.cancel();
+    _actingTimer = null;
+  }
+
+  void _endActing() {
+    _actingMember = null;
+    _actingUntil = null;
+    _actingVia = null;
+  }
+
+  void _actingWindowEnded() {
+    _actingTimer = null;
+    if (actingUntil == null) _endActing();
+    _emit({actingChanged});
   }
 
   /// Checks a PIN or picture pattern against the member's sign-in for shared screens.
@@ -225,7 +266,7 @@ class Den {
         _setRoot(id, _keys.pubkey);
         final spaceKeys = _spaceKeys;
         for (final s in [Space.family, Space.parents, Space.member(memberId)]) {
-          spaceKeys[s] = b64e(randomBytes(32));
+          spaceKeys[s] = {'0': b64e(randomBytes(32))};
         }
         try {
           await _commitNow([
@@ -259,7 +300,7 @@ class Den {
               'approved': true,
               'approvedBy': memberId,
               'revoked': false,
-              if (mode == DeviceMode.shared) 'display': {'layout': DisplayLayout.today.name, 'openCheckoff': false},
+              if (mode == DeviceMode.shared) 'display': _defaultDisplay,
             }, actor: memberId, setsActor: true),
           ]);
         } on Object {
@@ -298,7 +339,30 @@ class Den {
         ]);
       });
 
-  /// Fires with the record types that changed after every local write or ingest.
+  /// Forgets the family on this device: wipes its log and metadata from storage and returns the
+  /// engine to a fresh device's state, so a declined device or one the family no longer uses can
+  /// start over. A family remembers devices it declined or removed, so join again with new keys.
+  Future<void> leaveFamily() => _locked(() async {
+        await _storage.clear();
+        _actingTimer?.cancel();
+        _actingTimer = null;
+        _endActing();
+        _root = TrustRoot();
+        _meta = {};
+        _floor.clear();
+        _pending.clear();
+        _pubkeys
+          ..clear()
+          ..[deviceId] = _keys.pubkey;
+        _mat.clear();
+        _cache.clear();
+        _cacheVersion = -1;
+        await _saveMeta();
+        _emit({...RecordType.all, actingChanged});
+      });
+
+  /// Fires with the record types that changed after every local write or ingest, and with
+  /// [actingChanged] when who is acting changes.
   Stream<Set<String>> get onChange => _changes.stream;
 
   // ---------------------------------------------------------------- family state
@@ -428,15 +492,20 @@ class Den {
     await _commit([_Draft(RecordType.member, id, Space.family, fields)]);
   }
 
-  /// Removes a member and revokes the devices they own.
+  /// Removes a member and revokes the devices they own, rotating the keys of the spaces those
+  /// devices held.
   Future<void> removeMember(String id) async {
     if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
-    await _commit([
+    final owned = [
       for (final d in devices)
-        if (d.member == id && d.id != deviceId && !d.revoked)
-          _Draft(RecordType.device, d.id, Space.family, {'revoked': true}),
+        if (d.member == id && d.id != deviceId && !d.revoked) d.id,
+    ];
+    final held = {for (final d in owned) ...spacesForDevice(d)};
+    await _commit([
+      for (final d in owned) _Draft(RecordType.device, d, Space.family, {'revoked': true}),
       _Draft(RecordType.member, id, Space.family, {'_deleted': true}),
     ]);
+    await _rotateSpaceKeys(held);
   }
 
   /// Sets how a member signs in on shared screens: `pin` (4 digits), `pattern` (4 animals as
@@ -473,22 +542,47 @@ class Den {
         if (d.revoked) 'revoked': false,
         'member': newMode == DeviceMode.personal ? owner : member,
         'mode': newMode.name,
-        if (newMode == DeviceMode.shared && d.rec.fields['display'] == null)
-          'display': {'layout': DisplayLayout.today.name, 'openCheckoff': false},
+        if (newMode == DeviceMode.shared && d.rec.fields['display'] == null) 'display': _defaultDisplay,
       }),
     ]);
   }
 
+  /// Revokes a device. Revoking another device also rotates the keys of every space it held
+  /// (a new random key, one epoch on), so it can't read what the family writes next.
   Future<void> revokeDevice(String deviceId) async {
     if (device(deviceId) == null) throw const InvalidInput('That device isn\'t in the family');
+    final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
     await _commit([_Draft(RecordType.device, deviceId, Space.family, {'revoked': true})]);
+    await _rotateSpaceKeys(held);
   }
 
+  /// Changes another device's settings (parents), or this device's own name, display settings or
+  /// mode (a parent acting on it).
   Future<void> updateDevice(String deviceId, Map<String, Object?> patch) async {
     if (device(deviceId) == null) throw const InvalidInput('That device isn\'t in the family');
     final fields = _cleanPatch(patch, {'name', 'kind', 'member', 'mode', 'display', 'xpub'});
     await _commit([_Draft(RecordType.device, deviceId, Space.family, fields)]);
   }
+
+  /// Changes what this device is for: someone's own device, a shared display, or the family's
+  /// hub ("Keep the family online"). A parent must be acting on it: its owner on a personal
+  /// device, or a parent who verified on a shared one.
+  Future<void> setThisDeviceMode(DeviceMode mode) async {
+    final d = thisDevice;
+    if (d == null || !isApproved) throw const InvalidInput('This device isn\'t part of a family yet');
+    if (d.mode == mode) return;
+    if (mode == DeviceMode.personal && d.member == null) {
+      throw const InvalidInput('A personal device needs an owner; a parent sets one from their device');
+    }
+    await _commit([
+      _Draft(RecordType.device, deviceId, Space.family, {
+        'mode': mode.name,
+        if (mode == DeviceMode.shared && d.rec.fields['display'] == null) 'display': _defaultDisplay,
+      }),
+    ]);
+  }
+
+  static const Map<String, Object?> _defaultDisplay = {'layout': 'week', 'openCheckoff': false};
 
   Future<String> addCategory({required String name, String icon = 'calendar'}) async {
     final id = newId();
@@ -504,6 +598,16 @@ class Den {
   Future<void> deleteCategory(String id) async {
     if (category(id) == null) throw const InvalidInput('That category doesn\'t exist');
     await _commit([_Draft(RecordType.category, id, Space.family, {'_deleted': true})]);
+  }
+
+  /// Undoes a removal: the record comes back exactly as it was, with whatever belonged to it (an
+  /// event's changed occurrences, a list's items, a chore's completions). Needs the same
+  /// permission as editing it.
+  Future<void> restore(String type, String id) async {
+    final e = _mat.store.find(type, id);
+    if (e == null || !readableSpaces.contains(e.space)) throw const InvalidInput('That doesn\'t exist');
+    if (!e.deleted) return;
+    await _commit([_Draft(type, id, e.space, {'_deleted': false})]);
   }
 
   // ---------------------------------------------------------------- calendar
@@ -540,6 +644,10 @@ class Den {
     return e == null ? null : Event(e.rec);
   }
 
+  /// Adds an event and returns its id. [space], when given, places it in that space instead of
+  /// [audience]'s (a hub writing into a member's private space, or importing a calendar feed).
+  /// [source] marks an event that came from elsewhere, such as a subscribed calendar; it is
+  /// manual by default.
   Future<String> addEvent({
     required String title,
     required int start,
@@ -555,10 +663,12 @@ class Den {
     List<Ride> rides = const [],
     bool countdown = false,
     Audience audience = Audience.everyone,
+    String? space,
+    EventSource? source,
   }) async {
     final id = newId();
     await _commit([
-      _Draft(RecordType.event, id, _spaceFor(audience), {
+      _Draft(RecordType.event, id, space ?? _spaceFor(audience), {
         'title': title,
         'notes': notes,
         'location': location,
@@ -570,7 +680,9 @@ class Den {
         'rrule': _normalizeRule(rrule),
         'assignees': assignees,
         'reminders': reminders,
-        'source': {'kind': 'manual'},
+        'source': source == null || source.kind == 'manual'
+            ? {'kind': 'manual'}
+            : {'kind': source.kind, 'ref': source.ref, 'label': source.label},
         'rides': [for (final r in rides) {'leg': r.leg, 'driver': r.driver}],
         'countdown': countdown,
       }),
@@ -706,11 +818,7 @@ class Den {
   Future<void> deleteEvent(String id, {EditScope scope = EditScope.all, int? occurrence}) async {
     final entry = _requireLive(RecordType.event, id, 'That event doesn\'t exist');
     final event = Event(entry.rec);
-    List<_Draft> all() => [
-          _Draft(RecordType.event, id, entry.space, {'_deleted': true}),
-          for (final x in _exceptionsFor(event).values)
-            _Draft(RecordType.eventException, x.id, entry.space, {'_deleted': true}),
-        ];
+    List<_Draft> all() => [_Draft(RecordType.event, id, entry.space, {'_deleted': true})];
     if (event.rrule == null || scope == EditScope.all) {
       await _commit(all());
       return;
@@ -828,6 +936,22 @@ class Den {
     return out;
   }
 
+  /// Adds a chore and returns its id. [space], when given, places it in that space instead of
+  /// [audience]'s.
+  /// A chore's completions, by date, between [from] and [to] (local dates, both included).
+  List<Completion> completionsFor(String choreId, {String? from, String? to}) {
+    final c = _mat.store.find(RecordType.chore, choreId);
+    if (c == null || !readableSpaces.contains(c.space)) return const [];
+    return [
+      for (final e in _mat.store.liveOfType(RecordType.completion))
+        if (e.space == c.space &&
+            e.fields['chore'] == choreId &&
+            (from == null || (e.fields['date'] as String).compareTo(from) >= 0) &&
+            (to == null || (e.fields['date'] as String).compareTo(to) <= 0))
+          Completion(e.rec),
+    ]..sort((a, b) => a.date.compareTo(b.date));
+  }
+
   Future<String> addChore({
     required String title,
     required ChoreOwner owner,
@@ -839,10 +963,11 @@ class Den {
     List<ChoreStep> steps = const [],
     List<int> reminders = const [],
     Audience audience = Audience.everyone,
+    String? space,
   }) async {
     final id = newId();
     await _commit([
-      _Draft(RecordType.chore, id, _spaceFor(audience), {
+      _Draft(RecordType.chore, id, space ?? _spaceFor(audience), {
         'title': title,
         'notes': notes,
         'icon': icon,
@@ -894,11 +1019,18 @@ class Den {
 
   /// Marks the chore done or not done on [date]. Marking done also checks every step, keeping
   /// whoever already checked each one; marking not done clears them.
-  Future<void> setChoreDone(String choreId, String date, bool done) async {
+  Future<void> setChoreDone(String choreId, String date, bool done) =>
+      setChoreDoneBy(choreId, date, done, actor?.id);
+
+  /// [setChoreDone], crediting [doneBy] (null: nobody in particular) instead of the actor. Used
+  /// when the actor records what someone else did, such as a hub token naming who did a chore;
+  /// validation still decides whether the actor may complete it for them.
+  Future<void> setChoreDoneBy(String choreId, String date, bool done, String? doneBy) async {
     if (!isLocalDate(date)) throw const InvalidInput('That isn\'t a date');
+    if (doneBy != null && member(doneBy) == null) throw const InvalidInput('That person isn\'t in the family');
     final chore = _requireChore(choreId);
     final completion = _completionOf(chore, date);
-    final me = actor?.id;
+    final me = doneBy;
     final owner = dayOwner(chore, date, completion, _weekStart);
     final checked = completion?.steps ?? const {};
     await _commit([
@@ -918,13 +1050,19 @@ class Den {
 
   /// Checks or unchecks one step; checking the last one completes the chore, unchecking any
   /// step of a done chore reopens it.
-  Future<void> setStep(String choreId, String date, String stepId, bool checked) async {
+  Future<void> setStep(String choreId, String date, String stepId, bool checked) =>
+      setStepBy(choreId, date, stepId, checked, actor?.id);
+
+  /// [setStep], crediting [checkedBy] (null: the step's owner, else the chore's owner that day)
+  /// instead of the actor; validation still decides whether the actor may check it for them.
+  Future<void> setStepBy(String choreId, String date, String stepId, bool checked, String? checkedBy) async {
     if (!isLocalDate(date)) throw const InvalidInput('That isn\'t a date');
+    if (checkedBy != null && member(checkedBy) == null) throw const InvalidInput('That person isn\'t in the family');
     final chore = _requireChore(choreId);
     final step = chore.steps.firstWhereOrNull((s) => s.id == stepId);
     if (step == null) throw const InvalidInput('That chore has no such step');
     final completion = _completionOf(chore, date);
-    final me = actor?.id;
+    final me = checkedBy;
     final owner = dayOwner(chore, date, completion, _weekStart);
     final value = checked ? (me ?? _anonymousChecker(step, owner)) : null;
     final after = {...?completion?.steps, stepId: value};
@@ -993,7 +1131,9 @@ class Den {
   /// Store names used on items, most used first.
   List<String> get stores {
     final counts = <String, int>{};
+    final live = {for (final l in lists) '${l.list.space}|${l.list.id}'};
     for (final e in _visibleLive(RecordType.item)) {
+      if (!live.contains('${e.space}|${e.fields['list']}')) continue;
       final store = (e.fields['store'] as String?)?.trim();
       if (store != null && store.isNotEmpty) counts.update(store, (n) => n + 1, ifAbsent: () => 1);
     }
@@ -1004,22 +1144,25 @@ class Den {
       });
   }
 
+  /// Adds a list and returns its id. [space], when given, places it in that space instead of
+  /// [audience]'s.
   Future<String> addList({
     required String title,
     ListKind kind = ListKind.checklist,
     ListLifecycle lifecycle = ListLifecycle.running,
     String? needBy,
     String? event,
-    String icon = 'list',
+    String? icon,
     bool pinned = false,
     Audience audience = Audience.everyone,
+    String? space,
   }) async {
     final id = newId();
     final last = lists.map((l) => l.list.order).where(isOrderKey).maxOrNull;
     await _commit([
-      _Draft(RecordType.list, id, _spaceFor(audience), {
+      _Draft(RecordType.list, id, space ?? _spaceFor(audience), {
         'title': title,
-        'icon': icon,
+        'icon': icon ?? kind.name,
         'kind': kind.name,
         'lifecycle': lifecycle.name,
         'needBy': needBy,
@@ -1401,6 +1544,71 @@ class Den {
     return null;
   }
 
+  // ---------------------------------------------------------------- calendar feeds
+
+  /// Subscribed ICS calendars the actor may see (parents and hubs), by label.
+  List<Subscription> get subscriptions => _memo('subscriptions', () {
+        return [for (final e in _visibleLive(RecordType.subscription)) Subscription(e.rec)]
+          ..sort((a, b) {
+            final l = a.label.compareTo(b.label);
+            return l != 0 ? l : a.id.compareTo(b.id);
+          });
+      });
+
+  Subscription? subscription(String id) {
+    final e = _visibleEntry(RecordType.subscription, id);
+    return e == null ? null : Subscription(e.rec);
+  }
+
+  /// Subscribes the family to an ICS feed; the hub fetches it and keeps its events in [space]
+  /// (default: [audience]'s), with [category] and [assignee] on each. Parents only.
+  Future<String> addSubscription({
+    required String url,
+    String label = '',
+    String? category,
+    String? assignee,
+    Audience audience = Audience.everyone,
+    String? space,
+    List<String> include = const [],
+    List<String> exclude = const [],
+    bool skipAllDay = false,
+  }) async {
+    if (assignee != null && member(assignee) == null) throw const InvalidInput('That person isn\'t in the family');
+    final id = newId();
+    await _commit([
+      _Draft(RecordType.subscription, id, Space.parents, {
+        'url': url,
+        'label': label,
+        'category': category,
+        'assignee': assignee,
+        'space': space ?? _spaceFor(audience),
+        'include': include,
+        'exclude': exclude,
+        'skipAllDay': skipAllDay,
+        'status': '',
+      }),
+    ]);
+    return id;
+  }
+
+  Future<void> updateSubscription(String id, Map<String, Object?> patch) async {
+    _requireLive(RecordType.subscription, id, 'That calendar feed doesn\'t exist');
+    final fields = _cleanPatch(patch, {'url', 'label', 'category', 'assignee', 'space', 'include', 'exclude', 'skipAllDay'});
+    if (fields.isEmpty) return;
+    await _commit([_Draft(RecordType.subscription, id, Space.parents, fields)]);
+  }
+
+  Future<void> removeSubscription(String id) async {
+    _requireLive(RecordType.subscription, id, 'That calendar feed doesn\'t exist');
+    await _commit([_Draft(RecordType.subscription, id, Space.parents, {'_deleted': true})]);
+  }
+
+  /// Records how the last fetch of a feed went, in words for people. Written by the hub.
+  Future<void> setSubscriptionStatus(String id, String status) async {
+    _requireLive(RecordType.subscription, id, 'That calendar feed doesn\'t exist');
+    await _commit([_Draft(RecordType.subscription, id, Space.parents, {'status': status})]);
+  }
+
   // ---------------------------------------------------------------- views
 
   TodayView today({String? date}) {
@@ -1627,7 +1835,7 @@ class Den {
     if (dayStart(today) < end && dayStart(addDays(today, 1)) > start) {
       for (final cd in choresOn(today)) {
         if (cd.date == today && cd.owner == null && !cd.done) {
-          out.add(Gap(kind: GapKind.unowned, message: 'Nobody has taken ${cd.chore.title}', occurrences: const []));
+          out.add(Gap(kind: GapKind.unowned, message: '${cd.chore.title} is up for grabs', occurrences: const []));
         }
       }
     }
@@ -1802,24 +2010,62 @@ class Den {
     return spacesFor(device: d, owner: owner, family: family, members: members);
   }
 
+  /// space -> key, or (with epochs) space -> {epoch: key}; a map this engine owns, so storage can
+  /// hand back any map type.
   Map<String, Object?> get _spaceKeys {
     final raw = _meta['spaceKeys'];
-    if (raw is Map<String, Object?>) return raw;
-    final keys = <String, Object?>{...?(raw as Map?)?.cast<String, Object?>()};
-    _meta['spaceKeys'] = keys;
-    return keys;
+    if (raw is Map && identical(raw, _ownedSpaceKeys)) return _ownedSpaceKeys;
+    _ownedSpaceKeys = {
+      if (raw is Map)
+        for (final e in raw.entries) '${e.key}': e.value is Map ? Map<String, Object?>.from(e.value as Map) : e.value,
+    };
+    _meta['spaceKeys'] = _ownedSpaceKeys;
+    return _ownedSpaceKeys;
   }
 
-  /// Space keys used to seal changes on the relay mailbox. Generated at genesis per space.
-  Future<List<int>?> spaceKey(String space) async {
-    final key = _spaceKeys[space];
-    return key is String ? b64d(key) : null;
+  Map<String, Object?> _ownedSpaceKeys = {};
+
+  /// Keys by epoch for a space.
+  Map<int, String> _keysOf(String space) {
+    final raw = _spaceKeys[space];
+    if (raw is String) return {0: raw};
+    if (raw is! Map) return {};
+    return {
+      for (final e in raw.entries)
+        if (int.tryParse('${e.key}') != null && e.value is String) int.parse('${e.key}'): e.value as String,
+    };
   }
 
-  Future<void> setSpaceKey(String space, List<int> key) async {
+  /// Space keys used to seal changes on the relay mailbox: the current one, or the one for
+  /// [epoch]. Generated at genesis per space, when a member is added, and rotated when a device
+  /// that held the space is revoked.
+  Future<List<int>?> spaceKey(String space, {int? epoch}) async {
+    final keys = _keysOf(space);
+    if (keys.isEmpty) return null;
+    final key = keys[epoch ?? keys.keys.reduce(math.max)];
+    return key == null ? null : b64d(key);
+  }
+
+  /// The current key's epoch for a space, or null when this device has no key for it.
+  int? spaceKeyEpoch(String space) {
+    final keys = _keysOf(space);
+    return keys.isEmpty ? null : keys.keys.reduce(math.max);
+  }
+
+  /// Stores a space key received from another device. Older epochs are kept for reading what
+  /// was sealed with them.
+  Future<void> setSpaceKey(String space, List<int> key, {int epoch = 0}) async {
     if (key.length != 32) throw const InvalidInput('A space key is 32 bytes');
-    _spaceKeys[space] = b64e(key);
+    if (epoch < 0) throw const InvalidInput('A key epoch can\'t be negative');
+    final keys = _keysOf(space)..[epoch] = b64e(key);
+    _spaceKeys[space] = {for (final e in keys.entries) '${e.key}': e.value};
     await _saveMeta();
+  }
+
+  Future<void> _rotateSpaceKeys(Set<String> spaces) async {
+    for (final s in spaces.toList()..sort()) {
+      await setSpaceKey(s, randomBytes(32), epoch: (spaceKeyEpoch(s) ?? -1) + 1);
+    }
   }
 
   /// Every live record as JSON, for export: `{family, records: {type: {id: {space, fields}}}}`

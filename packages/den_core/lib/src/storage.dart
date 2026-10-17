@@ -13,6 +13,9 @@ abstract class DenStorage {
   Future<Map<String, Object?>?> loadMeta();
 
   Future<void> saveMeta(Map<String, Object?> meta);
+
+  /// Removes every change and the metadata, as when a device leaves its family.
+  Future<void> clear();
 }
 
 /// In-memory storage for tests and browsers that sync on load.
@@ -31,4 +34,10 @@ class MemoryStorage implements DenStorage {
 
   @override
   Future<void> saveMeta(Map<String, Object?> meta) async => _meta = Map.of(meta);
+
+  @override
+  Future<void> clear() async {
+    _changes.clear();
+    _meta = null;
+  }
 }

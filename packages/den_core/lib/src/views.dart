@@ -35,6 +35,7 @@ class Occurrence {
     int? seriesStart,
     this.rides = const [],
     this.reminders = const [],
+    this.category,
   }) : seriesStart = seriesStart ?? start;
 
   final Event event;
@@ -60,6 +61,9 @@ class Occurrence {
   /// Minutes before the start to remind, for this occurrence.
   final List<int> reminders;
 
+  /// The occurrence's category id, after any per-occurrence change.
+  final String? category;
+
   bool get isRepeating => event.rrule != null;
   bool get forEveryone => assignees.isEmpty;
 }
@@ -74,6 +78,7 @@ class ChoreDay {
     required this.doneBy,
     required this.steps,
     required this.late,
+    this.swapped = false,
   });
 
   final Chore chore;
@@ -89,6 +94,9 @@ class ChoreDay {
 
   /// Past its due time today, or from an earlier day, and not done.
   final bool late;
+
+  /// The owner comes from a one-day swap rather than the chore's schedule.
+  final bool swapped;
 
   int get stepsDone => steps.values.where((v) => v != null).length;
   int get stepCount => chore.steps.length;
@@ -217,7 +225,7 @@ class HistoryEntry {
   final String title;
 
   /// Short past-tense verb: added, changed, removed, completed, reopened, checked, unchecked,
-  /// approved, declined, swapped, requested, gave, took.
+  /// approved, declined, swapped, requested, gave, took, restored.
   final String verb;
   final List<FieldDiff> diffs;
   final String space;
