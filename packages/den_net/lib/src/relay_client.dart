@@ -398,10 +398,13 @@ class MailboxPage {
 /// HTTP client for a relay's mailboxes: `POST /mailbox/<id>` and `GET /mailbox/<id>?after=`.
 class RelayMailbox {
   /// Creates a client for the relay at [relay] (http, https, ws or wss).
-  RelayMailbox(Uri relay, {http.Client? client})
+  RelayMailbox(Uri relay, {http.Client? client, this.requestTimeout = const Duration(seconds: 30)})
       : _base = _withScheme(relay, websocket: false),
         _client = client ?? http.Client(),
         _ownsClient = client == null;
+
+  /// How long one request may take.
+  final Duration requestTimeout;
 
   final Uri _base;
   final http.Client _client;
@@ -415,11 +418,9 @@ class RelayMailbox {
   /// Appends [blob] (at most [maxRelayMessageBytes]) and returns its cursor.
   Future<int> append(String mailboxId, List<int> blob) async {
     if (blob.length > maxRelayMessageBytes) throw ArgumentError('blob too large');
-    final response = await _client.post(
-      _uri(mailboxId),
-      headers: {'content-type': 'application/octet-stream'},
-      body: blob,
-    );
+    final response = await _client
+        .post(_uri(mailboxId), headers: {'content-type': 'application/octet-stream'}, body: blob)
+        .timeout(requestTimeout);
     if (response.statusCode != 200) throw RelayException('mailbox append failed', status: response.statusCode);
     final cursor = asJsonObject(jsonDecode(response.body))?['cursor'];
     if (cursor is! int) throw RelayException('bad mailbox response');
@@ -431,7 +432,7 @@ class RelayMailbox {
     final response = await _client.get(_uri(mailboxId, {
       'after': '$after',
       if (limit != null) 'limit': '$limit',
-    }));
+    })).timeout(requestTimeout);
     if (response.statusCode != 200) throw RelayException('mailbox read failed', status: response.statusCode);
     final json = asJsonObject(jsonDecode(response.body));
     final items = json?['items'];

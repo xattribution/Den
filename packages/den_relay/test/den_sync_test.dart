@@ -139,6 +139,43 @@ void main() {
     await converge([fam.founder, laptop]);
     expect(relay.mailboxes.mailboxCount, greaterThanOrEqualTo(2));
   });
+
+  test('a revocation\'s rotated keys travel through the relay; the revoked phone reads nothing after', () async {
+    if (await skipUnlessDenCore()) return;
+    final fam = await TestFamily.create();
+    final laptop = await fam.approvedDevice(member: fam.parent, name: 'laptop');
+    final oldPhone = await fam.approvedDevice(member: fam.parent, name: 'old phone');
+    final phoneNode = SyncNode(fam.founder);
+    final laptopNode = SyncNode(laptop);
+    final oldNode = SyncNode(oldPhone);
+    addTearDown(() => Future.wait([phoneNode.close(), laptopNode.close(), oldNode.close()]));
+    for (final node in [laptopNode, oldNode]) {
+      final boot = await link(phoneNode, node);
+      await boot.live;
+      await boot.close();
+    }
+    final mails = [
+      for (final node in [phoneNode, laptopNode, oldNode]) MailboxSync(node: node, relay: RelayMailbox(relayUrl)),
+    ];
+    for (final m in mails) {
+      await m.syncOnce();
+    }
+
+    await fam.founder.revokeDevice(oldPhone.deviceId);
+    final listId = await laptop.addList(title: 'Before the laptop heard');
+    await mails[1].syncOnce();
+    await fam.founder.addEvent(title: 'After the revocation', start: at(9), end: at(10));
+    await mails[0].syncOnce();
+    expect(fam.founder.list(listId), isNotNull, reason: 'the old epoch is still read');
+    await mails[1].syncOnce();
+    expect(laptop.spaceKeyEpoch(Space.family), 1);
+    await mails[0].syncOnce();
+    await converge([fam.founder, laptop]);
+
+    await mails[2].syncOnce();
+    expect(oldPhone.spaceKeyEpoch(Space.family), 0);
+    expect(jsonEncode(oldPhone.exportJson()), isNot(contains('After the revocation')));
+  });
 }
 
 // ------------------------------------------------------------------------------------- helpers
