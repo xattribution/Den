@@ -1,0 +1,54 @@
+{
+  "entity": {
+    "calendar": {
+      "family": {
+        "default": "mdi:calendar-multiple"
+      },
+      "member": {
+        "default": "mdi:calendar-account"
+      }
+    },
+    "sensor": {
+      "points": {
+        "default": "mdi:star-circle"
+      },
+      "chores_left": {
+        "default": "mdi:broom",
+        "state": {
+          "0": "mdi:check-all"
+        }
+      },
+      "next_event": {
+        "default": "mdi:calendar-clock"
+      }
+    },
+    "todo": {
+      "shopping": {
+        "default": "mdi:cart"
+      },
+      "checklist": {
+        "default": "mdi:format-list-checks"
+      },
+      "packing": {
+        "default": "mdi:bag-suitcase"
+      },
+      "meal": {
+        "default": "mdi:silverware-fork-knife"
+      }
+    }
+  },
+  "services": {
+    "complete_chore": {
+      "service": "mdi:check-circle"
+    },
+    "check_step": {
+      "service": "mdi:checkbox-marked-outline"
+    },
+    "add_item": {
+      "service": "mdi:playlist-plus"
+    },
+    "adjust_points": {
+      "service": "mdi:star-plus"
+    }
+  }
+}

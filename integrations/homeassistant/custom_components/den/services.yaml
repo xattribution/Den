@@ -1,0 +1,99 @@
+complete_chore:
+  fields:
+    chore:
+      required: true
+      example: "Feed the cat"
+      selector:
+        text:
+    date:
+      selector:
+        date:
+    member:
+      example: "Leo"
+      selector:
+        text:
+    done:
+      default: true
+      selector:
+        boolean:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: den
+
+check_step:
+  fields:
+    chore:
+      required: true
+      example: "Feed the cat"
+      selector:
+        text:
+    step:
+      required: true
+      example: "Fill the water bowl"
+      selector:
+        text:
+    date:
+      selector:
+        date:
+    member:
+      example: "Leo"
+      selector:
+        text:
+    checked:
+      default: true
+      selector:
+        boolean:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: den
+
+add_item:
+  fields:
+    list:
+      required: true
+      example: "Groceries"
+      selector:
+        text:
+    text:
+      required: true
+      example: "Milk"
+      selector:
+        text:
+    qty:
+      example: "2 gal"
+      selector:
+        text:
+    store:
+      example: "Costco"
+      selector:
+        text:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: den
+
+adjust_points:
+  fields:
+    member:
+      required: true
+      example: "Leo"
+      selector:
+        text:
+    delta:
+      required: true
+      example: 5
+      selector:
+        number:
+          min: -10000
+          max: 10000
+          mode: box
+    reason:
+      example: "Helped carry the groceries"
+      selector:
+        text:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: den

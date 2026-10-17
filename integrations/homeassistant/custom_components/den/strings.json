@@ -1,0 +1,305 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Connect to your Den hub",
+        "description": "Home Assistant gets your family's calendars, chores, lists and points from a Den hub on your network.",
+        "data": {
+          "url": "Hub address",
+          "token": "API token"
+        },
+        "data_description": {
+          "url": "The hub's address, for example `http://192.168.1.20:47733` or `den.local`. The port defaults to 47733.",
+          "token": "In the Den app, a parent opens Settings → AI & automations, adds a token for Home Assistant and copies it here (it's shown once). Give it the scopes read, calendar, chores, lists and points: read alone shows everything but can't change anything. Leave the token's member empty so it acts at parent level and sees the whole family; tie it to a person to see only what they can see."
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Set up {name}",
+        "description": "Home Assistant found the Den hub {name} at {url}.",
+        "data": {
+          "token": "[%key:component::den::config::step::user::data::token%]"
+        },
+        "data_description": {
+          "token": "[%key:component::den::config::step::user::data_description::token%]"
+        }
+      },
+      "reauth_confirm": {
+        "title": "New token for {name}",
+        "description": "The Den hub stopped accepting Home Assistant's token. It may have been revoked or expired. Create a new one in the Den app under Settings → AI & automations.",
+        "data": {
+          "token": "[%key:component::den::config::step::user::data::token%]"
+        },
+        "data_description": {
+          "token": "[%key:component::den::config::step::user::data_description::token%]"
+        }
+      },
+      "reconfigure": {
+        "title": "Change the Den hub's address or token",
+        "data": {
+          "url": "[%key:component::den::config::step::user::data::url%]",
+          "token": "[%key:component::den::config::step::user::data::token%]"
+        },
+        "data_description": {
+          "url": "The hub's address, for example `http://192.168.1.20:47733`.",
+          "token": "[%key:component::den::config::step::user::data_description::token%]"
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "That isn't a web address. Try something like http://192.168.1.20:47733.",
+      "cannot_connect": "Couldn't reach a Den hub at that address. Check that the hub is running and on the same network.",
+      "invalid_auth": "The hub didn't accept that token. Copy it again, or create a new one in the Den app.",
+      "missing_read_scope": "That token doesn't have the read scope, which Home Assistant needs.",
+      "not_ready": "The hub isn't set up yet. Finish setting it up in the Den app, then try again.",
+      "unknown": "The hub sent an answer Home Assistant didn't understand. Check that the hub is up to date."
+    },
+    "abort": {
+      "already_configured": "This Den hub is already set up.",
+      "no_hub_id": "The discovered hub didn't say which hub it is. Add it with its address instead.",
+      "wrong_hub": "That address or token belongs to a different Den hub.",
+      "reauth_successful": "The new token works.",
+      "reconfigure_successful": "Saved."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "What Den shows in Home Assistant",
+        "data": {
+          "members": "People",
+          "lists": "Lists",
+          "everyone_on_member_calendars": "Show family-wide events on each person's calendar"
+        },
+        "data_description": {
+          "members": "Each person gets a calendar and sensors for chores and points. People added in Den later show up automatically.",
+          "lists": "Each list becomes a to-do list. Lists added in Den later show up automatically.",
+          "everyone_on_member_calendars": "Events assigned to no one are for the whole family. They're always on the Family calendar; turn this on to also put them on everyone's own calendar."
+        }
+      }
+    },
+    "abort": {
+      "not_loaded": "Den isn't connected right now. Try again once the hub is reachable."
+    }
+  },
+  "entity": {
+    "calendar": {
+      "family": {
+        "name": "Family"
+      }
+    },
+    "sensor": {
+      "points": {
+        "name": "Points"
+      },
+      "chores_left": {
+        "name": "Chores left today",
+        "state_attributes": {
+          "date": {
+            "name": "Date"
+          },
+          "total": {
+            "name": "Total"
+          },
+          "done": {
+            "name": "Done"
+          },
+          "late": {
+            "name": "Late"
+          },
+          "remaining": {
+            "name": "Remaining"
+          },
+          "anyone_left": {
+            "name": "Left for anyone"
+          },
+          "by_member": {
+            "name": "Left per person"
+          }
+        }
+      },
+      "next_event": {
+        "name": "Next event",
+        "state_attributes": {
+          "title": {
+            "name": "Title"
+          },
+          "location": {
+            "name": "Location"
+          },
+          "end": {
+            "name": "Ends"
+          },
+          "all_day": {
+            "name": "All day"
+          },
+          "for_everyone": {
+            "name": "For everyone"
+          },
+          "assignees": {
+            "name": "For"
+          }
+        }
+      }
+    }
+  },
+  "services": {
+    "complete_chore": {
+      "name": "Complete chore",
+      "description": "Marks a Den chore done (or not done) for a day.",
+      "fields": {
+        "chore": {
+          "name": "Chore",
+          "description": "The chore's title or id, as scheduled on that day."
+        },
+        "date": {
+          "name": "Date",
+          "description": "The day, in the family's time zone. Defaults to today."
+        },
+        "member": {
+          "name": "Done by",
+          "description": "Name or id of who did it. They earn the points of an \"anyone\" chore, and it picks between chores with the same title. Defaults to the token's member."
+        },
+        "done": {
+          "name": "Done",
+          "description": "Turn off to reopen the chore."
+        },
+        "config_entry_id": {
+          "name": "Den hub",
+          "description": "Only needed when more than one Den hub is set up."
+        }
+      }
+    },
+    "check_step": {
+      "name": "Check chore step",
+      "description": "Checks (or unchecks) one step of a Den chore. Checking the last step completes the chore.",
+      "fields": {
+        "chore": {
+          "name": "[%key:component::den::services::complete_chore::fields::chore::name%]",
+          "description": "[%key:component::den::services::complete_chore::fields::chore::description%]"
+        },
+        "step": {
+          "name": "Step",
+          "description": "The step's text or id."
+        },
+        "date": {
+          "name": "[%key:component::den::services::complete_chore::fields::date::name%]",
+          "description": "[%key:component::den::services::complete_chore::fields::date::description%]"
+        },
+        "member": {
+          "name": "Checked by",
+          "description": "Name or id of who did it. Defaults to the token's member."
+        },
+        "checked": {
+          "name": "Checked",
+          "description": "Turn off to uncheck the step."
+        },
+        "config_entry_id": {
+          "name": "[%key:component::den::services::complete_chore::fields::config_entry_id::name%]",
+          "description": "[%key:component::den::services::complete_chore::fields::config_entry_id::description%]"
+        }
+      }
+    },
+    "add_item": {
+      "name": "Add list item",
+      "description": "Adds an item to the end of a Den list.",
+      "fields": {
+        "list": {
+          "name": "List",
+          "description": "The list's title or id."
+        },
+        "text": {
+          "name": "Item",
+          "description": "What to add."
+        },
+        "qty": {
+          "name": "Quantity",
+          "description": "How much, as free text."
+        },
+        "store": {
+          "name": "Store",
+          "description": "Where to get it."
+        },
+        "config_entry_id": {
+          "name": "[%key:component::den::services::complete_chore::fields::config_entry_id::name%]",
+          "description": "[%key:component::den::services::complete_chore::fields::config_entry_id::description%]"
+        }
+      }
+    },
+    "adjust_points": {
+      "name": "Adjust points",
+      "description": "Gives or takes Den points.",
+      "fields": {
+        "member": {
+          "name": "Person",
+          "description": "Name or id of who gets (or loses) the points."
+        },
+        "delta": {
+          "name": "Points",
+          "description": "How many to give; negative takes points away."
+        },
+        "reason": {
+          "name": "Reason",
+          "description": "Shown in Den's points history."
+        },
+        "config_entry_id": {
+          "name": "[%key:component::den::services::complete_chore::fields::config_entry_id::name%]",
+          "description": "[%key:component::den::services::complete_chore::fields::config_entry_id::description%]"
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "invalid_auth": {
+      "message": "The Den hub didn't accept Home Assistant's token."
+    },
+    "update_failed": {
+      "message": "Couldn't get data from the Den hub: {error}"
+    },
+    "api_error": {
+      "message": "The Den hub said: {message}"
+    },
+    "missing_scope": {
+      "message": "Home Assistant's Den token doesn't have the {scope} scope. Create a token that does in the Den app under Settings → AI & automations."
+    },
+    "permission_denied": {
+      "message": "Den didn't allow that: {message}"
+    },
+    "read_only_event": {
+      "message": "That event comes from a subscribed calendar, so it can only be changed there."
+    },
+    "invalid_recurrence_id": {
+      "message": "{recurrence_id} isn't an occurrence of a Den event."
+    },
+    "item_not_found": {
+      "message": "There's no item {item} on that list."
+    },
+    "entry_not_loaded": {
+      "message": "The Den hub {entry} isn't set up or isn't connected."
+    },
+    "no_entries": {
+      "message": "No Den hub is connected."
+    },
+    "multiple_entries": {
+      "message": "More than one Den hub is set up; choose one with the Den hub field."
+    },
+    "unknown_member": {
+      "message": "There's no one named {member} in Den. Choose from: {choices}."
+    },
+    "unknown_list": {
+      "message": "There's no Den list named {list}. Choose from: {choices}."
+    },
+    "unknown_chore": {
+      "message": "There's no chore {chore} on {date}. Chores that day: {choices}."
+    },
+    "ambiguous_chore": {
+      "message": "More than one chore is called {chore} on {date}. Say who it's for with the Done by field, or use the chore's id."
+    },
+    "unknown_step": {
+      "message": "{chore} has no step {step}. Its steps: {choices}."
+    },
+    "points_disabled": {
+      "message": "Points are turned off for this family in Den."
+    }
+  }
+}
