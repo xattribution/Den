@@ -3,12 +3,15 @@ import 'package:go_router/go_router.dart';
 
 import 'design/theme.dart';
 import 'design/tokens.dart';
+import 'routes/calendar_routes.dart';
+import 'routes/family_routes.dart';
+import 'routes/home_routes.dart';
 import 'screens/calendar/calendar_screen.dart';
 import 'screens/today/today_screen.dart';
 import 'shell/shell.dart';
 import 'state/app_state.dart';
 
-/// Screens still being built register here so routes resolve while the app comes together.
+/// A route whose screen hasn't been built yet. Every use is replaced before release.
 class PendingScreen extends StatelessWidget {
   const PendingScreen(this.title, {super.key});
   final String title;
@@ -22,13 +25,9 @@ class PendingScreen extends StatelessWidget {
 GoRouter buildRouter(AppState state) => GoRouter(
       initialLocation: '/today',
       refreshListenable: state,
-      redirect: (context, route) {
-        if (!state.den.hasFamily && !route.matchedLocation.startsWith('/welcome')) return '/welcome';
-        return null;
-      },
+      redirect: (context, route) => familyRedirect(state, route),
       routes: [
         GoRoute(path: '/', redirect: (_, _) => '/today'),
-        GoRoute(path: '/welcome', builder: (_, _) => const PendingScreen('Welcome')),
         StatefulShellRoute.indexedStack(
           builder: (context, routeState, shell) => AppShell(navigationShell: shell),
           branches: [
@@ -51,17 +50,13 @@ GoRouter buildRouter(AppState state) => GoRouter(
                 ],
               ),
             ]),
-            StatefulShellBranch(routes: [GoRoute(path: '/chores', builder: (_, _) => const PendingScreen('Chores'))]),
-            StatefulShellBranch(routes: [GoRoute(path: '/lists', builder: (_, _) => const PendingScreen('Lists'))]),
+            StatefulShellBranch(routes: [GoRoute(path: '/chores', builder: (_, _) => choresTab())]),
+            StatefulShellBranch(routes: [GoRoute(path: '/lists', builder: (_, _) => listsTab())]),
           ],
         ),
-        GoRoute(path: '/lists/:id', builder: (_, s) => PendingScreen('List ${s.pathParameters['id']}')),
-        GoRoute(path: '/event/:id', builder: (_, s) => PendingScreen('Event ${s.pathParameters['id']}')),
-        GoRoute(path: '/chore/:id', builder: (_, s) => PendingScreen('Chore ${s.pathParameters['id']}')),
-        GoRoute(path: '/points', builder: (_, _) => const PendingScreen('Points and rewards')),
-        GoRoute(path: '/family', builder: (_, _) => const PendingScreen('Family and devices')),
-        GoRoute(path: '/history', builder: (_, _) => const PendingScreen('History')),
-        GoRoute(path: '/settings', builder: (_, _) => const PendingScreen('Settings')),
+        ...calendarRoutes,
+        ...homeRoutes,
+        ...familyRoutes,
       ],
     );
 
