@@ -12,6 +12,7 @@ import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
 import '../onboarding/demo_session.dart';
+import 'device_sync.dart';
 import 'export.dart';
 
 /// Shared-preferences key for local reminders on this device (on unless turned off).
@@ -167,25 +168,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         Text('Mode'),
                         InfoTip(
                           "Personal: one person's device. Shared display: the family's; people sign in with a PIN or "
-                          'pattern to change things. Hub: an always-on computer that keeps everyone in sync. A device '
-                          "can't change its own mode; a parent changes it from another device in Family and devices.",
+                          'pattern to change things. Hub: an always-on device that keeps everyone in sync. Turn on '
+                          'Keep the family online to make this device the hub.',
                         ),
                       ],
                     ),
                     trailing: Text(FamilyWords.mode(device.mode), style: context.type.body(c.ink2)),
                   ),
-                  ListTile(
-                    leading: Icon(PhosphorIconsRegular.hardDrives, color: c.ink2),
-                    title: const Row(
-                      children: [
-                        Text('Hub'),
-                        InfoTip(
-                          'A hub keeps devices in sync when they\'re apart, and serves Home Assistant and AI connections.',
-                        ),
-                      ],
-                    ),
-                    subtitle: const Text('Not connected'),
-                  ),
+                  const DeviceSyncSection(),
                 ],
                 const SectionHeader('Notifications'),
                 SwitchListTile(

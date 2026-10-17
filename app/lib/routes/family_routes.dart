@@ -1,12 +1,15 @@
 import 'package:den_core/den_core.dart';
 import 'package:go_router/go_router.dart';
 
+import '../screens/family/add_hub_screen.dart';
 import '../screens/family/device_screen.dart';
+import '../screens/family/link_browser_screen.dart';
 import '../screens/family/family_screen.dart';
 import '../screens/family/member_editor.dart';
 import '../screens/kids/kid_screen.dart';
 import '../screens/onboarding/add_people_screen.dart';
 import '../screens/onboarding/join_screen.dart';
+import '../screens/onboarding/link_this_browser_screen.dart';
 import '../screens/onboarding/start_family_screen.dart';
 import '../screens/onboarding/waiting_screen.dart';
 import '../screens/onboarding/welcome_screen.dart';
@@ -32,8 +35,9 @@ bool isLittleKid(Member? m) => m != null && m.isKid && (m.tier == Tier.preReader
 ///    once the device is in the family goes to Today.
 /// 4. A pre-reader or little kid acting on this device (its owner, or verified on a shared
 ///    screen): the kids' app instead of the shell's tabs.
-/// 5. A shared display or hub, or this device set to "Use as wall display": the wall instead of
-///    Today, unless someone has signed in to use the full app.
+/// 5. A shared display, a hub with no owner, or this device set to "Use as wall display": the
+///    wall instead of Today, unless someone has signed in to use the full app. A parent's device
+///    running as the hub acts for that parent (see DenNetwork) and keeps the full app.
 /// 6. Leaving the kids' app when the person acting is no longer a younger kid.
 String? familyRedirect(AppState state, GoRouterState route) {
   final den = state.den;
@@ -66,6 +70,7 @@ final List<RouteBase> familyRoutes = [
       GoRoute(path: 'start', builder: (_, _) => const StartFamilyScreen()),
       GoRoute(path: 'people', builder: (_, _) => const AddPeopleScreen()),
       GoRoute(path: 'join', builder: (_, _) => const JoinScreen()),
+      GoRoute(path: 'link', builder: (_, _) => const LinkThisBrowserScreen()),
       GoRoute(path: 'waiting', builder: (_, _) => const WaitingScreen()),
     ],
   ),
@@ -76,7 +81,16 @@ final List<RouteBase> familyRoutes = [
       GoRoute(
         path: 'devices',
         builder: (_, _) => const DevicesScreen(),
-        routes: [GoRoute(path: 'add', builder: (_, _) => const AddDeviceScreen())],
+        routes: [
+          GoRoute(
+            path: 'add',
+            builder: (_, _) => const AddDeviceScreen(),
+            routes: [
+              GoRoute(path: 'hub', builder: (_, _) => const AddHubScreen()),
+              GoRoute(path: 'browser', builder: (_, _) => const LinkBrowserScreen()),
+            ],
+          ),
+        ],
       ),
       GoRoute(path: 'member/new', builder: (_, s) => MemberEditor(role: s.uri.queryParameters['role'])),
       GoRoute(path: 'member/:id', builder: (_, s) => MemberEditor(memberId: s.pathParameters['id'])),

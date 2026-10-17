@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Sync with the hub, and run the hub in the app ("Keep the family online"). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- mDNS: finding hubs on the home Wi-Fi and advertising this device's hub. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
     <application
         android:label="Den"
         android:name="${applicationName}"

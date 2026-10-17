@@ -55,6 +55,15 @@ dependencies:
     path: ../packages/den_net
   web_socket_channel: ^3.0.3
   collection: ^1.19.1
+  den_hub:
+    path: ../packages/den_hub
+  http: ^1.6.0
+
+# den_hub's command line (not its library) imports the Sett importer, which needs sqlite3 3.x;
+# that version's build hooks need a newer `meta` than Flutter pins. The app never imports the
+# importer, so an older sqlite3 without hooks keeps version solving happy.
+dependency_overrides:
+  sqlite3: ^2.9.0
 
 dev_dependencies:
   flutter_test:

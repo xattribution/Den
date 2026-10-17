@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
@@ -7,9 +8,13 @@ import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import 'demo_session.dart';
 
-/// The first screen on a device with no family: the task, as three plain rows.
+/// The first screen on a device with no family: the task, as plain rows. A browser the hub
+/// served leads with linking itself from a parent's phone.
 class WelcomeScreen extends StatefulWidget {
-  const WelcomeScreen({super.key});
+  const WelcomeScreen({super.key, this.browser});
+
+  /// Shows the browser's choices, for tests; by default only on the web.
+  final bool? browser;
 
   @override
   State<WelcomeScreen> createState() => _WelcomeScreenState();
@@ -52,6 +57,12 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                   ),
                 ),
                 Divider(color: c.rule),
+                if (widget.browser ?? kIsWeb)
+                  _ChoiceRow(
+                    icon: PhosphorIconsRegular.browser,
+                    label: 'Link this browser',
+                    onTap: () => context.go('/welcome/link'),
+                  ),
                 _ChoiceRow(
                   icon: PhosphorIconsRegular.houseLine,
                   label: 'Start a family',

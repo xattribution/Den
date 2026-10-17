@@ -1,0 +1,161 @@
+// Real networking over localhost: an in-process DenHub, a parent's phone adding it with its
+// setup code, a browser linking through it, and a parent's computer keeping the family online.
+// Plain `test`s (no widget binding), so sockets and timers are real.
+import 'dart:io';
+
+import 'package:den_app/net/den_network.dart';
+import 'package:den_app/net/hub_client.dart';
+import 'package:den_app/net/local_hub.dart';
+import 'package:den_app/net/net_pairing.dart';
+import 'package:den_app/net/pairing.dart';
+import 'package:den_core/den_core.dart';
+import 'package:den_hub/den_hub.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/data/latest_all.dart' as tzdata;
+
+Future<void> until(bool Function() done, {Duration timeout = const Duration(seconds: 30), String? what}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!done()) {
+    if (DateTime.now().isAfter(deadline)) fail('Timed out waiting for ${what ?? 'a condition'}');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+}
+
+Future<Den> parentPhone() async {
+  final den = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
+  await den.createFamily(
+    familyName: 'The Testers',
+    timezone: 'America/Chicago',
+    yourName: 'Sam',
+    marker: Marker.blue,
+    animal: Animal.cat,
+    deviceName: "Sam's phone",
+    deviceKind: DeviceKind.phone,
+  );
+  return den;
+}
+
+Future<Den> freshDen() async => Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
+
+/// A local hub that never runs, for devices that aren't the hub in these tests.
+LocalHub noHub() => LocalHub.create(port: 0, mdns: false);
+
+void main() {
+  setUpAll(tzdata.initializeTimeZones);
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  /// A fresh hub on a free port, stopped after the test.
+  Future<(Den, DenHub)> startHub() async {
+    final den = await freshDen();
+    final hub = await DenHub.start(den, HubConfig(port: 0, mdns: false, log: HubLog.silent(), name: 'Closet hub'));
+    addTearDown(hub.stop);
+    return (den, hub);
+  }
+
+  /// A parent's phone that has added [hub] with its setup code.
+  Future<(Den, DenNetwork, NetPairing)> addHub(DenHub hub) async {
+    final phone = await parentPhone();
+    final network = DenNetwork(phone, localHub: noHub());
+    addTearDown(network.dispose);
+    final pairing = NetPairing(network);
+    final info = await pairing.hubStatus('127.0.0.1:${hub.port}');
+    expect(info.paired, isFalse);
+    expect(info.name, 'Closet hub');
+    final session = pairing.setUpHub(info, hub.setupCode!);
+    await until(() => session.stage == HubSetupStage.confirm || session.stage == HubSetupStage.failed, what: 'the hub to ask');
+    expect(session.error, isNull);
+    expect(session.words, hasLength(3));
+    await session.approve();
+    expect(session.stage, HubSetupStage.done, reason: session.error);
+    return (phone, network, pairing);
+  }
+
+  test('A parent adds a fresh hub with its setup code', () async {
+    final (hubDen, hub) = await startHub();
+    final (phone, network, _) = await addHub(hub);
+
+    await until(() => hub.ready, what: 'the hub to be ready');
+    expect(hubDen.isApproved, isTrue);
+    expect(hubDen.thisDevice!.mode, DeviceMode.hub);
+    expect(hubDen.familyId, phone.familyId);
+    expect(isFamilyHub(phone, hubDen.deviceId), isTrue);
+    expect(network.hubs.map((h) => h.toString()), ['ws://127.0.0.1:${hub.port}/ws']);
+  });
+
+  test('A wrong setup code says how many tries are left', () async {
+    final (_, hub) = await startHub();
+    final phone = await parentPhone();
+    final network = DenNetwork(phone, localHub: noHub());
+    addTearDown(network.dispose);
+    final pairing = NetPairing(network);
+    final info = await pairing.hubStatus('127.0.0.1:${hub.port}');
+    final session = pairing.setUpHub(info, 'AAAA-AAAA');
+    await until(() => session.stage == HubSetupStage.failed, what: 'the refusal');
+    expect(session.error, "That setup code isn't right. 4 tries left before the hub makes a new one.");
+  });
+
+  test('A browser links through the hub with a parent phone answering its code', () async {
+    final (hubDen, hub) = await startHub();
+    final (phone, network, pairing) = await addHub(hub);
+    await until(() => hub.ready, what: 'the hub to be ready');
+    await until(() => network.status.state.name == 'live', what: 'the phone to sync with the hub');
+
+    final browser = await freshDen();
+    final browserNet = DenNetwork(browser, localHub: noHub());
+    addTearDown(browserNet.dispose);
+    final browserPairing = NetPairing(browserNet, servedBy: Uri.parse('http://127.0.0.1:${hub.port}/'));
+    final link = await browserPairing.linkThisBrowser(deviceName: () => 'Kitchen laptop');
+    addTearDown(link.dispose);
+    expect(link.uri, startsWith('den://link?hub=${hubDen.deviceId}&slot='));
+
+    final hubName = await pairing.answerBrowserLink(link.uri);
+    expect(hubName, 'Closet hub');
+    await until(() => link.stage == LinkStage.joined || link.stage == LinkStage.failed, what: 'the browser to join');
+    expect(link.error, isNull);
+    expect(link.ticket!.familyId, phone.familyId);
+
+    await until(() => phone.pendingDevices.any((d) => d.name == 'Kitchen laptop'), what: 'the request to reach the phone');
+    final pending = phone.pendingDevices.firstWhere((d) => d.name == 'Kitchen laptop');
+    await phone.approveDevice(pending.id, member: phone.owner!.id);
+    await until(() => browser.isApproved, what: 'the browser to be approved');
+    expect(browser.thisDevice!.kind, DeviceKind.browser);
+    expect(browser.family!.name, 'The Testers');
+  });
+
+  test("Keep the family online runs the hub in the app and a tablet joins through it", () async {
+    final phone = await parentPhone();
+    final sam = phone.owner!.id;
+    final dir = await Directory.systemTemp.createTemp('den-hub-test');
+    addTearDown(() => dir.delete(recursive: true));
+    final network = DenNetwork(phone, localHub: LocalHub.create(port: 0, mdns: false, dataDir: dir.path));
+    addTearDown(network.dispose);
+    final pairing = NetPairing(network);
+
+    await network.keepOnline(true);
+    expect(network.localHub.state, LocalHubState.running, reason: network.localHub.error);
+    expect(phone.thisDevice!.mode, DeviceMode.hub);
+    expect(phone.actor?.id, sam, reason: 'the parent keeps using their own device');
+    expect(network.describe(), "This device is the family's hub. No other devices are connected right now.");
+
+    final tablet = await freshDen();
+    final tabletNet = DenNetwork(tablet, localHub: noHub());
+    addTearDown(tabletNet.dispose);
+    final joins = <List<PendingJoin>>[];
+    final sub = pairing.pendingJoins.listen(joins.add);
+    addTearDown(sub.cancel);
+
+    final invite = await pairing.createInviteQr();
+    final ticket = await NetPairing(tabletNet).joinWithQr(invite, deviceName: "Ava's tablet", kind: DeviceKind.tablet);
+    expect(ticket.familyId, phone.familyId);
+    await until(() => joins.isNotEmpty && joins.last.isNotEmpty, what: 'the pending join');
+    expect(joins.last.single.deviceName, "Ava's tablet");
+    await phone.approveDevice(joins.last.single.deviceId, member: sam);
+    await until(() => tablet.isApproved, what: 'the tablet to be approved');
+
+    await network.keepOnline(false);
+    expect(network.localHub.state, LocalHubState.off);
+    expect(phone.thisDevice!.mode, DeviceMode.personal);
+    expect(phone.actor?.id, sam);
+  });
+}

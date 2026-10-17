@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:den_net/den_net.dart';
 import 'package:den_net/io.dart' as io;
 
+import 'hub_client.dart';
+
 /// Hubs of this family answering mDNS on the home network.
 Future<List<Uri>> discoverHubs(String familyId) async {
   try {
@@ -11,6 +13,24 @@ Future<List<Uri>> discoverHubs(String familyId) async {
     return [
       for (final hub in found)
         if (hub.familyId == null || hub.familyId == familyId) hub.syncUri,
+    ];
+  } on Object {
+    return const [];
+  }
+}
+
+/// Every hub answering mDNS on the home network, in this family or waiting for setup.
+Future<List<FoundHub>> findHubsNearby() async {
+  try {
+    final found = await io.discoverHubs(timeout: const Duration(seconds: 3));
+    return [
+      for (final hub in found)
+        FoundHub(
+          name: hub.txt['name'] ?? hub.instance.split('.').first,
+          base: Uri(scheme: 'http', host: hub.addresses.isEmpty ? hub.host : hub.addresses.first.address, port: hub.port),
+          deviceId: hub.deviceId,
+          familyId: hub.familyId,
+        ),
     ];
   } on Object {
     return const [];

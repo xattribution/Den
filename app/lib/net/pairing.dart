@@ -3,6 +3,10 @@ import 'dart:async';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/widgets.dart';
 
+import 'hub_client.dart';
+
+export 'hub_client.dart' show FoundHub, HubInfo;
+
 /// Where a join attempt stands, as the joining device sees it.
 enum JoinState { waiting, approved, declined, failed }
 
@@ -86,6 +90,105 @@ abstract class PairingService {
 
   /// Devices waiting for this device's parent to compare words and approve.
   Stream<List<PendingJoin>> get pendingJoins;
+
+  // ------------------------------------------------------------------ hubs
+
+  /// Hubs answering mDNS on the home network (none in a browser).
+  Future<List<FoundHub>> findHubs() async => const [];
+
+  /// What the hub at [address] ("192.168.1.20", "den-hub.local:47733") says about itself.
+  Future<HubInfo> hubStatus(String address) async => throw const PairingException(LocalOnlyPairing.message);
+
+  /// Adds a fresh hub to the family with the 8-character setup code it printed: sends an invite
+  /// and the code, serves the hub's join, and waits for a parent to approve it as the hub.
+  HubSetupSession setUpHub(HubInfo hub, String code) => throw const PairingException(LocalOnlyPairing.message);
+
+  /// Saves a hub already in this family as the place to sync.
+  Future<void> useHub(HubInfo hub) async {}
+
+  // ------------------------------------------------------------------ browsers
+
+  /// In a browser the hub served: asks it for a link code to show as a QR code, then joins with
+  /// the invite a parent's phone leaves for it. [deviceName] is read when the invite arrives.
+  Future<BrowserLinkSession> linkThisBrowser({required String Function() deviceName}) async =>
+      throw const PairingException(LocalOnlyPairing.message);
+
+  /// On a parent's phone: answers a browser's `den://link` code with an invite the hub accepts
+  /// on this phone's behalf. Returns the hub's name; the browser's join request then arrives as a
+  /// pending device to approve.
+  Future<String> answerBrowserLink(String code) async => throw const PairingException(LocalOnlyPairing.message);
+}
+
+/// Where adding a hub stands, on the parent's phone.
+enum HubSetupStage {
+  /// Sending the setup code and an invite.
+  sending,
+
+  /// Waiting for the hub to reach this phone and ask to join.
+  waiting,
+
+  /// The hub asked; compare the words and approve it.
+  confirm,
+
+  /// Approved; the hub is catching up with the family.
+  approving,
+
+  /// The hub is in the family and saved as the place to sync.
+  done,
+
+  /// Something went wrong; [HubSetupSession.error] says what and what to do.
+  failed,
+}
+
+/// One run of adding a hub: follow [stage], show [words], then [approve] or [cancel].
+abstract class HubSetupSession extends ChangeNotifier {
+  HubInfo get hub;
+  HubSetupStage get stage;
+  String? get error;
+
+  /// The three matching words, once the hub has asked to join.
+  List<String> get words;
+
+  Future<void> approve();
+  Future<void> cancel();
+}
+
+/// Where linking this browser stands.
+enum LinkStage {
+  /// Showing the code; waiting for a parent's phone to scan it.
+  waiting,
+
+  /// The phone answered; this browser is asking to join.
+  joining,
+
+  /// The join request is sent; [BrowserLinkSession.ticket] has the words.
+  joined,
+
+  /// The code ran out before anyone scanned it.
+  expired,
+
+  /// Something went wrong; [BrowserLinkSession.error] says what and what to do.
+  failed,
+}
+
+/// A browser's link code at its hub, while it waits for a parent's phone.
+abstract class BrowserLinkSession extends ChangeNotifier {
+  /// The `den://link` URI to show as a QR code.
+  String get uri;
+
+  /// The hub that served this page.
+  Uri get hub;
+
+  /// UTC milliseconds when the code stops working.
+  int get expires;
+
+  LinkStage get stage;
+  String? get error;
+
+  /// The join this browser sent, once [stage] is [LinkStage.joined].
+  JoinTicket? get ticket;
+
+  Future<void> cancel();
 }
 
 /// Used until the hub or relay is wired in: every network step fails with a plain message.

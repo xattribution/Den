@@ -6,18 +6,29 @@ import 'package:den_net/den_net.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'local_hub.dart';
 import 'local_stub.dart' if (dart.library.io) 'local_io.dart' as local;
 
 /// This device's link to the rest of the family: one [SyncNode] for the engine, and a
 /// [SyncClient] that keeps it live with the hub over the home network or, away from home,
-/// through the relay. Without a hub, devices still pair and sync directly.
+/// through the relay. Without a hub, devices still pair and sync directly. On desktops and
+/// Android a parent can make this device the hub itself ([keepOnline]).
 class DenNetwork extends ChangeNotifier {
-  DenNetwork(this.den, {List<Uri> hubs = const [], this.relay})
+  DenNetwork(this.den, {List<Uri> hubs = const [], this.relay, LocalHub? localHub})
       : node = SyncNode(den),
-        _hubs = [...hubs];
+        localHub = localHub ?? LocalHub.create(),
+        _hubs = [...hubs] {
+    this.localHub.addListener(notifyListeners);
+    _engine = den.onChange.listen((_) => _keepActingAsOwner());
+    // Before the first screen: a device that is the hub opens as its owner's, not as a display.
+    _keepActingAsOwner();
+  }
 
   static const _hubsKey = 'den.hubs';
   static const _relayKey = 'den.relay';
+
+  /// Acting window for the owner of a device running as the hub, renewed whenever it lapses.
+  static const _ownerWindow = Duration(days: 30);
 
   /// Restores the saved hub addresses and relay for this device.
   static Future<DenNetwork> load(Den den) async {
@@ -32,7 +43,11 @@ class DenNetwork extends ChangeNotifier {
 
   final Den den;
   final SyncNode node;
+
+  /// The hub this app runs in-process when this device is the family's hub.
+  final LocalHub localHub;
   final List<Uri> _hubs;
+  late final StreamSubscription<Set<String>> _engine;
 
   /// The relay this family uses to reach the hub from outside the house, if any.
   Uri? relay;
@@ -40,8 +55,14 @@ class DenNetwork extends ChangeNotifier {
   SyncClient? _client;
   StreamSubscription<SyncStatus>? _statusSub;
   SyncStatus _status = const SyncStatus(SyncState.offline);
+  bool _switching = false;
+  bool _disposed = false;
 
   SyncStatus get status => _status;
+
+  /// The node pairing goes through: the in-process hub's while it runs (so joiners reaching the
+  /// hub find this device's invites), else this device's own.
+  SyncNode get activeNode => localHub.node ?? node;
 
   /// Saved hub sync addresses, `ws://host:47733/ws` form.
   List<Uri> get hubs => List.unmodifiable(_hubs);
@@ -50,15 +71,23 @@ class DenNetwork extends ChangeNotifier {
   Device? get hubDevice =>
       den.devices.firstWhereOrNull((d) => d.mode == DeviceMode.hub && d.approved && !d.revoked && d.id != den.deviceId);
 
-  /// Whether this device is itself running as the family's hub.
+  /// Whether this device is itself the family's hub.
   bool get isHub => den.thisDevice?.mode == DeviceMode.hub;
 
-  /// Starts syncing when this device belongs to an approved family. Safe to call again after
-  /// the hub or relay changes.
+  /// Starts syncing when this device belongs to an approved family, or starts the in-process hub
+  /// when this device is the hub. Safe to call again after the hub or relay changes.
   Future<void> start() async {
+    if (_disposed) return;
     await _stopClient();
-    if (!den.hasFamily || !den.isApproved || isHub) {
+    if (_disposed) return;
+    if (!den.hasFamily || !den.isApproved) {
       _setStatus(const SyncStatus(SyncState.offline));
+      return;
+    }
+    if (isHub) {
+      _keepActingAsOwner();
+      if (LocalHub.supported) await localHub.start(den, relay: relay);
+      _setStatus(const SyncStatus(SyncState.live));
       return;
     }
     final endpoints = <Uri>{
@@ -67,6 +96,7 @@ class DenNetwork extends ChangeNotifier {
       ...await local.discoverHubs(den.familyId!),
       if (relay != null && hubDevice != null) relayConnectUri(relay!, hubDevice!.id),
     }.toList();
+    if (_disposed) return;
     if (endpoints.isEmpty) {
       _setStatus(const SyncStatus(SyncState.offline, lastError: 'no hub'));
       return;
@@ -77,11 +107,70 @@ class DenNetwork extends ChangeNotifier {
     client.start();
   }
 
+  /// "Keep the family online": makes this device the family's hub and runs the hub in-process,
+  /// or turns it back into its owner's personal device. Parents only; the engine refuses others.
+  /// Throws [InvalidInput] or [PermissionDenied] with a message for people.
+  Future<void> keepOnline(bool on) async {
+    if (_switching) return;
+    _switching = true;
+    try {
+      final device = den.thisDevice;
+      if (device == null) throw const InvalidInput('This device isn\'t part of a family yet');
+      if (on) {
+        if (!LocalHub.supported) throw const InvalidInput('This device can\'t run the hub. Use a computer or an Android tablet.');
+        if (isHub && localHub.state == LocalHubState.running) return;
+        await _stopClient();
+        await den.setThisDeviceMode(DeviceMode.hub);
+        _keepActingAsOwner();
+        await localHub.start(den, relay: relay);
+        if (localHub.state == LocalHubState.failed) {
+          // Don't leave the family pointing at a hub that isn't running.
+          await den.setThisDeviceMode(DeviceMode.personal);
+          await start();
+        } else {
+          _setStatus(const SyncStatus(SyncState.live));
+        }
+      } else {
+        await localHub.stop();
+        if (isHub) {
+          _keepActingAsOwner();
+          await den.setThisDeviceMode(DeviceMode.personal);
+        }
+        await start();
+      }
+    } finally {
+      _switching = false;
+      notifyListeners();
+    }
+  }
+
+  /// A device running as the hub still belongs to the parent who turned it on: the app acts for
+  /// them, so their own screens keep working.
+  void _keepActingAsOwner() {
+    final device = den.thisDevice;
+    final owner = device?.member;
+    if (device == null || device.mode != DeviceMode.hub || owner == null || den.member(owner) == null) return;
+    if (den.actor?.id == owner) return;
+    try {
+      den.actAs(owner, window: _ownerWindow);
+    } on Object {
+      return;
+    }
+  }
+
   /// Adds a hub address typed by a person or found in an invite, saves it and reconnects.
   Future<void> addHub(String address) async {
+    if (_disposed) return;
     final uri = syncUriFor(address);
     if (uri == null || _hubs.contains(uri)) return;
     _hubs.add(uri);
+    await _save();
+    await start();
+  }
+
+  /// Forgets a saved hub address.
+  Future<void> removeHub(Uri uri) async {
+    if (!_hubs.remove(uri)) return;
     await _save();
     await start();
   }
@@ -120,6 +209,18 @@ class DenNetwork extends ChangeNotifier {
 
   /// A sentence for Settings and the top bar.
   String describe() {
+    if (isHub) {
+      return switch (localHub.state) {
+        LocalHubState.running => localHub.connected == 0
+            ? "This device is the family's hub. No other devices are connected right now."
+            : "This device is the family's hub. ${localHub.connected} ${localHub.connected == 1 ? 'device is' : 'devices are'} connected.",
+        LocalHubState.starting => "Starting the family's hub on this device",
+        LocalHubState.failed => localHub.error ?? "The hub on this device couldn't start.",
+        LocalHubState.off => LocalHub.supported
+            ? "This device is set to be the family's hub, but the hub isn't running."
+            : "This device is set to be the family's hub, but it can't run one. Turn that off from a parent's phone.",
+      };
+    }
     final hub = hubDevice?.name ?? 'the hub';
     return switch (_status.state) {
       SyncState.live => 'Up to date with $hub',
@@ -132,8 +233,14 @@ class DenNetwork extends ChangeNotifier {
   }
 
   void _setStatus(SyncStatus status) {
+    if (_disposed) return;
     _status = status;
     notifyListeners();
+  }
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
   }
 
   Future<void> _save() async {
@@ -156,6 +263,10 @@ class DenNetwork extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    unawaited(_engine.cancel());
+    localHub.removeListener(notifyListeners);
+    unawaited(localHub.stop());
     unawaited(_stopClient());
     unawaited(node.close());
     super.dispose();

@@ -1,6 +1,9 @@
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
+import 'package:den_app/net/den_network.dart';
+import 'package:den_app/net/local_hub.dart';
 import 'package:den_app/net/pairing.dart';
+import 'package:den_net/den_net.dart' show SyncNode;
 import 'package:den_app/state/app_state.dart';
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
@@ -11,11 +14,40 @@ import '../helpers/shots.dart';
 
 /// Pairing that answers at once with fixed words, for screenshots of invites, approvals and joins.
 class FakePairing extends PairingService {
-  FakePairing({this.pending = const [], this.status, required this.now});
+  FakePairing({
+    this.pending = const [],
+    this.status,
+    required this.now,
+    this.found = const [],
+    this.hubInfo,
+    this.setup,
+    this.link,
+  });
 
   final List<PendingJoin> pending;
   final JoinStatus? status;
   final DateTime now;
+  final List<FoundHub> found;
+  final HubInfo? hubInfo;
+  final HubSetupSession? setup;
+  final BrowserLinkSession? link;
+
+  @override
+  Future<List<FoundHub>> findHubs() async => found;
+
+  @override
+  Future<HubInfo> hubStatus(String address) async =>
+      hubInfo ?? (throw const PairingException("Couldn't reach a hub at that address."));
+
+  @override
+  HubSetupSession setUpHub(HubInfo hub, String code) => setup!;
+
+  @override
+  Future<BrowserLinkSession> linkThisBrowser({required String Function() deviceName}) async =>
+      link ?? (throw const PairingException(LocalOnlyPairing.message));
+
+  @override
+  Future<String> answerBrowserLink(String code) async => 'Closet hub';
 
   @override
   Future<JoinTicket> joinWithQr(String uri, {required String deviceName, required DeviceKind kind}) async =>
@@ -154,4 +186,77 @@ Future<AppState> littleKidTablet(WidgetTester tester) => real(tester, () async {
       await phone.approveDevice(tablet.deviceId, member: leo.id, mode: DeviceMode.personal);
       await tablet.ingest(phone.changesSince(tablet.versionVector, spaces: phone.spacesForDevice(tablet.deviceId)));
       return AppState(tablet);
+    });
+
+/// A fixed hub, for screenshots of adding one.
+final HubInfo closetHub = HubInfo(
+  base: Uri.parse('http://192.168.1.20:47733'),
+  paired: false,
+  device: 'H7Q2KX4M9PA3TBV6',
+  name: 'Closet hub',
+  stage: 'waiting_for_code',
+);
+
+/// A hub setup frozen at one stage.
+class FakeHubSetup extends HubSetupSession {
+  FakeHubSetup(this.stage, {this.error});
+  @override
+  final HubSetupStage stage;
+  @override
+  final String? error;
+  @override
+  HubInfo get hub => closetHub;
+  @override
+  List<String> get words => const ['lantern', 'meadow', 'copper'];
+  @override
+  Future<void> approve() async {}
+  @override
+  Future<void> cancel() async {}
+}
+
+/// A browser link code waiting for a phone.
+class FakeBrowserLink extends BrowserLinkSession {
+  FakeBrowserLink({required this.expires, this.stage = LinkStage.waiting});
+  @override
+  final int expires;
+  @override
+  final LinkStage stage;
+  @override
+  String get uri => 'den://link?hub=H7Q2KX4M9PA3TBV6&slot=c2xvdHNsb3RzbG90c2xvdA&u=http%3A%2F%2F192.168.1.20%3A47733';
+  @override
+  Uri get hub => Uri.parse('http://192.168.1.20:47733');
+  @override
+  String? get error => null;
+  @override
+  JoinTicket? get ticket => null;
+  @override
+  Future<void> cancel() async {}
+}
+
+/// An in-process hub frozen in one state, for Settings screenshots.
+class FakeLocalHub extends LocalHub {
+  FakeLocalHub({this.state = LocalHubState.off, this.connected = 0, this.error});
+  @override
+  final LocalHubState state;
+  @override
+  final int connected;
+  @override
+  final String? error;
+  @override
+  List<Uri> get addresses => state == LocalHubState.running ? [Uri.parse('http://192.168.1.20:47733')] : const [];
+  @override
+  SyncNode? get node => null;
+  @override
+  Future<void> start(Den den, {Uri? relay}) async {}
+  @override
+  Future<void> stop() async {}
+}
+
+/// The demo family with this device's network; with [hub], Alex's phone is the family's hub.
+Future<AppState> networked(WidgetTester tester, {LocalHub? localHub, bool hub = false, List<Uri> hubs = const []}) =>
+    real(tester, () async {
+      final state = await demoState();
+      if (hub) await state.den.setThisDeviceMode(DeviceMode.hub);
+      final network = DenNetwork(state.den, localHub: localHub ?? FakeLocalHub(), hubs: hubs);
+      return AppState(state.den, network: network);
     });

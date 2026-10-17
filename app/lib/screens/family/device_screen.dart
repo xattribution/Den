@@ -1,6 +1,7 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../design/parts/family_frame.dart';
 import '../../design/parts/family_pickers.dart';
@@ -184,10 +185,20 @@ class AddDeviceScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final qr = (width.clamp(0.0, 600.0) - Sp.l * 4).clamp(200.0, 400.0);
+    final c = context.colors;
+    Widget other(IconData icon, String label, String route) => ListTile(
+          leading: Icon(icon, color: c.ink2),
+          title: Text(label),
+          trailing: Icon(PhosphorIconsRegular.caretRight, size: 18, color: c.ink3),
+          onTap: () => context.push(route),
+        );
     return FormFrame(
       title: 'Add a device',
       children: [
         const PendingApprovals(),
+        other(PhosphorIconsRegular.hardDrives, 'A hub (NAS, Raspberry Pi, computer)', '/family/devices/add/hub'),
+        other(PhosphorIconsRegular.browser, 'A browser on a computer', '/family/devices/add/browser'),
+        Divider(color: c.rule),
         InvitePanel(qrSize: qr, now: now),
       ],
     );

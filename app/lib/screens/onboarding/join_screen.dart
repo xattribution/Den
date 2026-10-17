@@ -73,6 +73,13 @@ class _JoinScreenState extends State<JoinScreen> {
     if (_busy) return;
     final raw = capture.barcodes.map((b) => b.rawValue).whereType<String>().firstOrNull;
     if (raw == null) return;
+    if (raw.startsWith('den://link')) {
+      setState(
+        () => _error = "That's a browser's link code. Scan it from a parent's phone that's already in the family: "
+            'Family and devices, Add a device, A browser on a computer.',
+      );
+      return;
+    }
     if (!raw.startsWith('den://join')) {
       setState(() => _error = "That code isn't a Den invite. Scan the code under Add a device on a parent's phone.");
       return;

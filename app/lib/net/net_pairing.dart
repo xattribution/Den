@@ -2,20 +2,29 @@ import 'dart:async';
 
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart' as net;
+import 'package:flutter/foundation.dart';
 
 import 'den_network.dart';
+import 'hub_client.dart';
+import 'hub_flows.dart';
 import 'local_stub.dart' if (dart.library.io) 'local_io.dart' as local;
 import 'pairing.dart';
 
 /// [PairingService] on den_net: QR invites and spoken codes over the hub, the relay's
 /// rendezvous, or (with neither) a direct connection on the same Wi-Fi.
 class NetPairing extends PairingService {
-  NetPairing(this.network);
+  NetPairing(this.network, {HubClient? client, this.servedBy}) : _client = client ?? HubClient();
 
   final DenNetwork network;
+
+  /// The hub that served this browser; defaults to the page's own origin on the web.
+  final Uri? servedBy;
+  final HubClient _client;
   final StreamController<JoinStatus> _status = StreamController.broadcast();
 
-  net.SyncNode get _node => network.node;
+  /// The in-process hub's node while this device is the hub, so joiners reaching it find the
+  /// invites made here.
+  net.SyncNode get _node => network.activeNode;
 
   @override
   Stream<JoinStatus> get joinStatus => _status.stream;
@@ -74,6 +83,8 @@ class NetPairing extends PairingService {
     final code = _node.createSpokenCode();
     if (relay != null) {
       unawaited(_node.hostRendezvous(relay, await net.codeRendezvousSlot(code.text)).catchError((Object _) {}));
+    } else if (network.isHub && network.localHub.node != null) {
+      // Joiners type this device's address as the hub address; its hub accepts the code.
     } else if (await local.serveTemporarily(_node) == null) {
       throw const PairingException('Spoken codes need the hub, a relay, or both devices on the same Wi-Fi.');
     }
@@ -86,6 +97,83 @@ class NetPairing extends PairingService {
     yield* _node.pendingJoinsChanges.map(_convert);
   }
 
+  // ------------------------------------------------------------------ hubs
+
+  @override
+  Future<List<FoundHub>> findHubs() => local.findHubsNearby();
+
+  @override
+  Future<HubInfo> hubStatus(String address) async {
+    final base = HubClient.baseFor(address);
+    if (base == null) throw const PairingException("That isn't a hub address. Type something like 192.168.1.20.");
+    try {
+      return await _client.status(base);
+    } on HubException catch (e) {
+      throw PairingException(e.message);
+    }
+  }
+
+  @override
+  HubSetupSession setUpHub(HubInfo hub, String code) =>
+      NetHubSetup(network: network, client: _client, hub: hub, code: code)..run();
+
+  @override
+  Future<void> useHub(HubInfo hub) => network.addHub(hub.base.toString());
+
+  // ------------------------------------------------------------------ browsers
+
+  @override
+  Future<BrowserLinkSession> linkThisBrowser({required String Function() deviceName}) async {
+    final base = servedBy ?? (kIsWeb ? Uri.base : null);
+    if (base == null || base.host.isEmpty) {
+      throw const PairingException('Only a browser opened from the hub can link this way. Scan a code instead.');
+    }
+    final hub = Uri(scheme: base.scheme, host: base.host, port: base.port);
+    final LinkSlot slot;
+    try {
+      slot = await _client.openLink(hub);
+    } on HubException catch (e) {
+      throw PairingException(e.code == 'not_ready'
+          ? "This hub isn't in a family yet. Add it from a parent's phone first: Family, Devices, Add a device."
+          : e.message);
+    }
+    return NetBrowserLink(client: _client, hub: hub, slot: slot, deviceName: deviceName, join: _joinLinked)..start();
+  }
+
+  Future<JoinTicket> _joinLinked(net.Invite invite, Uri sync, String deviceName) async {
+    final channel = await _open(() => net.connectWebSocket(sync));
+    final attempt = await _node.joinWithInvite(channel, invite, deviceName: deviceName, kind: DeviceKind.browser);
+    _follow(attempt, hubs: [sync]);
+    return JoinTicket(familyId: invite.familyId, words: attempt.matchingWords);
+  }
+
+  @override
+  Future<String> answerBrowserLink(String code) async {
+    final link = LinkCode.parse(code);
+    if (link == null) {
+      throw const PairingException(
+        "That isn't a browser link code. On the computer, open the hub's address and choose Link this browser.",
+      );
+    }
+    final den = network.den;
+    if (!isFamilyHub(den, link.hubDevice)) {
+      throw const PairingException(
+        "That code comes from a hub that isn't in this family. Open the browser on your family's hub address.",
+      );
+    }
+    final invite = _node.createHubInvite(link.hubDevice, hubs: [HubClient.syncUri(link.base)]);
+    final grant = await net.InviteGrant.sign(invite, keys: den.keys, context: 'link:${link.slot}');
+    try {
+      await _client.grantLink(link.base, link.slot, grant.toJson());
+    } on HubException catch (e) {
+      throw PairingException(e.message);
+    }
+    if (!network.hubs.contains(DenNetwork.syncUriFor(link.base.toString()))) {
+      unawaited(network.addHub(link.base.toString()));
+    }
+    return den.device(link.hubDevice)?.name ?? 'the hub';
+  }
+
   List<PendingJoin> _convert(List<net.PendingJoin> joins) => [
         for (final j in joins)
           PendingJoin(deviceId: j.deviceId, deviceName: j.name, kind: j.kind, words: j.matchingWords),
@@ -94,6 +182,9 @@ class NetPairing extends PairingService {
   /// Where a joiner can reach this device: the hub when there is one, else this device itself
   /// on the same Wi-Fi for the next 15 minutes.
   Future<List<Uri>> _reachableHubs() async {
+    if (network.isHub && network.localHub.addresses.isNotEmpty) {
+      return [for (final a in network.localHub.addresses) HubClient.syncUri(a)];
+    }
     if (network.hubs.isNotEmpty) return network.hubs;
     final direct = await local.serveTemporarily(_node);
     return [?direct];
