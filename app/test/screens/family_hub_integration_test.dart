@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:den_app/net/den_network.dart';
 import 'package:den_app/net/hub_client.dart';
+import 'package:den_app/net/hub_keep_alive.dart';
 import 'package:den_app/net/local_hub.dart';
 import 'package:den_app/net/net_pairing.dart';
 import 'package:den_app/net/pairing.dart';
@@ -38,6 +39,20 @@ Future<Den> parentPhone() async {
 
 Future<Den> freshDen() async => Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
 
+/// Records what the in-app hub asks of the platform's keep-alive (Android's foreground service).
+class RecordingKeepAlive extends HubKeepAlive {
+  final List<String> calls = [];
+
+  @override
+  Future<void> start(String detail) async => calls.add('start: $detail');
+
+  @override
+  Future<void> update(String detail) async => calls.add('update: $detail');
+
+  @override
+  Future<void> stop() async => calls.add('stop');
+}
+
 /// A local hub that never runs, for devices that aren't the hub in these tests.
 LocalHub noHub() => LocalHub.create(port: 0, mdns: false);
 
@@ -66,6 +81,8 @@ void main() {
     await until(() => session.stage == HubSetupStage.confirm || session.stage == HubSetupStage.failed, what: 'the hub to ask');
     expect(session.error, isNull);
     expect(session.words, hasLength(3));
+    expect(session.hubWords, session.words, reason: 'the hub reports the words this phone shows');
+    expect(session.wordsMatch, isTrue);
     await session.approve();
     expect(session.stage, HubSetupStage.done, reason: session.error);
     return (phone, network, pairing);
@@ -128,12 +145,15 @@ void main() {
     final sam = phone.owner!.id;
     final dir = await Directory.systemTemp.createTemp('den-hub-test');
     addTearDown(() => dir.delete(recursive: true));
-    final network = DenNetwork(phone, localHub: LocalHub.create(port: 0, mdns: false, dataDir: dir.path));
+    final keepAlive = RecordingKeepAlive();
+    final network = DenNetwork(phone, localHub: LocalHub.create(port: 0, mdns: false, dataDir: dir.path, keepAlive: keepAlive));
     addTearDown(network.dispose);
     final pairing = NetPairing(network);
 
     await network.keepOnline(true);
     expect(network.localHub.state, LocalHubState.running, reason: network.localHub.error);
+    expect(keepAlive.calls, ['start: No other devices are connected right now.'],
+        reason: 'on Android, the foreground service keeps the hub running in the background');
     expect(phone.thisDevice!.mode, DeviceMode.hub);
     expect(phone.actor?.id, sam, reason: 'the parent keeps using their own device');
     expect(network.describe(), "This device is the family's hub. No other devices are connected right now.");
@@ -155,6 +175,8 @@ void main() {
 
     await network.keepOnline(false);
     expect(network.localHub.state, LocalHubState.off);
+    expect(keepAlive.calls.last, 'stop');
+    expect(keepAlive.calls.where((c) => c.startsWith('start')), hasLength(1));
     expect(phone.thisDevice!.mode, DeviceMode.personal);
     expect(phone.actor?.id, sam);
   });

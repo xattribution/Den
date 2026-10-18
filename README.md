@@ -15,7 +15,8 @@ the same Wi-Fi. Nothing to host.
 runs the extras: Home Assistant, AI access over MCP, calendar feeds, reminders.
 
 - An old Android tablet or a computer: install Den and turn on Settings → This device →
-  "Keep the family online". The hub runs inside the app.
+  "Keep the family online". The hub runs inside the app; on Android it keeps running in the
+  background, with the notification "Den is keeping the family online", until you turn it off.
 - A NAS, mini PC or Raspberry Pi with Docker:
 
   ```bash
@@ -25,7 +26,8 @@ runs the extras: Home Assistant, AI access over MCP, calendar feeds, reminders.
 
   The hub prints a setup code in its log (`docker logs den-hub`). On a parent's phone, go to
   Family → Devices → Add a device → A hub, pick it from the list or type its address, and enter
-  the code. Any browser can then open `http://<hub-address>:47733` and link itself by showing a
+  the code. The phone then shows three words and checks that the hub reports the same three
+  (they're in its log too); approve it if they match. Any browser can then open `http://<hub-address>:47733` and link itself by showing a
   QR code for a parent's phone to scan.
 
 **Away from home.** Phones reach the hub through a relay that only ever carries encrypted data.
@@ -56,20 +58,21 @@ hub's family.
 
 | Part | Tests | Verified on this machine |
 | --- | --- | --- |
-| Engine (`den_core`) | 170 | Analyzer clean |
-| Networking (`den_net`) | 68 | Two and three devices syncing in memory, over WebSocket and through the relay |
+| Engine (`den_core`) | 181 | Analyzer clean |
+| Networking (`den_net`) | 71 | Two and three devices syncing in memory, over WebSocket and through the relay; two parents revoking while out of touch settle on one key, through a hub and through the relay alone |
 | Relay | 20 | Tunnel, mailbox, rendezvous, rate limits |
 | Hub and its command line | 48 + 5 | Compiled binary serves the web app and prints its setup code |
 | Sett importer | 8 | A Sett schema v12 fixture |
-| App | 177, with 151 screenshots | Release APK on an Android emulator; web build in a browser |
-| Home Assistant integration | 74 | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub |
+| App | 191, with 152 screenshots and the Home Assistant brand images | Release APK on an Android emulator, including the hub kept online in the background and after Den is closed from recent apps; web build in a browser |
+| Home Assistant integration | 85 | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub; v0.1.0's `den.zip` downloads from den-homeassistant's release with its manifest and brand images |
 
 Windows, macOS, iOS and Linux app builds and the Docker images run in CI (`.github/workflows`).
 
-Known gaps: the Home Assistant integration needs its own repository root to install through HACS;
-Android needs a foreground service to keep an in-app hub running in the background; the hub
-doesn't yet show the matching words while it waits to be approved; when two parents revoke
-devices at the same moment while out of touch, their rotated keys can briefly diverge.
+HACS installs only from the root of a repository, so the Home Assistant integration is published
+from its own, [`xattribution/den-homeassistant`](https://github.com/xattribution/den-homeassistant):
+`integrations/homeassistant/scripts/prepare_hacs_repo.py` writes its files and CI builds its
+release zip (see the integration's README). Its first release, v0.1.0, carries `den.zip`. To
+install, add that repository to HACS as a custom repository of type Integration.
 
 ## Develop
 

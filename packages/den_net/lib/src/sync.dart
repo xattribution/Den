@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:den_core/den_core.dart';
 import 'package:stream_channel/stream_channel.dart';
@@ -190,7 +189,7 @@ class SyncNode {
       _scheduleChangeScan();
       _scheduleKeyChecks();
     });
-    _keyEpochs = _currentKeyEpochs();
+    _keyMarks = _currentKeyMarks();
     _keyWatch = Timer.periodic(const Duration(seconds: 5), (_) => _checkKeyEpochs());
   }
 
@@ -223,10 +222,9 @@ class SyncNode {
   bool _scanScheduled = false;
   bool _closed = false;
   Set<String> _mySpaces = const {};
-  Map<String, int> _keyEpochs = const {};
+  Map<String, String> _keyMarks = const {};
   late final Timer _keyWatch;
   int _keyPushHolds = 0;
-  final Set<String> _learnedKeys = {};
 
   /// Connected peers.
   Iterable<SyncPeer> get peers => List.unmodifiable(_peers);
@@ -470,13 +468,6 @@ class SyncNode {
   /// `den.setSpaceKey` directly so peers get them at once.
   void keysChanged() => _scheduleChangeScan();
 
-  /// Whether this process learned [space]'s key for [epoch] from another device (a session or
-  /// a sealed delivery) rather than making it.
-  bool learnedKey(String space, int epoch) => _learnedKeys.contains('$space@$epoch');
-
-  /// Records that [space]'s key for [epoch] came from another device; see [learnedKey].
-  void noteLearnedKey(String space, int epoch) => _learnedKeys.add('$space@$epoch');
-
   /// Runs [task] with key pushes to peers held back, then sends what changed. Used while a
   /// relay mailbox round stores newly delivered keys before ingesting the changes that came
   /// with them (a revocation among them), so a newer key is never forwarded to a device this
@@ -491,17 +482,19 @@ class SyncNode {
     }
   }
 
-  Map<String, int> _currentKeyEpochs() {
-    final spaces = <String>{..._spacesFor(den.deviceId), ..._index.spaces, ..._keyEpochs.keys};
+  /// The key in use per space, as `"<epoch>:<hash>"`: a change of either (a rotation, or another
+  /// parent's key winning the same epoch) is passed on.
+  Map<String, String> _currentKeyMarks() {
+    final spaces = <String>{..._spacesFor(den.deviceId), ..._index.spaces, ..._keyMarks.keys};
     return {
       for (final s in spaces)
-        s: ?_epochOf(s),
+        if (_keyIn(s) case final k?) s: '${k.epoch}:${k.hash}',
     };
   }
 
-  int? _epochOf(String space) {
+  SpaceKey? _keyIn(String space) {
     try {
-      return den.spaceKeyEpoch(space);
+      return den.currentSpaceKey(space);
     } on Object {
       return null;
     }
@@ -517,8 +510,8 @@ class SyncNode {
 
   void _checkKeyEpochs() {
     if (_closed) return;
-    final now = _currentKeyEpochs();
-    if (now.length != _keyEpochs.length || now.entries.any((e) => _keyEpochs[e.key] != e.value)) {
+    final now = _currentKeyMarks();
+    if (now.length != _keyMarks.length || now.entries.any((e) => _keyMarks[e.key] != e.value)) {
       _scheduleChangeScan();
     }
   }
@@ -649,7 +642,7 @@ class SyncNode {
     // Keys go after the changes above, so a peer always has a revocation before the keys it
     // caused, and never forwards those keys to the revoked device.
     if (_keyPushHolds > 0) return;
-    _keyEpochs = _currentKeyEpochs();
+    _keyMarks = _currentKeyMarks();
     for (final peer in List.of(_peers)) {
       await peer._sendMissingKeys();
     }
@@ -677,7 +670,9 @@ class SyncPeer {
   final StreamController<PeerPhase> _phases = StreamController.broadcast();
   final Completer<void> _live = Completer();
   final Map<String, Map<String, int>> _known = {};
-  final Map<String, int> _peerKeys = {};
+  /// The newest key epoch the peer holds per space, and the hashes of the keys it holds for it.
+  final Map<String, int> _peerEpochs = {};
+  final Map<String, Set<String>> _peerHashes = {};
   StreamSubscription<Map<String, Object?>>? _subscription;
   PeerPhase _phase = PeerPhase.pairing;
   Set<String> _allowed = const {};
@@ -873,9 +868,9 @@ class SyncPeer {
     final mine = _node._spacesFor(_den.deviceId);
     final theirs = _node._spacesFor(deviceId);
     final declared = mine.isNotEmpty && theirs.isNotEmpty ? mine.intersection(theirs) : _node._index.spaces.toSet();
-    final keyed = <String, int>{
+    final keyed = <String, List<Object>>{
       for (final space in {...mine, ...declared})
-        space: ?_node._epochOf(space),
+        if (_node._keyIn(space) case final k?) space: [k.epoch, k.hash],
     };
     await _send({
       't': 'have',
@@ -899,7 +894,13 @@ class SyncPeer {
     final keys = m['keys'];
     if (keys is Map) {
       for (final e in keys.entries) {
-        if (e.key is String && e.value is int) _notePeerKey(e.key as String, e.value as int);
+        final space = e.key, value = e.value;
+        if (space is! String) continue;
+        if (value is int) {
+          _notePeerKey(space, value);
+        } else if (value is List && value.length == 2 && value[0] is int && value[1] is String) {
+          _notePeerKey(space, value[0] as int, value[1] as String);
+        }
       }
     } else if (keys is List) {
       for (final space in keys.whereType<String>()) {
@@ -1041,37 +1042,44 @@ class SyncPeer {
     }
   }
 
-  /// Stores a space key: a newer epoch becomes current and is passed on to other peers; an
-  /// older epoch this replica lacks is kept for reading old mailboxes; an epoch already held is
-  /// never replaced. Keys for spaces the sender may not hold are ignored.
+  /// Offers a space key to the engine, which keeps it when its maker's statement verifies: a
+  /// newer epoch becomes current, another key for an epoch already held becomes a candidate for
+  /// it (every replica picks the same one), an older epoch is kept for reading old mailboxes.
+  /// Whatever changed the key in use is passed on to other peers. Keys for spaces the sender
+  /// may not hold, and keys without a valid statement, are ignored.
   Future<void> _onKeys(Map<String, Object?> m) async {
     if (!_syncing || (isClient && !_trusted)) throw _Violation('not-approved');
     final grant = SpaceKeyGrant.fromJson(m);
     if (grant == null) throw _Violation('bad-keys');
-    _notePeerKey(grant.space, grant.epoch);
-    if (_den.device(deviceId) != null && !_node._spacesFor(deviceId).contains(grant.space)) return;
-    if (await _den.spaceKey(grant.space, epoch: grant.epoch) != null) return;
-    final current = _node._epochOf(grant.space);
-    await _den.setSpaceKey(grant.space, grant.key, epoch: grant.epoch);
-    _node.noteLearnedKey(grant.space, grant.epoch);
-    if (current == null || grant.epoch > current) _node._scheduleChangeScan();
+    final key = grant.spaceKey;
+    _notePeerKey(key.space, key.epoch, key.hash);
+    if (_den.device(deviceId) != null && !_node._spacesFor(deviceId).contains(key.space)) return;
+    if (await _den.addSpaceKey(key) == SpaceKeyOutcome.stored) _node._scheduleChangeScan();
   }
 
-  void _notePeerKey(String space, int epoch) {
-    if (epoch > (_peerKeys[space] ?? -1)) _peerKeys[space] = epoch;
+  void _notePeerKey(String space, int epoch, [String? hash]) {
+    final known = _peerEpochs[space] ?? -1;
+    if (epoch > known) {
+      _peerEpochs[space] = epoch;
+      _peerHashes[space] = {?hash};
+    } else if (epoch == known && hash != null) {
+      _peerHashes.putIfAbsent(space, () => {}).add(hash);
+    }
   }
 
-  /// Sends the current key of each space the peer may hold (by this replica's view, right now)
-  /// when the peer hasn't said it has that epoch or a newer one.
+  /// Sends the key in use for each space the peer may hold (by this replica's view, right now)
+  /// unless the peer has said it holds a newer epoch, or that very key.
   Future<void> _sendMissingKeys() async {
     if (!_syncing || session.isClosed || _node._keyPushHolds > 0) return;
     for (final space in _node._spacesFor(deviceId)) {
-      final epoch = _node._epochOf(space);
-      if (epoch == null || (_peerKeys[space] ?? -1) >= epoch) continue;
-      final key = await _den.spaceKey(space, epoch: epoch);
+      final key = await _den.spaceKeyToShare(space);
       if (key == null) continue;
-      _notePeerKey(space, epoch);
-      await _send(SpaceKeyGrant(space: space, epoch: epoch, key: Uint8List.fromList(key)).toJson());
+      final peerEpoch = _peerEpochs[space] ?? -1;
+      if (peerEpoch > key.epoch || (peerEpoch == key.epoch && (_peerHashes[space]?.contains(key.hash) ?? false))) {
+        continue;
+      }
+      _notePeerKey(space, key.epoch, key.hash);
+      await _send(SpaceKeyGrant.of(key).toJson());
     }
   }
 

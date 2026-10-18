@@ -139,13 +139,15 @@ class MailboxRound {
 ///
 /// Each round, a device:
 ///
-/// 1. takes space keys sealed to it from its inbox (from an approved parent's device);
-/// 2. for every space it holds a key for, reads the mailbox of the current key epoch, and of
-///    each older epoch until [drainWindow] after it first saw a newer one, so whatever devices
-///    posted before they had the new key is still read; changes are deduplicated by id;
-/// 3. on a parent's device, leaves a key epoch it made itself (a rotation after a revocation)
-///    in the inbox of every other device that may hold the space;
-/// 4. posts to the current epoch's mailbox the changes from the last [window] that mailbox
+/// 1. takes space keys sealed to it from its inbox, keeping those whose maker's statement
+///    verifies (see den_core's `SpaceKey`);
+/// 2. for every space it holds a key for, reads the mailbox of each key it holds for the
+///    current epoch (another parent's key for the same epoch included), and of each older epoch
+///    until [drainWindow] after it first saw a newer one, so whatever devices posted before they
+///    had the key in use is still read; changes are deduplicated by id;
+/// 3. on a device that makes keys, leaves the key in use in the inbox of every other device that
+///    may hold the space when this device made it (a rotation after a revocation);
+/// 4. posts to the mailbox of the key in use the changes from the last [window] that mailbox
 ///    doesn't hold yet.
 ///
 /// Key pushes to live sessions are held during the round, so keys that arrived with a
@@ -212,9 +214,10 @@ class MailboxSync {
               return MailboxRound(received: 0, posted: 0, skipped: 0, keysStored: keysStored);
             }
             for (final space in spaces.toList()..sort()) {
-              final current = _den.spaceKeyEpoch(space);
-              final currentKey = current == null ? null : await _den.spaceKey(space, epoch: current);
-              if (current == null || currentKey == null) continue;
+              final inUse = _den.currentSpaceKey(space);
+              if (inUse == null) continue;
+              final current = inUse.epoch;
+              final currentKey = inUse.key;
               final now = _now();
               final metaKey = 'epochs:${_den.familyId}:$space';
               final meta = await state.read(metaKey) ?? const {};
@@ -224,32 +227,40 @@ class MailboxSync {
               };
               seenAt.putIfAbsent(current, () => now);
 
-              // Read the current epoch's mailbox, then older ones still being drained.
-              final epochs = <int, List<int>>{current: currentKey};
-              for (var e = current - 1; e >= 0; e--) {
-                final key = await _den.spaceKey(space, epoch: e);
-                if (key == null) break;
+              // Read the mailbox of the key in use, then the other keys for its epoch, then older
+              // epochs still being drained.
+              final boxes = <SpaceKey>[
+                inUse,
+                for (final k in _den.spaceKeysAt(space, current))
+                  if (k.hash != inUse.hash) k,
+              ];
+              // Epochs can have gaps (a key that never left the device that made it), so walk the
+              // ones held rather than counting down.
+              for (final e in _den.spaceKeyEpochs(space).reversed) {
+                if (e >= current) continue;
+                final keys = _den.spaceKeysAt(space, e);
                 final newer = [
                   for (final s in seenAt.entries)
                     if (s.key > e) s.value,
                 ];
                 final since = newer.isEmpty ? now : newer.reduce((a, b) => a < b ? a : b);
                 if (now - since > drainWindow.inMilliseconds) break;
-                epochs[e] = key;
+                boxes.addAll(keys);
               }
               final ids = <String>{};
               final incoming = <Change>[];
               _Seen? currentSeen;
               String? currentId;
               int currentCursor = 0;
-              for (final entry in epochs.entries) {
-                final epoch = entry.key;
-                final key = entry.value;
+              for (final box in boxes) {
+                final epoch = box.epoch;
+                final key = box.key;
+                final posting = identical(box, inUse);
                 final id = await mailboxId(key, epoch);
                 final saved = await state.read('mailbox:$id');
                 var cursor = saved?['cursor'] as int? ?? 0;
                 var seen = _Seen.fromJson(asJsonObject(saved?['seen']));
-                if (saved == null && epoch == current) {
+                if (saved == null && posting) {
                   // A new epoch's mailbox starts out knowing what the previous one holds, so the
                   // switch doesn't repost a month of changes that are still being drained.
                   final previous = current > 0 ? await _den.spaceKey(space, epoch: current - 1) : null;
@@ -274,7 +285,7 @@ class MailboxSync {
                   cursor = page.next;
                   if (!page.more || page.entries.isEmpty) break;
                 }
-                if (epoch == current) {
+                if (posting) {
                   currentSeen = seen;
                   currentId = id;
                   currentCursor = cursor;
@@ -287,26 +298,32 @@ class MailboxSync {
                 received += result?.added ?? 0;
               }
 
+              // What was read can change the key in use: a revocation this device hadn't heard
+              // of makes it rotate again. Deliver the newest key, and post only while the key
+              // this round read with is still the one in use; the next round posts under the new
+              // one, so nothing goes into a mailbox only this device can read.
+              final latest = _den.currentSpaceKey(space);
               var deliveredEpoch = meta['delivered'] as int? ?? -1;
-              if (current > deliveredEpoch) {
-                if (!node.learnedKey(space, current) && _den.owner?.isParent == true) {
-                  delivered += await _deliver(space, current, currentKey);
-                }
-                deliveredEpoch = current;
+              if (latest != null && latest.epoch > deliveredEpoch) {
+                final made = _den.makesSpaceKeys ? await _den.spaceKeyToShare(space) : null;
+                if (made != null && made.by == _den.deviceId) delivered += await _deliver(made);
+                deliveredEpoch = latest.epoch;
               }
 
               final seen = currentSeen!;
-              final cutoff = _now() - window.inMilliseconds;
-              final outgoing = [
-                for (final c in _den.changesSince(const {}, spaces: {space}))
-                  if (c.hlc.millis >= cutoff && !seen.contains(c.device, c.counter)) c,
-              ];
-              for (final batch in _batches(outgoing)) {
-                await relay.append(currentId!, await sealChanges(currentKey, space: space, epoch: current, changes: batch));
-                for (final c in batch) {
-                  seen.add(c.device, c.counter);
+              if (latest?.hash == inUse.hash) {
+                final cutoff = _now() - window.inMilliseconds;
+                final outgoing = [
+                  for (final c in _den.changesSince(const {}, spaces: {space}))
+                    if (c.hlc.millis >= cutoff && !seen.contains(c.device, c.counter)) c,
+                ];
+                for (final batch in _batches(outgoing)) {
+                  await relay.append(currentId!, await sealChanges(currentKey, space: space, epoch: current, changes: batch));
+                  for (final c in batch) {
+                    seen.add(c.device, c.counter);
+                  }
+                  posted += batch.length;
                 }
-                posted += batch.length;
               }
               await state.write('mailbox:$currentId', {'cursor': currentCursor, 'seen': seen.toJson()});
               await state.write(metaKey, {
@@ -332,37 +349,36 @@ class MailboxSync {
     }
     var count = 0;
     for (final space in _den.spacesForDevice(deviceId)) {
-      final epoch = _den.spaceKeyEpoch(space);
-      final key = epoch == null ? null : await _den.spaceKey(space, epoch: epoch);
-      if (epoch == null || key == null) continue;
-      await _sealTo(device, space, epoch, key);
+      final key = await _den.spaceKeyToShare(space);
+      if (key == null) continue;
+      await _sealTo(device, key);
       count++;
     }
     return count;
   }
 
-  /// Reads this device's relay inbox and stores space keys (by epoch) sealed to it by an
-  /// approved parent's device. Envelopes from devices this replica doesn't know yet are retried
-  /// next time. Returns how many keys were stored.
+  /// Reads this device's relay inbox and stores space keys sealed to it by an approved device of
+  /// the family, when the key's maker's statement verifies. Envelopes from devices this replica
+  /// doesn't know yet are retried next time. Returns how many keys were stored.
   Future<int> receiveKeys() => _queue.run(() => node.withKeyPushHeld(_receiveKeys));
 
-  Future<int> _deliver(String space, int epoch, List<int> key) async {
+  Future<int> _deliver(SpaceKey key) async {
     var count = 0;
     for (final device in _den.devices) {
       if (device.id == _den.deviceId || !device.approved || device.revoked || device.xpub.isEmpty) continue;
-      if (!_den.spacesForDevice(device.id).contains(space)) continue;
-      await _sealTo(device, space, epoch, key);
+      if (!_den.spacesForDevice(device.id).contains(key.space)) continue;
+      await _sealTo(device, key);
       count++;
     }
     return count;
   }
 
-  Future<void> _sealTo(Device device, String space, int epoch, List<int> key) async {
+  Future<void> _sealTo(Device device, SpaceKey key) async {
     final envelope = await sealSpaceKey(
       sender: _den.keys,
       recipientDevice: device.id,
       recipientXpub: device.xpub,
-      grant: SpaceKeyGrant(space: space, epoch: epoch, key: Uint8List.fromList(key)),
+      grant: SpaceKeyGrant.of(key),
     );
     await relay.append(await deviceInboxId(device.xpub), utf8Bytes(jsonEncode(envelope)));
   }
@@ -393,15 +409,12 @@ class MailboxSync {
           blocked = true;
           break;
         }
-        final owner = sender.member == null ? null : _den.member(sender.member!);
-        if (sender.approved && !sender.revoked && owner != null && owner.isParent) {
+        if (sender.approved && !sender.revoked) {
           try {
             final grant = await openSpaceKey(envelope, recipient: _den.keys, senderPubkey: sender.pubkey);
-            if (await _den.spaceKey(grant.space, epoch: grant.epoch) == null) {
-              await _den.setSpaceKey(grant.space, grant.key, epoch: grant.epoch);
-              node.noteLearnedKey(grant.space, grant.epoch);
-              stored++;
-            }
+            // A key whose maker this replica hasn't heard of waits in the engine until the
+            // maker's record arrives, which this round's mailbox reads usually bring.
+            if (await _den.addSpaceKey(grant.spaceKey) == SpaceKeyOutcome.stored) stored++;
           } on SealException {
             // Forged or damaged; skip it.
           }

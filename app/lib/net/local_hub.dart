@@ -2,6 +2,7 @@ import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
 import 'package:flutter/foundation.dart';
 
+import 'hub_keep_alive.dart';
 import 'local_hub_stub.dart' if (dart.library.io) 'local_hub_io.dart' as impl;
 
 enum LocalHubState { off, starting, running, failed }
@@ -11,8 +12,10 @@ enum LocalHubState { off, starting, running, failed }
 /// browsers and iOS get [supported] false.
 abstract class LocalHub extends ChangeNotifier {
   /// [port] 0 picks a free one and [dataDir] null uses the app's support directory, for tests.
-  static LocalHub create({int port = 47733, bool mdns = true, String? dataDir}) =>
-      impl.createLocalHub(port: port, mdns: mdns, dataDir: dataDir);
+  /// [keepAlive] defaults to the platform's ([HubKeepAlive.platform]): on Android, the
+  /// foreground service that keeps the hub running while the app is in the background.
+  static LocalHub create({int port = 47733, bool mdns = true, String? dataDir, HubKeepAlive? keepAlive}) =>
+      impl.createLocalHub(port: port, mdns: mdns, dataDir: dataDir, keepAlive: keepAlive);
 
   /// Whether this platform can run the hub in-process.
   static bool get supported => impl.localHubSupported;

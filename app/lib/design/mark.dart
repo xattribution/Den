@@ -27,6 +27,10 @@ class DenMarkPainter extends CustomPainter {
   final DenColors colors;
   final bool background;
 
+  /// The doorway's place in the mark's square, as fractions of its side. Apart from the
+  /// background, everything the mark paints is inside it.
+  static const doorway = Rect.fromLTRB(0.17, 0.18, 0.83, 0.86);
+
   static const _people = [
     (Marker.blue, 0.86),
     (Marker.orange, 0.52),
@@ -39,10 +43,10 @@ class DenMarkPainter extends CustomPainter {
     final s = size.width;
     if (background) canvas.drawRect(Offset.zero & size, Paint()..color = colors.paper);
 
-    final doorLeft = s * 0.17;
-    final doorWidth = s * 0.66;
-    final doorTop = s * 0.18;
-    final doorBottom = s * 0.86;
+    final doorLeft = s * doorway.left;
+    final doorWidth = s * doorway.width;
+    final doorTop = s * doorway.top;
+    final doorBottom = s * doorway.bottom;
     final radius = doorWidth / 2;
     final door = Path()
       ..moveTo(doorLeft, doorBottom)

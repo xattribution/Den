@@ -151,6 +151,10 @@ Future<int> status(DataDir data, int port, CliIo io) async {
     final setup = await _getJson(base.resolve('/api/v1/hub/status'));
     io.out.writeln('Running: ${health['name']} (${health['device']}), den_hub ${health['version']}');
     io.out.writeln(health['ready'] == true ? 'In a family and serving.' : 'Setup: ${setup?['stage'] ?? 'unknown'}');
+    final words = setup?['matching_words'];
+    if (words is List && words.isNotEmpty) {
+      io.out.writeln('Matching words: ${words.join(' ')} (approve this hub in the Den app only if it shows the same three)');
+    }
     return 0;
   }
   if (!data.exists) {

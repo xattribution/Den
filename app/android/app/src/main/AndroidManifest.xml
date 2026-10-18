@@ -3,6 +3,13 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- mDNS: finding hubs on the home Wi-Fi and advertising this device's hub. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
+    <!-- "Keep the family online": HubService keeps the in-app hub running in the background,
+         as a connected-device foreground service (other devices on the network sync with it),
+         with its notification, the CPU awake and the Wi-Fi up. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <application
         android:label="Den"
         android:name="${applicationName}"
@@ -29,6 +36,10 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <service
+            android:name=".HubService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

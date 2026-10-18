@@ -16,6 +16,7 @@ import 'points.dart';
 import 'rrule.dart';
 import 'schema.dart';
 import 'secrets.dart';
+import 'space_keys.dart';
 import 'storage.dart';
 import 'store.dart';
 import 'time.dart';
@@ -266,9 +267,8 @@ class Den {
         final id = familyIdFor(_keys.pubkey, first.millis);
         final memberId = newId();
         _setRoot(id, _keys.pubkey);
-        final spaceKeys = _spaceKeys;
         for (final s in [Space.family, Space.parents, Space.member(memberId)]) {
-          spaceKeys[s] = {'0': b64e(randomBytes(32))};
+          _keyring[s] = {0: [await _makeSpaceKey(s, 0)]};
         }
         try {
           await _commitNow([
@@ -309,6 +309,7 @@ class Den {
           _meta.remove('familyId');
           _meta.remove('founderPubkey');
           _root = TrustRoot();
+          _keyring.clear();
           rethrow;
         }
       });
@@ -353,6 +354,8 @@ class Den {
         _meta = {};
         _floor.clear();
         _pending.clear();
+        _keyring.clear();
+        _pendingKeys.clear();
         _pubkeys
           ..clear()
           ..[deviceId] = _keys.pubkey;
@@ -482,7 +485,7 @@ class Den {
         'order': order,
       }),
     ]);
-    await setSpaceKey(Space.member(id), randomBytes(32));
+    await _locked(() => _rotateNow({Space.member(id)}));
     return id;
   }
 
@@ -507,7 +510,7 @@ class Den {
       for (final d in owned) _Draft(RecordType.device, d, Space.family, {'revoked': true}),
       _Draft(RecordType.member, id, Space.family, {'_deleted': true}),
     ]);
-    await _rotateSpaceKeys(held);
+    await _locked(() => _rotateNow(held));
   }
 
   /// Sets how a member signs in on shared screens: `pin` (4 digits), `pattern` (4 animals as
@@ -555,7 +558,7 @@ class Den {
     if (device(deviceId) == null) throw const InvalidInput('That device isn\'t in the family');
     final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
     await _commit([_Draft(RecordType.device, deviceId, Space.family, {'revoked': true})]);
-    await _rotateSpaceKeys(held);
+    await _locked(() => _rotateNow(held));
   }
 
   /// Changes another device's settings (parents), or this device's own name, display settings or
@@ -1995,6 +1998,7 @@ class Den {
         }
         if (floorMoved) await _saveMeta();
         if (accepted.isNotEmpty) _emit({for (final c in accepted) c.type});
+        if (accepted.isNotEmpty) await _afterKeyFacts();
         return IngestResult(
           added: accepted.length,
           duplicate: duplicate,
@@ -2012,61 +2016,273 @@ class Den {
     return spacesFor(device: d, owner: owner, family: family, members: members);
   }
 
-  /// space -> key, or (with epochs) space -> {epoch: key}; a map this engine owns, so storage can
-  /// hand back any map type.
-  Map<String, Object?> get _spaceKeys {
-    final raw = _meta['spaceKeys'];
-    if (raw is Map && identical(raw, _ownedSpaceKeys)) return _ownedSpaceKeys;
-    _ownedSpaceKeys = {
-      if (raw is Map)
-        for (final e in raw.entries) '${e.key}': e.value is Map ? Map<String, Object?>.from(e.value as Map) : e.value,
-    };
-    _meta['spaceKeys'] = _ownedSpaceKeys;
-    return _ownedSpaceKeys;
+  // ---------------------------------------------------------------- space keys
+
+  /// space -> epoch -> candidate keys. Persisted in metadata as `spaceKeys`.
+  final Map<String, Map<int, List<SpaceKey>>> _keyring = {};
+
+  /// Keys whose maker's device record hasn't arrived, by `space@epoch@hash`.
+  final Map<String, SpaceKey> _pendingKeys = {};
+
+  /// Most candidates kept for one epoch: parents racing each other make two or three.
+  static const int maxKeysPerEpoch = 8;
+
+  /// Most keys waiting for their maker's device record.
+  static const int maxPendingKeys = 64;
+
+  /// Whether this device may make space keys: an approved hub, or an approved personal device
+  /// owned by a parent.
+  bool get makesSpaceKeys {
+    final d = thisDevice;
+    return d != null && _makesKeys(d);
   }
 
-  Map<String, Object?> _ownedSpaceKeys = {};
+  bool _makesKeys(Device d) {
+    if (!d.approved || d.revoked) return false;
+    if (d.mode == DeviceMode.hub) return true;
+    if (d.mode != DeviceMode.personal || d.member == null) return false;
+    return member(d.member!)?.isParent ?? false;
+  }
 
-  /// Keys by epoch for a space.
-  Map<int, String> _keysOf(String space) {
-    final raw = _spaceKeys[space];
-    if (raw is String) return {0: raw};
-    if (raw is! Map) return {};
-    return {
-      for (final e in raw.entries)
-        if (int.tryParse('${e.key}') != null && e.value is String) int.parse('${e.key}'): e.value as String,
-    };
+  /// A bound key counts while its maker is this device or an approved device not revoked since:
+  /// a key minted by a device after it was revoked (a stolen phone, say) never wins.
+  bool _inGoodStanding(SpaceKey key) {
+    if (key.by == deviceId) return true;
+    final d = device(key.by!);
+    return d != null && d.approved && !d.revoked;
+  }
+
+  bool _usable(SpaceKey key) => !key.bound || _inGoodStanding(key);
+
+  /// Approved devices that are revoked now: what a new key's statement lists.
+  List<String> _revokedDevices() => [
+        for (final d in devices)
+          if (d.approved && d.revoked) d.id,
+      ]..sort();
+
+  /// The current key epoch for a space: the newest epoch with a key this device may seal with
+  /// (one stored here without a statement, or one whose maker is in good standing), or null.
+  int? spaceKeyEpoch(String space) {
+    int? best;
+    for (final e in (_keyring[space] ?? const <int, List<SpaceKey>>{}).entries) {
+      if ((best == null || e.key > best) && e.value.any(_usable)) best = e.key;
+    }
+    return best;
+  }
+
+  /// The key a space uses at [epoch] (default: the current one), with its maker's statement:
+  /// of several keys for one epoch, every replica picks the same ([pickSpaceKey]).
+  SpaceKey? currentSpaceKey(String space, {int? epoch}) {
+    final e = epoch ?? spaceKeyEpoch(space);
+    final list = e == null ? null : _keyring[space]?[e];
+    return list == null ? null : pickSpaceKey(list, _inGoodStanding);
   }
 
   /// Space keys used to seal changes on the relay mailbox: the current one, or the one for
-  /// [epoch]. Generated at genesis per space, when a member is added, and rotated when a device
+  /// [epoch]. Made at genesis per space and when a member is added, and rotated when a device
   /// that held the space is revoked.
-  Future<List<int>?> spaceKey(String space, {int? epoch}) async {
-    final keys = _keysOf(space);
-    if (keys.isEmpty) return null;
-    final key = keys[epoch ?? keys.keys.reduce(math.max)];
-    return key == null ? null : b64d(key);
+  Future<List<int>?> spaceKey(String space, {int? epoch}) async => currentSpaceKey(space, epoch: epoch)?.key;
+
+  /// Every key held for [space] at [epoch], the one in use first: mailboxes of the others are
+  /// still read, since devices may have posted there before they saw the one in use.
+  List<SpaceKey> spaceKeysAt(String space, int epoch) {
+    final list = _keyring[space]?[epoch];
+    if (list == null || list.isEmpty) return const [];
+    final winner = pickSpaceKey(list, _inGoodStanding)!;
+    return [
+      winner,
+      for (final k in list)
+        if (!identical(k, winner)) k,
+    ];
   }
 
-  /// The current key's epoch for a space, or null when this device has no key for it.
-  int? spaceKeyEpoch(String space) {
-    final keys = _keysOf(space);
-    return keys.isEmpty ? null : keys.keys.reduce(math.max);
+  /// Epochs held for [space], oldest first.
+  List<int> spaceKeyEpochs(String space) => (_keyring[space]?.keys.toList() ?? <int>[])..sort();
+
+  /// Stores a key without a statement: trusted on this device, losing to any bound key for the
+  /// same epoch, and replacing an earlier key stored this way for it. Older epochs are kept for
+  /// reading what was sealed with them.
+  Future<void> setSpaceKey(String space, List<int> key, {int epoch = 0}) => _locked(() async {
+        if (key.length != 32) throw const InvalidInput('A space key is 32 bytes');
+        if (epoch < 0) throw const InvalidInput('A key epoch can\'t be negative');
+        final list = _keyring.putIfAbsent(space, () => {}).putIfAbsent(epoch, () => []);
+        final k = SpaceKey(space: space, epoch: epoch, key: key);
+        if (list.any((c) => c.hash == k.hash)) return;
+        list
+          ..removeWhere((c) => !c.bound)
+          ..add(k);
+        await _saveMeta();
+      });
+
+  /// Takes a key another device passed on. It is kept when its maker's statement verifies and the
+  /// maker may make keys (a parent's device or a hub, approved and not revoked); a key for an
+  /// epoch this device already holds becomes another candidate for it. Then, on a device that
+  /// makes keys, a space whose key in use may have reached a revoked device is rotated
+  /// ([staleSpaceKeys]).
+  Future<SpaceKeyOutcome> addSpaceKey(SpaceKey key) => _locked(() async {
+        final outcome = await _admitKey(key);
+        if (outcome == SpaceKeyOutcome.stored) await _afterKeyFacts();
+        return outcome;
+      });
+
+  Future<SpaceKeyOutcome> _admitKey(SpaceKey key) async {
+    final family = familyId;
+    if (!key.bound || family == null) return SpaceKeyOutcome.refused;
+    final list = _keyring[key.space]?[key.epoch];
+    final same = list?.firstWhereOrNull((c) => c.hash == key.hash);
+    if (same != null && same.bound) return SpaceKeyOutcome.duplicate;
+    final maker = device(key.by!);
+    if (maker == null) {
+      if (_pendingKeys.length < maxPendingKeys) _pendingKeys['${key.space}@${key.epoch}@${key.hash}'] = key;
+      return SpaceKeyOutcome.waiting;
+    }
+    if (!_makesKeys(maker) || !await verifySignature(key.statementBytes(family), key.sig!, maker.pubkey)) {
+      return SpaceKeyOutcome.refused;
+    }
+    final held = _keyring.putIfAbsent(key.space, () => {}).putIfAbsent(key.epoch, () => []);
+    if (same != null) {
+      held.remove(same);
+    } else if (held.length >= maxKeysPerEpoch) {
+      // Full: keep the lowest hashes, as every replica does, so they still agree on the pick.
+      final highest = held.reduce((a, b) => a.hash.compareTo(b.hash) >= 0 ? a : b);
+      if (key.hash.compareTo(highest.hash) >= 0) return SpaceKeyOutcome.refused;
+      held.remove(highest);
+    }
+    held.add(key);
+    await _saveMeta();
+    return SpaceKeyOutcome.stored;
   }
 
-  /// Stores a space key received from another device. Older epochs are kept for reading what
-  /// was sealed with them.
-  Future<void> setSpaceKey(String space, List<int> key, {int epoch = 0}) async {
-    if (key.length != 32) throw const InvalidInput('A space key is 32 bytes');
-    if (epoch < 0) throw const InvalidInput('A key epoch can\'t be negative');
-    final keys = _keysOf(space)..[epoch] = b64e(key);
-    _spaceKeys[space] = {for (final e in keys.entries) '${e.key}': e.value};
+  /// The current key of [space] with a statement, to pass on to another device. A key stored here
+  /// without one is signed as this device's own first (listing no revoked devices, since this
+  /// device can't vouch for what its maker knew), which only a device that makes keys can do;
+  /// otherwise null.
+  Future<SpaceKey?> spaceKeyToShare(String space) async {
+    final inUse = currentSpaceKey(space);
+    if (inUse == null || inUse.bound) return inUse;
+    if (!makesSpaceKeys) return null;
+    return _locked(() async {
+      final current = currentSpaceKey(space);
+      if (current == null || current.bound) return current;
+      final draft = SpaceKey(space: space, epoch: current.epoch, key: current.key, by: deviceId, sig: '');
+      final adopted = draft.signed(by: deviceId, revoked: const [], sig: await _keys.sign(draft.statementBytes(familyId!)));
+      _keyring[space]![current.epoch]!
+        ..remove(current)
+        ..add(adopted);
+      await _saveMeta();
+      return adopted;
+    });
+  }
+
+  /// Spaces whose key in use may have reached a revoked device: some key held for the space
+  /// lists a device that is revoked now, and the key in use doesn't. Its maker didn't know of
+  /// that revocation (two parents revoking while out of touch, or a rotation made before the
+  /// news arrived), so it may have handed the key to that device.
+  Set<String> get staleSpaceKeys {
+    final revoked = _revokedDevices().toSet();
+    if (revoked.isEmpty) return const {};
+    final stale = <String>{};
+    for (final entry in _keyring.entries) {
+      final current = currentSpaceKey(entry.key);
+      if (current == null) continue;
+      final covered = current.revoked.toSet();
+      final listed = {
+        for (final list in entry.value.values)
+          for (final k in list) ...k.revoked,
+      };
+      if (listed.any((d) => revoked.contains(d) && !covered.contains(d))) stale.add(entry.key);
+    }
+    return stale;
+  }
+
+  /// After new changes or a new key: admits keys whose maker has now arrived, then rotates
+  /// stale spaces when this device makes keys. Runs inside the lock.
+  Future<void> _afterKeyFacts() async {
+    if (_pendingKeys.isNotEmpty) {
+      final waiting = Map.of(_pendingKeys);
+      _pendingKeys.clear();
+      for (final k in waiting.values) {
+        await _admitKey(k);
+      }
+    }
+    if (makesSpaceKeys) await _rotateNow(staleSpaceKeys);
+  }
+
+  /// A new random key for [space] at [epoch], signed by this device with today's revoked devices.
+  Future<SpaceKey> _makeSpaceKey(String space, int epoch) async {
+    final revoked = _revokedDevices();
+    final draft = SpaceKey(space: space, epoch: epoch, key: randomBytes(32), by: deviceId, revoked: revoked, sig: '');
+    return draft.signed(by: deviceId, revoked: revoked, sig: await _keys.sign(draft.statementBytes(familyId!)));
+  }
+
+  /// Makes a new key for each of [spaces], one epoch past every epoch held for it. Runs inside
+  /// the lock.
+  Future<void> _rotateNow(Set<String> spaces) async {
+    if (spaces.isEmpty || familyId == null) return;
+    for (final s in spaces.toList()..sort()) {
+      final epochs = _keyring.putIfAbsent(s, () => {});
+      final epoch = epochs.isEmpty ? 0 : epochs.keys.reduce(math.max) + 1;
+      epochs[epoch] = [await _makeSpaceKey(s, epoch)];
+    }
     await _saveMeta();
   }
 
-  Future<void> _rotateSpaceKeys(Set<String> spaces) async {
-    for (final s in spaces.toList()..sort()) {
-      await setSpaceKey(s, randomBytes(32), epoch: (spaceKeyEpoch(s) ?? -1) + 1);
+  Map<String, Object?> _keyringJson() => {
+        for (final s in _keyring.entries)
+          s.key: {
+            for (final e in s.value.entries)
+              '${e.key}': [
+                for (final k in e.value)
+                  {
+                    'k': b64e(k.key),
+                    if (k.bound) ...{'by': k.by, 'rv': k.revoked, 'sig': k.sig},
+                  },
+              ],
+          },
+      };
+
+  /// Reads `spaceKeys`: space -> {epoch: [{k, by, rv, sig}]}, or, from before keys were bound,
+  /// space -> {epoch: key} and space -> key (epoch 0).
+  void _loadKeyring(Object? raw) {
+    _keyring.clear();
+    if (raw is! Map) return;
+    for (final s in raw.entries) {
+      final space = '${s.key}';
+      SpaceKey? parse(int epoch, Object? v) {
+        try {
+          if (v is String) return SpaceKey(space: space, epoch: epoch, key: b64d(v));
+          if (v is! Map) return null;
+          final by = v['by'] as String?;
+          return SpaceKey(
+            space: space,
+            epoch: epoch,
+            key: b64d(v['k']! as String),
+            by: by,
+            revoked: [for (final d in (v['rv'] as List?) ?? const []) '$d'],
+            sig: by == null ? null : v['sig'] as String?,
+          );
+        } on Object {
+          return null;
+        }
+      }
+
+      final epochs = <int, List<SpaceKey>>{};
+      final value = s.value;
+      if (value is String) {
+        final k = parse(0, value);
+        if (k != null) epochs[0] = [k];
+      } else if (value is Map) {
+        for (final e in value.entries) {
+          final epoch = int.tryParse('${e.key}');
+          if (epoch == null || epoch < 0) continue;
+          final items = e.value is List ? e.value as List : [e.value];
+          final list = [
+            for (final item in items) ?parse(epoch, item),
+          ];
+          if (list.isNotEmpty) epochs[epoch] = list;
+        }
+      }
+      if (epochs.isNotEmpty) _keyring[space] = epochs;
     }
   }
 
@@ -2126,11 +2342,13 @@ class Den {
         if (e.value is int) _floor['${e.key}'] = e.value as int;
       }
     }
+    _loadKeyring(_meta['spaceKeys']);
   }
 
   Future<void> _saveMeta() async {
     _meta['counter'] = _counter;
     _meta['floor'] = Map<String, Object?>.of(_floor);
+    _meta['spaceKeys'] = _keyringJson();
     await _storage.saveMeta(Map.of(_meta));
   }
 

@@ -149,6 +149,17 @@ abstract class HubSetupSession extends ChangeNotifier {
   /// The three matching words, once the hub has asked to join.
   List<String> get words;
 
+  /// The words the hub itself reports for the same connection (its status while it waits),
+  /// empty when it didn't say.
+  List<String> get hubWords => const [];
+
+  /// Whether the hub reports this phone's words; null when it reported none to compare.
+  bool? get wordsMatch {
+    final theirs = hubWords;
+    if (theirs.isEmpty || words.isEmpty) return null;
+    return theirs.length == words.length && [for (var i = 0; i < words.length; i++) theirs[i] == words[i]].every((same) => same);
+  }
+
   Future<void> approve();
   Future<void> cancel();
 }

@@ -34,7 +34,8 @@ covers `/health`, everything under `/api/v1`, and the mDNS advertisement.
   [`POST /api/v1/points/adjust`](#post-apiv1pointsadjust) ·
   [`GET /api/v1/history`](#get-apiv1history) ·
   [`GET /api/v1/search`](#get-apiv1search) ·
-  [`GET /api/v1/stream`](#get-apiv1stream-server-sent-events)
+  [`GET /api/v1/stream`](#get-apiv1stream-server-sent-events) ·
+  [`GET /api/v1/hub/status`](#get-apiv1hubstatus)
 
 ## Conventions
 
@@ -1084,7 +1085,40 @@ Suggested refetch by type, for clients that cache:
 
 ## Hub setup and browser linking
 
-These endpoints let a fresh hub join a family and let a browser link to it. They're specified in
-`packages/den_hub/README.md`: `GET /api/v1/hub/status`, `POST /api/v1/hub/setup`,
-`GET /api/v1/hub/setup/ws`, `POST /api/v1/link`, `POST /api/v1/link/{slot}` and
-`GET /api/v1/link/{slot}`.
+These endpoints let a fresh hub join a family and let a browser link to it. `GET
+/api/v1/hub/status` is specified here; `POST /api/v1/hub/setup`, `GET /api/v1/hub/setup/ws`,
+`POST /api/v1/link`, `POST /api/v1/link/{slot}` and `GET /api/v1/link/{slot}` are specified in
+`packages/den_hub/README.md`.
+
+### `GET /api/v1/hub/status`
+
+No token. Where the hub is in joining a family, for the app's "Add a hub" screen and
+`den_hub status`.
+
+```json
+{
+  "paired": false,
+  "device": "h7q2kx4m9pa3tbv6",
+  "name": "Closet hub",
+  "version": "0.1.0",
+  "setup_needed": false,
+  "stage": "waiting_for_approval",
+  "matching_words": ["lantern", "meadow", "copper"]
+}
+```
+
+| Field | |
+| --- | --- |
+| `paired` | In a family and approved |
+| `device` | The hub's device id |
+| `name` | The hub's name |
+| `version` | `den_hub`'s version |
+| `setup_needed` | No family and no join under way: a parent's phone can send the setup code |
+| `stage` | `waiting_for_code`, `joining`, `waiting_for_approval`, `syncing` or `ready` |
+| `matching_words` | Present only while the pairing session with the inviting phone is up (`joining` through `syncing`): the three words both ends derive from that session's transcript (den_net's matching words). The phone shows its own three; a parent approves only if they're the same. The hub also logs them at info level and `den_hub status` prints them |
+| `last_error` | Why the last join didn't finish (`timed-out`, `unreachable`, or the phone's reason), until the hub is ready |
+
+The words are not a secret: a relay or anything else in the middle that ran two sessions would
+produce two transcripts, so the two ends would show different words. This answer travels over
+plain HTTP on the home network, so it backs up, and doesn't replace, comparing with the hub's log
+when the network itself isn't trusted.

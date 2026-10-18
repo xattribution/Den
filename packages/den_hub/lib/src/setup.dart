@@ -78,6 +78,10 @@ class HubSetup {
   /// Why the last join attempt failed.
   String? get lastError => _lastError;
 
+  /// The three words derived from the pairing session with the inviting phone, while that
+  /// session is up. The phone shows the same three; a parent approves only if they match.
+  List<String>? get matchingWords => _attempt?.matchingWords;
+
   HubLog get _log => hub.log;
 
   File? get _codeFile {
@@ -142,6 +146,7 @@ class HubSetup {
           SetupStage.syncing => 'syncing',
           SetupStage.ready => 'ready',
         },
+        'matching_words': ?matchingWords,
         if (_lastError != null && !hub.ready) 'last_error': _lastError,
       });
 
@@ -238,6 +243,8 @@ class HubSetup {
         kind: DeviceKind.hub,
         mode: DeviceMode.hub,
       );
+      _log.info('Matching words: ${attempt.matchingWords.join(' ')}. The Den app shows three words too; '
+          'approve this hub there only if they\'re the same.');
       attempt.stages.listen((s) {
         if (s == JoinStage.waitingForApproval) {
           _stage = SetupStage.waitingForApproval;

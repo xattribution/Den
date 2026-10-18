@@ -197,6 +197,38 @@ class _AddHubScreenState extends State<AddHubScreen> {
   }
 }
 
+/// How the hub's own words compare with this phone's: the same, different (someone may be in
+/// the middle, so approving is off), or not reported (compare with the hub's log by eye).
+class _WordsCheck extends StatelessWidget {
+  const _WordsCheck({required this.name, required this.matches, required this.hubWords});
+  final String name;
+  final bool? matches;
+  final List<String> hubWords;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return switch (matches) {
+      true => Row(
+          children: [
+            Icon(PhosphorIconsBold.check, size: 18, color: c.ink),
+            const SizedBox(width: Sp.s),
+            Expanded(child: Text('$name shows the same three words.', style: context.type.body(c.ink))),
+          ],
+        ),
+      false => AttentionLine(
+          bad: true,
+          message: '$name shows different words: ${hubWords.join(' ')}. Something between this phone and the hub '
+              'may be listening in. Decline, then add the hub again.',
+        ),
+      null => Text(
+          "$name didn't report its words. Compare them with the ones in its log before you approve.",
+          style: context.type.body(c.ink2),
+        ),
+    };
+  }
+}
+
 /// The setup after the code went out: waiting for the hub, the words and Approve, then done.
 class _Progress extends StatelessWidget {
   const _Progress({required this.session, required this.onStartOver});
@@ -247,19 +279,25 @@ class _Progress extends StatelessWidget {
                     children: [
                       Text('Words', style: context.type.meta(c.ink2)),
                       InfoTip(
-                        'Three words from the connection to $name. A hub with a screen shows the same ones; '
-                        'approve only if they match.',
+                        'Three words from the connection to $name. The hub works out the same three on its '
+                        'side, reports them here, and prints them in its log ("den_hub status" shows them too). '
+                        'Approve only if they match.',
                       ),
                     ],
                   ),
                   const SizedBox(height: Sp.xs),
                   Text(session.words.join('  '), style: context.type.heading(c.ink)),
+                  const SizedBox(height: Sp.s),
+                  _WordsCheck(name: name, matches: session.wordsMatch, hubWords: session.hubWords),
                   const SizedBox(height: Sp.l),
                   Wrap(
                     spacing: Sp.s,
                     runSpacing: Sp.s,
                     children: [
-                      FilledButton(onPressed: session.approve, child: Text('Approve $name')),
+                      FilledButton(
+                        onPressed: session.wordsMatch == false ? null : session.approve,
+                        child: Text('Approve $name'),
+                      ),
                       OutlinedButton(
                         onPressed: () async {
                           await session.cancel();

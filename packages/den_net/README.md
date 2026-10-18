@@ -26,7 +26,8 @@ spoken codes, matching words), the relay client and encrypted backups. It implem
 | Join with a spoken code | `channel = await rendezvous(relay, await codeRendezvousSlot(code), host: false)` (or a hub found on the LAN); `node.joinWithCode(channel, code, ...)` |
 | Hub reachable through a relay | `RelayTunnel(relay: ..., keys: den.keys, onClient: (c) => node.serve(c))..start()`; `status`, `statusChanges`, `whenOnline()` |
 | No hub online | `MailboxSync(node: node, relay: RelayMailbox(relay), state: store)`: `syncOnce()` (returns `MailboxRound`: received, posted, skipped, keysStored, keysDelivered), `start(interval)`, `stop()`; space keys through the relay: `deliverKeys(deviceId)`, `receiveKeys()` |
-| Space keys changed outside a den write | `node.keysChanged()` (epochs are also checked a few seconds after every change and every 5 seconds) |
+| Space keys changed outside a den write | `node.keysChanged()` (the key in use is also checked a few seconds after every change and every 5 seconds) |
+| Space keys themselves (den_core) | `den.currentSpaceKey(space)` (a `SpaceKey`: `epoch`, `key`, `hash`, `by`, `revoked`, `sig`), `den.spaceKeysAt(space, epoch)`, `den.addSpaceKey(key)` (`SpaceKeyOutcome`), `den.spaceKeyToShare(space)`, `den.staleSpaceKeys`, `den.makesSpaceKeys` |
 | Backups | `encryptBackup(bytes, passphrase)`, `decryptBackup(bytes, passphrase)` (throws `BackupException`) |
 | LAN discovery | `discoverHubs()` (io.dart) returns `DiscoveredHub` (`syncUri`, `deviceId`, `familyId`) |
 | Lower level | `Session.connect` / `Session.accept`, `sealToDevice` / `openSealed`, `sealSpaceKey` / `openSpaceKey`, `sealChanges` / `openChanges`, `mailboxId`, `matchingWords`, `normalizeCode`, `CodeBook`, `InviteBook` |
@@ -63,10 +64,10 @@ sessions produces two transcripts, so the screens disagree.
 
 | Message | Meaning |
 | --- | --- |
-| `have {vv: {space: {author: [max, count, digest]}}, keys: {space: epoch}}` | What I hold per space I'm entitled to and the peer may read: highest counter, how many, and the sum mod 2^32 of MurmurHash3's finalizer over the counters; and the current key epoch I hold per space |
+| `have {vv: {space: {author: [max, count, digest]}}, keys: {space: [epoch, hash]}}` | What I hold per space I'm entitled to and the peer may read: highest counter, how many, and the sum mod 2^32 of MurmurHash3's finalizer over the counters; and the key I use per space (its epoch and hash) |
 | `changes {list, done}` | The answer to `have`: what the peer lacks, in HLC order, in batches of up to 256 KiB, then any `keys`, then an empty `changes` with `done: true` |
 | `push {list}` | Changes as they're written or arrive from elsewhere |
-| `keys {space, epoch, key}` | The current key of a space the peer may hold, when the peer hasn't said it has that epoch or a newer one |
+| `keys {space, epoch, key, by, revoked, sig}` | The key I use for a space the peer may hold, with its maker's statement, unless the peer has said it holds a newer epoch or that very key |
 | `probe {vv: {space: {author: bound}}}` / `probe_ok {vv: {space: {author: [bound, count, digest]}}}` | When the peer's `have` is ahead of mine for an author, I ask for its summary up to my max; a mismatch means it has holes there, so I push that author's history |
 
 A side sends only spaces `den.spacesForDevice(peer)` allows and accepts from a known peer only
@@ -78,15 +79,25 @@ once, so a hub relays between its clients and a chain of devices converges.
 
 ### Space-key epochs
 
-When a parent's device revokes a device, den_core rotates the key of every space it held (epoch
-plus one) and keeps the older epochs. The rotating device then sends each connected peer its
-changes first (the revocation among them) and the new keys after, so a peer has always ingested
-the revocation before it holds, and passes on, the keys it caused. Keys go only to devices
-`den.spacesForDevice` allows at that moment, which leaves out a revoked device, and its session
-is closed. A receiver stores a key under its epoch (`setSpaceKey(space, key, epoch:)`), never
-replaces an epoch it already holds, ignores keys for spaces the sender may not hold, and passes
-a newer epoch on to its own peers. A device that was away gets the newest epoch from the next
-`have` exchange.
+When a parent's device revokes a device, den_core rotates the key of every space it held (one
+epoch past every epoch held) and keeps the older epochs. The rotating device then sends each
+connected peer its changes first (the revocation among them) and the new keys after, so a peer
+has always ingested the revocation before it holds, and passes on, the keys it caused. Keys go
+only to devices `den.spacesForDevice` allows at that moment, which leaves out a revoked device,
+and its session is closed. A device that was away gets the key in use from the next `have`
+exchange.
+
+Each key carries its maker's statement (ARCHITECTURE.md, "Genesis and trust"): the maker's
+device signs the family, space, epoch, the key's hash and the devices revoked by then. A receiver
+hands the key to `den.addSpaceKey`, which keeps it only when the statement verifies and the maker
+is a parent's device or a hub; it ignores keys for spaces the sender may not hold, and passes
+on whatever changed the key it uses. A key for an epoch it already holds, made by another
+parent who rotated at the same time, is kept beside the first; every replica uses the one with
+the lowest hash, and reads both mailboxes. Because `have` names the key in use by epoch and hash,
+two devices that hold different keys for one epoch each send theirs and end up using the same
+one. When the key in use doesn't list a revoked device that another key held for the space
+does, it may have reached that device, so a parent's device or hub rotates once more; that key
+lists both revocations, which settles it.
 
 ## Pairing
 
@@ -118,19 +129,22 @@ those messages; any sync message from the joiner closes the session. Then it sen
 - Mailbox: id = hex HMAC-SHA256(space key, `"mailbox:<epoch>"`); blob = `0x01 | nonce (24) |
   XChaCha20-Poly1305(space key, {"v":1,"changes":[...]}, aad "den/mailbox/v1|<space>|<epoch>")`.
   Dedupe is by change id; only changes from the last 30 days are posted. Devices post under the
-  current epoch and keep reading each older epoch they hold a key for until 30 days after they
-  first saw a newer one (the relay's blob lifetime), so changes posted by a device that hadn't
-  heard of a rotation yet still arrive. A new epoch's mailbox starts out knowing what the
-  previous one holds, so a switch doesn't repost a month of changes. Each round first takes keys
-  from the device's inbox; on a parent's device it then leaves every epoch it made itself (a
-  rotation) in the inbox of each other device that may hold the space. Key pushes to live
-  sessions wait until the round has ingested what it read.
+  key in use and read every key they hold for its epoch, and each older epoch they hold a key for
+  until 30 days after they first saw a newer one (the relay's blob lifetime), so changes posted
+  by a device that hadn't heard of a rotation, or used another parent's key for the same epoch,
+  still arrive. A new epoch's mailbox starts out knowing what the previous one holds, so a switch
+  doesn't repost a month of changes. Each round first takes keys from the device's inbox; on a
+  device that makes keys it then leaves the key in use, when it made it (a rotation), in the
+  inbox of each other device that may hold the space. When what a round reads changes the key in
+  use (a revocation it hadn't heard of makes it rotate again), it posts under the new key from
+  the next round on, never under one it just left. Key pushes to live sessions wait until the
+  round has ingested what it read.
 - Sealed to a device: `{v, from, to, eph, nonce, ct, sig}`; X25519 from a fresh key to the
   device's `xpub`, HKDF-SHA256 (salt eph | xpub, info `"den/seal/v1|from|to"`),
   XChaCha20-Poly1305, Ed25519 signature by the sender over `"den/seal/v1" 0x00 | canonical
   JSON [v, from, to, eph, nonce, ct]`. Device inboxes are hex SHA-256 of `"den/inbox/v1|<xpub>"`;
-  the payload is a `keys {space, epoch, key}` message, accepted only from an approved parent's
-  device.
+  the payload is a `keys {space, epoch, key, by, revoked, sig}` message from an approved device,
+  and the key in it is kept only when its maker's statement verifies.
 
 ## Backups
 

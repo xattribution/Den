@@ -15,13 +15,14 @@ import 'support/fixture.dart';
 void main() {
   test('a fresh hub joins with its setup code and a parent approves it on their phone', () async {
     final codes = <String>[];
+    final logged = <String>[];
     final den = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
     final hub = await DenHub.start(den, HubConfig(
       port: 0,
       host: InternetAddress.loopbackIPv4,
       mdns: false,
       name: 'Basement hub',
-      log: HubLog.silent(),
+      log: HubLog(level: LogLevel.info, sink: logged.add),
       onSetupCode: codes.add,
     ));
     addTearDown(hub.stop);
@@ -34,6 +35,7 @@ void main() {
     expect(status.body, containsPair('setup_needed', true));
     expect(status.body, containsPair('paired', false));
     expect(status.body['name'], 'Basement hub');
+    expect(status.body.containsKey('matching_words'), isFalse, reason: 'no words before a phone connects');
     expect((await call('GET', '/api/v1/members', token: 'x')).error['code'], 'not_ready');
     expect(codes.single, matches(RegExp('^[$setupAlphabet]{4}-[$setupAlphabet]{4}\$')));
     expect(hub.setupCode, codes.single);
@@ -64,6 +66,10 @@ void main() {
     expect(join.name, 'Basement hub');
     expect(join.kind, DeviceKind.hub);
     await eventually(() async => (await call('GET', '/api/v1/hub/status')).body['stage'] == 'waiting_for_approval');
+    final waiting = await call('GET', '/api/v1/hub/status');
+    expect(join.matchingWords, hasLength(3));
+    expect(waiting.body['matching_words'], join.matchingWords, reason: 'the hub reports the words the phone shows');
+    expect(logged.where((l) => l.contains('Matching words: ${join.matchingWords.join(' ')}.')), hasLength(1));
     await phoneNode.approve(join, mode: DeviceMode.hub);
     await eventually(() async => (await call('GET', '/health')).body['ready'] == true);
     await eventually(() => den.events.length == phone.events.length);
@@ -71,6 +77,7 @@ void main() {
     expect(den.thisDevice!.mode, DeviceMode.hub);
     final after = await call('GET', '/api/v1/hub/status');
     expect(after.body, containsPair('paired', true));
+    expect(after.body.containsKey('matching_words'), isFalse, reason: 'the words go once the session is over');
     expect((await call('POST', '/api/v1/hub/setup', body: {'code': 'x', 'invite': 'y'})).status, 409);
     await socket.sink.close();
     await served;
