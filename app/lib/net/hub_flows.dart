@@ -32,6 +32,7 @@ class NetHubSetup extends HubSetupSession {
   HubSetupStage _stage = HubSetupStage.sending;
   String? _error;
   net.PendingJoin? _join;
+  List<String> _hubWords = const [];
   StreamSubscription<List<net.PendingJoin>>? _pendingSub;
   bool _closed = false;
 
@@ -43,6 +44,9 @@ class NetHubSetup extends HubSetupSession {
 
   @override
   List<String> get words => _join?.matchingWords ?? const [];
+
+  @override
+  List<String> get hubWords => _hubWords;
 
   net.SyncNode get _node => network.activeNode;
 
@@ -74,6 +78,7 @@ class NetHubSetup extends HubSetupSession {
       check(_node.pendingJoins);
       _join = await joined.future.timeout(waitFor);
       await _pendingSub?.cancel();
+      _hubWords = await _wordsFromHub();
       _set(HubSetupStage.confirm);
     } on HubException catch (e) {
       final tries = e.triesLeft;
@@ -96,10 +101,26 @@ class NetHubSetup extends HubSetupSession {
     }
   }
 
+  /// What the hub's status says the words are. The hub may answer a moment after its join
+  /// request arrives, so ask a few times; an older hub or one that doesn't answer says nothing.
+  Future<List<String>> _wordsFromHub() async {
+    for (var i = 0; i < 6 && !_closed; i++) {
+      try {
+        final info = await client.status(hub.base);
+        if (info.matchingWords.isNotEmpty) return info.matchingWords;
+        if (info.paired || info.stage == 'waiting_for_code') return const [];
+      } on HubException {
+        return const [];
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    return const [];
+  }
+
   @override
   Future<void> approve() async {
     final join = _join;
-    if (join == null || _stage != HubSetupStage.confirm) return;
+    if (join == null || _stage != HubSetupStage.confirm || wordsMatch == false) return;
     _set(HubSetupStage.approving);
     try {
       await _node.approve(join, mode: DeviceMode.hub);

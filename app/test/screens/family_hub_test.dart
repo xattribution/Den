@@ -68,6 +68,32 @@ void main() {
     );
   });
 
+  testWidgets('Add a hub, words differ', (tester) async {
+    final state = await demo(tester);
+    await shootWith(
+      tester,
+      'family_add_hub_words_differ_phone',
+      AddHubScreen(session: FakeHubSetup(HubSetupStage.confirm, hubWords: const ['harbor', 'violet', 'pencil'])),
+      state: state,
+      pairing: FakePairing(now: demoNow),
+    );
+    final approve = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Approve Closet hub'));
+    expect(approve.onPressed, isNull, reason: "a hub whose words differ can't be approved");
+  });
+
+  testWidgets("Add a hub, words the hub didn't report", (tester) async {
+    final state = await demo(tester);
+    await pumpScreen(
+      tester,
+      AddHubScreen(session: FakeHubSetup(HubSetupStage.confirm, hubWords: const [])),
+      state: state,
+      pairing: FakePairing(now: demoNow),
+    );
+    expect(find.textContaining("didn't report its words"), findsOneWidget);
+    final approve = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Approve Closet hub'));
+    expect(approve.onPressed, isNotNull);
+  });
+
   testWidgets('Add a hub, wrong code', (tester) async {
     final state = await demo(tester);
     await shootWith(

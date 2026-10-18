@@ -13,6 +13,7 @@ class HubInfo {
     required this.name,
     required this.stage,
     this.lastError,
+    this.matchingWords = const [],
   });
 
   /// The hub's HTTP base address, `http://192.168.1.20:47733`.
@@ -26,6 +27,10 @@ class HubInfo {
   /// `waiting_for_code`, `joining`, `waiting_for_approval`, `syncing` or `ready`.
   final String stage;
   final String? lastError;
+
+  /// The three words from the hub's pairing session with the phone that invited it, while it
+  /// waits to be approved; empty otherwise.
+  final List<String> matchingWords;
 
   /// The address as people type it: `192.168.1.20:47733`.
   String get address => base.hasPort ? '${base.host}:${base.port}' : base.host;
@@ -106,6 +111,11 @@ class HubClient {
       name: json['name'] as String? ?? 'Den hub',
       stage: json['stage'] as String? ?? 'waiting_for_code',
       lastError: json['last_error'] as String?,
+      matchingWords: [
+        if (json['matching_words'] case final List<Object?> words)
+          for (final w in words)
+            if (w is String) w,
+      ],
     );
   }
 

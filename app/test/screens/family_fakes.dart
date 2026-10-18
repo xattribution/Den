@@ -199,11 +199,13 @@ final HubInfo closetHub = HubInfo(
 
 /// A hub setup frozen at one stage.
 class FakeHubSetup extends HubSetupSession {
-  FakeHubSetup(this.stage, {this.error});
+  FakeHubSetup(this.stage, {this.error, this.hubWords = const ['lantern', 'meadow', 'copper']});
   @override
   final HubSetupStage stage;
   @override
   final String? error;
+  @override
+  final List<String> hubWords;
   @override
   HubInfo get hub => closetHub;
   @override

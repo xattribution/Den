@@ -53,8 +53,11 @@ to the hub, so a stranger on the LAN can't claim it.
    the hub pins the inviter's key from the invite, so only that phone can complete the session.
 3. The hub writes its join request (`mode: hub`) and the phone shows it as a pending join; a
    parent approves it (`node.approve(join, mode: DeviceMode.hub)`). `GET /api/v1/hub/status`
-   (no token) reports `paired`, `device`, `name`, `version`, `setup_needed` and `stage`
-   (`waiting_for_code`, `joining`, `waiting_for_approval`, `syncing`, `ready`).
+   (no token, [docs/hub-api.md](../../docs/hub-api.md#get-apiv1hubstatus)) reports `paired`,
+   `device`, `name`, `version`, `setup_needed`, `stage` (`waiting_for_code`, `joining`,
+   `waiting_for_approval`, `syncing`, `ready`) and, while the session with the phone is up, its
+   `matching_words`. The hub logs the same words and `den_hub status` prints them, so a parent
+   can compare them with the three the phone shows before approving.
 
 Errors: `403 permission_denied` with `details.tries_left`, `409 already_set_up`, `409 busy`.
 
