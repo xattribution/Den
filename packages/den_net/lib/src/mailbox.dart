@@ -140,7 +140,9 @@ class MailboxRound {
 /// Each round, a device:
 ///
 /// 1. takes space keys sealed to it from its inbox, keeping those whose maker's statement
-///    verifies (see den_core's `SpaceKey`);
+///    verifies (see den_core's `SpaceKey`); a key whose sender or maker this replica doesn't
+///    know yet, or knows only as asking to join, is held and retried at the end of the round,
+///    once the mailboxes may have brought that device's approval, and in later rounds;
 /// 2. for every space it holds a key for, reads the mailbox of each key it holds for the
 ///    current epoch (another parent's key for the same epoch included), and of each older epoch
 ///    until [drainWindow] after it first saw a newer one, so whatever devices posted before they
@@ -180,6 +182,12 @@ class MailboxSync {
   /// blob lifetime, so nothing posted under the old key is missed).
   final Duration drainWindow;
 
+  /// Most sealed keys held in the inbox for a sender or maker this replica can't decide on yet.
+  static const int maxHeldKeys = 64;
+
+  /// How long a held key is retried before it is dropped (the relay's blob lifetime).
+  static const Duration holdKeysFor = Duration(days: 30);
+
   final int Function() _now;
   final SerialQueue _queue = SerialQueue();
   Timer? _timer;
@@ -200,9 +208,10 @@ class MailboxSync {
     await _queue.run(() async {});
   }
 
-  /// Takes delivered keys, then reads and posts every space mailbox once.
+  /// Takes delivered keys, then reads and posts every space mailbox once, then retries the keys
+  /// that had to wait for what the mailboxes bring.
   Future<MailboxRound> syncOnce() => _queue.run(() => node.withKeyPushHeld(() async {
-            final keysStored = await _receiveKeys();
+            var keysStored = await _receiveKeys();
             var received = 0;
             var posted = 0;
             var skipped = 0;
@@ -331,6 +340,9 @@ class MailboxSync {
                 'delivered': deliveredEpoch,
               });
             }
+            // A key from a device whose approval this round's reads brought is taken now; the
+            // next round reads the mailbox it leads to.
+            keysStored += await _receiveKeys(read: false);
             return MailboxRound(
               received: received,
               posted: posted,
@@ -358,8 +370,9 @@ class MailboxSync {
   }
 
   /// Reads this device's relay inbox and stores space keys sealed to it by an approved device of
-  /// the family, when the key's maker's statement verifies. Envelopes from devices this replica
-  /// doesn't know yet are retried next time. Returns how many keys were stored.
+  /// the family, when the key's maker's statement verifies. Keys from a sender or maker this
+  /// replica doesn't know yet, or knows only as asking to join, are held (at most [maxHeldKeys],
+  /// for [holdKeysFor]) and retried next time. Returns how many keys were stored.
   Future<int> receiveKeys() => _queue.run(() => node.withKeyPushHeld(_receiveKeys));
 
   Future<int> _deliver(SpaceKey key) async {
@@ -383,48 +396,90 @@ class MailboxSync {
     await relay.append(await deviceInboxId(device.xpub), utf8Bytes(jsonEncode(envelope)));
   }
 
-  Future<int> _receiveKeys() async {
-    final inbox = await deviceInboxId(_den.keys.xpub);
+  /// Retries the envelopes held in the inbox, then (when [read]) reads what is new there. An
+  /// envelope this replica can't decide on yet is held: its sender or the key's maker is unknown
+  /// here, or has asked to join and isn't approved yet (signed envelopes only). The cursor moves
+  /// past it either way, so nothing a device that is never approved sends stalls the inbox.
+  Future<int> _receiveKeys({bool read = true}) async {
     final stateKey = 'inbox:${_den.deviceId}';
-    var cursor = (await state.read(stateKey))?['cursor'] as int? ?? 0;
+    final saved = await state.read(stateKey);
+    var cursor = saved?['cursor'] as int? ?? 0;
+    final now = _now();
+    final held = <_Held>[
+      for (final raw in saved?['held'] as List? ?? const []) ?_Held.fromJson(asJsonObject(raw)),
+    ]..removeWhere((h) => now - h.at > holdKeysFor.inMilliseconds);
+    if (!read && held.isEmpty) return 0;
     var stored = 0;
-    var blocked = false;
-    while (!blocked) {
-      final page = await relay.read(inbox, after: cursor);
-      for (final entry in page.entries) {
-        final Map<String, Object?>? envelope;
-        try {
-          envelope = asJsonObject(jsonDecode(utf8.decode(entry.blob)));
-        } on Object {
+    final kept = <_Held>[];
+    for (final h in held) {
+      switch (await _take(h.envelope)) {
+        case _Taken.stored:
+          stored++;
+        case _Taken.later:
+          kept.add(h);
+        case _Taken.done:
+      }
+    }
+    if (read) {
+      final inbox = await deviceInboxId(_den.keys.xpub);
+      while (true) {
+        final page = await relay.read(inbox, after: cursor);
+        for (final entry in page.entries) {
           cursor = entry.cursor;
-          continue;
-        }
-        final from = envelope == null ? null : sealedSender(envelope);
-        if (envelope == null || from == null) {
-          cursor = entry.cursor;
-          continue;
-        }
-        final sender = _den.device(from);
-        if (sender == null) {
-          blocked = true;
-          break;
-        }
-        if (sender.approved && !sender.revoked) {
+          final Map<String, Object?>? envelope;
           try {
-            final grant = await openSpaceKey(envelope, recipient: _den.keys, senderPubkey: sender.pubkey);
-            // A key whose maker this replica hasn't heard of waits in the engine until the
-            // maker's record arrives, which this round's mailbox reads usually bring.
-            if (await _den.addSpaceKey(grant.spaceKey) == SpaceKeyOutcome.stored) stored++;
-          } on SealException {
-            // Forged or damaged; skip it.
+            envelope = asJsonObject(jsonDecode(utf8.decode(entry.blob)));
+          } on Object {
+            continue;
+          }
+          if (envelope == null) continue;
+          switch (await _take(envelope)) {
+            case _Taken.stored:
+              stored++;
+            case _Taken.later:
+              kept.add(_Held(now, envelope));
+            case _Taken.done:
           }
         }
-        cursor = entry.cursor;
+        if (!page.more || page.entries.isEmpty) break;
       }
-      if (blocked || !page.more || page.entries.isEmpty) break;
     }
-    await state.write(stateKey, {'cursor': cursor});
+    // Over the limit, the oldest envelope from a sender this replica still doesn't know goes
+    // first: anyone can claim an unknown sender, but a waiting device's envelopes verified.
+    while (kept.length > maxHeldKeys) {
+      final unknown = kept.indexWhere((h) => _den.device(sealedSender(h.envelope) ?? '') == null);
+      kept.removeAt(unknown < 0 ? 0 : unknown);
+    }
+    await state.write(stateKey, {
+      'cursor': cursor,
+      if (kept.isNotEmpty) 'held': [for (final h in kept) h.toJson()],
+    });
     return stored;
+  }
+
+  /// Opens a sealed key and offers it to the engine, or says it must wait.
+  Future<_Taken> _take(Map<String, Object?> envelope) async {
+    final from = sealedSender(envelope);
+    if (from == null) return _Taken.done;
+    final sender = _den.device(from);
+    if (sender == null) return _Taken.later;
+    if (sender.revoked) return _Taken.done;
+    final SpaceKey key;
+    try {
+      key = (await openSpaceKey(envelope, recipient: _den.keys, senderPubkey: sender.pubkey)).spaceKey;
+    } on SealException {
+      return _Taken.done; // Forged or damaged.
+    }
+    if (!sender.approved || _waiting(key.by)) return _Taken.later;
+    return await _den.addSpaceKey(key) == SpaceKeyOutcome.stored ? _Taken.stored : _Taken.done;
+  }
+
+  /// Whether a device is unknown here or has asked to join and isn't decided on yet: its record
+  /// or its approval may still be on the way in a mailbox.
+  bool _waiting(String? deviceId) {
+    if (deviceId == null) return false;
+    final d = _den.device(deviceId);
+    return d == null || (!d.approved && !d.revoked);
   }
 
   List<List<Change>> _batches(List<Change> changes) {
@@ -445,6 +500,26 @@ class MailboxSync {
     if (batch.isNotEmpty) out.add(batch);
     return out;
   }
+}
+
+/// What became of a sealed key from the inbox.
+enum _Taken { stored, done, later }
+
+/// A sealed key held in the inbox until its sender or maker can be decided on, with when it was
+/// first held.
+class _Held {
+  _Held(this.at, this.envelope);
+
+  static _Held? fromJson(Map<String, Object?>? json) {
+    final at = json?['at'];
+    final envelope = asJsonObject(json?['envelope']);
+    return at is int && envelope != null ? _Held(at, envelope) : null;
+  }
+
+  final int at;
+  final Map<String, Object?> envelope;
+
+  Map<String, Object?> toJson() => {'at': at, 'envelope': envelope};
 }
 
 /// Counters seen in a mailbox, per author, as sorted inclusive ranges.
