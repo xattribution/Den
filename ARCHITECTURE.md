@@ -275,7 +275,7 @@ ahead becomes a read-only event assigned to that parent, with no reminders of it
 already alerts), and `source: {kind: device, ref: "<deviceId>/<calendarId>/<eventId>", label:
 <calendar name>}`, where an occurrence of a repeating event carries `<eventId>@<timestamp>`. The
 device id in the ref keeps two phones from touching each other's events. Each pass, at start, on
-returning to the app and every 15 minutes, updates what changed, moves a calendar's events when its
+returning to the app, every 15 minutes while it runs and in the background refresh, updates what changed, moves a calendar's events when its
 audience changes (same ids), and removes events deleted on the phone within the window it read and
 every event of a calendar no longer brought in. Without calendar access nothing is removed. The
 picks stay on the phone (shared preferences, keyed to the family).
@@ -340,9 +340,19 @@ under iOS's limit), planned again at start, after every applied change and on a 
 app runs: a personal device holds its owner's reminders, a shared display or hub everyone's, with
 items outside `f` shown only as "A reminder from Den". The notification id is a hash of
 `ReminderDue.key`, so planning again replaces a reminder instead of adding a second one; a tap
-opens `/event/<id>?at=<occurrence>` or `/chore/<id>?date=<date>`. The hub additionally sends pushes for live events (a message, an
-approval waiting) through a pluggable notifier: Home Assistant's `notify` service, ntfy, or the
-hosted push relay.
+opens `/event/<id>?at=<occurrence>` or `/chore/<id>?date=<date>`.
+
+Phones also refresh with Den closed: a periodic background task (`family.den.refresh`, about
+hourly; Android WorkManager, iOS BGAppRefreshTask) connects to the hub for a few seconds to catch
+up, brings in the phone's calendars, plans the reminders again from all of it, and lets what it
+wrote go out before disconnecting. Only one engine may hold a device's change log in a process,
+since two could reuse a change counter: the holder registers a port named `den.engine` with the
+process's `IsolateNameServer`. A background task that finds the app holding it asks the app to
+refresh instead; the app at start waits for a background task to finish; a holder that stopped
+answering pings is taken over.
+
+The hub additionally sends pushes for live events (a message, an approval waiting) through a
+pluggable notifier: Home Assistant's `notify` service, ntfy, or the hosted push relay.
 
 ## Security fixes from Sett, by design
 

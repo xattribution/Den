@@ -47,6 +47,14 @@
 	<string>Den shows events from the calendars you choose to bring in.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Den uses the camera to scan the code that adds this device to your family.</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>family.den.refresh</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

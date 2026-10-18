@@ -2,8 +2,21 @@ import 'dart:async';
 
 import 'package:den_core/den_core.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'reminder_plan.dart';
+
+/// Shared-preferences key for local reminders on this device (on unless turned off).
+const remindersPrefKey = 'den.reminders';
+
+/// Whether reminders are on for this device: the Settings switch, on until someone turns it off.
+Future<bool> remindersEnabled() async {
+  try {
+    return (await SharedPreferences.getInstance()).getBool(remindersPrefKey) ?? true;
+  } on Object {
+    return true;
+  }
+}
 
 /// The OS side of reminders: what [ReminderScheduler] asks of the notification system.
 abstract class ReminderOutlet {
@@ -92,6 +105,15 @@ class ReminderScheduler {
     }
     _changes = _den.onChange.listen((_) => _later());
     _roll = Timer.periodic(refresh, (_) => _later());
+    await reschedule();
+  }
+
+  /// One plan for a background refresh: no listeners, no timers, and no permission prompt, since
+  /// there is no screen to show one on.
+  Future<void> runOnce() async {
+    _asked = true;
+    await _outlet.start((_) {});
+    _leftover = await _outlet.pending();
     await reschedule();
   }
 

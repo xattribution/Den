@@ -12,12 +12,11 @@ import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
 import '../../calendars/phone_calendars.dart';
+import '../../reminders/reminder_scheduler.dart';
 import '../onboarding/demo_session.dart';
 import 'device_sync.dart';
 import 'export.dart';
 
-/// Shared-preferences key for local reminders on this device (on unless turned off).
-const remindersPrefKey = 'den.reminders';
 
 /// Settings: this device's look and role, notifications, AI and automations, Home Assistant,
 /// backup and export, and About.

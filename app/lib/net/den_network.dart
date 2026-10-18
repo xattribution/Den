@@ -53,6 +53,9 @@ class DenNetwork extends ChangeNotifier {
 
   SyncStatus get status => _status;
 
+  /// Whether a connection to the hub is being kept or tried; false with no hub to reach.
+  bool get connecting => _client != null;
+
   /// The node pairing goes through: the in-process hub's while it runs (so joiners reaching the
   /// hub find this device's invites), else this device's own.
   SyncNode get activeNode => localHub.node ?? node;
@@ -235,6 +238,15 @@ class DenNetwork extends ChangeNotifier {
     final client = _client;
     _client = null;
     await client?.stop();
+  }
+
+  /// Stops syncing and closes the node without touching the in-process hub: the end of a
+  /// background refresh, which never starts one.
+  Future<void> close() async {
+    _disposed = true;
+    localHub.removeListener(notifyListeners);
+    await _stopClient();
+    await node.close();
   }
 
   @override

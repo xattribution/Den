@@ -3,46 +3,13 @@ import 'package:den_app/reminders/reminder_scheduler.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'fake_outlet.dart';
+
 const _minute = 60000;
 const _hour = 60 * _minute;
 
 /// Friday, October 16, 2026, 8 AM in Chicago.
 final int _start = DateTime.utc(2026, 10, 16, 13).millisecondsSinceEpoch;
-
-/// The OS as a map: what it holds, and every call made to it.
-class FakeOutlet implements ReminderOutlet {
-  final Map<int, PlannedReminder> held = {};
-  final List<PlannedReminder> scheduledCalls = [];
-  final List<int> cancelled = [];
-  Set<int> leftover = {};
-  String? launch;
-  int asks = 0;
-  void Function(String route)? tap;
-
-  @override
-  Future<String?> start(void Function(String route) onTap) async {
-    tap = onTap;
-    return launch;
-  }
-
-  @override
-  Future<void> schedule(PlannedReminder reminder) async {
-    scheduledCalls.add(reminder);
-    held[reminder.id] = reminder;
-  }
-
-  @override
-  Future<void> cancel(int id) async {
-    cancelled.add(id);
-    held.remove(id);
-  }
-
-  @override
-  Future<Set<int>> pending() async => {...leftover};
-
-  @override
-  Future<void> askPermission() async => asks++;
-}
 
 /// A family of one parent on their own phone, with a clock the test moves.
 class World {
