@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -72,6 +74,23 @@ class DenApp extends StatefulWidget {
 
 class _DenAppState extends State<DenApp> {
   late final GoRouter _router = buildRouter(widget.state);
+  StreamSubscription<String>? _taps;
+
+  @override
+  void initState() {
+    super.initState();
+    // A tapped reminder opens its event or chore over whatever is showing.
+    _taps = widget.state.reminders?.taps.listen((route) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _router.push(route));
+      WidgetsBinding.instance.scheduleFrame();
+    });
+  }
+
+  @override
+  void dispose() {
+    _taps?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

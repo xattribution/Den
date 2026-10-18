@@ -61,12 +61,14 @@ hub's family.
 | Relay | 20 | Tunnel, mailbox, rendezvous, rate limits |
 | Hub and its command line | 48 + 5 | Compiled binary serves the web app and prints its setup code |
 | Sett importer | 8 | A Sett schema v12 fixture |
-| App | 177, with 151 screenshots | Release APK on an Android emulator; web build in a browser |
+| App | 209, with 157 screenshots | Release APK on an Android emulator; web build in a browser |
 | Home Assistant integration | 74 | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub |
 
 Windows, macOS, iOS and Linux app builds and the Docker images run in CI (`.github/workflows`).
 
-Known gaps: the Home Assistant integration needs its own repository root to install through HACS;
+Known gaps: a device keeps only the next 48 hours of reminders with the OS and refreshes them
+when Den runs, so a phone left closed for longer misses later ones until it's opened; browsers get
+no reminders; the Home Assistant integration needs its own repository root to install through HACS;
 Android needs a foreground service to keep an in-app hub running in the background; the hub
 doesn't yet show the matching words while it waits to be approved; when two parents revoke
 devices at the same moment while out of touch, their rotated keys can briefly diverge.

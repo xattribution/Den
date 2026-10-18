@@ -11,6 +11,7 @@ import '../../design/parts/family_words.dart';
 import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
+import '../../calendars/phone_calendars.dart';
 import '../onboarding/demo_session.dart';
 import 'device_sync.dart';
 import 'export.dart';
@@ -88,12 +89,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _setReminders(bool on) async {
     setState(() => _reminders = on);
+    final reminders = context.app.reminders;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(remindersPrefKey, on);
     } on Object {
       if (mounted) showNote(context, "Couldn't save that on this device. Try again.");
+      return;
     }
+    await reminders?.setEnabled(on);
   }
 
   @override
@@ -176,6 +180,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     trailing: Text(FamilyWords.mode(device.mode), style: context.type.body(c.ink2)),
                   ),
                   const DeviceSyncSection(),
+                  if (parent && app.phoneCalendars != null) _PhoneCalendarsRow(app.phoneCalendars!),
                 ],
                 const SectionHeader('Notifications'),
                 SwitchListTile(
@@ -249,6 +254,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Settings → This device → Calendars on this phone, with how many are brought in.
+class _PhoneCalendarsRow extends StatelessWidget {
+  const _PhoneCalendarsRow(this.calendars);
+  final PhoneCalendars calendars;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return ListenableBuilder(
+      listenable: calendars,
+      builder: (context, _) {
+        final n = calendars.picks.length;
+        return ListTile(
+          leading: Icon(PhosphorIconsRegular.calendarPlus, color: c.ink2),
+          title: const Text('Calendars on this phone'),
+          subtitle: Text(n == 0 ? 'None brought in' : '$n brought in'),
+          trailing: Icon(PhosphorIconsRegular.caretRight, size: 18, color: c.ink3),
+          onTap: () => context.push('/settings/phone-calendars'),
+        );
+      },
     );
   }
 }

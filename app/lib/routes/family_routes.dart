@@ -16,6 +16,7 @@ import '../screens/onboarding/welcome_screen.dart';
 import '../screens/settings/connections_screen.dart';
 import '../screens/settings/create_token_screen.dart';
 import '../screens/settings/home_assistant_screen.dart';
+import '../screens/settings/phone_calendars_screen.dart';
 import '../screens/settings/settings_screen.dart';
 import '../screens/wall/wall_screen.dart';
 import '../state/app_state.dart';
@@ -107,6 +108,7 @@ final List<RouteBase> familyRoutes = [
         routes: [GoRoute(path: 'new', builder: (_, s) => CreateTokenScreen(label: s.uri.queryParameters['label']))],
       ),
       GoRoute(path: 'home-assistant', builder: (_, _) => const HomeAssistantScreen()),
+      GoRoute(path: 'phone-calendars', builder: (_, _) => const PhoneCalendarsScreen()),
     ],
   ),
   GoRoute(path: '/wall', builder: (_, _) => const WallScreen()),

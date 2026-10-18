@@ -4,7 +4,9 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../calendars/phone_calendars.dart';
 import '../net/den_network.dart';
+import '../reminders/reminder_scheduler.dart';
 import 'format.dart';
 
 enum ThemeChoice { auto, day, night }
@@ -12,7 +14,14 @@ enum ThemeChoice { auto, day, night }
 /// The app's live state: the device's [Den] engine plus UI preferences. Rebuilds listeners on
 /// every change the engine applies, whether made here or synced from another device.
 class AppState extends ChangeNotifier {
-  AppState(Den den, {bool wall = false, ThemeChoice theme = ThemeChoice.auto, this.network})
+  AppState(
+    Den den, {
+    bool wall = false,
+    ThemeChoice theme = ThemeChoice.auto,
+    this.network,
+    this.reminders,
+    this.phoneCalendars,
+  })
       : _den = den,
         _wall = wall,
         _theme = theme {
@@ -20,18 +29,32 @@ class AppState extends ChangeNotifier {
   }
 
   /// Restores the saved theme and wall preferences for this device.
-  static Future<AppState> load(Den den, {DenNetwork? network}) async {
+  static Future<AppState> load(
+    Den den, {
+    DenNetwork? network,
+    ReminderScheduler? reminders,
+    PhoneCalendars? phoneCalendars,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     return AppState(
       den,
       wall: prefs.getBool(_wallKey) ?? false,
       theme: ThemeChoice.values.asNameMap()[prefs.getString(_themeKey)] ?? ThemeChoice.auto,
       network: network,
+      reminders: reminders,
+      phoneCalendars: phoneCalendars,
     );
   }
 
   /// This device's sync with the hub and other devices; null for the demo family and in tests.
   final DenNetwork? network;
+
+  /// This device's reminder notifications; null in tests. It follows the device's own engine,
+  /// never the demo family's.
+  final ReminderScheduler? reminders;
+
+  /// Calendars brought in from this phone; null where there are none to bring in, and in tests.
+  final PhoneCalendars? phoneCalendars;
 
   static const _wallKey = 'den.wall';
   static const _themeKey = 'den.theme';
