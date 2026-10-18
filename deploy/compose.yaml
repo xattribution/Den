@@ -37,6 +37,21 @@ services:
     volumes:
       - den-relay:/data
 
+  # A model that reads what the family shares (flyers, emails, "soccer every Wednesday at 5")
+  # without it leaving the house. Off unless you ask for it:
+  #   docker compose -f deploy/compose.yaml --profile model up -d model
+  #   docker compose -f deploy/compose.yaml exec model ollama pull llama3.2
+  # then on a parent's phone: Settings, AI and automations, A model at home, this computer's address.
+  model:
+    profiles: [model]
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - den-model:/root/.ollama
+
 volumes:
   den-hub:
   den-relay:
+  den-model:

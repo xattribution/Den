@@ -82,6 +82,15 @@ class _DenAppState extends State<DenApp> {
     super.initState();
     // Something shared from another app opens straight on what Den found in it.
     _shares = Capture.inbox.stream.listen((input) => _router.push('/capture', extra: input));
+    if (Capture.waiting.isNotEmpty) {
+      final early = [...Capture.waiting];
+      Capture.waiting.clear();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        for (final input in early) {
+          _router.push('/capture', extra: input);
+        }
+      });
+    }
   }
 
   @override

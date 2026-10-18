@@ -126,6 +126,17 @@ abstract final class Capture {
   /// Shares that arrived from the system share sheet, for the app to open.
   static final StreamController<CaptureInput> inbox = StreamController.broadcast();
 
+  /// Shares that arrived before anything listened to [inbox] (Den was starting), taken once.
+  static final List<CaptureInput> waiting = [];
+
+  static void deliver(CaptureInput input) {
+    if (inbox.hasListener) {
+      inbox.add(input);
+    } else {
+      waiting.add(input);
+    }
+  }
+
   static CaptureService of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<CaptureScope>()?.service ?? service;
 
@@ -134,7 +145,7 @@ abstract final class Capture {
   static Future<void> collectShares([PlatformCapture platform = const PlatformCapture()]) async {
     for (final s in await platform.takeShares()) {
       final input = s.input;
-      if (!input.isEmpty) inbox.add(input);
+      if (!input.isEmpty) deliver(input);
     }
   }
 }

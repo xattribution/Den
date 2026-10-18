@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../capture/capture_service.dart';
+import '../../capture/capture_sources.dart';
 import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
@@ -30,6 +31,7 @@ class AddSheet extends StatefulWidget {
 
 class _AddSheetState extends State<AddSheet> {
   final _text = TextEditingController();
+  late final CaptureSources _sources = Capture.of(context).sources;
   bool _listening = false;
   bool _spoken = false;
   String _heardText = '';
@@ -45,7 +47,7 @@ class _AddSheetState extends State<AddSheet> {
 
   @override
   void dispose() {
-    if (_listening) unawaited(Capture.of(context).sources.stopListening());
+    if (_listening) unawaited(_sources.stopListening());
     _text.dispose();
     super.dispose();
   }
@@ -73,7 +75,7 @@ class _AddSheetState extends State<AddSheet> {
   }
 
   Future<void> _speak() async {
-    final sources = Capture.of(context).sources;
+    final sources = _sources;
     if (_listening) {
       await sources.stopListening();
       return;

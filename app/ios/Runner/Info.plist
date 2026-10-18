@@ -42,7 +42,13 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>Den uses the camera to scan the code that adds this device to your family.</string>
+	<string>Den uses the camera to scan the code that adds this device to your family, and to photograph flyers and schedules to add.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Den listens when you say what to add, and turns it into text on this phone.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Den turns what you say into text on this phone to add events, chores and lists.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Den reads the photo or screenshot you choose to find events, chores and lists to add.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

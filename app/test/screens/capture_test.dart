@@ -309,6 +309,48 @@ void main() {
     });
   });
 
+  group('Sharing into Den', () {
+    test('what the share sheet hands over becomes something to read', () {
+      final shared = SharedThing.fromMap({
+        'text': null,
+        'subject': 'Tigers schedule',
+        'files': [
+          {'bytes': Uint8List.fromList(const [1, 2]), 'mimeType': null, 'name': 'Screenshot 2026-10-16.png'},
+          {'bytes': 'not bytes', 'mimeType': 'image/png', 'name': 'broken.png'},
+        ],
+      });
+      expect(shared.files.single.mimeType, 'image/png');
+      expect(shared.input.kind, CaptureKind.screenshot);
+      expect(shared.input.subject, 'Tigers schedule');
+    });
+
+    test('a share that arrives while Den is starting waits for it', () async {
+      Capture.waiting.clear();
+      Capture.deliver(CaptureInput.typed('milk'));
+      expect(Capture.waiting.single.text, 'milk');
+      final heard = <CaptureInput>[];
+      final sub = Capture.inbox.stream.listen(heard.add);
+      Capture.deliver(CaptureInput.typed('eggs'));
+      await Future<void>.delayed(Duration.zero);
+      expect(heard.single.text, 'eggs');
+      await sub.cancel();
+      Capture.waiting.clear();
+    });
+
+    test('a shared page is read as its words', () {
+      expect(
+        pageWords('<html><head><title>x</title><script>var a=1;</script></head><body><h1>Spirit week</h1>'
+            '<p>Pajama day is Monday&nbsp;Oct 19.</p><style>p{}</style></body></html>'),
+        'Spirit week\nPajama day is Monday Oct 19.',
+      );
+    });
+  });
+
+  testWidgets('the sample flyer the end-to-end tests photograph', (tester) async {
+    final state = await demoIn(tester);
+    await shoot(tester, 'capture_sample_flyer', const _Flyer(), state: state);
+  });
+
   testWidgets('History says where things came from', (tester) async {
     final state = await demoIn(tester);
     await write(tester, () async {
@@ -318,4 +360,42 @@ void main() {
     await shootAt(tester, 'history_capture_phone', state: state, location: '/history');
     expect(find.textContaining('from a photo'), findsWidgets);
   });
+}
+
+/// Oak Grove's fall flyer as a parent would photograph it: the same words as
+/// ixtures/flyer_ocr.txt, which is what the phone's text recognition returns for it.
+class _Flyer extends StatelessWidget {
+  const _Flyer();
+
+  @override
+  Widget build(BuildContext context) {
+    final blocks = fixture('flyer_ocr.txt').trim().split(RegExp(r'\n\s*\n'));
+    const ink = Color(0xFF1B3A5C);
+    TextStyle style(double size, {bool bold = false}) =>
+        TextStyle(fontFamily: DenType.family, fontSize: size, height: 1.3, color: ink, fontWeight: bold ? FontWeight.w700 : FontWeight.w400);
+    return Container(
+      color: const Color(0xFFE9E4D8),
+      padding: const EdgeInsets.all(18),
+      child: Container(
+        decoration: BoxDecoration(color: const Color(0xFFFFFDF6), border: Border.all(color: const Color(0xFFD9822B), width: 6)),
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final (i, block) in blocks.indexed) ...[
+              for (final (j, line) in block.split('\n').indexed)
+                Text(
+                  line,
+                  textAlign: i == 0 ? TextAlign.center : TextAlign.left,
+                  style: i == 0
+                      ? style(j == 0 ? 24 : 15, bold: j == 0)
+                      : style(j == 0 && line == line.toUpperCase() ? 19 : 14, bold: j == 0),
+                ),
+              const SizedBox(height: 14),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }

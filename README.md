@@ -28,6 +28,15 @@ runs the extras: Home Assistant, AI access over MCP, calendar feeds, reminders.
   the code. Any browser can then open `http://<hub-address>:47733` and link itself by showing a
   QR code for a parent's phone to scan.
 
+**Add anything by sharing it.** Tap Add and type, snap or say it ("soccer every Wednesday at 5
+for Leo"), or share a flyer photo, a screenshot, an email, a link or a PDF to Den from any app.
+Den proposes the events, chores, list items and reminders it found; what needs no look is added
+right away with Undo, or everything waits for you under Settings → AI and automations → "Show me
+first". Den reads on the phone first (Apple Intelligence or Gemini Nano where the phone has it,
+and its own reader everywhere), and nothing leaves the phone unless a parent connects a reader
+there: a model at home (`docker compose -f deploy/compose.yaml --profile model up -d model`,
+then `ollama pull llama3.2`) or Claude with their own API key, kept in that phone's keychain.
+
 **Away from home.** Phones reach the hub through a relay that only ever carries encrypted data.
 Run your own with `deploy/relay`, then enter its address under Settings → This device → Relay.
 
@@ -42,6 +51,7 @@ hub's family.
 | `app/` | The Flutter app for iPhone, iPad, Android, Mac, Windows, Linux and the web |
 | `packages/den_core/` | The engine: data model, signed change log, spaces, permissions, recurrence, chores, points, history |
 | `packages/den_net/` | Encrypted sessions, sync, pairing, key rotation, relay client, encrypted backups |
+| `packages/den_capture/` | Capture: readers (Den's own, a home model, Claude), resolution to the family, checks against den_core, writes with undo |
 | `packages/den_hub/` | The hub library: HTTP API, MCP with OAuth, Home Assistant bridge, reminders, calendar feeds, mDNS |
 | `packages/den_hub_cli/` | The `den_hub` command: serve, MCP over stdio, Sett import, backup and restore |
 | `packages/den_relay/` | The relay: tunnel, mailbox and pairing rendezvous |
@@ -56,17 +66,18 @@ hub's family.
 
 | Part | Tests | Verified on this machine |
 | --- | --- | --- |
-| Engine (`den_core`) | 170 | Analyzer clean |
+| Engine (`den_core`) | 175 | Analyzer clean |
 | Networking (`den_net`) | 68 | Two and three devices syncing in memory, over WebSocket and through the relay |
+| Capture (`den_capture`) | 76 | A school flyer's text becomes six calendar events on the phone alone and through a recorded Claude response; typed and spoken sentences, emails, recorded Gemini Nano and Ollama answers |
 | Relay | 20 | Tunnel, mailbox, rendezvous, rate limits |
 | Hub and its command line | 48 + 5 | Compiled binary serves the web app and prints its setup code |
 | Sett importer | 8 | A Sett schema v12 fixture |
-| App | 177, with 151 screenshots | Release APK on an Android emulator; web build in a browser |
+| App | 197, with 167 screenshots | Release APK on an Android emulator; web build in a browser; debug APK with Gemini Nano, ML Kit text recognition and share intents compiles |
 | Home Assistant integration | 74 | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub |
 
 Windows, macOS, iOS and Linux app builds and the Docker images run in CI (`.github/workflows`).
 
-Known gaps: the Home Assistant integration needs its own repository root to install through HACS;
+Known gaps: capture's native parts haven't run on a device yet (Gemini Nano, ML Kit text recognition and share intents on Android are compiled; Apple Intelligence, Vision and the iOS share extension are written but not yet built; CI builds iOS and macOS on release tags), and signing the iOS app needs the App Group `group.family.den.denApp` on the developer account; the Home Assistant integration needs its own repository root to install through HACS;
 Android needs a foreground service to keep an in-app hub running in the background; the hub
 doesn't yet show the matching words while it waits to be approved; when two parents revoke
 devices at the same moment while out of touch, their rotated keys can briefly diverge.

@@ -129,6 +129,26 @@ Sun 19    │      Dinner at Grandma's, 6:00 PM (everyone)
 ...
 ```
 
+**Add**, from the top bar on every adult screen: one field that takes a sentence or speech, and
+the camera and a file picker for flyers, schedules and PDFs, above the one-thing choices.
+
+```
+Add
+[ Type, snap or say                        (mic) ]
+[ Snap a photo ]  [ Photo or PDF ]
+─────────────────────────────────────────────────
+ Event
+ Chore
+ Grocery item
+```
+
+What Den found comes back as rows like Today's: the person's marker bar, the title, when in
+`meta`, and a `caution` line for anything that needs a look ("No one in the family is called
+Coach Dan", "Already on the calendar"). The check dot on the left is the choice; one primary
+button says how many: "Add 4 things". When the family adds right away, the page leads with
+"Added 6 things" and Undo in a `well` band, inline, never a toast, and lists what was added.
+Who read it is said plainly under the heading ("Read on this device", "Read by Claude").
+
 ## Signature element: family columns
 
 The paper family organizer gives every person a column and every day a row. Den's week view
