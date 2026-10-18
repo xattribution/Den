@@ -193,6 +193,135 @@ void main() {
       expect(relay.reads, isNot(contains(epoch0)));
       expect(relay.reads, contains(await mailboxId((await fam.founder.spaceKey(Space.family))!, 1)));
     });
+
+    test('a key from a parent\'s device the reader still sees as waiting is taken once the round brings its approval',
+        () async {
+      if (!await setUpFamily()) return;
+      final pat = fam.founder;
+      final alex = await pat.addMember(name: 'Alex', role: Role.parent);
+
+      // Alex's new phone asks to join, and the laptop hears of the request through the mailbox
+      // before Pat approves it.
+      final alexPhone = await openDen();
+      await alexPhone.requestJoin(
+        familyId: pat.familyId!,
+        founderPubkey: fam.founderPubkey,
+        deviceName: 'Alex phone',
+        kind: DeviceKind.phone,
+      );
+      await pat.ingest(alexPhone.changesSince(const {}));
+      await phoneMail.syncOnce();
+      await laptopMail.syncOnce();
+      expect(laptop.device(alexPhone.deviceId)?.approved, isFalse);
+
+      // Pat approves it, and the approval goes into the mailbox; Alex's phone gets the family
+      // from Pat in person.
+      await pat.approveDevice(alexPhone.deviceId, member: alex);
+      await phoneMail.syncOnce();
+      final alexNode = SyncNode(alexPhone);
+      addTearDown(alexNode.close);
+      final peer = await link(phoneNode, alexNode);
+      await peer.live;
+      await eventually(() => alexPhone.spaceKeyEpoch(Space.family) == 0);
+      await peer.close();
+
+      // Alex's phone revokes Pat's old phone and leaves the new keys in the laptop's inbox.
+      await alexPhone.revokeDevice(oldPhone.deviceId);
+      final alexMail = mailFor(alexNode);
+      expect((await alexMail.syncOnce()).keysDelivered, greaterThan(0));
+      expect(laptop.device(alexPhone.deviceId)?.approved, isFalse, reason: 'the laptop reads its inbox first');
+
+      // The laptop's round reads the inbox before the mailbox that brings the approval.
+      final round = await laptopMail.syncOnce();
+      expect(laptop.device(alexPhone.deviceId)!.approved, isTrue);
+      final spaces = laptop.spacesForDevice(laptop.deviceId);
+      expect(spaces, hasLength(4), reason: 'f, p and both parents\' own spaces, all of which the old phone held');
+      expect(round.keysStored, spaces.length);
+      for (final s in spaces) {
+        expect(laptop.spaceKeyEpoch(s), 1, reason: s);
+        expect(laptop.currentSpaceKey(s)!.hash, alexPhone.currentSpaceKey(s)!.hash, reason: s);
+      }
+
+      // The next round reads the new mailbox, where the revocation is.
+      await laptopMail.syncOnce();
+      expect(laptop.device(oldPhone.deviceId)!.revoked, isTrue);
+      for (final s in spaces) {
+        expect(laptop.spaceKeyEpoch(s), 1, reason: s);
+      }
+      expect(laptop.staleSpaceKeys, isEmpty);
+    });
+
+    test('keys the reader can\'t decide on yet never stall its inbox, and only so many are held for so long', () async {
+      if (!await setUpFamily()) return;
+      final pat = fam.founder;
+      final store = MemorySyncStateStore();
+      var now = DateTime.now().millisecondsSinceEpoch;
+      final reader = MailboxSync(
+        node: laptopNode,
+        relay: RelayMailbox(relayUrl, client: relay.client),
+        state: store,
+        now: () => now,
+      );
+      Future<List<String>> heldFrom() async => [
+            for (final h in (await store.read('inbox:${laptop.deviceId}'))?['held'] as List? ?? const [])
+              sealedSender(((h as Map)['envelope'] as Map).cast<String, Object?>())!,
+          ];
+      final mailbox = RelayMailbox(relayUrl, client: relay.client);
+      Future<void> sealToLaptop(DeviceKeys sender, SpaceKey key) async => mailbox.append(
+            await deviceInboxId(laptop.keys.xpub),
+            utf8.encode(jsonEncode(await sealSpaceKey(
+              sender: sender,
+              recipientDevice: laptop.deviceId,
+              recipientXpub: laptop.keys.xpub,
+              grant: SpaceKeyGrant.of(key),
+            ))),
+          );
+
+      // A device asks to join and is never approved; the laptop knows it only as asking.
+      final asking = await openDen();
+      await asking.requestJoin(
+        familyId: pat.familyId!,
+        founderPubkey: fam.founderPubkey,
+        deviceName: 'Never approved',
+        kind: DeviceKind.phone,
+      );
+      await pat.ingest(asking.changesSince(const {}));
+      await phoneMail.syncOnce();
+      await reader.syncOnce();
+      expect(laptop.device(asking.deviceId)?.approved, isFalse);
+
+      // It seals a key it made up to the laptop, then someone the family has never heard of
+      // floods the inbox; Pat's phone rotates behind all of them.
+      final draft = SpaceKey(space: Space.family, epoch: 5, key: randomBytes(32), by: asking.deviceId, sig: '');
+      final made = draft.signed(
+        by: asking.deviceId,
+        revoked: const [],
+        sig: await asking.keys.sign(draft.statementBytes(pat.familyId!)),
+      );
+      await sealToLaptop(asking.keys, made);
+      final stranger = await DeviceKeys.generate();
+      for (var i = 0; i < MailboxSync.maxHeldKeys + 8; i++) {
+        await sealToLaptop(stranger, made);
+      }
+      await pat.revokeDevice(oldPhone.deviceId);
+      expect((await phoneMail.syncOnce()).keysDelivered, greaterThan(0));
+
+      final round = await reader.syncOnce();
+      expect(round.keysStored, laptop.spacesForDevice(laptop.deviceId).length);
+      expect(laptop.spaceKeyEpoch(Space.family), 1);
+      expect(laptop.currentSpaceKey(Space.family)!.hash, pat.currentSpaceKey(Space.family)!.hash);
+      expect(laptop.spaceKeysAt(Space.family, 5), isEmpty);
+      final held = await heldFrom();
+      expect(held, hasLength(MailboxSync.maxHeldKeys));
+      expect(held, contains(asking.deviceId), reason: 'a signed key from a device asking to join outlasts the flood');
+
+      // Still held a round later; dropped once the relay would have let the blobs go.
+      await reader.syncOnce();
+      expect(await heldFrom(), hasLength(MailboxSync.maxHeldKeys));
+      now += MailboxSync.holdKeysFor.inMilliseconds + 1;
+      await reader.syncOnce();
+      expect(await heldFrom(), isEmpty);
+    });
   });
 
   group('two parents revoking while out of touch', () {

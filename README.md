@@ -59,7 +59,7 @@ hub's family.
 | Part | Tests | Verified on this machine |
 | --- | --- | --- |
 | Engine (`den_core`) | 181 | Analyzer clean |
-| Networking (`den_net`) | 71 | Two and three devices syncing in memory, over WebSocket and through the relay; two parents revoking while out of touch settle on one key, through a hub and through the relay alone |
+| Networking (`den_net`) | 73 | Two and three devices syncing in memory, over WebSocket and through the relay; two parents revoking while out of touch settle on one key, through a hub and through the relay alone; a rotated key from a device whose approval arrives in the same relay round is taken |
 | Relay | 20 | Tunnel, mailbox, rendezvous, rate limits |
 | Hub and its command line | 48 + 5 | Compiled binary serves the web app and prints its setup code |
 | Sett importer | 8 | A Sett schema v12 fixture |

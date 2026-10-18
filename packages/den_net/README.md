@@ -133,8 +133,14 @@ those messages; any sync message from the joiner closes the session. Then it sen
   until 30 days after they first saw a newer one (the relay's blob lifetime), so changes posted
   by a device that hadn't heard of a rotation, or used another parent's key for the same epoch,
   still arrive. A new epoch's mailbox starts out knowing what the previous one holds, so a switch
-  doesn't repost a month of changes. Each round first takes keys from the device's inbox; on a
-  device that makes keys it then leaves the key in use, when it made it (a rotation), in the
+  doesn't repost a month of changes. Each round first takes keys from the device's inbox. A key
+  whose sender or maker this device doesn't know yet, or knows only as asking to join, is held
+  and tried again at the end of the round, once the mailboxes may have brought that device's
+  record or approval, and in later rounds: at most 64 for 30 days, those from senders still
+  unknown dropped first when over the limit, since only a known device's envelope can be
+  verified. The inbox cursor moves past held keys, so nothing a device that is never approved
+  (or someone posing as a device nobody knows) leaves there holds up the keys behind it. On a
+  device that makes keys the round then leaves the key in use, when it made it (a rotation), in the
   inbox of each other device that may hold the space. When what a round reads changes the key in
   use (a revocation it hadn't heard of makes it rotate again), it posts under the new key from
   the next round on, never under one it just left. Key pushes to live sessions wait until the
@@ -144,7 +150,8 @@ those messages; any sync message from the joiner closes the session. Then it sen
   XChaCha20-Poly1305, Ed25519 signature by the sender over `"den/seal/v1" 0x00 | canonical
   JSON [v, from, to, eph, nonce, ct]`. Device inboxes are hex SHA-256 of `"den/inbox/v1|<xpub>"`;
   the payload is a `keys {space, epoch, key, by, revoked, sig}` message from an approved device,
-  and the key in it is kept only when its maker's statement verifies.
+  and the key in it is kept only when its maker's statement verifies (held until then when the
+  sender or maker is still on its way, as above).
 
 ## Backups
 
