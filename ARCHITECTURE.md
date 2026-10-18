@@ -117,10 +117,25 @@ are invalid.
 Each space has a key for sealing changes on the relay, with an epoch. The founder's device makes
 the first keys at genesis and a parent's device makes one for each member it adds. When a parent's
 device revokes another device (directly or by removing its member), it rotates the key of every
-space that device held: a new random key, epoch plus one. Older epochs are kept for reading what
-was sealed with them. A device that leaves its family wipes its log and metadata and starts over
-as a fresh device; it joins again with new keys, since the family remembers devices it declined
-or removed.
+space that device held: a new random key, one epoch past every epoch it holds. Older epochs are
+kept for reading what was sealed with them. A device that leaves its family wipes its log and
+metadata and starts over as a fresh device; it joins again with new keys, since the family
+remembers devices it declined or removed.
+
+Every key is bound to the device that made it. The maker signs `"den/space-key/v1" 0x00 |
+canonical JSON [family, space, epoch, hash, by, revoked]`, where `hash` is hex SHA-256 of
+`"den/space-key/v1/hash" 0x00 | key` and `revoked` lists, sorted, the approved devices that were
+revoked when it made the key. Only an approved hub or a parent's own approved device makes keys;
+any device may pass one on, and a receiver keeps it only when the statement verifies against a
+maker that may make keys. A key whose maker has since been revoked is never used to seal, so a
+stolen phone that mints keys after its revocation gets nowhere.
+
+Two parents who revoke devices while out of touch each make a key for the same epoch. Every
+replica keeps both and seals with the same one, the lowest `hash` among keys whose maker is in good
+standing (`pickSpaceKey`), so the epoch's mailbox doesn't split; the other key's mailbox is still
+read. The winner may have been handed to the device the other parent revoked, so a key-making
+device that holds a key listing a revoked device the key in use doesn't list rotates again
+(`staleSpaceKeys`). The new key lists both revocations, and the family settles one epoch later.
 
 ### Record types and fields
 
@@ -238,9 +253,9 @@ approved gets only the pairing messages below.
 - `have {vv}`: my version vector, per space I'm entitled to.
 - `changes {list}`: changes the peer lacks, filtered to spaces the peer's member may read.
 - `push {list}`: live changes as they're made.
-- `keys {space, epoch, key}`: space keys sent to a newly approved device, and to the remaining
-  devices after a revocation rotates them (sealed to its `xpub` and signed by a parent device when
-  sent through the relay).
+- `keys {space, epoch, key, by, revoked, sig}`: space keys with their maker's statement, sent to
+  a newly approved device, and to the remaining devices after a revocation rotates them (sealed
+  to the device's `xpub` and signed by the sending device when sent through the relay).
 
 ### Pairing
 

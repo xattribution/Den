@@ -106,10 +106,29 @@ Future<Map<String, Object?>> openSealed(
   }
 }
 
-/// A space key granted to a device: what a `keys` message carries.
+/// A space key granted to a device: what a `keys` message carries. [by], [revoked] and [sig]
+/// are the maker's statement (see den_core's [SpaceKey]); receivers keep only keys whose
+/// statement verifies.
 class SpaceKeyGrant {
   /// Creates a grant.
-  const SpaceKeyGrant({required this.space, required this.epoch, required this.key});
+  const SpaceKeyGrant({
+    required this.space,
+    required this.epoch,
+    required this.key,
+    this.by,
+    this.revoked = const [],
+    this.sig,
+  });
+
+  /// The grant for a key and its maker's statement.
+  factory SpaceKeyGrant.of(SpaceKey key) => SpaceKeyGrant(
+        space: key.space,
+        epoch: key.epoch,
+        key: key.key,
+        by: key.by,
+        revoked: key.revoked,
+        sig: key.sig,
+      );
 
   /// Space id.
   final String space;
@@ -120,16 +139,25 @@ class SpaceKeyGrant {
   /// The 32-byte key.
   final Uint8List key;
 
-  /// The `keys` message body.
-  Map<String, Object?> toJson() => {'t': 'keys', 'space': space, 'epoch': epoch, 'key': b64e(key)};
+  /// The device that made the key.
+  final String? by;
+
+  /// Approved devices that were revoked when [by] made it, sorted.
+  final List<String> revoked;
+
+  /// [by]'s signature over the statement.
+  final String? sig;
+
+  /// The key with its statement, for `Den.addSpaceKey`.
+  SpaceKey get spaceKey => SpaceKey(space: space, epoch: epoch, key: key, by: by, revoked: revoked, sig: sig);
+
+  /// The `keys` message body: `{t: keys, space, epoch, key, by, revoked, sig}`.
+  Map<String, Object?> toJson() => {'t': 'keys', ...spaceKey.toJson()};
 
   /// Parses a `keys` message body; null when malformed.
   static SpaceKeyGrant? fromJson(Map<String, Object?> json) {
-    final space = json['space'];
-    final epoch = json['epoch'];
-    final key = tryB64d(json['key']);
-    if (space is! String || epoch is! int || epoch < 0 || key == null || key.length != 32) return null;
-    return SpaceKeyGrant(space: space, epoch: epoch, key: key);
+    final key = SpaceKey.fromJson(json);
+    return key == null ? null : SpaceKeyGrant.of(key);
   }
 }
 

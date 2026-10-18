@@ -194,4 +194,164 @@ void main() {
       expect(relay.reads, contains(await mailboxId((await fam.founder.spaceKey(Space.family))!, 1)));
     });
   });
+
+  group('two parents revoking while out of touch', () {
+    late TestFamily fam;
+    late Den pat;
+    late Den alexPhone;
+    late Den tabletA;
+    late Den tabletB;
+    late String sam;
+
+    /// Pat founds the family; Alex is the other parent; Sam's tablet and old phone are the two
+    /// devices that get revoked.
+    Future<bool> setUpFamily() async {
+      if (await skipUnlessDenCore()) return false;
+      fam = await TestFamily.create();
+      pat = fam.founder;
+      final alex = await pat.addMember(name: 'Alex', role: Role.parent);
+      sam = await pat.addMember(name: 'Sam', role: Role.kid);
+      alexPhone = await fam.approvedDevice(member: alex, name: 'Alex phone');
+      tabletA = await fam.approvedDevice(member: sam, kind: DeviceKind.tablet, name: 'Sam tablet');
+      tabletB = await fam.approvedDevice(member: sam, name: 'Sam old phone');
+      return true;
+    }
+
+    /// Whether [dens] use one key for [space], whose maker knew both tablets were revoked, and
+    /// see nothing left to rotate.
+    bool settledOn(List<Den> dens, String space) {
+      final keys = [for (final d in dens) d.currentSpaceKey(space)];
+      if (keys.any((k) => k == null || k.hash != keys.first!.hash)) return false;
+      if (!keys.first!.revoked.contains(tabletA.deviceId) || !keys.first!.revoked.contains(tabletB.deviceId)) return false;
+      return dens.every((d) => d.staleSpaceKeys.isEmpty);
+    }
+
+    test('through the hub, the family ends on one key that neither revoked device ever holds', () async {
+      if (!await setUpFamily()) return;
+      final hub = await fam.approvedDevice(mode: DeviceMode.hub, kind: DeviceKind.hub, name: 'Hub');
+      final patNode = SyncNode(pat);
+      final hubNode = SyncNode(hub);
+      final alexNode = SyncNode(alexPhone);
+      final aNode = SyncNode(tabletA);
+      final bNode = SyncNode(tabletB);
+      addTearDown(() => Future.wait([for (final n in [patNode, hubNode, alexNode, aNode, bNode]) n.close()]));
+      final patPeer = await link(patNode, hubNode);
+      await patPeer.live;
+      final alexPeer = await link(hubNode, alexNode);
+      await alexPeer.live;
+      await (await link(hubNode, aNode)).live;
+      await (await link(hubNode, bNode)).live;
+      await eventually(() => alexPhone.device(tabletB.deviceId)?.approved == true && tabletB.spaceKeyEpoch(Space.family) == 0);
+
+      // Out of touch with each other, each parent revokes one of Sam's devices and rotates.
+      await patPeer.close();
+      await alexPeer.close();
+      await pat.revokeDevice(tabletA.deviceId);
+      await alexPhone.revokeDevice(tabletB.deviceId);
+      expect(pat.spaceKeyEpoch(Space.family), 1);
+      expect(alexPhone.spaceKeyEpoch(Space.family), 1);
+      expect(pat.currentSpaceKey(Space.family)!.hash, isNot(alexPhone.currentSpaceKey(Space.family)!.hash));
+
+      // Back in touch: whichever epoch-1 key wins may have reached the device the other parent
+      // revoked, so the key makers rotate again and settle on one key.
+      await (await link(patNode, hubNode)).live;
+      await (await link(hubNode, alexNode)).live;
+      final makers = [pat, alexPhone, hub];
+      await eventually(() => settledOn(makers, Space.family) && settledOn(makers, Space.member(sam)),
+          timeout: const Duration(seconds: 20));
+      final epoch = pat.spaceKeyEpoch(Space.family)!;
+      expect(epoch, greaterThanOrEqualTo(2));
+      for (final d in makers) {
+        expect(await mailboxId((await d.spaceKey(Space.family))!, epoch),
+            await mailboxId((await pat.spaceKey(Space.family))!, epoch),
+            reason: 'one mailbox for the family');
+      }
+
+      // And it stays there: nothing left to rotate.
+      await Future<void>.delayed(const Duration(milliseconds: 2500));
+      expect(settledOn(makers, Space.family), isTrue);
+      expect(pat.spaceKeyEpoch(Space.family), epoch);
+
+      for (final t in [tabletA, tabletB]) {
+        expect(t.spaceKeyEpoch(Space.family), lessThan(epoch), reason: t.thisDevice!.name);
+        expect(t.spaceKeysAt(Space.family, epoch), isEmpty, reason: t.thisDevice!.name);
+      }
+    });
+
+    test('a key a kid\'s device makes up is refused, even sealed to a parent through the relay', () async {
+      if (!await setUpFamily()) return;
+      final patNode = SyncNode(pat);
+      addTearDown(patNode.close);
+      final relay = FakeRelay();
+      final mailbox = RelayMailbox(relayUrl, client: relay.client);
+      final draft = SpaceKey(space: Space.family, epoch: 9, key: randomBytes(32), by: tabletA.deviceId, sig: '');
+      final minted = draft.signed(
+        by: tabletA.deviceId,
+        revoked: const [],
+        sig: await tabletA.keys.sign(draft.statementBytes(pat.familyId!)),
+      );
+      final envelope = await sealSpaceKey(
+        sender: tabletA.keys,
+        recipientDevice: pat.deviceId,
+        recipientXpub: pat.keys.xpub,
+        grant: SpaceKeyGrant.of(minted),
+      );
+      await mailbox.append(await deviceInboxId(pat.keys.xpub), utf8.encode(jsonEncode(envelope)));
+      final round = await MailboxSync(node: patNode, relay: mailbox).syncOnce();
+      expect(round.keysStored, 0);
+      expect(pat.spaceKeyEpoch(Space.family), 0);
+      expect(pat.spaceKeysAt(Space.family, 9), isEmpty);
+    });
+
+    test('through the relay alone, both parents end up posting to one mailbox', () async {
+      if (!await setUpFamily()) return;
+      final patNode = SyncNode(pat);
+      final alexNode = SyncNode(alexPhone);
+      final aNode = SyncNode(tabletA);
+      final bNode = SyncNode(tabletB);
+      addTearDown(() => Future.wait([for (final n in [patNode, alexNode, aNode, bNode]) n.close()]));
+      for (final node in [alexNode, aNode, bNode]) {
+        final peer = await link(patNode, node);
+        await peer.live;
+        await peer.close();
+      }
+      final relay = FakeRelay();
+      MailboxSync mailFor(SyncNode node) => MailboxSync(node: node, relay: RelayMailbox(relayUrl, client: relay.client));
+      final patMail = mailFor(patNode);
+      final alexMail = mailFor(alexNode);
+      final aMail = mailFor(aNode);
+      final bMail = mailFor(bNode);
+      for (final m in [patMail, alexMail, aMail, bMail]) {
+        await m.syncOnce();
+      }
+
+      await pat.revokeDevice(tabletA.deviceId);
+      await alexPhone.revokeDevice(tabletB.deviceId);
+      for (var round = 0; round < 4; round++) {
+        await patMail.syncOnce();
+        await alexMail.syncOnce();
+      }
+      expect(settledOn([pat, alexPhone], Space.family), isTrue);
+      expect(settledOn([pat, alexPhone], Space.member(sam)), isTrue);
+      final epoch = pat.spaceKeyEpoch(Space.family)!;
+      final mailbox = await mailboxId((await pat.spaceKey(Space.family))!, epoch);
+
+      final listId = await pat.addList(title: 'After both revocations');
+      await patMail.syncOnce();
+      await alexMail.syncOnce();
+      expect(alexPhone.list(listId), isNotNull);
+      expect(relay.blobs[mailbox], isNotEmpty);
+      await alexPhone.addItem(listId, text: 'Milk');
+      await alexMail.syncOnce();
+      await patMail.syncOnce();
+      expect(pat.list(listId)!.items.single.text, 'Milk');
+
+      await aMail.syncOnce();
+      await bMail.syncOnce();
+      for (final t in [tabletA, tabletB]) {
+        expect(t.spaceKeysAt(Space.family, epoch), isEmpty, reason: t.thisDevice!.name);
+        expect(exportOf(t), isNot(contains('After both revocations')), reason: t.thisDevice!.name);
+      }
+    });
+  });
 }
