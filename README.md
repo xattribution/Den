@@ -68,7 +68,7 @@ hub's family.
 | --- | --- | --- |
 | Engine (`den_core`) | 175 | Analyzer clean |
 | Networking (`den_net`) | 75 | Two and three devices syncing in memory, over WebSocket and through the relay |
-| Capture (`den_capture`) | 83 | A school flyer's text becomes six calendar events on the phone alone and through a recorded Claude response, including the text ML Kit really found in it on Android, wrapped lines and all; typed and spoken sentences, emails, recorded Gemini Nano and Ollama answers |
+| Capture (`den_capture`) | 86 | A school flyer's text becomes six calendar events on the phone alone and through a recorded Claude response, including the text ML Kit really found in it on Android, wrapped lines and all; what a notice asks families to bring is kept; typed and spoken sentences, emails, recorded Gemini Nano and Ollama answers |
 | Relay | 20 | Tunnel, mailbox, rendezvous, rate limits |
 | Hub and its command line | 58 + 5 | Compiled binary serves the web app and prints its setup code; a teen's phone reads through the hub's Claude with signed requests over loopback |
 | Sett importer | 8 | A Sett schema v12 fixture |

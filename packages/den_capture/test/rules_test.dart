@@ -123,6 +123,37 @@ void main() {
     expect(wire['unclear'], ['Sit in the sun']);
   });
 
+  test('a notice\'s "Please bring:" with several events on it isn\'t lost: the family sees it', () {
+    final d = read('Riverside Swim Team\n\nFall practice schedule\n\n'
+        'Swim practice for Maya every Tuesday and Thursday 6-7 PM at YMCA pool\n\n'
+        'Swim meet: Saturday, November 7 at 8 AM, Lincoln High\n\n'
+        'Team photo day Tuesday, October 27\n\n'
+        'Please bring: swim cap, goggles, towel\n\n'
+        'Please let me know if you have any questions');
+    expect([for (final e in d.events) (e.title, e.date, e.start)], [
+      ('Swim practice', '2026-10-20', '18:00'),
+      ('Swim meet', '2026-11-07', '08:00'),
+      ('Team photo day', '2026-10-27', null),
+    ]);
+    expect([for (final e in d.events) e.notes], everyElement(isEmpty), reason: 'not the photo day\'s swim cap');
+    expect(d.items, isEmpty);
+    expect(d.unclear, ['Please bring: swim cap, goggles, towel']);
+  });
+
+  test('with one event, what an invitation asks of the family goes in its notes, before it or after', () {
+    final d = read("Please RSVP to Priya\n\nLeo's birthday party\nSaturday, October 24, 2-4 PM\nBounce Zone\n\n"
+        'Please bring socks and a water bottle');
+    final e = d.events.single;
+    expect((e.title, e.location), ("Leo's birthday party", 'Bounce Zone'));
+    expect(e.notes, 'Please RSVP to Priya\nPlease bring socks and a water bottle');
+    expect(d.unclear, isEmpty);
+  });
+
+  test('a heading in capitals or title case still names its event, even "PACK MEETING"', () {
+    expect(read('PACK MEETING\n\nTuesday, October 27 at 7 PM').events.single.title.toLowerCase(), 'pack meeting');
+    expect(read('Wear Pink Day\n\nFriday, October 23').events.single.title.toLowerCase(), 'wear pink day');
+  });
+
   test('an email\'s headers aren\'t events, and its sign-off isn\'t a note', () {
     final d = read('From: Ms. Lee\nDate: Oct 15, 2026\nSubject: Field trip\n\n'
         'Our field trip to the Nature Center is Friday, October 30.\nPlease pack a lunch.\nThanks, Ms. Lee');

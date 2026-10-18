@@ -90,6 +90,9 @@ void main() {
     final result = await capturer.read(CaptureInput.shared(files: [photo]), den);
     final notes = {for (final e in result.draft.events) e.title.toLowerCase(): e.notes};
     expect(notes['no school'], 'Thanksgiving break');
+    // ML Kit put the clinic's sign-up line in a block of its own; Den shows it rather than
+    // guessing which of six events it belongs to.
+    expect(result.draft.unclear, ['Sign up at oakgrove.example/clinic']);
     await check(den, result, reader: 'rules');
     await den.close();
   });

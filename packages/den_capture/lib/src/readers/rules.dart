@@ -154,7 +154,43 @@ class _Rules {
       }
     }
     flush();
+    // What a flyer asks of the family, away from any event: with one event it belongs to that
+    // one; with several Den can't tell which, so the family sees it rather than losing it.
+    for (final line in asked) {
+      if (events.length != 1 || !_addNote(events.single, line)) unclear.add(line);
+    }
     return {'events': events, 'chores': chores, 'items': items, 'reminders': reminders, 'unclear': unclear};
+  }
+
+  /// Lines asking the family to do or bring something that no event's block claimed.
+  final asked = <String>[];
+
+  /// Adds [line] to [event]'s notes, which keep a few lines at most.
+  static bool _addNote(Map<String, Object?> event, String line) {
+    final notes = event['notes'] as String?;
+    if ((notes?.split('\n').length ?? 0) >= 3) return false;
+    event['notes'] = notes == null ? line : '$notes\n$line';
+    return true;
+  }
+
+  /// "Please …", but not an email's "Please let me know if you have questions".
+  static final _please = _re(
+    r"^(?:please|kindly|be\s+sure\s+to|make\s+sure\s+to)\s+"
+    r"(?!(?:do\s+not|don'?t)\s+hesitate|let\s+(?:me|us)\s+know|feel\s+free|reach\s+out|contact|email|e-mail|call|text|reply|write)\w",
+  );
+  static final _toBring = _re(
+    r"^(?:what\s+to\s+bring|things\s+to\s+bring|to\s+bring|bring|supplies|supply\s+list|what\s+you'?ll\s+need|you'?ll\s+need)\s*:",
+  );
+  static final _doThis = _re(r'^(?:bring|pack|wear|send\s+in|sign\s+up|register|turn\s+in|drop\s+off|arrive)\s+\S');
+
+  /// A line asking the family to do or bring something: "Please bring: swim cap, goggles",
+  /// "Pack a lunch", "Sign up at oakgrove.example/clinic". A heading in capitals or title case
+  /// ("PACK MEETING", "Wear Pink Day") names an event instead.
+  static bool _asks(String line) {
+    if (_please.hasMatch(line) || _toBring.hasMatch(line)) return true;
+    if (!_doThis.hasMatch(line)) return false;
+    final words = [for (final w in line.split(' ').skip(1)) if (RegExp('^[A-Za-z]').hasMatch(w)) w];
+    return words.any((w) => w[0] == w[0].toLowerCase());
   }
 
   /// A full stop that ends a sentence, not "Nov." or "Dr.".
@@ -254,12 +290,14 @@ class _Rules {
       } else if (last != null) {
         if (last['location'] == null && _placeLike(line)) {
           last['location'] = _tidy(line);
-        } else if (!_signOff.hasMatch(line) && ((last['notes'] as String?)?.split('\n').length ?? 0) < 3) {
-          final notes = last['notes'] as String?;
-          last['notes'] = notes == null ? _tidy(line) : '$notes\n${_tidy(line)}';
+        } else if (!_signOff.hasMatch(line)) {
+          _addNote(last, _tidy(line));
         }
       } else if (!multi) {
         if (_tidy(line).isNotEmpty) unclear.add(_tidy(line));
+      } else if (_asks(line)) {
+        // Never a title for the next event; [read] places it once every block is read.
+        asked.add(_tidy(line));
       } else {
         loose = _tidy(line);
       }
