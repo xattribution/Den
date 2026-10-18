@@ -70,14 +70,14 @@ hub's family.
 
 | Part | Tests | Verified on this machine |
 | --- | --- | --- |
-| Engine (`den_core`) | {CORE} | Analyzer clean |
-| Networking (`den_net`) | {NET} | Two and three devices syncing in memory, over WebSocket and through the relay; two parents revoking while out of touch settle on one key, through a hub and through the relay alone; a rotated key from a device whose approval arrives in the same relay round is taken |
-| Capture (`den_capture`) | {CAP} | A school flyer's text becomes six calendar events on the phone alone and through a recorded Claude response, including the text ML Kit really found in it on Android, wrapped lines and all; what a notice asks families to bring is kept; typed and spoken sentences, emails, recorded Gemini Nano and Ollama answers |
+| Engine (`den_core`) | 186 | Analyzer clean |
+| Networking (`den_net`) | 80 | Two and three devices syncing in memory, over WebSocket and through the relay; two parents revoking while out of touch settle on one key, through a hub and through the relay alone; a rotated key from a device whose approval arrives in the same relay round is taken |
+| Capture (`den_capture`) | 86 | A school flyer's text becomes six calendar events on the phone alone and through a recorded Claude response, including the text ML Kit really found in it on Android, wrapped lines and all; what a notice asks families to bring is kept; typed and spoken sentences, emails, recorded Gemini Nano and Ollama answers |
 | Relay | 20 | Tunnel, mailbox, rendezvous, rate limits |
 | Hub and its command line | 58 + 5 | Compiled binary serves the web app and prints its setup code; a teen's phone reads through the hub's Claude with signed requests over loopback |
 | Sett importer | 8 | A Sett schema v12 fixture |
-| App | {APP}, with {SHOTS} screenshots and the Home Assistant brand images | Release APK on an Android emulator: reminders, phone calendars, the hub kept online in the background and after Den is closed from recent apps; a typed sentence; a flyer photo shared from Files, read by ML Kit into six events and undone; an email's text and a PDF shared in; History saying where each came from. Web build in a browser |
-| Home Assistant integration | {HA} | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub; v0.1.0's `den.zip` downloads from den-homeassistant's release with its manifest and brand images |
+| App | 263, with 174 screenshots and the Home Assistant brand images | Release APK on an Android emulator: reminders, phone calendars, the hub kept online in the background and after Den is closed from recent apps; a typed sentence; a flyer photo shared from Files, read by ML Kit into six events and undone; an email's text and a PDF shared in; History saying where each came from. Web build in a browser |
+| Home Assistant integration | 85 | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub; v0.1.0's `den.zip` downloads from den-homeassistant's release with its manifest and brand images |
 
 Windows, macOS, iOS and Linux app builds and the Docker images run in CI (`.github/workflows`).
 

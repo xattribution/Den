@@ -55,8 +55,9 @@ jobs:
         run: flutter pub get
       - working-directory: app
         run: flutter analyze
-      # Golden images are rendered on Windows by the people reviewing them; other platforms
-      # rasterize fonts differently, so CI runs the behavior tests only.
+      # Golden images are rendered on Windows by the people reviewing them; elsewhere
+      # test/flutter_test_config.dart renders every screen without comparing pixels. The app
+      # icon's source (tagged golden) is skipped.
       - working-directory: app
         run: flutter test --exclude-tags golden
 
@@ -65,9 +66,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: home-assistant/actions/hassfest@master
-        with:
-          path: integrations/homeassistant/custom_components/den
+      # hassfest checks custom_components/ at the root of what it's given; the action takes no
+      # path, so run its image on the integration's folder.
+      - name: hassfest
+        run: docker run --rm -v "$PWD/integrations/homeassistant:/github/workspace" ghcr.io/home-assistant/hassfest
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'

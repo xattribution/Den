@@ -1,6 +1,3 @@
-@Tags(['golden'])
-library;
-
 import 'package:den_app/app.dart';
 import 'package:den_app/screens/calendar/family_week.dart';
 import 'package:den_app/screens/today/today_screen.dart';

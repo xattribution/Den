@@ -16,6 +16,13 @@ class DataDir {
 
   RandomAccessFile? _lock;
 
+  /// Lock files this process holds. POSIX file locks belong to the process, so on Linux and
+  /// macOS a second [lock] from the same process would succeed, and closing it would release the
+  /// first; Windows locks per handle. This keeps both the same.
+  static final _held = <String>{};
+
+  String get _lockPath => File(_join('hub.lock')).absolute.path;
+
   String _join(String name) => '$path${Platform.pathSeparator}$name';
 
   /// `keys.json`.
@@ -26,14 +33,17 @@ class DataDir {
 
   /// Takes the lock, or throws [StateError] when another process holds it.
   Future<void> lock() async {
+    final busy = StateError('Another den_hub is using $path. Stop it first.');
+    if (_held.contains(_lockPath)) throw busy;
     await Directory(path).create(recursive: true);
-    final file = await File(_join('hub.lock')).open(mode: FileMode.append);
+    final file = await File(_lockPath).open(mode: FileMode.append);
     try {
       await file.lock(FileLock.exclusive);
     } on FileSystemException {
       await file.close();
-      throw StateError('Another den_hub is using $path. Stop it first.');
+      throw busy;
     }
+    _held.add(_lockPath);
     _lock = file;
   }
 
@@ -42,6 +52,7 @@ class DataDir {
     final file = _lock;
     _lock = null;
     if (file == null) return;
+    _held.remove(_lockPath);
     await file.unlock();
     await file.close();
   }

@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Diff images flutter test writes when a golden doesn't match.
+/test/**/failures/
