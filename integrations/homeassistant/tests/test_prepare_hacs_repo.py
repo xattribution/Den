@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import struct
 import zipfile
 from pathlib import Path
 
@@ -83,6 +84,46 @@ def test_zip_holds_the_integration_at_its_root(tmp_path: Path) -> None:
     assert sorted(names) == sorted(
         p.relative_to(copied).as_posix() for p in copied.rglob("*") if p.is_file()
     )
+
+
+def png_size(data: bytes) -> tuple[int, int]:
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    return struct.unpack(">II", data[16:24])
+
+
+def test_carries_the_brand_images(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """brand/ reaches the repository and the zip at the sizes Home Assistant asks for."""
+    out = tmp_path / "den-homeassistant"
+    zip_path = tmp_path / "den.zip"
+    assert main([str(out), "--zip", str(zip_path)]) == 0
+    assert "brand" not in capsys.readouterr().err
+
+    brand = out / "custom_components" / "den" / "brand"
+    with zipfile.ZipFile(zip_path) as zf:
+        for theme in ("", "dark_"):
+            for suffix, scale in (("", 1), ("@2x", 2)):
+                icon = zf.read(f"brand/{theme}icon{suffix}.png")
+                assert icon == (brand / f"{theme}icon{suffix}.png").read_bytes()
+                assert png_size(icon) == (256 * scale, 256 * scale)
+                width, height = png_size(zf.read(f"brand/{theme}logo{suffix}.png"))
+                assert min(width, height) in range(128 * scale, 256 * scale + 1)
+
+
+def test_notes_missing_brand_images(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """Without brand/icon.png the repository is still written, with a note on how to render it."""
+    den = tmp_path / "den"
+    source = den / "integrations" / "homeassistant"
+    shutil.copytree(
+        COMPONENT, source / "custom_components" / "den", ignore=shutil.ignore_patterns("brand")
+    )
+    shutil.copyfile(INTEGRATION / "hacs.json", source / "hacs.json")
+    shutil.copyfile(INTEGRATION / "README.md", source / "README.md")
+    (den / "LICENSE").write_text("license\n", encoding="utf-8")
+
+    prepare_hacs_repo.prepare(tmp_path / "out", den_repo=den)
+    err = capsys.readouterr().err
+    assert "brand/icon.png is missing" in err
+    assert "flutter test --update-goldens test/icon" in err
 
 
 def test_leaves_out_bytecode(tmp_path: Path) -> None:

@@ -7,7 +7,7 @@ This writes that repository's files into OUT_DIR:
     hacs.json               HACS settings: install from the den.zip attached to each release
     README.md               this integration's README, which HACS shows
     LICENSE                 Den's license (AGPL-3.0)
-    custom_components/den/  the integration
+    custom_components/den/  the integration, with its brand images in brand/
 
 With --zip it also writes den.zip: the contents of custom_components/den at the zip's root,
 which HACS unpacks into config/custom_components/den/.
@@ -93,7 +93,11 @@ def prepare(
         write_json(target / "manifest.json", manifest)
 
     if not (target / "brand" / "icon.png").exists():
-        print("note: HACS asks for custom_components/den/brand/icon.png", file=sys.stderr)
+        print(
+            "note: custom_components/den/brand/icon.png is missing; render the brand images "
+            "from Den's mark with `flutter test --update-goldens test/icon` in app/",
+            file=sys.stderr,
+        )
 
     if zip_path is not None:
         write_zip(target, zip_path)

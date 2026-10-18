@@ -276,8 +276,14 @@ The script needs only Python 3.10 or newer. It won't write into a folder that ha
 pass `--force`, which replaces `hacs.json`, `README.md`, `LICENSE` and `custom_components/den` and
 leaves everything else, like `.git`, alone. `--version 0.2.0` (or `v0.2.0`) refuses to go on unless
 that's the version in `manifest.json`; add `--set-version` to put it in the copied `manifest.json`
-instead. HACS also asks integrations for brand images (at least
-`custom_components/den/brand/icon.png`); the script points it out while they're missing.
+instead.
+
+The brand images Home Assistant (2026.3 and later) and HACS show for the integration are in
+`custom_components/den/brand/`: `icon.png` and `logo.png`, each at `@2x`, and `dark_` versions
+for dark themes. They're Den's mark, trimmed to its doorway, with the name beside it in the logo,
+rendered by the app's golden tests. After changing the mark, render them again from `app/`
+with `flutter test --update-goldens test/icon`. The script notes it if `brand/icon.png` goes
+missing.
 
 CI's `homeassistant-release` job runs after the integration's tests on every push and pull
 request. It builds both and uploads them as the workflow artifacts `den-homeassistant-zip` and
