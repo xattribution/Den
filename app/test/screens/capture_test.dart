@@ -16,6 +16,7 @@ import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -457,14 +458,29 @@ void main() {
     test('a share that arrives while Den is starting waits for it', () async {
       Capture.waiting.clear();
       Capture.deliver(CaptureInput.typed('milk'));
-      expect(Capture.waiting.single.text, 'milk');
-      final heard = <CaptureInput>[];
+      expect((Capture.waiting.single as CaptureInput).text, 'milk');
+      final heard = <Object>[];
       final sub = Capture.inbox.stream.listen(heard.add);
       Capture.deliver(CaptureInput.typed('eggs'));
       await Future<void>.delayed(Duration.zero);
-      expect(heard.single.text, 'eggs');
+      expect((heard.single as CaptureInput).text, 'eggs');
       await sub.cancel();
       Capture.waiting.clear();
+    });
+
+    testWidgets("a share Den couldn't open says so instead of doing nothing", (tester) async {
+      final state = await demoIn(tester);
+      await shootAt(
+        tester,
+        'capture_share_unreadable_phone',
+        state: state,
+        location: '/today',
+        act: () async {
+          final router = GoRouter.of(tester.element(find.byType(Scaffold).first));
+          router.push('/capture', extra: const CaptureProblem("Den couldn't open what was shared. Try sharing it again, or choose it from Add."));
+        },
+      );
+      expect(find.textContaining("Den couldn't open what was shared."), findsOneWidget);
     });
 
     test('a shared page is read as its words', () {

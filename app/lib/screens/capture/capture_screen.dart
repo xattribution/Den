@@ -22,8 +22,11 @@ import 'capture_words.dart';
 /// found. In direct mode what needs no look is already added, with Undo; everything else waits
 /// here to be chosen, fixed or dropped.
 class CaptureRoute extends StatefulWidget {
-  const CaptureRoute({super.key, this.input});
+  const CaptureRoute({super.key, this.input, this.problem});
   final CaptureInput? input;
+
+  /// Why something shared couldn't be read at all, instead of an input.
+  final String? problem;
 
   @override
   State<CaptureRoute> createState() => _CaptureRouteState();
@@ -51,9 +54,26 @@ class _CaptureRouteState extends State<CaptureRoute> {
   Widget build(BuildContext context) {
     final controller = _controller;
     if (controller == null) {
+      final problem = widget.problem;
       return FormFrame(
         title: 'Add',
-        children: [EmptyLine(message: 'There\'s nothing to read here.', actionLabel: 'Back', onAction: () => closePage(context))],
+        children: [
+          if (problem != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Sp.l, Sp.xl, Sp.l, Sp.s),
+              child: AttentionLine(message: problem, bad: true),
+            ),
+          if (problem == null)
+            EmptyLine(message: 'There\'s nothing to read here.', actionLabel: 'Back', onAction: () => closePage(context))
+          else
+            FormBlock(
+              top: Sp.s,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton(onPressed: () => closePage(context), child: const Text('Back')),
+              ),
+            ),
+        ],
       );
     }
     return CaptureScreen(controller: controller);
@@ -300,6 +320,9 @@ class _DoneRow extends StatelessWidget {
                 children: [
                   Text(e.title, style: context.type.body(c.ink)),
                   Text(detail, style: context.type.meta(c.ink2)),
+                  // Added without a look, so a guess is said here: tapping opens it to fix.
+                  for (final i in e.issues)
+                    if (i.kind == IssueKind.guessed) AttentionLine(message: i.message),
                 ],
               ),
             ),

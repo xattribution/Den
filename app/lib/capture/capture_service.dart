@@ -132,13 +132,14 @@ String pageWords(String html) {
 abstract final class Capture {
   static CaptureService service = CaptureService(settings: CaptureSettings(secrets: MemoryCaptureSecrets()));
 
-  /// Shares that arrived from the system share sheet, for the app to open.
-  static final StreamController<CaptureInput> inbox = StreamController.broadcast();
+  /// Shares that arrived from the system share sheet, for the app to open: a [CaptureInput],
+  /// or a [CaptureProblem] when what was shared couldn't be opened.
+  static final StreamController<Object> inbox = StreamController.broadcast();
 
   /// Shares that arrived before anything listened to [inbox] (Den was starting), taken once.
-  static final List<CaptureInput> waiting = [];
+  static final List<Object> waiting = [];
 
-  static void deliver(CaptureInput input) {
+  static void deliver(Object input) {
     if (inbox.hasListener) {
       inbox.add(input);
     } else {
@@ -154,9 +155,19 @@ abstract final class Capture {
   static Future<void> collectShares([PlatformCapture platform = const PlatformCapture()]) async {
     for (final s in await platform.takeShares()) {
       final input = s.input;
-      if (!input.isEmpty) deliver(input);
+      if (!input.isEmpty) {
+        deliver(input);
+      } else if (s.unread > 0) {
+        deliver(const CaptureProblem('Den couldn\'t open what was shared. Try sharing it again, or choose it from Add.'));
+      }
     }
   }
+}
+
+/// Something was shared that Den couldn't open; [message] says so, for people.
+class CaptureProblem {
+  const CaptureProblem(this.message);
+  final String message;
 }
 
 class CaptureScope extends InheritedWidget {

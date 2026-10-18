@@ -68,16 +68,16 @@ hub's family.
 | --- | --- | --- |
 | Engine (`den_core`) | 175 | Analyzer clean |
 | Networking (`den_net`) | 75 | Two and three devices syncing in memory, over WebSocket and through the relay |
-| Capture (`den_capture`) | 81 | A school flyer's text becomes six calendar events on the phone alone and through a recorded Claude response; typed and spoken sentences, emails, recorded Gemini Nano and Ollama answers |
+| Capture (`den_capture`) | 83 | A school flyer's text becomes six calendar events on the phone alone and through a recorded Claude response, including the text ML Kit really found in it on Android, wrapped lines and all; typed and spoken sentences, emails, recorded Gemini Nano and Ollama answers |
 | Relay | 20 | Tunnel, mailbox, rendezvous, rate limits |
 | Hub and its command line | 58 + 5 | Compiled binary serves the web app and prints its setup code; a teen's phone reads through the hub's Claude with signed requests over loopback |
 | Sett importer | 8 | A Sett schema v12 fixture |
-| App | 202, with 168 screenshots | Release APK on an Android emulator; web build in a browser; debug APK with Gemini Nano, ML Kit text recognition and share intents compiles |
+| App | 203, with 169 screenshots | Release APK on an Android emulator: a typed sentence; a flyer photo shared from Files, read by ML Kit into six events and undone; an email's text and a PDF shared in; History saying where each came from. Web build in a browser |
 | Home Assistant integration | 74 | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub |
 
 Windows, macOS, iOS and Linux app builds and the Docker images run in CI (`.github/workflows`).
 
-Known gaps: capture's native parts haven't run on a device yet (Gemini Nano, ML Kit text recognition and share intents on Android are compiled; Apple Intelligence, Vision and the iOS share extension are written but not yet built; CI builds iOS and macOS on release tags), and signing the iOS app needs the App Group `group.family.den.denApp` on the developer account; the Home Assistant integration needs its own repository root to install through HACS;
+Known gaps: capture's native parts have run only on an Android emulator, where Gemini Nano reports itself unavailable (the image has no AICore), so reading with the phone's own model is untested on a phone that has it; Apple Intelligence, Vision and the iOS share extension are written but not yet built (CI builds iOS and macOS on release tags), and signing the iOS app needs the App Group `group.family.den.denApp` on the developer account; the Home Assistant integration needs its own repository root to install through HACS;
 Android needs a foreground service to keep an in-app hub running in the background; the hub
 doesn't yet show the matching words while it waits to be approved; when two parents revoke
 devices at the same moment while out of touch, their rotated keys can briefly diverge.

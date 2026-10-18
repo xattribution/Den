@@ -43,16 +43,20 @@ class DeviceAbilities {
 
 /// Something another app shared with Den through the system share sheet.
 class SharedThing {
-  const SharedThing({this.text, this.subject, this.files = const []});
+  const SharedThing({this.text, this.subject, this.files = const [], this.unread = 0});
   final String? text;
   final String? subject;
   final List<CaptureFile> files;
+
+  /// Files that were shared but couldn't be opened.
+  final int unread;
 
   CaptureInput get input => CaptureInput.shared(text: text, subject: subject, files: files);
 
   static SharedThing fromMap(Map<Object?, Object?> m) => SharedThing(
         text: m['text'] as String?,
         subject: m['subject'] as String?,
+        unread: (m['unread'] as num?)?.toInt() ?? 0,
         files: [
           for (final f in (m['files'] as List? ?? const []))
             if (f is Map && f['bytes'] is Uint8List)

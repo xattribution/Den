@@ -84,6 +84,16 @@ void main() {
     await den.close();
   });
 
+  test('the text ML Kit really found in the flyer on an Android phone, wrapped lines and all', () async {
+    final den = await demo();
+    final capturer = Capturer(readers: const [RulesReader()], textFinder: FixedText(fixtureText('flyer_mlkit.txt')));
+    final result = await capturer.read(CaptureInput.shared(files: [photo]), den);
+    final notes = {for (final e in result.draft.events) e.title.toLowerCase(): e.notes};
+    expect(notes['no school'], 'Thanksgiving break');
+    await check(den, result, reader: 'rules');
+    await den.close();
+  });
+
   test('with Claude: the photo itself goes, and the recorded answer becomes the same calendar', () async {
     final den = await demo();
     final ocr = FixedText(fixtureText('flyer_ocr.txt'));

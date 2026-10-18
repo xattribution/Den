@@ -173,7 +173,7 @@ class _Rules {
         .replaceAll(RegExp(r'[·•|]'), ',')
         .replaceAll(RegExp('[‘’]'), "'");
     final out = <String>[];
-    for (var line in text.split('\n')) {
+    for (var line in _unwrap(text.split('\n'))) {
       line = line.trim().replaceFirst(RegExp(r'^[,*>\-]+\s*'), '').replaceAll(RegExp(r'\s+'), ' ').trim();
       if (_re(r'^(from|to|cc|bcc|sent|date|reply-to):\s').hasMatch(line)) continue;
       line = line.replaceFirst(_re(r'^subject:\s*'), '');
@@ -192,11 +192,36 @@ class _Rules {
     return out;
   }
 
+  static final _dangling = _re(r'(\b(to|at|from|and|or|until|till|through|thru|on|by|for|with|of|the|every|each)|[,(&/-])$');
+
+  /// Lines a flyer or a screen wrapped, joined back: one that ends mid-phrase ("Oct 24 to",
+  /// "oakgrove.example/") or leaves a parenthesis open goes on with the next, and so does one
+  /// followed by a line that starts in lowercase. Blank lines still separate blocks.
+  static List<String> _unwrap(List<String> lines) {
+    final out = <String>[];
+    for (final raw in lines) {
+      final line = raw.trim();
+      final last = out.isEmpty ? '' : out.last;
+      final open = '('.allMatches(last).length > ')'.allMatches(last).length;
+      final continues = line.isNotEmpty &&
+          last.isNotEmpty &&
+          // A wrapped line runs near the width of the page; a short one ("milk") stands alone.
+          (_dangling.hasMatch(last) || open || (RegExp(r'^[a-z]').hasMatch(line) && last.length >= 25));
+      if (continues) {
+        out[out.length - 1] = last.endsWith('/') ? '$last$line' : '$last $line';
+      } else {
+        out.add(line);
+      }
+    }
+    return out;
+  }
+
   /// Reads one block of lines (a paragraph of a flyer, or a typed sentence). [loose] is a line
   /// from just before that may title the block's first event. Returns the block's last loose
   /// line, for the next block.
   String? _block(List<String> lines, String? loose, {required bool multi}) {
     Map<String, Object?>? last;
+    _listing = false;
     for (final line in lines) {
       if (_reminder(line) || _chore(line) || _shopping(line, multi: multi)) {
         last = null;
@@ -345,9 +370,13 @@ class _Rules {
     'snacks', 'crackers', 'chips', 'water', 'ice cream', 'batteries',
   };
 
+  /// A shopping heading or list started in this block, so its short lines are items too.
+  bool _listing = false;
+
   bool _shopping(String line, {required bool multi}) {
     var text = line;
     final cue = _shopCue.firstMatch(text);
+    if (cue != null && text.substring(cue.end).trim().isEmpty) return _listing = true;
     String? listName;
     final toList = _toList.firstMatch(text);
     if (toList != null) {
@@ -377,13 +406,15 @@ class _Rules {
     if (scan.hasWhen || scan.hasTime) return false;
     final known = pieces.where((p) => _groceryWords.contains(_qty(p).$2.toLowerCase())).length;
     final listy = pieces.length >= 2 && pieces.every((p) => p.split(' ').length <= 4);
-    final shoppy = cue != null || toList != null || store != null || known > 0 || (listy && !multi);
+    final short = pieces.every((p) => p.split(' ').length <= 5);
+    final shoppy = cue != null || toList != null || store != null || known > 0 || (listy && !multi) || (_listing && short);
     if (!shoppy) return false;
     for (final p in pieces) {
       final (qty, what) = _qty(p);
       if (what.isEmpty) continue;
       items.add({'text': what, 'qty': qty, 'store': store, 'list': listName});
     }
+    _listing = true;
     return true;
   }
 

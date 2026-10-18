@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
+import android.util.Log
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
@@ -71,6 +72,7 @@ class CaptureChannel(private val activity: MainActivity, engine: FlutterEngine) 
                 try {
                     result.success(generate(call.argument("instructions")!!, call.argument("prompt")!!, call.argument("schema")!!))
                 } catch (e: Exception) {
+                    Log.w(TAG, "Gemini Nano couldn't answer", e)
                     result.error("generate", "Gemini Nano couldn't read that.", e.message)
                 }
             }
@@ -80,6 +82,7 @@ class CaptureChannel(private val activity: MainActivity, engine: FlutterEngine) 
                     val type = call.argument<String>("mimeType") ?: ""
                     result.success(withContext(Dispatchers.Default) { if (type == "application/pdf") pdfText(bytes) else imageText(bytes) })
                 } catch (e: Exception) {
+                    Log.w(TAG, "Couldn't find the text in a shared file", e)
                     result.error("findText", "This phone couldn't find the text in that.", e.message)
                 }
             }
@@ -118,8 +121,10 @@ class CaptureChannel(private val activity: MainActivity, engine: FlutterEngine) 
         val files = uris.take(10).mapNotNull { uri -> fileOf(resolver, uri) }
         val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
         val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
-        if (text.isNullOrBlank() && files.isEmpty()) return
-        shares.add(mapOf("text" to text, "subject" to subject, "files" to files))
+        // Files Den couldn't open still arrive, so Den can say so instead of doing nothing.
+        val unread = uris.size - files.size
+        if (text.isNullOrBlank() && files.isEmpty() && unread == 0) return
+        shares.add(mapOf("text" to text, "subject" to subject, "files" to files, "unread" to unread))
         // Handled once: a configuration change mustn't share it again.
         intent.action = Intent.ACTION_MAIN
         sink?.success(null)
@@ -155,14 +160,17 @@ class CaptureChannel(private val activity: MainActivity, engine: FlutterEngine) 
     }
 
     private suspend fun abilities(): Map<String, Any?> {
+        // Logged so "why doesn't Den use Gemini Nano on my phone" has an answer in logcat.
         val state = try {
-            when (gemini().checkStatus()) {
+            val status = gemini().checkStatus()
+            when (status) {
                 FeatureStatus.AVAILABLE -> "available"
                 FeatureStatus.DOWNLOADABLE -> "downloadable"
                 FeatureStatus.DOWNLOADING -> "downloading"
                 else -> "unavailable"
-            }
-        } catch (_: Exception) {
+            }.also { Log.i(TAG, "Gemini Nano is $it (ML Kit status $status)") }
+        } catch (e: Exception) {
+            Log.i(TAG, "Gemini Nano isn't available: $e")
             "unavailable"
         }
         return mapOf(
@@ -244,5 +252,9 @@ class CaptureChannel(private val activity: MainActivity, engine: FlutterEngine) 
             scaled.compress(Bitmap.CompressFormat.JPEG, 85, out)
             out.toByteArray()
         }
+    }
+
+    private companion object {
+        const val TAG = "DenCapture"
     }
 }

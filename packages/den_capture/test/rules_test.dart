@@ -74,6 +74,10 @@ void main() {
     expect([for (final i in read('milk eggs bread').items) i.text], ['Milk', 'Eggs', 'Bread']);
   });
 
+  test('a list typed one thing per line stays one thing per line', () {
+    expect([for (final i in read('Groceries:\npaper towels\ndish soap\nbananas').items) i.text], ['Paper towels', 'Dish soap', 'Bananas']);
+  });
+
   test('"add sunscreen and beach towels to the packing list"', () {
     final packing = den.lists.firstWhere((l) => l.list.kind == ListKind.packing).list.id;
     final items = read('add sunscreen and beach towels to the packing list').items.toList();
