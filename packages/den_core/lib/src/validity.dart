@@ -517,5 +517,5 @@ class _Ctx {
 
   String get who => actor?.name ?? device.name;
 
-  bool only(Set<String> names) => c.fields.keys.every((k) => k == '_via' || names.contains(k));
+  bool only(Set<String> names) => c.fields.keys.every((k) => k == '_via' || k == '_from' || names.contains(k));
 }

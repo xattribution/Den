@@ -100,6 +100,38 @@ enum RedemptionStatus { requested, approved, declined }
 
 enum DisplayLayout { today, week, month, lists, photos }
 
+/// What a capture read: the thing someone photographed, shared, said or typed.
+enum CaptureKind { photo, screenshot, pdf, email, message, link, voice, typed }
+
+/// Where a record added by capture came from, written as `_from` on the change that made it:
+/// what was read and, when a model read it, which one ("On this phone", "Claude").
+@immutable
+class CaptureOrigin {
+  const CaptureOrigin(this.kind, {this.reader});
+
+  final CaptureKind kind;
+
+  /// Who read it, as people see it in History; null when Den's own reader did.
+  final String? reader;
+
+  Map<String, Object?> toJson() => {'kind': kind.name, 'reader': ?reader};
+
+  /// The origin a change recorded, or null when it has none Den understands.
+  static CaptureOrigin? parse(Object? raw) {
+    if (raw is! Map) return null;
+    final kind = _enum(CaptureKind.values, raw['kind']);
+    if (kind == null) return null;
+    final reader = raw['reader'];
+    return CaptureOrigin(kind, reader: reader is String && reader.isNotEmpty ? reader : null);
+  }
+
+  @override
+  bool operator ==(Object other) => other is CaptureOrigin && other.kind == kind && other.reader == reader;
+
+  @override
+  int get hashCode => Object.hash(kind, reader);
+}
+
 T? _enum<T extends Enum>(List<T> values, Object? raw) =>
     raw is String ? values.firstWhereOrNull((v) => v.name == raw) : null;
 

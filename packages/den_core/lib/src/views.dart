@@ -209,6 +209,7 @@ class HistoryEntry {
     required this.diffs,
     required this.space,
     this.via,
+    this.from,
   });
 
   final Hlc when;
@@ -232,6 +233,9 @@ class HistoryEntry {
 
   /// Label of the API token or MCP connection that made the change through the hub.
   final String? via;
+
+  /// What a capture read to make this change ("from a photo"), or null for a change made by hand.
+  final CaptureOrigin? from;
 }
 
 enum GapKind {

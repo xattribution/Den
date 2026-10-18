@@ -1,0 +1,17 @@
+name: den_capture
+description: "Den capture: turns a photo, a shared email or link, or a sentence into proposed events, chores, list items and reminders, checked against the family's schemas before anything is written."
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  collection: ^1.19.1
+  den_core:
+    path: ../den_core
+  http: ^1.5.0
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.31.1

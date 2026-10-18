@@ -1,0 +1,4 @@
+Here is the JSON:
+```json
+{"events":[{"title":"soccer","date":"2026-10-21","start":"5:00 PM","end":"","repeat":{"every":"weekly","interval":"1","days":["Wednesday"]},"people":["leo"],"kind":"sports"}],"items":[{"text":"milk","qty":1,"store":"costco"}],"reminders":[{"text":"call grandma","date":"tomorrow","time":"6pm","people":["me"]}]}
+```
