@@ -1,0 +1,12 @@
+{
+  "model": "llama3.2",
+  "created_at": "2026-10-16T13:02:11.418Z",
+  "message": {
+    "role": "assistant",
+    "content": "{\"events\":[{\"title\":\"Dentist\",\"date\":\"2026-10-20\",\"start\":\"15:30\",\"end\":null,\"endDate\":null,\"repeat\":null,\"people\":[\"Zoe\"],\"location\":\"Bright Smiles Dental\",\"notes\":null,\"kind\":\"health\",\"remindBefore\":[1440]}],\"chores\":[],\"items\":[],\"reminders\":[],\"unclear\":[]}"
+  },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 4812345678,
+  "eval_count": 96
+}

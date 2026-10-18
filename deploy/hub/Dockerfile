@@ -15,6 +15,7 @@ WORKDIR /src
 # Resolve dependencies first so source edits don't invalidate the pub cache layer.
 COPY packages/den_core/pubspec.yaml packages/den_core/pubspec.lock* packages/den_core/
 COPY packages/den_net/pubspec.yaml packages/den_net/pubspec.lock* packages/den_net/
+COPY packages/den_capture/pubspec.yaml packages/den_capture/pubspec.lock* packages/den_capture/
 COPY packages/den_relay/pubspec.yaml packages/den_relay/pubspec.lock* packages/den_relay/
 COPY packages/den_sett_import/pubspec.yaml packages/den_sett_import/pubspec.lock* packages/den_sett_import/
 COPY packages/den_hub/pubspec.yaml packages/den_hub/pubspec.lock* packages/den_hub/

@@ -383,6 +383,12 @@ final Map<String, TypeSpec> typeSpecs = {
   }, required: {'label', 'kind', 'scopes', 'status'}, space: Space.parents),
 };
 
+/// `_from` on a change: what a capture read, and who read it.
+final FieldCheck _origin = shape({
+  'kind': names(CaptureKind.values),
+  'reader': text(max: maxName, nullable: true),
+}, required: {'kind'});
+
 String _label(String field) {
   final spaced = field.replaceAllMapped(RegExp(r'[A-Z]'), (m) => ' ${m[0]!.toLowerCase()}');
   return spaced[0].toUpperCase() + spaced.substring(1);
@@ -403,6 +409,11 @@ String? checkFields(String type, Map<String, Object?> fields, {required bool cre
     if (name == '_deleted') continue;
     if (name == '_via') {
       final err = text(min: 1, max: maxTitle)('Via', e.value);
+      if (err != null) return err;
+      continue;
+    }
+    if (name == '_from') {
+      final err = _origin('Source', e.value);
       if (err != null) return err;
       continue;
     }

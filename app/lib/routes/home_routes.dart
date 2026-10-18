@@ -1,6 +1,9 @@
+import 'package:den_capture/den_capture.dart' show CaptureInput;
 import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
+import '../capture/capture_service.dart' show CaptureProblem;
+import '../screens/capture/capture_screen.dart';
 import '../screens/chores/chore_detail.dart';
 import '../screens/chores/chore_editor.dart';
 import '../screens/chores/chores_board.dart';
@@ -21,6 +24,13 @@ Widget listsTab() => const ListsIndex();
 
 /// Routes owned by chores, lists and points. Fixed paths come before their `:id` siblings.
 final List<RouteBase> homeRoutes = [
+  GoRoute(
+    path: '/capture',
+    builder: (_, s) => CaptureRoute(
+      input: s.extra is CaptureInput ? s.extra! as CaptureInput : null,
+      problem: s.extra is CaptureProblem ? (s.extra! as CaptureProblem).message : null,
+    ),
+  ),
   GoRoute(path: '/chore/new', builder: (_, _) => const ChoreEditorScreen()),
   GoRoute(
     path: '/chore/:id/edit',

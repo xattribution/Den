@@ -10,6 +10,7 @@ import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
 import '../events/event_detail.dart' show closePage;
+import '../capture/capture_words.dart' show sourceWords;
 import 'history_words.dart';
 
 /// Everything that changed, newest first and grouped by day: "Mia completed Dishes", with the
@@ -221,7 +222,11 @@ class _EntryRow extends StatelessWidget {
     final line = historyLine(app, entry);
     final route = entry.verb == 'removed' ? null : _route(app);
     final diffs = line.diffs;
-    final where = [entry.deviceName, if (entry.via != null && entry.via!.isNotEmpty) 'through ${entry.via}'].join(', ');
+    final where = [
+      entry.deviceName,
+      if (entry.via != null && entry.via!.isNotEmpty) 'through ${entry.via}',
+      if (entry.from != null) sourceWords(entry.from!),
+    ].join(', ');
     final avatarSize = 24 * context.type.scale;
 
     final row = Padding(

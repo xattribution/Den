@@ -9,6 +9,7 @@ the same change.
 | --- | --- | --- |
 | `packages/den_core` | Dart (pure, no `dart:io` in `lib/den_core.dart`) | Data model, hybrid logical clock, signed change log, materializer, permissions, recurrence, chores, points, history, queries, the `Den` engine facade, storage interface |
 | `packages/den_net` | Dart | Device handshake and encrypted sessions, sync protocol, pairing (QR invites, spoken codes, matching words), relay client, encrypted backups |
+| `packages/den_capture` | Dart (pure) | Capture: reads a photo, a shared email, link or PDF, or a sentence into proposed events, chores, list items and reminders (see "Capture" below) |
 | `packages/den_hub` | Dart (server, `dart:io`) | The hub: HTTP API, WebSocket sync endpoint, MCP server, OAuth for MCP, scoped tokens, ICS import and export, reminders and notifiers, Home Assistant bridge, mDNS advertising, static web app. `bin/den_hub.dart` compiles to one binary |
 | `packages/den_relay` | Dart (server) | Rendezvous, tunnel and mailbox for devices that can't reach each other or the hub directly. Sees only ciphertext |
 | `app` | Flutter | The designed app for iOS, Android, macOS, Windows, Linux and web. Embeds `den_core`; runs `den_hub` in-process in hub mode on desktop and Android |
@@ -196,6 +197,13 @@ and its exceptions, by the same wall-clock delta.
 name), on which device, when, what record, and each field's old and new value. A viewer sees only
 entries for records in spaces they hold.
 
+**Where a change came from.** A change that capture made carries `_from`:
+`{kind: photo|screenshot|pdf|email|message|link|voice|typed, reader}`, where `reader` names the
+model that read it ("Claude", "Apple Intelligence") and is absent when Den's own reader did. Any
+device may write it; the schema checks its shape. History shows it beside the device: "from a
+photo, read by Claude". Like `_via` it is bookkeeping, never a field diff, and moving a record to
+another space drops it.
+
 ### Permissions
 
 | Action | Parent | Adult | Kid | Guest | Shared display |
@@ -318,6 +326,8 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `GET /api/v1/history?q=&limit=` | read | |
 | `GET /api/v1/search?q=` | read | |
 | `GET /api/v1/stream` | read | Server-sent events: `changed {types}` after every applied change |
+| `GET`/`PUT /api/v1/capture/reader` | signed by a device (`PUT`: a parent's own device) | The family's capture reader, never with its key |
+| `POST /api/v1/capture/read` | signed by a device whose member may add things | Reads what was shared with the family's reader; returns den_capture's JSON |
 | `GET /ics/<token>/family.ics` | read token in path | Read-only ICS feed for other calendar apps |
 | `GET /ws` | session handshake | Device sync |
 | `POST /mcp` | bearer or OAuth | MCP Streamable HTTP |
@@ -346,6 +356,39 @@ rename, delete items); `sensor` per member for points and chores left today; a `
 next event. Services: `den.complete_chore`, `den.add_item`, `den.adjust_points`. Events on the
 HA bus: `den_chore_completed`, `den_item_checked`, `den_event_starting`. Live updates come from
 `/api/v1/stream`. Home Assistant's own MCP client can use the hub's `/mcp` for Assist.
+
+## Capture
+
+`den_capture` turns what a family shares into a draft, checks it, and writes what they choose.
+
+1. **Input.** Typed or spoken words (on-device speech recognition), something shared from another
+   app (text, an email, a link, images, PDFs), or a photo from the camera.
+2. **A reader** returns one JSON shape (`CaptureWire.schema`: events with dates, times and a
+   structured repeat; chores with owners or turns; items with qty, store and list; reminders;
+   unclear notes). Readers, in the family's order: the device's own model (Apple Foundation
+   Models on iOS and macOS 26, Gemini Nano through ML Kit's Prompt API on supported Android),
+   then Den's own rules (pure Dart, everywhere); a model on a home computer (Ollama, often on the
+   hub's machine); Claude with a parent's API key (structured output, photos and PDFs read
+   directly). A reader that can't see images gets the text the device found in them (Vision,
+   ML Kit text recognition). Nothing leaves the device unless a parent connected a reader that
+   runs elsewhere; the key stays in this device's secure storage and never enters the log.
+   A parent can instead set the reader up once on the hub (`/api/v1/capture`, docs/hub-api.md)
+   for every device, kids' tablets included when they may add things: the device signs each
+   request with its own key (`DeviceRequest` in den_net: approved device, addressed to this hub,
+   fresh, never replayed, acting member checked), the hub reads as that member sees the family,
+   and the key stays in the hub's data directory. Devices try the hub's reader after their own,
+   or first when the family chose that.
+3. **Resolution** (`draftFrom`) matches names to members ("me" is whoever is sharing), items to
+   lists (the groceries list unless one is named; a named list the family lacks is proposed),
+   repeats to RRULEs aligned to their first real day, and categories by icon. Unknown names,
+   missing days and guesses become issues on their entry.
+4. **Checking** (`checkDraft`) builds the exact fields each write will make and runs den_core's
+   `checkFields` and `can()` for the acting member, then flags what's already over or already on
+   the calendar or list. Nothing is written yet.
+5. **Writing** (`writeDraft`) adds the chosen entries through `Den` as the acting member, each
+   change carrying `_from`. With the family's `capture` setting `direct`, entries that need no
+   look are added at once with Undo and the rest wait; with `review`, everything waits in the
+   tray. Reminders are written as a one-day chore with a reminder at its time.
 
 ## Notifications
 

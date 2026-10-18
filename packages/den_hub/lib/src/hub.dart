@@ -10,6 +10,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import 'access.dart';
 import 'api.dart';
+import 'capture.dart';
 import 'config.dart';
 import 'context.dart';
 import 'feed.dart';
@@ -49,6 +50,7 @@ class DenHub {
   late final LinkSlots _links;
   late final EventStream _stream;
   late final RestApi _api;
+  late final HubCapture _capture;
   late final McpServer _mcp;
   late final McpHttp _mcpHttp;
   late final OAuthServer _oauth;
@@ -104,6 +106,9 @@ class DenHub {
   /// The MCP server, for other transports (stdio).
   McpServer get mcp => _mcp;
 
+  /// Reading what devices share, with the reader a parent set up on the hub.
+  HubCapture get capture => _capture;
+
   /// Calendar feeds in; [FeedService.syncAll] refreshes them now.
   FeedService get feeds => _feeds;
 
@@ -128,6 +133,7 @@ class DenHub {
     _links = LinkSlots(_ctx);
     _stream = EventStream(_ctx, _feed);
     _api = RestApi(_ctx);
+    _capture = HubCapture(_ctx);
     _mcp = McpServer(_ctx);
     _mcpHttp = McpHttp(_ctx, _mcp);
     _oauth = OAuthServer(_ctx);
@@ -163,6 +169,7 @@ class DenHub {
       ..add('OPTIONS', '/oauth/token', (r, _) => _mcpHttp.options(r))
       ..add('GET', '/ics/<token>/<file>', (r, p) => _ics.feed(r, p['token']!, p['file']!));
     _api.register(_routes);
+    _capture.register(_routes);
     _changes = den.onChange.listen((_) {
       _setup.refresh();
       final m = _mdns;

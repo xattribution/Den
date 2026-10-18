@@ -1,0 +1,25 @@
+{
+  "id": "msg_01H6emailTigersU10",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-opus-5-5",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "EqQBCkYIBxgCKkDyQ3Rs0emailSignature"
+    },
+    {
+      "type": "text",
+      "text": "{\"events\":[{\"title\":\"Soccer game vs. the Hawks\",\"date\":\"2026-10-24\",\"start\":\"09:00\",\"end\":null,\"endDate\":null,\"repeat\":null,\"people\":[\"Leo\",\"Coach Dan\"],\"location\":\"Riverside Park, Field 4\",\"notes\":null,\"kind\":\"sports\",\"remindBefore\":[60]},{\"title\":\"Soccer practice\",\"date\":\"2026-10-20\",\"start\":\"17:30\",\"end\":\"19:00\",\"endDate\":null,\"repeat\":{\"every\":\"week\",\"interval\":1,\"days\":[\"TU\",\"TH\"],\"nth\":null,\"monthDay\":null,\"until\":null,\"count\":null},\"people\":[\"Leo\"],\"location\":\"Riverside Park, Field 4\",\"notes\":\"New practice time\",\"kind\":\"sports\",\"remindBefore\":[]}],\"chores\":[],\"items\":[{\"text\":\"Orange slices\",\"qty\":null,\"store\":null,\"list\":null},{\"text\":\"Water bottles\",\"qty\":\"24\",\"store\":\"Costco\",\"list\":null}],\"reminders\":[{\"text\":\"Return Leo's medical form\",\"date\":\"2026-10-23\",\"time\":null,\"people\":[\"Alex\"]}],\"unclear\":[\"The team photo date is still to be announced\"]}"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 1907,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 486
+  }
+}

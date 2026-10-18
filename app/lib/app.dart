@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import 'capture/capture_service.dart';
 import 'design/theme.dart';
 import 'design/tokens.dart';
 import 'routes/calendar_routes.dart';
@@ -75,6 +76,7 @@ class DenApp extends StatefulWidget {
 class _DenAppState extends State<DenApp> {
   late final GoRouter _router = buildRouter(widget.state);
   StreamSubscription<String>? _taps;
+  StreamSubscription<Object>? _shares;
 
   @override
   void initState() {
@@ -84,11 +86,23 @@ class _DenAppState extends State<DenApp> {
       WidgetsBinding.instance.addPostFrameCallback((_) => _router.push(route));
       WidgetsBinding.instance.scheduleFrame();
     });
+    // Something shared from another app opens straight on what Den found in it.
+    _shares = Capture.inbox.stream.listen((input) => _router.push('/capture', extra: input));
+    if (Capture.waiting.isNotEmpty) {
+      final early = [...Capture.waiting];
+      Capture.waiting.clear();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        for (final input in early) {
+          _router.push('/capture', extra: input);
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
     _taps?.cancel();
+    _shares?.cancel();
     super.dispose();
   }
 

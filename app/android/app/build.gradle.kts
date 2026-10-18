@@ -26,7 +26,8 @@ android {
         applicationId = "family.den.den_app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // Gemini Nano through ML Kit's Prompt API needs Android 8.
+        minSdk = maxOf(flutter.minSdkVersion, 26)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -46,5 +47,10 @@ flutter {
 }
 
 dependencies {
+    // Reminders: flutter_local_notifications needs java.time on older Android.
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // Capture on the phone: Gemini Nano where the phone has it, and text recognition in photos.
+    implementation("com.google.mlkit:genai-prompt:1.0.0-beta4")
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 }

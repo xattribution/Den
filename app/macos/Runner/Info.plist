@@ -26,6 +26,10 @@
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Den listens when you say what to add, and turns it into text on this Mac.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Den turns what you say into text on this Mac to add events, chores and lists.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

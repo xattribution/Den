@@ -7,6 +7,7 @@ library;
 
 export 'src/backup.dart';
 export 'src/client.dart';
+export 'src/device_request.dart';
 export 'src/invite.dart';
 export 'src/mailbox.dart';
 export 'src/relay_client.dart';

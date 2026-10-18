@@ -1,6 +1,7 @@
 package family.den.den_app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
@@ -15,6 +16,8 @@ class MainActivity : FlutterActivity() {
         private const val NOTIFICATIONS_REQUEST = 47733
     }
 
+    private var capture: CaptureChannel? = null
+
     // While the hub runs, the engine (and the hub in it) outlives this window: closing Den from
     // the recent apps leaves the family online, and opening Den again picks the same engine up.
     override fun getCachedEngineId(): String? =
@@ -24,6 +27,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        capture = CaptureChannel(this, flutterEngine).also { it.receive(intent) }
         val app = applicationContext
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "den/hub_service").setMethodCallHandler { call, result ->
             val text = call.argument<String>("text") ?: ""
@@ -49,6 +53,12 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        capture?.receive(intent)
     }
 
     override fun onDestroy() {

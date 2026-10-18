@@ -36,6 +36,7 @@ covers `/health`, everything under `/api/v1`, and the mDNS advertisement.
   [`GET /api/v1/search`](#get-apiv1search) ·
   [`GET /api/v1/stream`](#get-apiv1stream-server-sent-events) ·
   [`GET /api/v1/hub/status`](#get-apiv1hubstatus)
+- [Capture: reading for every device](#capture-reading-for-every-device)
 
 ## Conventions
 
@@ -1122,3 +1123,85 @@ The words are not a secret: a relay or anything else in the middle that ran two 
 produce two transcripts, so the two ends would show different words. This answer travels over
 plain HTTP on the home network, so it backs up, and doesn't replace, comparing with the hub's log
 when the network itself isn't trusted.
+
+## Capture: reading for every device
+
+A parent sets up one reader on the hub (Claude with an API key, or a model at home through
+Ollama) and every approved device in the family uses it: a device sends what someone shared and
+gets back the same JSON every capture reader returns (`CaptureWire.schema` in
+`packages/den_capture`). The device then resolves it to the family, checks it against den_core and
+writes it as its own acting member; the hub writes nothing.
+
+These endpoints take no token. Every request is signed with the device's own key
+(`DeviceRequest` in `packages/den_net`):
+
+| Header | Value |
+| --- | --- |
+| `X-Den-Device` | The device id |
+| `X-Den-Time` | UTC milliseconds; refused more than 5 minutes from the hub's clock |
+| `X-Den-Nonce` | Random; refused if the hub has seen it |
+| `X-Den-Actor` | The member acting on the device, when it names one |
+| `X-Den-Signature` | base64url Ed25519 over `"den/device-request/v1" 0x00` and the canonical JSON `[method, path with query, time, nonce, hex SHA-256 of the body, device, actor, hub device id]` |
+
+The hub accepts a request only from an approved, unrevoked device of its family, addressed to
+itself. A personal device acts for its owner and no one else; a shared display for the member
+signed in on it, or nobody; a hub-mode device for its owner. Anything else is `401 unauthorized`.
+
+### `GET /api/v1/capture/reader`
+
+Any device. What the hub reads with; the key is never in it.
+
+```json
+{
+  "kind": "claude",
+  "reader": {"id": "claude", "name": "Claude", "place": "provider",
+             "inputs": ["text", "image", "pdf"], "history_name": "Claude"},
+  "device_first": true,
+  "model": "claude-opus-5-5",
+  "address": null,
+  "key_saved": true
+}
+```
+
+`kind` is `none`, `claude` or `home`; `reader` is null when nothing is set up. `place` is
+`provider` when what's shared leaves the house, `home` when it stays. `device_first` asks each
+device to read on its own first and ask the hub only for what it can't read or finds nothing in.
+
+### `PUT /api/v1/capture/reader`
+
+A parent's own device (not a shared display). Body:
+
+```json
+{"kind": "claude", "key": "sk-ant-...", "model": "claude-sonnet-5-5", "device_first": true}
+{"kind": "home", "address": "127.0.0.1:11434", "model": "llama3.2", "device_first": true}
+{"kind": "none"}
+```
+
+Without `key`, a Claude reader keeps the key the hub already has. `none` forgets the key. The key
+is kept in `<data>/hub/capture.json`, readable by the hub's user only; it is never in the
+family's log, an answer or the hub's log. Answers like `GET`. `403 permission_denied` for anyone
+else; `400 invalid_input` for a key that doesn't start with `sk-ant-`, a model Den doesn't offer,
+or a home address that isn't one.
+
+### `POST /api/v1/capture/read`
+
+A device whose acting member may add events, chores or list items. Body (at most 30 MB):
+
+```json
+{"kind": "photo", "text": "", "subject": null, "link": null,
+ "files": [{"mime_type": "image/jpeg", "name": "IMG_4471.jpg", "data": "<base64>"}]}
+```
+
+`kind` is one of `photo`, `screenshot`, `pdf`, `email`, `message`, `link`, `voice`, `typed`. Files
+the hub's reader can't take (photos for a home model) are dropped; a device sends the text it
+found in them instead. The hub reads as the acting member sees the family (their lists, not a
+parent's private ones). Answer:
+
+```json
+{"wire": {"events": [], "chores": [], "items": [], "reminders": [], "unclear": []},
+ "reader": {"id": "claude", "name": "Claude", "place": "provider", "inputs": ["text", "image", "pdf"], "history_name": "Claude"}}
+```
+
+Errors: `403 permission_denied` ("Sign in on this screen to add things", "Leo can't add anything
+Den reads"), `409 no_reader` when nothing is set up, `429 busy` (`details.retry`: true) when four
+reads are already running, `502 reader_failed` with the reader's own reason and `details.retry`.

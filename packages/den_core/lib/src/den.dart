@@ -670,6 +670,7 @@ class Den {
     Audience audience = Audience.everyone,
     String? space,
     EventSource? source,
+    CaptureOrigin? from,
   }) async {
     final id = newId();
     await _commit([
@@ -690,6 +691,7 @@ class Den {
             : {'kind': source.kind, 'ref': source.ref, 'label': source.label},
         'rides': [for (final r in rides) {'leg': r.leg, 'driver': r.driver}],
         'countdown': countdown,
+        '_from': ?from?.toJson(),
       }),
     ]);
     return id;
@@ -969,6 +971,7 @@ class Den {
     List<int> reminders = const [],
     Audience audience = Audience.everyone,
     String? space,
+    CaptureOrigin? from,
   }) async {
     final id = newId();
     await _commit([
@@ -983,6 +986,7 @@ class Den {
         'steps': _stepsJson(steps),
         'reminders': reminders,
         'active': true,
+        '_from': ?from?.toJson(),
       }),
     ]);
     return id;
@@ -1161,6 +1165,7 @@ class Den {
     bool pinned = false,
     Audience audience = Audience.everyone,
     String? space,
+    CaptureOrigin? from,
   }) async {
     final id = newId();
     final last = lists.map((l) => l.list.order).where(isOrderKey).maxOrNull;
@@ -1174,6 +1179,7 @@ class Den {
         'event': event,
         'pinned': pinned,
         'order': keyBetween(last, null),
+        '_from': ?from?.toJson(),
       }),
     ]);
     return id;
@@ -1201,8 +1207,15 @@ class Den {
   }
 
   /// Adds an item at the end. On a meal list, [toGroceries] also adds it to the first pinned
-  /// shopping list.
-  Future<String> addItem(String listId, {required String text, String? qty, String? store, bool toGroceries = false}) async {
+  /// shopping list. [from] records what a capture read to find it.
+  Future<String> addItem(
+    String listId, {
+    required String text,
+    String? qty,
+    String? store,
+    bool toGroceries = false,
+    CaptureOrigin? from,
+  }) async {
     final entry = _requireLive(RecordType.list, listId, 'That list doesn\'t exist');
     final target = DenList(entry.rec);
     final id = newId();
@@ -1216,6 +1229,7 @@ class Den {
         'checkedBy': null,
         'order': _endKey(listId),
         'toGroceries': toGroceries,
+        '_from': ?from?.toJson(),
       }),
       if (toGroceries && target.kind == ListKind.meal) ..._mirrorDrafts(text, qty, store),
     ];
@@ -1717,11 +1731,12 @@ class Den {
       verb: a.verb,
       diffs: [
         for (final e in c.fields.entries)
-          if (e.key != '_via' && e.key != '_deleted')
+          if (e.key != '_via' && e.key != '_deleted' && e.key != '_from')
             FieldDiff(e.key, _redact(e.key, a.before[e.key]), _redact(e.key, e.value)),
       ],
       space: c.space,
       via: c.fields['_via'] as String?,
+      from: CaptureOrigin.parse(c.fields['_from']),
     );
   }
 
