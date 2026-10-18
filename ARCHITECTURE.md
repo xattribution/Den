@@ -297,6 +297,8 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `GET /api/v1/history?q=&limit=` | read | |
 | `GET /api/v1/search?q=` | read | |
 | `GET /api/v1/stream` | read | Server-sent events: `changed {types}` after every applied change |
+| `GET`/`PUT /api/v1/capture/reader` | signed by a device (`PUT`: a parent's own device) | The family's capture reader, never with its key |
+| `POST /api/v1/capture/read` | signed by a device whose member may add things | Reads what was shared with the family's reader; returns den_capture's JSON |
 | `GET /ics/<token>/family.ics` | read token in path | Read-only ICS feed for other calendar apps |
 | `GET /ws` | session handshake | Device sync |
 | `POST /mcp` | bearer or OAuth | MCP Streamable HTTP |
@@ -341,6 +343,12 @@ HA bus: `den_chore_completed`, `den_item_checked`, `den_event_starting`. Live up
    directly). A reader that can't see images gets the text the device found in them (Vision,
    ML Kit text recognition). Nothing leaves the device unless a parent connected a reader that
    runs elsewhere; the key stays in this device's secure storage and never enters the log.
+   A parent can instead set the reader up once on the hub (`/api/v1/capture`, docs/hub-api.md)
+   for every device, kids' tablets included when they may add things: the device signs each
+   request with its own key (`DeviceRequest` in den_net: approved device, addressed to this hub,
+   fresh, never replayed, acting member checked), the hub reads as that member sees the family,
+   and the key stays in the hub's data directory. Devices try the hub's reader after their own,
+   or first when the family chose that.
 3. **Resolution** (`draftFrom`) matches names to members ("me" is whoever is sharing), items to
    lists (the groceries list unless one is named; a named list the family lacks is proposed),
    repeats to RRULEs aligned to their first real day, and categories by icon. Unknown names,

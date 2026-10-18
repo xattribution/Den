@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -15,6 +16,8 @@ import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../helpers/shots.dart';
@@ -56,11 +59,12 @@ class FakeSources implements CaptureSources {
   Future<void> stopListening() async {}
 }
 
-CaptureService serviceFor({List<CaptureReader>? readers, CaptureSettings? settings}) => CaptureService(
+CaptureService serviceFor({List<CaptureReader>? readers, CaptureSettings? settings, HubCaptureClient? hub}) => CaptureService(
       settings: settings ?? CaptureSettings(secrets: MemoryCaptureSecrets()),
       platform: const FlyerPhone(),
       sources: FakeSources(),
       readers: readers,
+      hubClient: hub,
     );
 
 /// The coach's email, as Claude read it in den_capture's recorded response.
@@ -306,6 +310,132 @@ void main() {
       settings.homeAddress = '192.168.1.20';
       final home = await tester.runAsync(serviceFor(settings: settings).readers);
       expect([for (final r in home!) r.info.id], ['home', 'rules']);
+    });
+  });
+
+  group('The family\'s hub', () {
+    const claudeOnHub = {
+      'kind': 'claude',
+      'reader': {
+        'id': 'claude',
+        'name': 'Claude',
+        'place': 'provider',
+        'inputs': ['text', 'image', 'pdf'],
+        'history_name': 'Claude',
+      },
+      'device_first': true,
+      'model': 'claude-opus-5-5',
+      'address': null,
+      'key_saved': true,
+    };
+
+    /// A hub that answers with [status] and keeps what it was asked to save.
+    (HubCaptureClient, List<Map<String, Object?>>) fakeHub(Map<String, Object?> status) {
+      final saved = <Map<String, Object?>>[];
+      var current = status;
+      final client = MockClient((r) async {
+        if (r.method == 'PUT') {
+          final body = jsonDecode(r.body) as Map<String, Object?>;
+          saved.add(body);
+          current = {
+            'kind': body['kind'],
+            'reader': body['kind'] == 'home'
+                ? {'id': 'home', 'name': 'Home model', 'place': 'home', 'inputs': ['text'], 'history_name': 'the home model'}
+                : null,
+            'device_first': body['device_first'],
+            'model': body['model'],
+            'address': body['address'],
+            'key_saved': false,
+          };
+        }
+        return http.Response(jsonEncode(current), 200);
+      });
+      return (
+        HubCaptureClient(bases: () => [Uri.parse('http://192.168.1.20:47733')], sign: (m, u, b) async => {'x-den-device': 'PHONE'}, client: client),
+        saved,
+      );
+    }
+
+    /// The demo family with a hub approved by Alex's phone.
+    Future<AppState> withHub(WidgetTester tester) => real(tester, () async {
+          final state = await demoState();
+          final hub = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate(), now: () => demoNow.millisecondsSinceEpoch);
+          await hub.requestJoin(
+            familyId: state.den.familyId!,
+            founderPubkey: state.den.founderPubkey!,
+            deviceName: 'Closet hub',
+            kind: DeviceKind.hub,
+            mode: DeviceMode.hub,
+          );
+          await state.den.ingest(hub.changesSince(const {}));
+          await state.den.approveDevice(hub.deviceId, mode: DeviceMode.hub);
+          await hub.close();
+          return state;
+        });
+
+    testWidgets('Claude set up once on the hub, for every device', (tester) async {
+      final state = await withHub(tester);
+      final (client, _) = fakeHub(claudeOnHub);
+      Capture.service = serviceFor(hub: client);
+      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
+      expect(find.text('Claude on the hub'), findsOneWidget);
+      expect(find.text('API key saved on the hub'), findsOneWidget);
+      await matchShot('settings_capture_hub_phone');
+    });
+
+    testWidgets('a parent points the hub at a model at home', (tester) async {
+      final state = await withHub(tester);
+      final (client, saved) = fakeHub(HubReaderStatus.none.toJson());
+      Capture.service = serviceFor(hub: client);
+      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
+      expect(find.text('Nothing on the hub yet'), findsOneWidget);
+      await tester.tap(find.text('A model at home').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Address the hub reaches it at'), '127.0.0.1:11434');
+      await tester.tap(find.text('Save on the hub'));
+      await tester.pumpAndSettle();
+      expect(saved.single, {'kind': 'home', 'address': '127.0.0.1:11434', 'device_first': true});
+      expect(find.text('Home model on the hub'), findsOneWidget);
+    });
+
+    testWidgets('without a hub there is nothing to set up there', (tester) async {
+      final state = await demoIn(tester);
+      final (client, _) = fakeHub(claudeOnHub);
+      Capture.service = serviceFor(hub: client);
+      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
+      expect(find.text('The family\'s hub'), findsNothing);
+    });
+
+    testWidgets('the hub reads after the device unless the family put it first', (tester) async {
+      Future<List<String>> order(Map<String, Object?> status, {CaptureSettings? settings}) async {
+        final (client, _) = fakeHub(status);
+        final readers = await tester.runAsync(serviceFor(hub: client, settings: settings).readers);
+        return [for (final r in readers!) r.info.id];
+      }
+
+      expect(await order(claudeOnHub), ['rules', 'hub']);
+      expect(await order({...claudeOnHub, 'device_first': false}), ['hub', 'rules']);
+      expect(await order(HubReaderStatus.none.toJson()), ['rules']);
+      final own = CaptureSettings(secrets: MemoryCaptureSecrets('sk-ant-test'), reader: ReaderChoice.claude, hasClaudeKey: true);
+      expect(await order(claudeOnHub, settings: own), ['rules', 'claude', 'hub']);
+    });
+
+    testWidgets('while reading, it says the hub may help', (tester) async {
+      final state = await demoIn(tester);
+      final (client, _) = fakeHub(claudeOnHub);
+      final service = serviceFor(hub: client);
+      await tester.runAsync(() => service.hub!.refresh());
+      Capture.service = service;
+      final c = CaptureController(service: service, den: state.den, input: CaptureInput.shared(files: [flyerPhoto]));
+      await loadFonts();
+      await tester.pumpWidget(
+        DenScope(
+          state: state,
+          child: MaterialApp(debugShowCheckedModeBanner: false, theme: denTheme(DenColors.day), home: CaptureScreen(controller: c)),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('On this device first, then Claude on the hub if it needs help.'), findsOneWidget);
     });
   });
 

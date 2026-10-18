@@ -35,7 +35,7 @@ right away with Undo, or everything waits for you under Settings → AI and auto
 first". Den reads on the phone first (Apple Intelligence or Gemini Nano where the phone has it,
 and its own reader everywhere), and nothing leaves the phone unless a parent connects a reader
 there: a model at home (`docker compose -f deploy/compose.yaml --profile model up -d model`,
-then `ollama pull llama3.2`) or Claude with their own API key, kept in that phone's keychain.
+then `ollama pull llama3.2`) or Claude with their own API key, kept in that phone's keychain; or once on the hub for every device (Settings → AI and automations → The family's hub), where the key stays on the hub and each device asks with a request signed by its own key.
 
 **Away from home.** Phones reach the hub through a relay that only ever carries encrypted data.
 Run your own with `deploy/relay`, then enter its address under Settings → This device → Relay.
@@ -67,12 +67,12 @@ hub's family.
 | Part | Tests | Verified on this machine |
 | --- | --- | --- |
 | Engine (`den_core`) | 175 | Analyzer clean |
-| Networking (`den_net`) | 68 | Two and three devices syncing in memory, over WebSocket and through the relay |
-| Capture (`den_capture`) | 76 | A school flyer's text becomes six calendar events on the phone alone and through a recorded Claude response; typed and spoken sentences, emails, recorded Gemini Nano and Ollama answers |
+| Networking (`den_net`) | 75 | Two and three devices syncing in memory, over WebSocket and through the relay |
+| Capture (`den_capture`) | 81 | A school flyer's text becomes six calendar events on the phone alone and through a recorded Claude response; typed and spoken sentences, emails, recorded Gemini Nano and Ollama answers |
 | Relay | 20 | Tunnel, mailbox, rendezvous, rate limits |
-| Hub and its command line | 48 + 5 | Compiled binary serves the web app and prints its setup code |
+| Hub and its command line | 58 + 5 | Compiled binary serves the web app and prints its setup code; a teen's phone reads through the hub's Claude with signed requests over loopback |
 | Sett importer | 8 | A Sett schema v12 fixture |
-| App | 197, with 167 screenshots | Release APK on an Android emulator; web build in a browser; debug APK with Gemini Nano, ML Kit text recognition and share intents compiles |
+| App | 202, with 168 screenshots | Release APK on an Android emulator; web build in a browser; debug APK with Gemini Nano, ML Kit text recognition and share intents compiles |
 | Home Assistant integration | 74 | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub |
 
 Windows, macOS, iOS and Linux app builds and the Docker images run in CI (`.github/workflows`).

@@ -10,6 +10,8 @@ dependencies:
   async: ^2.13.0
   collection: ^1.19.1
   cryptography: ^2.9.0
+  den_capture:
+    path: ../den_capture
   den_core:
     path: ../den_core
   den_net:

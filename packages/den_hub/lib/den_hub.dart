@@ -6,6 +6,7 @@
 library;
 
 export 'src/access.dart' show Access, accessForToken, readableSpacesFor;
+export 'src/capture.dart' show HubCapture;
 export 'src/config.dart';
 export 'src/hub.dart';
 export 'src/log.dart';

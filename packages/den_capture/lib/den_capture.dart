@@ -18,6 +18,7 @@ export 'src/lexicon.dart' show choreIcon, eventKind;
 export 'src/reader.dart';
 export 'src/readers/claude.dart';
 export 'src/readers/home_model.dart';
+export 'src/readers/hub.dart';
 export 'src/readers/rules.dart';
 export 'src/resolve.dart' show draftFrom, ruleFor;
 export 'src/wire.dart';

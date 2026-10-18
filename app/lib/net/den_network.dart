@@ -157,6 +157,19 @@ class DenNetwork extends ChangeNotifier {
     await start();
   }
 
+  /// The family hub's HTTP addresses, best first: this device's own hub when it is the hub, the
+  /// server a browser page came from, saved addresses, then hubs answering on the home network.
+  /// Empty when the family has no hub.
+  Future<List<Uri>> hubBases() async {
+    if (!den.hasFamily || (!isHub && hubDevice == null)) return const [];
+    Uri http(Uri sync) => Uri(scheme: sync.scheme == 'wss' ? 'https' : 'http', host: sync.host, port: sync.port);
+    return <Uri>{
+      if (isHub) ...localHub.addresses,
+      for (final s in [...?_servingHub(), ..._hubs]) http(s),
+      for (final s in await local.discoverHubs(den.familyId!)) http(s),
+    }.toList();
+  }
+
   /// Turns "192.168.1.20", "hub.local:47733" or "https://den.example.com" into the hub's sync
   /// WebSocket address.
   static Uri? syncUriFor(String address) {

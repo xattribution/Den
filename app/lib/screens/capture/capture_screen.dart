@@ -181,8 +181,13 @@ class _Reading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final settings = Capture.of(context).settings;
+    final service = Capture.of(context);
+    final settings = service.settings;
+    final family = service.hub?.status;
+    final hub = family != null && family.ready ? '${family.reader!.name} on the hub' : null;
     final where = switch (settings.reader) {
+      ReaderChoice.device when hub != null =>
+        family!.deviceFirst ? 'On this device first, then $hub if it needs help.' : '$hub is reading it.',
       ReaderChoice.device => 'Nothing leaves this device.',
       ReaderChoice.home => settings.deviceFirst ? 'On this device first, then the home model if it needs help.' : 'The home model is reading it.',
       ReaderChoice.claude => settings.deviceFirst ? 'On this device first, then Claude if it needs help.' : 'Claude is reading it.',

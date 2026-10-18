@@ -33,6 +33,31 @@ class ReaderInfo {
   final String? historyName;
 
   bool reads(ReaderInput input) => inputs.contains(input);
+
+  Map<String, Object?> toJson() => {
+        'id': id,
+        'name': name,
+        'place': place.name,
+        'inputs': [for (final i in ReaderInput.values) if (inputs.contains(i)) i.name],
+        'history_name': historyName,
+      };
+
+  /// Reads [toJson] output; null when it isn't one.
+  static ReaderInfo? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final id = raw['id'], name = raw['name'];
+    final place = ReaderPlace.values.asNameMap()[raw['place']];
+    if (id is! String || name is! String || place == null) return null;
+    return ReaderInfo(
+      id: id,
+      name: name,
+      place: place,
+      inputs: {
+        for (final i in (raw['inputs'] as List? ?? const [])) ?ReaderInput.values.asNameMap()[i],
+      },
+      historyName: raw['history_name'] as String?,
+    );
+  }
 }
 
 /// One request: what was shared, about which family, and the fixed instructions and schema

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:den_core/den_core.dart';
@@ -82,6 +83,42 @@ class CaptureInput {
         link: dropFiles ? null : link,
         subject: subject,
       );
+
+  /// As sent to the hub to read: files as base64.
+  Map<String, Object?> toJson() => {
+        'kind': kind.name,
+        'text': text,
+        'subject': subject,
+        'link': link?.toString(),
+        'files': [
+          for (final f in files) {'mime_type': f.mimeType, 'name': f.name, 'data': base64Encode(f.bytes)},
+        ],
+      };
+
+  /// Reads [toJson] output; throws [FormatException] when it isn't one.
+  static CaptureInput fromJson(Map<String, Object?> json) {
+    final kind = CaptureKind.values.asNameMap()[json['kind']];
+    final text = json['text'] ?? '';
+    final subject = json['subject'];
+    final link = json['link'];
+    final files = json['files'] ?? const [];
+    if (kind == null || text is! String || (subject != null && subject is! String) || (link != null && link is! String) || files is! List) {
+      throw const FormatException('Not something to read');
+    }
+    return CaptureInput(
+      kind: kind,
+      text: text,
+      subject: subject as String?,
+      link: link == null ? null : Uri.tryParse(link as String),
+      files: [
+        for (final f in files)
+          if (f is Map && f['mime_type'] is String && f['data'] is String)
+            CaptureFile(base64Decode(f['data'] as String), f['mime_type'] as String, name: f['name'] as String?)
+          else
+            throw const FormatException('Not a file'),
+      ],
+    );
+  }
 
   /// A photo, a screenshot (by name), a PDF, a link, an email (it has a subject or mail
   /// headers), else a message.

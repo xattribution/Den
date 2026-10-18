@@ -10,10 +10,10 @@ import 'capture_settings.dart';
 import 'capture_sources.dart';
 import 'platform_capture.dart';
 
-/// Reads what someone shared with the readers this device's settings allow, in their order:
-/// this device first (its model, then Den's own reader) unless a parent chose otherwise, then
-/// the home model or Claude when one is set up. Nothing is sent anywhere unless a parent set
-/// one up on this device.
+/// Reads what someone shared with the readers a parent allowed, in their order: this device
+/// first (its model, then Den's own reader) unless a parent chose otherwise; then the home model
+/// or Claude set up on this device; then the reader a parent set up on the family's hub, for
+/// every device. Nothing is sent anywhere unless a parent set one of those up.
 class CaptureService {
   CaptureService({
     required this.settings,
@@ -21,7 +21,9 @@ class CaptureService {
     CaptureSources? sources,
     http.Client? client,
     List<CaptureReader>? readers,
+    HubCaptureClient? hubClient,
   })  : sources = sources ?? DeviceCaptureSources(),
+        hub = hubClient == null ? null : HubReader(hubClient),
         _fixed = readers,
         _http = client ?? http.Client();
 
@@ -30,6 +32,9 @@ class CaptureService {
 
   /// The camera, files and microphone.
   final CaptureSources sources;
+
+  /// The family hub's reader, when the family has a hub.
+  final HubReader? hub;
 
   /// Readers to use instead of the ones settings choose, for tests and the demo.
   final List<CaptureReader>? _fixed;
@@ -59,8 +64,12 @@ class CaptureService {
           remote = ClaudeReader(apiKey: key, model: settings.claudeModel, client: _http, browser: kIsWeb);
         }
     }
-    if (remote == null) return own;
-    return settings.deviceFirst ? [...own, remote] : [remote, ...own];
+    final hubReader = hub;
+    final family = hubReader == null ? null : await hubReader.refresh();
+    final shared = family?.ready ?? false ? hubReader : null;
+    if (remote != null) return [...(settings.deviceFirst ? [...own, remote] : [remote, ...own]), ?shared];
+    if (shared == null) return own;
+    return family!.deviceFirst ? [...own, shared] : [shared, ...own];
   }
 
   /// Reads [input] for [den]'s family. Throws [ReaderException] when nothing could.

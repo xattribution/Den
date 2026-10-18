@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:den_capture/den_capture.dart';
+import 'package:den_core/den_core.dart' show DenAction, DeviceMode;
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -115,7 +116,13 @@ class _CaptureSectionState extends State<CaptureSection> {
                 ),
               ),
             const SizedBox(height: Sp.s),
-            choice(ReaderChoice.device, 'This device', '$_deviceWords. Nothing leaves this device.'),
+            choice(
+              ReaderChoice.device,
+              'This device',
+              service.hub?.status?.ready ?? false
+                  ? '$_deviceWords, then the family\'s hub'
+                  : '$_deviceWords. Nothing leaves this device.',
+            ),
             choice(ReaderChoice.home, 'A model at home', 'Through Ollama on the hub\'s computer or another one at home'),
             choice(ReaderChoice.claude, 'Claude', 'Anthropic reads what you share and your family\'s first names and lists'),
             if (s.reader == ReaderChoice.home) ...[
@@ -206,9 +213,215 @@ class _CaptureSectionState extends State<CaptureSection> {
                   ),
                 ),
               ),
+            if (service.hub != null && app.den.devices.any((d) => d.mode == DeviceMode.hub && d.approved && !d.revoked))
+              _HubReaderBlock(hub: service.hub!, onChanged: () => setState(() {})),
           ],
         );
       },
+    );
+  }
+}
+
+/// The reader a parent sets up on the family's hub, for every device. The key goes to the hub
+/// and stays there; this device never keeps it.
+class _HubReaderBlock extends StatefulWidget {
+  const _HubReaderBlock({required this.hub, required this.onChanged});
+  final HubReader hub;
+
+  /// Tells the section the hub's reader changed, so its other lines can say so.
+  final VoidCallback onChanged;
+
+  @override
+  State<_HubReaderBlock> createState() => _HubReaderBlockState();
+}
+
+class _HubReaderBlockState extends State<_HubReaderBlock> {
+  final _key = TextEditingController();
+  final _address = TextEditingController();
+  final _model = TextEditingController();
+  HubReaderStatus? _status;
+  bool _loading = true;
+  bool _saving = false;
+  bool _replaceKey = false;
+  HubReaderKind _kind = HubReaderKind.none;
+  String _claudeModel = ClaudeReader.defaultModel;
+  bool _deviceFirst = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _key.dispose();
+    _address.dispose();
+    _model.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final status = await widget.hub.refresh(force: true);
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _show(status);
+    });
+    widget.onChanged();
+  }
+
+  void _show(HubReaderStatus? status) {
+    _status = status;
+    if (status == null) return;
+    _kind = status.kind;
+    _deviceFirst = status.deviceFirst;
+    if (status.kind == HubReaderKind.claude && ClaudeReader.models.containsKey(status.model)) _claudeModel = status.model!;
+    if (status.kind == HubReaderKind.home) {
+      _address.text = status.address ?? '';
+      _model.text = status.model ?? HomeModelReader.defaultModel;
+    }
+    _replaceKey = false;
+    _key.clear();
+  }
+
+  Future<void> _save() async {
+    final key = _key.text.trim();
+    final setup = switch (_kind) {
+      HubReaderKind.none => const HubReaderSetup(kind: HubReaderKind.none),
+      HubReaderKind.claude => HubReaderSetup(
+          kind: HubReaderKind.claude,
+          key: key.isEmpty ? null : key,
+          model: _claudeModel,
+          deviceFirst: _deviceFirst,
+        ),
+      HubReaderKind.home => HubReaderSetup(
+          kind: HubReaderKind.home,
+          address: _address.text.trim(),
+          model: _model.text.trim().isEmpty ? null : _model.text.trim(),
+          deviceFirst: _deviceFirst,
+        ),
+    };
+    setState(() => _saving = true);
+    try {
+      final status = await widget.hub.client.configure(setup);
+      await widget.hub.refresh(force: true);
+      if (mounted) setState(() => _show(status));
+      widget.onChanged();
+    } on ReaderException catch (e) {
+      if (mounted) showNote(context, e.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.app;
+    final c = context.colors;
+    final status = _status;
+    final parent = app.allows(DenAction.manageFamily) && app.den.thisDevice?.mode != DeviceMode.shared;
+    final header = const InfoHeader(
+      'The family\'s hub',
+      info: 'Set up once for every device in the family, including kids\' tablets that can add things. '
+          'The hub keeps the key; devices never see it.',
+    );
+    if (_loading) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        header,
+        ListTile(leading: Icon(PhosphorIconsRegular.hardDrives, color: c.ink2), title: const Text('Asking the hub')),
+      ]);
+    }
+    if (status == null) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        header,
+        EmptyLine(message: 'Can\'t reach the hub from here. Try again at home.', actionLabel: 'Try again', onAction: _load),
+      ]);
+    }
+    final reader = status.reader;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        header,
+        ListTile(
+          leading: Icon(PhosphorIconsRegular.hardDrives, color: c.ink2),
+          title: Text(status.ready ? '${reader!.name} on the hub' : 'Nothing on the hub yet'),
+          subtitle: Text(
+            !status.ready
+                ? 'Each device reads on its own'
+                : status.deviceFirst
+                    ? 'Every device reads on its own first, then asks the hub'
+                    : 'Every device asks the hub first',
+          ),
+        ),
+        if (parent) ...[
+          FormBlock(
+            top: Sp.s,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Segmented<HubReaderKind>(
+                options: const {
+                  HubReaderKind.none: 'Nothing',
+                  HubReaderKind.home: 'A model at home',
+                  HubReaderKind.claude: 'Claude',
+                },
+                value: _kind,
+                onChanged: (k) => setState(() => _kind = k),
+              ),
+            ),
+          ),
+          if (_kind == HubReaderKind.claude) ...[
+            if (status.keySaved && !_replaceKey)
+              ListTile(
+                leading: Icon(PhosphorIconsRegular.key, color: c.ink2),
+                title: const Text('API key saved on the hub'),
+                trailing: TextButton(onPressed: () => setState(() => _replaceKey = true), child: const Text('Replace')),
+              )
+            else
+              FormBlock(
+                child: TextField(
+                  controller: _key,
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: const InputDecoration(labelText: 'Claude API key for the hub', hintText: 'sk-ant-...'),
+                ),
+              ),
+            FormBlock(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Segmented<String>(
+                  options: {for (final m in ClaudeReader.models.entries) m.key: m.value.replaceFirst('Claude ', '')},
+                  value: _claudeModel,
+                  onChanged: (m) => setState(() => _claudeModel = m),
+                ),
+              ),
+            ),
+          ],
+          if (_kind == HubReaderKind.home) ...[
+            FormBlock(
+              child: TextField(
+                controller: _address,
+                decoration: const InputDecoration(labelText: 'Address the hub reaches it at', hintText: '127.0.0.1:11434'),
+              ),
+            ),
+            FormBlock(child: TextField(controller: _model, decoration: const InputDecoration(labelText: 'Model'))),
+          ],
+          if (_kind != HubReaderKind.none)
+            SwitchListTile(
+              title: const Text('Each device tries first'),
+              value: _deviceFirst,
+              onChanged: (v) => setState(() => _deviceFirst = v),
+            ),
+          FormBlock(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton(onPressed: _saving ? null : _save, child: const Text('Save on the hub')),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
