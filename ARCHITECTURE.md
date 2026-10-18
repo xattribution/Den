@@ -281,6 +281,20 @@ approved gets only the pairing messages below.
 Relays keep no accounts and log no content. Families can run their own; the default is
 `relay.den.family` (hosted service, placeholder name).
 
+### Phone calendars
+
+A parent's phone can bring in calendars it already holds (EventKit on iOS, the Calendar Provider on
+Android), the way around Google and Microsoft sign-ins. Each picked calendar goes to Everyone
+(`f`), Parents (`p`) or Just me (`m:<parent>`); every occurrence from 14 days back to 180 days
+ahead becomes a read-only event assigned to that parent, with no reminders of its own (the phone
+already alerts), and `source: {kind: device, ref: "<deviceId>/<calendarId>/<eventId>", label:
+<calendar name>}`, where an occurrence of a repeating event carries `<eventId>@<timestamp>`. The
+device id in the ref keeps two phones from touching each other's events. Each pass, at start, on
+returning to the app, every 15 minutes while it runs and in the background refresh, updates what changed, moves a calendar's events when its
+audience changes (same ids), and removes events deleted on the phone within the window it read and
+every event of a calendar no longer brought in. Without calendar access nothing is removed. The
+picks stay on the phone (shared preferences, keyed to the family).
+
 ## Hub API (for browsers' sync, Home Assistant, scripts)
 
 All under `/api/v1`, JSON, bearer token in `Authorization`. Tokens are shown once, stored as
@@ -336,9 +350,24 @@ HA bus: `den_chore_completed`, `den_item_checked`, `den_event_starting`. Live up
 ## Notifications
 
 Reminders are computed from synced data and scheduled as local notifications on each device, so
-they work offline with no server. The hub additionally sends pushes for live events (a message, an
-approval waiting) through a pluggable notifier: Home Assistant's `notify` service, ntfy, or the
-hosted push relay.
+they work offline with no server. Each device keeps the next 48 hours with the OS (at most 60,
+under iOS's limit), planned again at start, after every applied change and on a timer while the
+app runs: a personal device holds its owner's reminders, a shared display or hub everyone's, with
+items outside `f` shown only as "A reminder from Den". The notification id is a hash of
+`ReminderDue.key`, so planning again replaces a reminder instead of adding a second one; a tap
+opens `/event/<id>?at=<occurrence>` or `/chore/<id>?date=<date>`.
+
+Phones also refresh with Den closed: a periodic background task (`family.den.refresh`, about
+hourly; Android WorkManager, iOS BGAppRefreshTask) connects to the hub for a few seconds to catch
+up, brings in the phone's calendars, plans the reminders again from all of it, and lets what it
+wrote go out before disconnecting. Only one engine may hold a device's change log in a process,
+since two could reuse a change counter: the holder registers a port named `den.engine` with the
+process's `IsolateNameServer`. A background task that finds the app holding it asks the app to
+refresh instead; the app at start waits for a background task to finish; a holder that stopped
+answering pings is taken over.
+
+The hub additionally sends pushes for live events (a message, an approval waiting) through a
+pluggable notifier: Home Assistant's `notify` service, ntfy, or the hosted push relay.
 
 ## Security fixes from Sett, by design
 

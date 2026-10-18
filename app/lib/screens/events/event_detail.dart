@@ -313,7 +313,16 @@ class _SourceBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final label = source.label;
-    final from = label == null || label.isEmpty ? 'From another calendar.' : 'From $label’s calendar.';
+    final String from;
+    if (source.kind == 'device') {
+      // A phone calendar: its name, and the phone it lives on (the device id leads the ref).
+      final ref = source.ref ?? '';
+      final phone = ref.contains('/') ? context.den.device(ref.substring(0, ref.indexOf('/')))?.name : null;
+      final name = label == null || label.isEmpty ? 'a phone calendar' : label;
+      from = phone == null || phone.isEmpty ? 'From $name on a phone.' : 'From $name on $phone.';
+    } else {
+      from = label == null || label.isEmpty ? 'From another calendar.' : 'From $label’s calendar.';
+    }
     return Container(
       color: c.well,
       padding: const EdgeInsets.symmetric(horizontal: Sp.l, vertical: Sp.m),

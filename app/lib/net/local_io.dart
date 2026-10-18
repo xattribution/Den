@@ -6,10 +6,15 @@ import 'package:den_net/io.dart' as io;
 
 import 'hub_client.dart';
 
+/// The longest a search may take in all. Starting the mDNS client can hang where the network
+/// stack refuses its socket options (seen on the Android emulator), and the lookups' own timeouts
+/// only begin after it starts.
+const _discoveryLimit = Duration(seconds: 5);
+
 /// Hubs of this family answering mDNS on the home network.
 Future<List<Uri>> discoverHubs(String familyId) async {
   try {
-    final found = await io.discoverHubs(timeout: const Duration(seconds: 2));
+    final found = await io.discoverHubs(timeout: const Duration(seconds: 2)).timeout(_discoveryLimit);
     return [
       for (final hub in found)
         if (hub.familyId == null || hub.familyId == familyId) hub.syncUri,
@@ -22,7 +27,7 @@ Future<List<Uri>> discoverHubs(String familyId) async {
 /// Every hub answering mDNS on the home network, in this family or waiting for setup.
 Future<List<FoundHub>> findHubsNearby() async {
   try {
-    final found = await io.discoverHubs(timeout: const Duration(seconds: 3));
+    final found = await io.discoverHubs(timeout: const Duration(seconds: 3)).timeout(_discoveryLimit);
     return [
       for (final hub in found)
         FoundHub(
