@@ -63,15 +63,16 @@ hub's family.
 | Relay | 20 | Tunnel, mailbox, rendezvous, rate limits |
 | Hub and its command line | 48 + 5 | Compiled binary serves the web app and prints its setup code |
 | Sett importer | 8 | A Sett schema v12 fixture |
-| App | 183, with 152 screenshots | Release APK on an Android emulator, including the hub kept online in the background and after Den is closed from recent apps; web build in a browser |
-| Home Assistant integration | 83 | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub |
+| App | 191, with 152 screenshots and the Home Assistant brand images | Release APK on an Android emulator, including the hub kept online in the background and after Den is closed from recent apps; web build in a browser |
+| Home Assistant integration | 85 | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub; v0.1.0's `den.zip` downloads from den-homeassistant's release with its manifest and brand images |
 
 Windows, macOS, iOS and Linux app builds and the Docker images run in CI (`.github/workflows`).
 
 HACS installs only from the root of a repository, so the Home Assistant integration is published
-from its own, `den-homeassistant`: `integrations/homeassistant/scripts/prepare_hacs_repo.py`
-writes its files and CI builds its release zip (see the integration's README). That repository
-hasn't been created yet; until it is, install the integration by hand.
+from its own, [`xattribution/den-homeassistant`](https://github.com/xattribution/den-homeassistant):
+`integrations/homeassistant/scripts/prepare_hacs_repo.py` writes its files and CI builds its
+release zip (see the integration's README). Its first release, v0.1.0, carries `den.zip`. To
+install, add that repository to HACS as a custom repository of type Integration.
 
 ## Develop
 

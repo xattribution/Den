@@ -291,7 +291,7 @@ request. It builds both and uploads them as the workflow artifacts `den-homeassi
 to the repository) attaches that `den.zip` to Den's GitHub release for the tag. The zip carries the version in `manifest.json`, which needn't match Den's tag. CI never
 pushes to den-homeassistant; publishing there is done by hand:
 
-1. Once: create the public GitHub repository `xattribution/den-homeassistant` and clone it.
+1. Once: clone `xattribution/den-homeassistant` (public; its first release was v0.1.0).
 2. Set the new `version` in `custom_components/den/manifest.json` in Den.
 3. From `integrations/homeassistant`, write the new version into the clone (here it sits next to
    the Den repository) and `den.zip` beside it:
