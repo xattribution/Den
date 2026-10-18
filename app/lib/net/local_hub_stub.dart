@@ -1,12 +1,13 @@
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
 
+import 'hub_keep_alive.dart';
 import 'local_hub.dart';
 
 /// Browsers and other platforms without `dart:io` can't run a hub.
 const bool localHubSupported = false;
 
-LocalHub createLocalHub({int port = 47733, bool mdns = true, String? dataDir}) => _NoHub();
+LocalHub createLocalHub({int port = 47733, bool mdns = true, String? dataDir, HubKeepAlive? keepAlive}) => _NoHub();
 
 class _NoHub extends LocalHub {
   @override

@@ -7,20 +7,24 @@ import 'package:den_net/den_net.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'hub_keep_alive.dart';
 import 'local_hub.dart';
 
 /// Desktops and Android can keep a hub running; iPhones and iPads stop apps in the background.
 bool get localHubSupported => Platform.isAndroid || Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
-LocalHub createLocalHub({int port = defaultHubPort, bool mdns = true, String? dataDir}) =>
-    _IoHub(port: port, mdns: mdns, dataDir: dataDir);
+LocalHub createLocalHub({int port = defaultHubPort, bool mdns = true, String? dataDir, HubKeepAlive? keepAlive}) =>
+    _IoHub(port: port, mdns: mdns, dataDir: dataDir, keepAlive: keepAlive ?? HubKeepAlive.platform(android: Platform.isAndroid));
 
 class _IoHub extends LocalHub {
-  _IoHub({required this.port, required this.mdns, this.dataDir});
+  _IoHub({required this.port, required this.mdns, required this.keepAlive, this.dataDir});
 
   final int port;
   final bool mdns;
   final String? dataDir;
+
+  /// Keeps the app, and so the hub, running in the background while the hub is on.
+  final HubKeepAlive keepAlive;
 
   DenHub? _hub;
   LocalHubState _state = LocalHubState.off;
@@ -67,11 +71,13 @@ class _IoHub extends LocalHub {
       // Without a home network (a test machine, say) the hub still answers on this device.
       _addresses = lan.isNotEmpty ? lan : [Uri(scheme: 'http', host: '127.0.0.1', port: hub.port)];
       _state = LocalHubState.running;
+      await keepAlive.start(keepAliveDetail(0));
       _tick = Timer.periodic(const Duration(seconds: 3), (_) {
         final n = hub.node.peers.length;
         if (n != _connected) {
           _connected = n;
           notifyListeners();
+          unawaited(keepAlive.update(keepAliveDetail(n)));
         }
       });
     } on SocketException catch (e) {
@@ -94,6 +100,7 @@ class _IoHub extends LocalHub {
     _tick = null;
     final hub = _hub;
     _hub = null;
+    if (hub != null) await keepAlive.stop();
     _connected = 0;
     _addresses = const [];
     _state = LocalHubState.off;
