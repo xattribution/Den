@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 
 import 'app.dart';
+import 'capture/capture_service.dart';
+import 'capture/capture_settings.dart';
+import 'capture/platform_capture.dart';
 import 'boot/boot.dart';
 import 'boot/boot_screen.dart';
 import 'net/den_network.dart';
@@ -18,6 +21,11 @@ Future<void> main() async {
   final den = await Boot.start();
   final network = await DenNetwork.load(den);
   Pairing.service = NetPairing(network);
+  Capture.service = CaptureService(settings: await CaptureSettings.load());
   runApp(DenApp(state: await AppState.load(den, network: network)));
   unawaited(network.start());
+  // Shares that opened Den, that arrive while it's open, and that waited while it was away.
+  unawaited(Capture.collectShares());
+  const PlatformCapture().sharesArrived.listen((_) => Capture.collectShares());
+  AppLifecycleListener(onResume: Capture.collectShares);
 }

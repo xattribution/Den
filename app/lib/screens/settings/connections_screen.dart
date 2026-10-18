@@ -9,6 +9,7 @@ import '../../design/parts/family_words.dart';
 import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
+import 'capture_section.dart';
 import 'scope_picker.dart';
 
 /// AI and automations: requests waiting for a parent, then every connection with what it may
@@ -38,6 +39,7 @@ class ConnectionsScreen extends StatelessWidget {
               children: [
                 if (!parent) const EmptyLine(message: 'Only parents can manage AI and automations.'),
                 for (final x in pending) _Request(x),
+                if (parent) const CaptureSection(),
                 if (parent) ...[
                   SectionHeader(
                     'Connected',

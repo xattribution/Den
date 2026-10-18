@@ -58,6 +58,11 @@ dependencies:
   den_hub:
     path: ../packages/den_hub
   http: ^1.6.0
+  image_picker: ^1.2.3
+  file_selector: ^1.1.0
+  speech_to_text: ^7.4.0
+  den_capture:
+    path: ../packages/den_capture
 
 dev_dependencies:
   flutter_test:

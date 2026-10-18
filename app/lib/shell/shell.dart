@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../design/tokens.dart';
+import '../screens/capture/capture_sheet.dart';
 import '../design/widgets.dart';
 import '../state/app_state.dart';
 
@@ -124,7 +125,8 @@ class DenTopBar extends StatelessWidget {
   }
 }
 
-/// The one way to add anything: a short sheet of what you can add, by permission.
+/// The one way to add anything: type, snap or say it and let Den work out what it is, or pick
+/// one kind of thing to add by hand, by permission.
 Future<void> showAddSheet(BuildContext context) {
   final app = context.app;
   final today = app.today;
@@ -135,32 +137,5 @@ Future<void> showAddSheet(BuildContext context) {
     ('List', PhosphorIconsRegular.listPlus, '/lists/new', DenAction.editLists),
     ('Points', PhosphorIconsRegular.star, '/points/adjust', DenAction.managePoints),
   ].where((choice) => app.allows(choice.$4)).toList();
-
-  return showModalBottomSheet<void>(
-    context: context,
-    builder: (sheetContext) => SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: Sp.l),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(Sp.l, 0, Sp.l, Sp.s),
-              child: Text('Add', style: sheetContext.type.title(sheetContext.colors.ink)),
-            ),
-            for (final choice in choices)
-              ListTile(
-                leading: Icon(choice.$2),
-                title: Text(choice.$1),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  context.push(choice.$3);
-                },
-              ),
-          ],
-        ),
-      ),
-    ),
-  );
+  return showCaptureSheet(context, [for (final c in choices) (c.$1, c.$2, c.$3)]);
 }
