@@ -77,6 +77,46 @@ jobs:
           python -m pip install -r requirements_test.txt
           python -m pytest -q
 
+  # HACS installs from the root of a repository, so the integration is published from
+  # den-homeassistant. This builds that repository's files and den.zip; it pushes nothing.
+  homeassistant-release:
+    name: Home Assistant release zip
+    needs: [homeassistant]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare den-homeassistant and den.zip
+        run: python integrations/homeassistant/scripts/prepare_hacs_repo.py dist/den-homeassistant --zip dist/den.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: den-homeassistant-zip
+          path: dist/den.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: den-homeassistant-repo
+          path: dist/den-homeassistant
+
+  # On a release tag, attach den.zip to the GitHub release; the only job that may write.
+  homeassistant-publish:
+    name: Attach den.zip to the release
+    needs: [homeassistant-release]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: den-homeassistant-zip
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/den.zip
+          fail_on_unmatched_files: true
+
   build:
     name: Build ${{ matrix.target }}
     needs: [packages, app]

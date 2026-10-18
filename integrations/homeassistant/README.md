@@ -26,17 +26,25 @@ Den, and Home Assistant fetches just that part. If the stream drops, it reconnec
 
 ### With HACS
 
-1. In HACS, open the menu (⋮) and choose **Custom repositories**.
-2. Add `https://github.com/xattribution/den-homeassistant` with the type **Integration**. (HACS
-   reads `hacs.json` and `custom_components/` from the root of a repository, so this folder of
-   the Den repository is published there on its own.)
-3. Find **Den** in HACS, download it, and restart Home Assistant.
+HACS installs integrations from the root of a GitHub repository, so this integration is published
+from its own one, [xattribution/den-homeassistant](https://github.com/xattribution/den-homeassistant).
+It isn't in HACS's default list, so add it as a custom repository:
+
+1. In Home Assistant, open **HACS**, then the menu (⋮) at the top right, and choose
+   **Custom repositories**.
+2. Enter `https://github.com/xattribution/den-homeassistant`, choose the type **Integration** and
+   **Add**.
+3. Search HACS for **Den**, open it and choose **Download**. HACS downloads the release's
+   `den.zip` and unpacks it into `config/custom_components/den`.
+4. Restart Home Assistant, then [add the integration](#add-the-integration).
+
+When a new version is released, HACS offers it as an update.
 
 ### By hand
 
 Copy `custom_components/den` into the `custom_components` folder of your Home Assistant
-configuration (so you have `config/custom_components/den/manifest.json`), then restart Home
-Assistant.
+configuration (so you have `config/custom_components/den/manifest.json`), or unzip a release's
+`den.zip` into `config/custom_components/den`, then restart Home Assistant.
 
 ## Create a token in Den
 
@@ -240,3 +248,59 @@ Den itself.
 - Times follow the family's time zone in Den. "Today" for chores rolls over at the family's
   midnight.
 - Debug logging: add `custom_components.den: debug` under `logger:`.
+
+## Publishing to HACS
+
+For maintainers. The integration is developed in the Den repository, under
+[`integrations/homeassistant`](https://github.com/xattribution/den/tree/main/integrations/homeassistant),
+and published from `xattribution/den-homeassistant`, which has at its root what HACS looks for.
+`scripts/prepare_hacs_repo.py` (in `integrations/homeassistant`) writes that repository's files
+into a folder:
+
+| File | What it is |
+| --- | --- |
+| `hacs.json` | The integration's `hacs.json`, set to install from releases: `"zip_release": true` and `"filename": "den.zip"` |
+| `custom_components/den/` | The integration, without `__pycache__` folders or `.pyc` files |
+| `README.md` | This README, which HACS shows on the integration's page |
+| `LICENSE` | Den's license (AGPL-3.0) |
+
+With `--zip PATH` it also writes `den.zip`: the contents of `custom_components/den`, with
+`manifest.json` at the top of the zip, which is how HACS expects it (it unpacks the zip into
+`config/custom_components/den`). From `integrations/homeassistant`:
+
+```bash
+python scripts/prepare_hacs_repo.py ../../dist/den-homeassistant --zip ../../dist/den.zip
+```
+
+The script needs only Python 3.10 or newer. It won't write into a folder that has anything in it unless you
+pass `--force`, which replaces `hacs.json`, `README.md`, `LICENSE` and `custom_components/den` and
+leaves everything else, like `.git`, alone. `--version 0.2.0` (or `v0.2.0`) refuses to go on unless
+that's the version in `manifest.json`; add `--set-version` to put it in the copied `manifest.json`
+instead. HACS also asks integrations for brand images (at least
+`custom_components/den/brand/icon.png`); the script points it out while they're missing.
+
+CI's `homeassistant-release` job runs after the integration's tests on every push and pull
+request. It builds both and uploads them as the workflow artifacts `den-homeassistant-zip` and
+`den-homeassistant-repo`. On a `v*` tag, `homeassistant-publish` (the only job allowed to write
+to the repository) attaches that `den.zip` to Den's GitHub release for the tag. The zip carries the version in `manifest.json`, which needn't match Den's tag. CI never
+pushes to den-homeassistant; publishing there is done by hand:
+
+1. Once: create the public GitHub repository `xattribution/den-homeassistant` and clone it.
+2. Set the new `version` in `custom_components/den/manifest.json` in Den.
+3. From `integrations/homeassistant`, write the new version into the clone (here it sits next to
+   the Den repository) and `den.zip` beside it:
+
+   ```bash
+   python scripts/prepare_hacs_repo.py ../../../den-homeassistant --force --version 0.2.0 --zip ../../../den.zip
+   ```
+
+4. In the clone, commit and push.
+5. Publish a GitHub release there tagged `v0.2.0` with `den.zip` attached (this one, or one CI
+   built from the same commit), for example from the clone:
+
+   ```bash
+   gh release create v0.2.0 ../den.zip --repo xattribution/den-homeassistant --title v0.2.0 --generate-notes
+   ```
+
+   HACS takes the version from the latest release's tag and installs the `den.zip` attached to
+   it; a tag without a release isn't enough.
