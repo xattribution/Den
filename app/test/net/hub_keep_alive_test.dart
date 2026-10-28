@@ -31,6 +31,18 @@ void main() {
     await AndroidHubKeepAlive().stop();
   });
 
+  test('on a Mac it uses the same channel, so closing the window keeps the hub running', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    final keepAlive = HubKeepAlive.platform(android: false, mac: true);
+    await keepAlive.start('x');
+    await keepAlive.stop();
+    expect([for (final c in calls) c.method], ['start', 'stop']);
+  });
+
   test('elsewhere it does nothing', () async {
     final calls = <MethodCall>[];
     messenger.setMockMethodCallHandler(channel, (call) async {

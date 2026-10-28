@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>den_app</string>
+	<string>Den</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -61,6 +61,12 @@
 	<string>Den turns what you say into text on this phone to add events, chores and lists.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Den reads the photo or screenshot you choose to find events, chores and lists to add.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Den looks for your family's hub on your home Wi-Fi so your phone stays in sync.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_den._tcp</string>
+	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

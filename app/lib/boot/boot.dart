@@ -2,8 +2,8 @@ import 'dart:convert';
 
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'device_keychain.dart';
 import 'storage_stub.dart'
     if (dart.library.io) 'storage_native.dart'
     if (dart.library.js_interop) 'storage_web.dart';
@@ -25,13 +25,13 @@ class Boot {
   }
 
   static Future<DeviceKeys> _loadKeys() async {
-    const secure = FlutterSecureStorage();
-    final saved = await secure.read(key: _keysName);
+    const keychain = DeviceKeychain();
+    final saved = await keychain.read(_keysName);
     if (saved != null) {
       return DeviceKeys.fromJson(Map<String, Object?>.from(jsonDecode(saved) as Map));
     }
     final keys = await DeviceKeys.generate();
-    await secure.write(key: _keysName, value: jsonEncode(await keys.toJson()));
+    await keychain.write(_keysName, jsonEncode(await keys.toJson()));
     return keys;
   }
 }
