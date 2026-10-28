@@ -167,6 +167,44 @@ void main() {
     expect((ok.data['feed'] as Map)['url'], 'https://school.example.org/cal.ics');
   });
 
+  test('what the app\'s editors change: steps keep their ids, a rotation its first day, a list its pictogram', () async {
+    final app = on(Surface.app);
+    final dishes = den.chores.firstWhere((c) => c.title == 'Dishes');
+    final steps = [
+      {'id': 'clear', 'text': 'Clear the whole table'},
+      {'text': 'Dry the pans'},
+    ];
+    final changed = await runner.run(app, 'update_chore', {'chore': dishes.id, 'steps': steps});
+    expect(changed.isError, isFalse, reason: changed.text);
+    final after = den.chore(dishes.id)!;
+    expect(after.steps.first.id, 'clear');
+    expect(after.steps.first.text, 'Clear the whole table');
+    expect(after.steps.first.icon, 'dishes', reason: 'a step given by id keeps the pictogram it leaves out');
+    expect(after.steps.last.id, isNot(anyOf('', 'clear', 'load', 'wipe')));
+    final leo = den.members.firstWhere((m) => m.name == 'Leo').id;
+    final maya = den.members.firstWhere((m) => m.name == 'Maya').id;
+    final turns = await runner.run(app, 'update_chore', {
+      'chore': dishes.id,
+      'rotation': [leo, maya],
+      'rotate_every': 'day',
+      'rotation_start': '2026-11-02',
+    });
+    expect(turns.isError, isFalse, reason: turns.text);
+    final owner = den.chore(dishes.id)!.owner as OwnerRotation;
+    expect([owner.ids, owner.every, owner.anchor], [
+      [leo, maya],
+      'day',
+      '2026-11-02',
+    ]);
+    final made = await runner.run(app, 'create_list', {'title': 'Trip', 'need_by': '2026-12-01'});
+    final id = (made.data['list'] as Map)['id'] as String;
+    await runner.run(app, 'update_list', {'list': id, 'kind': 'packing'});
+    expect(den.list(id)!.list.icon, 'packing');
+    final soccer = den.events.firstWhere((e) => e.title == 'Soccer practice');
+    await runner.run(app, 'update_list', {'list': id, 'event': soccer.id});
+    expect([den.list(id)!.list.lifecycle, den.list(id)!.list.needBy], [ListLifecycle.event, isNull]);
+  });
+
   test('add_from_text adds what it reads and leaves what is already there', () async {
     final r = await runner.run(on(Surface.app), 'add_from_text', {'text': 'milk, eggs, 2 lb apples from Costco'});
     expect(r.isError, isFalse, reason: r.text);

@@ -14,6 +14,7 @@ final Map<String, Object?> _choreFields = {
   'owner': S.person('Whose chore it is, or "anyone".'),
   'rotation': S.people('People who take turns, in order (instead of owner).'),
   'rotate_every': S.string('How often the turn passes (default week).', oneOf: ['day', 'week']),
+  'rotation_start': S.date('The day the first person in "rotation" has it (default when the chore starts).'),
   'repeat': S.string('An RRULE such as FREQ=DAILY or FREQ=WEEKLY;BYDAY=MO,TH (default FREQ=DAILY).', maxLength: 500),
   'once': S.date('For a one-time chore, its date.'),
   'start': S.date('When a repeating chore starts (default today).'),
@@ -22,6 +23,7 @@ final Map<String, Object?> _choreFields = {
   'icon': S.string('A pictogram for people who can\'t read yet.', oneOf: PictogramKeys.chores),
   'steps': S.array(
     S.object({
+      'id': S.string('An existing step\'s id, to keep it (and who checked it) as it is changed.', maxLength: 64),
       'text': S.string('The step.', maxLength: 200),
       'owner': S.person('Who does this step.'),
       'points': S.integer('Stars for the step.', min: 0, max: 1000),
@@ -159,7 +161,8 @@ List<ActionSpec> choreActions() => [
 ChoreOwner? _owner(ActionContext c, ActionInput a, String start) {
   final rotation = a.list('rotation');
   if (rotation != null && rotation.isNotEmpty) {
-    return OwnerRotation(c.people.many(rotation, 'rotation'), a.str('rotate_every') ?? 'week', start);
+    final from = a.has('rotation_start') ? toolDate(a.raw['rotation_start'], c.zone, 'rotation_start') : start;
+    return OwnerRotation(c.people.many(rotation, 'rotation'), a.str('rotate_every') ?? 'week', from);
   }
   final owner = a.str('owner');
   if (owner == null) return null;
@@ -177,17 +180,20 @@ ChoreSchedule? _schedule(ActionContext c, ActionInput a) {
   return ChoreSchedule.repeating(rule, a.has('start') ? toolDate(a.raw['start'], c.zone, 'start') : c.today);
 }
 
-List<ChoreStep>? _steps(ActionContext c, ActionInput a) {
+/// The steps given, or null when there are none. A step given by the id of one [before] has
+/// keeps the pictogram it leaves out.
+List<ChoreStep>? _steps(ActionContext c, ActionInput a, {Chore? before}) {
   final raw = a.objects('steps');
   if (raw == null) return null;
+  final kept = {for (final s in before?.steps ?? const <ChoreStep>[]) s.id: s};
   return [
     for (final s in raw)
       ChoreStep(
-        id: '',
+        id: (s['id'] as String?)?.trim() ?? '',
         text: s['text']! as String,
         owner: s['owner'] == null ? null : c.people.one('${s['owner']}'),
         points: s['points'] as int? ?? 0,
-        icon: s['icon'] as String?,
+        icon: (s['icon'] as String?) ?? kept[(s['id'] as String?)?.trim()]?.icon,
       ),
   ];
 }
@@ -223,7 +229,7 @@ Future<ActionResult> _update(ActionContext c, ActionInput a) async {
   final chore = c.chore(a.str('chore', required: true)!);
   final schedule = _schedule(c, a);
   final owner = _owner(c, a, schedule?.start ?? schedule?.once ?? c.today);
-  final steps = _steps(c, a);
+  final steps = _steps(c, a, before: chore);
   final patch = <String, Object?>{
     if (a.has('title')) 'title': a.str('title')!.trim(),
     if (a.present('notes')) 'notes': a.str('notes') ?? '',
