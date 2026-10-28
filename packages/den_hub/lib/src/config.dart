@@ -56,8 +56,6 @@ class HubConfig {
     this.accessTokenLifetime = const Duration(hours: 1),
     this.refreshTokenLifetime = const Duration(days: 90),
     this.onSetupCode,
-    this.localAdminToken,
-    this.backup,
   });
 
   /// TCP port for HTTP, WebSocket sync and MCP; 0 picks a free one.
@@ -111,15 +109,6 @@ class HubConfig {
   /// Replaces the Content-Security-Policy the hub sends with the web app (`DEN_CSP`), for a web
   /// build that needs more than the default allows. Null keeps the default.
   final String? contentSecurityPolicy;
-
-  /// A secret the `den_hub` command line on the same machine presents to ask the running hub
-  /// for a backup (`POST /api/v1/hub/backup`, loopback only). Null turns that endpoint off.
-  final String? localAdminToken;
-
-  /// Collects a consistent copy of the hub's files for a backup while it runs: relative path
-  /// (`keys.json`, `log/changes.jsonl`, `hub/oauth.json`) to bytes. Supplied by whoever owns the
-  /// storage (the command line); null turns live backups off.
-  final Future<Map<String, List<int>>> Function()? backup;
 
   /// Whether the hub runs in the public posture (see [public]).
   bool get publicPosture => public ?? (publicUrl?.scheme == 'https');

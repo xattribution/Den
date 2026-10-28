@@ -179,25 +179,49 @@ String _passphrase(ArgResults a, CliIo io) {
   return value;
 }
 
-/// `den_hub backup --out FILE --passphrase-env VAR`: keys, log and hub state, sealed.
+/// `den_hub backup --out FILE --passphrase-env VAR`: keys, the change log, the hub's own state
+/// and `notify.json`, sealed. Works while the hub runs (`docker compose exec hub
+/// /app/bin/den_hub backup ...`): [DataDir.readBackup] reads in an order that is consistent
+/// while the hub writes, so it doesn't need the hub's lock. With no hub running it holds the
+/// lock, so none starts halfway through.
 Future<int> backup(ArgResults a, DataDir data, CliIo io) async {
   final out = _required(a, 'out');
   final passphrase = _passphrase(a, io);
   if (!data.exists) throw StateError('There\'s no hub in ${data.path} to back up.');
-  await data.lock();
+  var locked = false;
   try {
-    final files = {for (final f in data.backupFiles()) f: base64.encode(await data.file(f).readAsBytes())};
-    final sealed = await encryptBackup(utf8.encode(jsonEncode({'v': 1, 'kind': 'den_hub', 'files': files})), passphrase);
+    await data.lock();
+    locked = true;
+  } on StateError {
+    io.err.writeln('The hub is running; backing it up as it runs.');
+  }
+  try {
+    final files = await data.readBackup();
+    final sealed = await encryptBackup(
+      utf8.encode(jsonEncode({
+        'v': 1,
+        'kind': 'den_hub',
+        'files': {for (final e in files.entries) e.key: base64.encode(e.value)},
+      })),
+      passphrase,
+    );
     await File(out).writeAsBytes(sealed, flush: true);
     restrictToOwner(out);
-    io.out.writeln('Backed up ${files.length} files to $out.');
+    io.out.writeln('Backed up ${files.length} files to $out. Keep a copy somewhere other than this machine.');
     return 0;
   } finally {
-    await data.unlock();
+    if (locked) await data.unlock();
   }
 }
 
-/// `den_hub restore --in FILE --passphrase-env VAR [--force]`.
+/// What a restore says once it has written the files.
+const String restoreAdvice = 'Before anyone changes anything, start the hub and let the family\'s phones and tablets '
+    'connect to it. What the hub wrote after this backup is still on them; the hub takes it back as they sync and '
+    'carries on after it, instead of writing over it.';
+
+/// `den_hub restore --in FILE --passphrase-env VAR [--force]`. Refuses while a hub runs on the
+/// directory (stop it, then `docker compose run --rm hub restore ...`); with `--force` it first
+/// removes the hub that is there, so nothing of it mixes with the one restored.
 Future<int> restore(ArgResults a, DataDir data, CliIo io) async {
   final input = _required(a, 'in');
   final passphrase = _passphrase(a, io);
@@ -209,17 +233,26 @@ Future<int> restore(ArgResults a, DataDir data, CliIo io) async {
     throw StateError('That backup doesn\'t open with that passphrase.');
   }
   if (json['kind'] != 'den_hub') throw StateError('That isn\'t a den_hub backup.');
-  await data.lock();
+  try {
+    await data.lock();
+  } on StateError {
+    throw StateError('A hub is running on ${data.path}. Stop it first (docker compose stop hub), then restore '
+        '(docker compose run --rm hub restore ...).');
+  }
   try {
     final files = (json['files'] as Map).cast<String, String>();
+    if (data.exists) await data.clearForRestore();
+    var written = 0;
     for (final e in files.entries) {
-      if (e.key.contains('..')) continue;
+      if (!DataDir.backupPath(e.key)) continue;
       final f = data.file(e.key);
       await f.parent.create(recursive: true);
       await f.writeAsBytes(base64.decode(e.value), flush: true);
-      if (e.key == 'keys.json') restrictToOwner(f.path);
+      if (e.key == 'keys.json' || e.key.startsWith('hub/')) restrictToOwner(f.path);
+      written++;
     }
-    io.out.writeln('Restored ${files.length} files into ${data.path}.');
+    io.out.writeln('Restored $written files into ${data.path}.');
+    io.out.writeln(restoreAdvice);
     return 0;
   } finally {
     await data.unlock();

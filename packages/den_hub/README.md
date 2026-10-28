@@ -18,10 +18,9 @@ CLI code, so the Den app can run a hub in-process on desktop and Android. `HubCo
 `host`, `dataDir` (the hub's own state; the change log is the `Den`'s storage), `webDir`,
 `relay`, `name`, `homeAssistantUrl` and `homeAssistantToken`, `notify` (per member, by id or
 name: Home Assistant notify service and ntfy topic), `publicUrl`, `allowedOrigins`,
-`trustedProxies`, `public`, `contentSecurityPolicy`, `mailbox`, `mdns`, `log`, `onSetupCode`,
-`localAdminToken` and `backup` (live backups for the command line). Logs never carry tokens,
-PINs, invite secrets or change contents. Hosting a hub on a server behind HTTPS is in
-[docs/hosting.md](../../docs/hosting.md).
+`trustedProxies`, `public`, `contentSecurityPolicy`, `mailbox`, `mdns`, `log`, `onSetupCode`.
+Logs never carry tokens, PINs, invite secrets or change contents. Hosting a hub on a server
+behind HTTPS is in [docs/hosting.md](../../docs/hosting.md).
 
 ## Command line
 
@@ -37,10 +36,12 @@ beside it.
 | `import-sett coord.db --as NAME` | Imports Sett as that parent through the hub device (changes say "via Sett import") |
 | `setup-code` | A fresh hub's setup code |
 | `status` | What the hub is doing |
-| `backup --out FILE --passphrase-env VAR` / `restore --in FILE --passphrase-env VAR [--force]` | Keys, log and hub state sealed with den_net's backup format |
+| `backup --out FILE --passphrase-env VAR` | Keys, the change log, the hub's own state and `notify.json`, sealed with den_net's backup format. Works while the hub runs (`docker compose exec hub /app/bin/den_hub backup ...`): it reads the log's metadata before the log and cuts the log after its last complete line, so the copy is consistent without the hub's lock |
+| `restore --in FILE --passphrase-env VAR [--force]` | Refuses while a hub runs on the directory (stop it, then `docker compose run --rm hub restore ...`); `--force` first removes the hub that is there. Afterwards, let the family's devices connect before changing anything: what the hub wrote after the backup comes back from them, and the hub's change counter moves past it |
 
 Data directory: `keys.json` (device keys, owner-only), `log/` (change log), `hub/` (reminders
-sent, OAuth clients and refresh-token hashes, feed caches), `hub.lock` (one process at a time).
+sent, OAuth clients and refresh-token hashes, the capture reader, feed caches), `notify.json`
+(optional reminder targets), `hub.lock` (one process at a time).
 
 ## Adding a hub to a family
 
