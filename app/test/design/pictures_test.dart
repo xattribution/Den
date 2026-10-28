@@ -92,8 +92,8 @@ void main() {
         }
         return count;
       });
-      // Each picture draws something real in its square (thin ones like the six-shooter
-      // still cover a tenth of it).
+      // Each picture draws something real in its square; thin ones like the six-shooter cover
+      // less of it than the animals do.
       expect(painted, greaterThan(64 * 64 ~/ 14), reason: p.id);
     }
   });

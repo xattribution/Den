@@ -82,6 +82,15 @@ void main() {
       expect(DenMotion.uiCurve.transform(0.5), inExclusiveRange(0.5, 1.02));
     });
 
+    testWidgets('a spring lands exactly on its target', (tester) async {
+      final controller = AnimationController.unbounded(vsync: const TestVSync(), value: 1);
+      addTearDown(controller.dispose);
+      controller.springTo(0, spring: DenMotion.sheet, velocity: -3);
+      await tester.pumpAndSettle();
+      expect(controller.value, 0);
+      expect(controller.isAnimating, isFalse);
+    });
+
     testWidgets('a spring grabbed mid-flight keeps its velocity', (tester) async {
       final controller = AnimationController.unbounded(vsync: const TestVSync());
       addTearDown(controller.dispose);

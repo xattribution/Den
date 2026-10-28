@@ -81,9 +81,28 @@ class SpringCurve extends Curve {
 extension DenSpring on AnimationController {
   /// Springs from wherever the value is now to [target], carrying the current velocity (or
   /// [velocity], in units per second, such as a released drag's) so an animation grabbed
-  /// mid-flight continues without a jump.
+  /// mid-flight continues without a jump. It ends exactly on [target].
   TickerFuture springTo(double target, {SpringDescription? spring, double? velocity}) =>
-      animateWith(SpringSimulation(spring ?? DenMotion.ui, value, target, velocity ?? this.velocity));
+      animateWith(LandingSpring(spring ?? DenMotion.ui, value, target, velocity ?? this.velocity));
+}
+
+/// A spring that lands exactly on its end: once it is within tolerance it reports the end
+/// itself, so nothing rests a fraction of a pixel short.
+class LandingSpring extends Simulation {
+  LandingSpring(SpringDescription spring, double start, this.end, double velocity)
+      : _spring = SpringSimulation(spring, start, end, velocity);
+
+  final double end;
+  final SpringSimulation _spring;
+
+  @override
+  double x(double time) => _spring.isDone(time) ? end : _spring.x(time);
+
+  @override
+  double dx(double time) => _spring.isDone(time) ? 0 : _spring.dx(time);
+
+  @override
+  bool isDone(double time) => _spring.isDone(time);
 }
 
 /// Press feedback for anything tappable: a button, a row, a chip. On pointer down (in the same
