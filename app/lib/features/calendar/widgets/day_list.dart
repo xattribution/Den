@@ -83,7 +83,12 @@ class DaySection extends StatelessWidget {
               children: [
                 for (final (i, group) in groups.indexed) ...[
                   if (i > 0) const SizedBox(height: 10),
-                  GroupRow(group: group, person: person, combined: combined.contains(group.key), onToggle: () => combined.toggle(group.key)),
+                  GroupRow(
+                    group: group,
+                    person: person,
+                    combined: combined.contains(group.key),
+                    onToggle: () => combined.toggle(group.key),
+                  ),
                 ],
               ],
             ),
@@ -118,7 +123,13 @@ class GroupRow extends StatelessWidget {
     Widget blocks;
     if (!group.isMulti) {
       final occ = items.single;
-      blocks = EventBlock(occ: occ, date: group.date, person: person, hero: heroDay(occ), onTap: () => openEvent(context, occ));
+      blocks = EventBlock(
+        occ: occ,
+        date: group.date,
+        person: person,
+        hero: heroDay(occ),
+        onTap: () => openEvent(context, occ),
+      );
     } else {
       blocks = CombineStack(
         combined: combined,
@@ -183,7 +194,10 @@ class GroupRow extends StatelessWidget {
       children: [
         SizedBox(
           width: timeColumnWidth(context),
-          child: Padding(padding: EdgeInsets.only(top: group.isMulti ? 13 : 15), child: time),
+          child: Padding(
+            padding: EdgeInsets.only(top: group.isMulti ? 13 : 15),
+            child: time,
+          ),
         ),
         const SizedBox(width: 10),
         Expanded(child: column),

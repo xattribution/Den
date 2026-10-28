@@ -172,7 +172,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   void _propose(Occurrence occ, Map<String, Object?> patch, String message) {
     if (occ.isRepeating) {
       setState(() {
-        _pending = _Pending({...?_pending?.patch, ...patch}, _pending == null ? message : 'Changed ${_value(occ, 'title')}');
+        _pending = _Pending({
+          ...?_pending?.patch,
+          ...patch,
+        }, _pending == null ? message : 'Changed ${_value(occ, 'title')}');
         _open = null;
         _error = null;
       });
@@ -304,11 +307,11 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       builder: (sheet) {
         final c = sheet.colors;
         Widget row(String label, EditScope scope) => _SheetRow(
-              icon: PhosphorIconsBold.trash,
-              label: label,
-              color: c.destructive,
-              onTap: () => Navigator.of(sheet).pop(scope),
-            );
+          icon: PhosphorIconsBold.trash,
+          label: label,
+          color: c.destructive,
+          onTap: () => Navigator.of(sheet).pop(scope),
+        );
         return Padding(
           padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.s),
           child: Column(
@@ -330,7 +333,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                             Container(height: 1, color: c.line, margin: const EdgeInsets.only(left: 36)),
                             row('Delete this one and the rest', EditScope.following),
                             Container(height: 1, color: c.line, margin: const EdgeInsets.only(left: 36)),
-                            row(all == 'All of them' ? 'Delete all of them' : 'Delete e${all.substring(1)}', EditScope.all),
+                            row(
+                              all == 'All of them' ? 'Delete all of them' : 'Delete e${all.substring(1)}',
+                              EditScope.all,
+                            ),
                           ]
                         : [row('Delete ${occ.title}', EditScope.all)],
                   ),
@@ -352,11 +358,9 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     setState(() => _busy = true);
     ActionResult? result;
     final error = await tryWrite(
-      () async => result = await EventActions(actions).delete(
-        occ.event,
-        scope: scope,
-        occurrence: occ.isRepeating ? occ.seriesStart : null,
-      ),
+      () async => result = await EventActions(
+        actions,
+      ).delete(occ.event, scope: scope, occurrence: occ.isRepeating ? occ.seriesStart : null),
     );
     if (!mounted) return;
     final day = f.short(f.localDate(occ.start));
@@ -393,13 +397,22 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     final List<Widget> children;
     if (deleted != null) {
       children = [
-        DoneRow(message: deleted.message, onUndo: deleted.result?.receipt?.undoable ?? false ? () => _undo(deleted) : null),
+        DoneRow(
+          message: deleted.message,
+          onUndo: deleted.result?.receipt?.undoable ?? false ? () => _undo(deleted) : null,
+        ),
         const SizedBox(height: Sp.l),
-        Align(alignment: Alignment.centerLeft, child: CalendarPill(label: 'Back to the calendar', onTap: () => _leave(context))),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: CalendarPill(label: 'Back to the calendar', onTap: () => _leave(context)),
+        ),
       ];
     } else if (occ == null) {
       children = [
-        Text(tidyLine('This event was deleted, or it isn’t shared with this device.'), style: context.text.body(c.ink2)),
+        Text(
+          tidyLine('This event was deleted, or it isn’t shared with this device.'),
+          style: context.text.body(c.ink2),
+        ),
         const SizedBox(height: Sp.l),
         Align(
           alignment: Alignment.centerLeft,
@@ -425,12 +438,19 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       padding: const EdgeInsets.symmetric(horizontal: DenLayout.gutter),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [top, const SizedBox(height: Sp.l), ...children],
+        children: [
+          top,
+          const SizedBox(height: Sp.l),
+          ...children,
+        ],
       ),
     );
 
     if (widget.inSheet) {
-      return SingleChildScrollView(padding: const EdgeInsets.only(bottom: Sp.s), child: body);
+      return SingleChildScrollView(
+        padding: const EdgeInsets.only(bottom: Sp.s),
+        child: body,
+      );
     }
     final bottom = MediaQuery.paddingOf(context).bottom;
     return Scaffold(
@@ -490,12 +510,24 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       const OfflineNote(),
     ];
 
-    final scope = pending == null ? null : ScopeCard(occ: occ, onPick: (s) => _write(occ, pending.patch, s, pending.message), onCancel: () => setState(() => _pending = null));
+    final scope = pending == null
+        ? null
+        : ScopeCard(
+            occ: occ,
+            onPick: (s) => _write(occ, pending.patch, s, pending.message),
+            onCancel: () => setState(() => _pending = null),
+          );
     final status = _error != null
-        ? (_open == DetailField.title ? null : ErrorState(message: _error!, actionLabel: 'Try again', onAction: _retry ?? () => setState(() => _error = null)))
+        ? (_open == DetailField.title
+              ? null
+              : ErrorState(
+                  message: _error!,
+                  actionLabel: 'Try again',
+                  onAction: _retry ?? () => setState(() => _error = null),
+                ))
         : done != null
-            ? DoneRow(message: done.message, onUndo: done.result?.receipt?.undoable ?? false ? () => _undo(done) : null)
-            : null;
+        ? DoneRow(message: done.message, onUndo: done.result?.receipt?.undoable ?? false ? () => _undo(done) : null)
+        : null;
 
     return [
       _Hero(
@@ -517,16 +549,28 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       ),
       // A rename that didn't go through says why right under the field it was typed in.
       if (_error != null && _open == DetailField.title)
-        Padding(padding: const EdgeInsets.fromLTRB(4, Sp.s, 0, 0), child: ErrorState(message: _error!, actionLabel: 'Try again', onAction: _retry ?? () => setState(() => _error = null))),
-      for (final n in notes) Padding(padding: const EdgeInsets.only(top: Sp.m), child: n),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, Sp.s, 0, 0),
+          child: ErrorState(
+            message: _error!,
+            actionLabel: 'Try again',
+            onAction: _retry ?? () => setState(() => _error = null),
+          ),
+        ),
+      for (final n in notes)
+        Padding(
+          padding: const EdgeInsets.only(top: Sp.m),
+          child: n,
+        ),
       const SizedBox(height: Sp.l),
-      _Details(
-        state: this,
-        occ: occ,
-        shown: shown,
-        canEdit: canEdit,
+      _Details(state: this, occ: occ, shown: shown, canEdit: canEdit),
+      DenReveal(
+        visible: scope != null,
+        child: Padding(
+          padding: const EdgeInsets.only(top: Sp.l),
+          child: scope ?? const SizedBox.shrink(),
+        ),
       ),
-      DenReveal(visible: scope != null, child: Padding(padding: const EdgeInsets.only(top: Sp.l), child: scope ?? const SizedBox.shrink())),
       DenReveal(
         visible: status != null,
         child: Padding(padding: const EdgeInsets.fromLTRB(4, Sp.m, 0, 0), child: status ?? const SizedBox.shrink()),
@@ -563,7 +607,14 @@ class _TopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final more = onMore == null
         ? null
-        : RoundButton(icon: PhosphorIconsBold.dotsThree, label: 'More', onTap: onMore, fill: context.colors.card, color: context.colors.ink, size: Targets.adult);
+        : RoundButton(
+            icon: PhosphorIconsBold.dotsThree,
+            label: 'More',
+            onTap: onMore,
+            fill: context.colors.card,
+            color: context.colors.ink,
+            size: Targets.adult,
+          );
     if (inSheet) {
       return Row(
         children: [
@@ -638,9 +689,18 @@ class _Hero extends StatelessWidget {
               fillColor: look.ink,
               isDense: true,
               contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-              border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(Radii.input)), borderSide: BorderSide.none),
-              enabledBorder: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(Radii.input)), borderSide: BorderSide.none),
-              focusedBorder: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(Radii.input)), borderSide: BorderSide.none),
+              border: const OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(Radii.input)),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: const OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(Radii.input)),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: const OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(Radii.input)),
+                borderSide: BorderSide.none,
+              ),
               semanticCounterText: '',
               labelText: null,
               hintText: 'Title',
@@ -683,7 +743,11 @@ class _Hero extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 14),
-              DenCrossfade(child: editing ? KeyedSubtree(key: const ValueKey('field'), child: field) : KeyedSubtree(key: const ValueKey('title'), child: heading)),
+              DenCrossfade(
+                child: editing
+                    ? KeyedSubtree(key: const ValueKey('field'), child: field)
+                    : KeyedSubtree(key: const ValueKey('title'), child: heading),
+              ),
               const SizedBox(height: 14),
               Text(tidyLine(whenLine), style: t.body(look.ink)),
             ],
@@ -716,7 +780,8 @@ class _Details extends StatelessWidget {
     final today = app.today;
     final date = f.localDate(shown.start);
     final weekStart = app.den.family?.weekStart ?? 0;
-    final repeat = describeRrule(event.rrule, f, startDate: f.localDate(event.start), weekStart: weekStart) ?? 'Just this once';
+    final repeat =
+        describeRrule(event.rrule, f, startDate: f.localDate(event.start), weekStart: weekStart) ?? 'Just this once';
     final people = app.den.members;
     final named = [for (final id in shown.assignees) ?app.memberById(id)];
     final everyone = named.isEmpty || named.length == people.length;
@@ -726,11 +791,11 @@ class _Details extends StatelessWidget {
 
     final timeLine = shown.allDay
         ? (f.localDate(shown.start) == f.lastDate(shown.start, shown.end)
-            ? '${weekdayLong(f, date)}, all day'
-            : f.occurrenceSpan(shown, today: today))
+              ? '${weekdayLong(f, date)}, all day'
+              : f.occurrenceSpan(shown, today: today))
         : f.localDate(shown.start) == f.localDate(shown.end) || shown.end <= shown.start
-            ? '${weekdayLong(f, date)}, ${f.occurrenceSpan(shown, today: today)}'
-            : f.occurrenceSpan(shown, today: today);
+        ? '${weekdayLong(f, date)}, ${f.occurrenceSpan(shown, today: today)}'
+        : f.occurrenceSpan(shown, today: today);
 
     final rows = <Widget>[];
     void add(Widget row) {
@@ -739,255 +804,293 @@ class _Details extends StatelessWidget {
     }
 
     // When, and how often.
-    add(Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _Row(
-          icon: PhosphorIconsBold.clock,
-          title: timeLine,
-          detail: repeat,
-          onTap: canEdit ? () => state._toggle(DetailField.when, occ) : null,
-          open: open == DetailField.when,
-        ),
-        DenReveal(
-          visible: open == DetailField.when,
-          child: Padding(
-            padding: const EdgeInsets.only(left: 36, bottom: Sp.l),
-            child: open != DetailField.when || state._when == null
-                ? const SizedBox.shrink()
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      WhenEditor(
-                        start: state._when!.$1,
-                        end: state._when!.$2,
-                        allDay: state._when!.$3,
-                        onChanged: (s, e, a) => state._set(() => state._when = (s, e, a)),
-                      ),
-                      const SizedBox(height: Sp.m),
-                      Text('Repeats', style: t.meta(c.ink2)),
-                      const SizedBox(height: Sp.xs),
-                      RepeatChips(
-                        rrule: event.rrule,
-                        date: f.localDate(occ.start),
-                        seriesStart: f.localDate(event.start),
-                        onChanged: (rule) => state._write(
-                          occ,
-                          {'rrule': rule},
-                          // A new rule starts from this one; the ones before stay as they were.
-                          event.rrule == null ? EditScope.all : EditScope.following,
-                          rule == null
-                              ? 'Now just this once'
-                              : 'Now ${(describeRrule(rule, f, startDate: f.localDate(occ.start), weekStart: weekStart) ?? 'repeating').toLowerCase()}',
-                        ),
-                      ),
-                      const SizedBox(height: Sp.l),
-                      CalendarPill(
-                        label: 'Done',
-                        primary: true,
-                        onTap: () {
-                          final (s, e, a) = state._when!;
-                          if (s == shown.start && e == shown.end && a == shown.allDay) {
-                            state._set(() => state._open = null);
-                            return;
-                          }
-                          state._propose(
-                            occ,
-                            {'start': s, 'end': e, if (a != occ.allDay) 'allDay': a},
-                            a ? 'Moved to ${f.short(f.localDate(s))}, all day' : 'Moved to ${f.relative(f.localDate(s), today)}, ${f.time(s)}',
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-          ),
-        ),
-      ],
-    ));
-
-    // Who.
-    add(Padding(
-      padding: const EdgeInsets.symmetric(vertical: Sp.m),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    add(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const RowGlyph(PhosphorIconsBold.usersThree),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(tidyLine(everyone ? 'Everyone' : joinNames([for (final m in named) m.name])), style: t.rowTitle(c.ink)),
-                const SizedBox(height: 10),
-                PeopleToggles(
-                  people: people,
-                  selected: everyone ? const [] : [for (final m in named) m.id],
-                  enabled: canEdit,
-                  onChanged: (ids) {
-                    final names = ids.isEmpty ? 'everyone' : joinNames([for (final id in ids) app.memberById(id)?.name ?? '']);
-                    state._propose(occ, {'assignees': ids}, 'Now for $names');
-                  },
-                ),
-              ],
+          _Row(
+            icon: PhosphorIconsBold.clock,
+            title: timeLine,
+            detail: repeat,
+            onTap: canEdit ? () => state._toggle(DetailField.when, occ) : null,
+            open: open == DetailField.when,
+          ),
+          DenReveal(
+            visible: open == DetailField.when,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 36, bottom: Sp.l),
+              child: open != DetailField.when || state._when == null
+                  ? const SizedBox.shrink()
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        WhenEditor(
+                          start: state._when!.$1,
+                          end: state._when!.$2,
+                          allDay: state._when!.$3,
+                          onChanged: (s, e, a) => state._set(() => state._when = (s, e, a)),
+                        ),
+                        const SizedBox(height: Sp.m),
+                        Text('Repeats', style: t.meta(c.ink2)),
+                        const SizedBox(height: Sp.xs),
+                        RepeatChips(
+                          rrule: event.rrule,
+                          date: f.localDate(occ.start),
+                          seriesStart: f.localDate(event.start),
+                          onChanged: (rule) => state._write(
+                            occ,
+                            {'rrule': rule},
+                            // A new rule starts from this one; the ones before stay as they were.
+                            event.rrule == null ? EditScope.all : EditScope.following,
+                            rule == null
+                                ? 'Now just this once'
+                                : 'Now ${(describeRrule(rule, f, startDate: f.localDate(occ.start), weekStart: weekStart) ?? 'repeating').toLowerCase()}',
+                          ),
+                        ),
+                        const SizedBox(height: Sp.l),
+                        CalendarPill(
+                          label: 'Done',
+                          primary: true,
+                          onTap: () {
+                            final (s, e, a) = state._when!;
+                            if (s == shown.start && e == shown.end && a == shown.allDay) {
+                              state._set(() => state._open = null);
+                              return;
+                            }
+                            state._propose(
+                              occ,
+                              {'start': s, 'end': e, if (a != occ.allDay) 'allDay': a},
+                              a
+                                  ? 'Moved to ${f.short(f.localDate(s))}, all day'
+                                  : 'Moved to ${f.relative(f.localDate(s), today)}, ${f.time(s)}',
+                            );
+                          },
+                        ),
+                      ],
+                    ),
             ),
           ),
         ],
       ),
-    ));
+    );
 
-    // Rides.
-    if (occ.rides.isNotEmpty) {
-      add(Padding(
-        padding: const EdgeInsets.symmetric(vertical: Sp.s),
+    // Who.
+    add(
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: Sp.m),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Padding(padding: EdgeInsets.only(top: 10), child: RowGlyph(PhosphorIconsBold.car)),
+            const RowGlyph(PhosphorIconsBold.usersThree),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final ride in occ.rides) _RideLine(state: state, occ: occ, ride: ride, forWhom: forWhom),
+                  Text(
+                    tidyLine(everyone ? 'Everyone' : joinNames([for (final m in named) m.name])),
+                    style: t.rowTitle(c.ink),
+                  ),
+                  const SizedBox(height: 10),
+                  PeopleToggles(
+                    people: people,
+                    selected: everyone ? const [] : [for (final m in named) m.id],
+                    enabled: canEdit,
+                    onChanged: (ids) {
+                      final names = ids.isEmpty
+                          ? 'everyone'
+                          : joinNames([for (final id in ids) app.memberById(id)?.name ?? '']);
+                      state._propose(occ, {'assignees': ids}, 'Now for $names');
+                    },
+                  ),
                 ],
               ),
             ),
           ],
         ),
-      ));
+      ),
+    );
+
+    // Rides.
+    if (occ.rides.isNotEmpty) {
+      add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: Sp.s),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(padding: EdgeInsets.only(top: 10), child: RowGlyph(PhosphorIconsBold.car)),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  children: [
+                    for (final ride in occ.rides) _RideLine(state: state, occ: occ, ride: ride, forWhom: forWhom),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
     // Where.
     if (shown.location.isNotEmpty || open == DetailField.place) {
-      add(open == DetailField.place
-          ? _FieldRow(
-              icon: PhosphorIconsBold.mapPin,
-              controller: state._place,
-              hint: 'Add a place',
-              onDone: () {
-                final place = state._place.text.trim();
-                if (place == shown.location) {
-                  state._set(() => state._open = null);
-                  return;
-                }
-                state._propose(occ, {'location': place}, place.isEmpty ? 'Took the place off' : 'Now at $place');
-              },
-            )
-          : _PlaceRow(
-              place: shown.location,
-              onEdit: canEdit ? () => state._toggle(DetailField.place, occ) : null,
-            ));
+      add(
+        open == DetailField.place
+            ? _FieldRow(
+                icon: PhosphorIconsBold.mapPin,
+                controller: state._place,
+                hint: 'Add a place',
+                onDone: () {
+                  final place = state._place.text.trim();
+                  if (place == shown.location) {
+                    state._set(() => state._open = null);
+                    return;
+                  }
+                  state._propose(occ, {'location': place}, place.isEmpty ? 'Took the place off' : 'Now at $place');
+                },
+              )
+            : _PlaceRow(place: shown.location, onEdit: canEdit ? () => state._toggle(DetailField.place, occ) : null),
+      );
     }
 
     // Reminders.
     if (reminders.isNotEmpty || open == DetailField.remind) {
-      add(Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _Row(
-            icon: PhosphorIconsBold.bellSimple,
-            title: reminders.isEmpty ? 'No reminder' : joinNames([for (final m in reminders) reminderWords(m)]),
-            onTap: canEdit ? () => state._toggle(DetailField.remind, occ) : null,
-            open: open == DetailField.remind,
-            regular: true,
-          ),
-          DenReveal(
-            visible: open == DetailField.remind,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 36, bottom: Sp.l),
-              child: ReminderChips(
-                value: reminders,
-                onChanged: (value) => state._write(
-                  occ,
-                  {'reminders': value},
-                  EditScope.all,
-                  value.isEmpty ? 'No reminder now' : 'Reminder ${joinNames([for (final m in value) reminderWords(m)]).toLowerCase()}',
+      add(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _Row(
+              icon: PhosphorIconsBold.bellSimple,
+              title: reminders.isEmpty ? 'No reminder' : joinNames([for (final m in reminders) reminderWords(m)]),
+              onTap: canEdit ? () => state._toggle(DetailField.remind, occ) : null,
+              open: open == DetailField.remind,
+              regular: true,
+            ),
+            DenReveal(
+              visible: open == DetailField.remind,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 36, bottom: Sp.l),
+                child: ReminderChips(
+                  value: reminders,
+                  onChanged: (value) => state._write(
+                    occ,
+                    {'reminders': value},
+                    EditScope.all,
+                    value.isEmpty
+                        ? 'No reminder now'
+                        : 'Reminder ${joinNames([for (final m in value) reminderWords(m)]).toLowerCase()}',
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
-      ));
+          ],
+        ),
+      );
     }
 
     // Notes.
     if (shown.notes.isNotEmpty || open == DetailField.notes) {
-      add(open == DetailField.notes
-          ? _FieldRow(
-              icon: PhosphorIconsBold.notepad,
-              controller: state._notes,
-              hint: 'Add notes',
-              multiline: true,
-              onDone: () {
-                final notes = state._notes.text.trim();
-                if (notes == shown.notes) {
-                  state._set(() => state._open = null);
-                  return;
-                }
-                state._propose(occ, {'notes': notes}, notes.isEmpty ? 'Took the notes off' : 'Saved the notes');
-              },
-            )
-          : _Row(
-              icon: PhosphorIconsBold.notepad,
-              title: shown.notes,
-              onTap: canEdit ? () => state._toggle(DetailField.notes, occ) : null,
-              regular: true,
-            ));
+      add(
+        open == DetailField.notes
+            ? _FieldRow(
+                icon: PhosphorIconsBold.notepad,
+                controller: state._notes,
+                hint: 'Add notes',
+                multiline: true,
+                onDone: () {
+                  final notes = state._notes.text.trim();
+                  if (notes == shown.notes) {
+                    state._set(() => state._open = null);
+                    return;
+                  }
+                  state._propose(occ, {'notes': notes}, notes.isEmpty ? 'Took the notes off' : 'Saved the notes');
+                },
+              )
+            : _Row(
+                icon: PhosphorIconsBold.notepad,
+                title: shown.notes,
+                onTap: canEdit ? () => state._toggle(DetailField.notes, occ) : null,
+                regular: true,
+              ),
+      );
     }
 
     // Who can see it, when it isn't everyone.
     if (audience != Audience.everyone) {
-      add(_Row(
-        icon: PhosphorIconsBold.eyeSlash,
-        title: app.seenBy(event.space),
-        detail: 'Who can see it',
-        onTap: canEdit ? () => state._toggle(DetailField.more, occ) : null,
-      ));
+      add(
+        _Row(
+          icon: PhosphorIconsBold.eyeSlash,
+          title: app.seenBy(event.space),
+          detail: 'Who can see it',
+          onTap: canEdit ? () => state._toggle(DetailField.more, occ) : null,
+        ),
+      );
     }
 
     // More options: what isn't set yet.
     final missing = <Widget>[
       if (shown.location.isEmpty && open != DetailField.place)
-        _AddRow(icon: PhosphorIconsBold.mapPin, label: 'Add a place', onTap: () => state._toggle(DetailField.place, occ)),
+        _AddRow(
+          icon: PhosphorIconsBold.mapPin,
+          label: 'Add a place',
+          onTap: () => state._toggle(DetailField.place, occ),
+        ),
       if (!occ.rides.any((r) => r.leg == 'to'))
         _AddRow(
           icon: PhosphorIconsBold.car,
           label: 'Someone drives there',
-          onTap: () => state._propose(occ, {'rides': [const Ride('to', null), ...occ.rides]}, 'Added a ride there'),
+          onTap: () => state._propose(occ, {
+            'rides': [const Ride('to', null), ...occ.rides],
+          }, 'Added a ride there'),
         ),
       if (!occ.rides.any((r) => r.leg == 'from'))
         _AddRow(
           icon: PhosphorIconsBold.car,
           label: 'Someone picks up',
-          onTap: () => state._propose(occ, {'rides': [...occ.rides, const Ride('from', null)]}, 'Added a ride home'),
+          onTap: () => state._propose(occ, {
+            'rides': [...occ.rides, const Ride('from', null)],
+          }, 'Added a ride home'),
         ),
       if (reminders.isEmpty && open != DetailField.remind)
-        _AddRow(icon: PhosphorIconsBold.bellSimple, label: 'Add a reminder', onTap: () => state._toggle(DetailField.remind, occ)),
+        _AddRow(
+          icon: PhosphorIconsBold.bellSimple,
+          label: 'Add a reminder',
+          onTap: () => state._toggle(DetailField.remind, occ),
+        ),
       if (shown.notes.isEmpty && open != DetailField.notes)
-        _AddRow(icon: PhosphorIconsBold.notepad, label: 'Add notes', onTap: () => state._toggle(DetailField.notes, occ)),
+        _AddRow(
+          icon: PhosphorIconsBold.notepad,
+          label: 'Add notes',
+          onTap: () => state._toggle(DetailField.notes, occ),
+        ),
       _AudienceRow(state: state, occ: occ),
     ];
     if (canEdit) {
-      add(Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _Row(
-            icon: open == DetailField.more ? PhosphorIconsBold.caretUp : PhosphorIconsBold.caretDown,
-            title: 'More options',
-            onTap: () => state._toggle(DetailField.more, occ),
-            open: open == DetailField.more,
-            regular: true,
-          ),
-          DenReveal(
-            visible: open == DetailField.more,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final row in missing) ...[const _Rule(), row],
-              ],
+      add(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _Row(
+              icon: open == DetailField.more ? PhosphorIconsBold.caretUp : PhosphorIconsBold.caretDown,
+              title: 'More options',
+              onTap: () => state._toggle(DetailField.more, occ),
+              open: open == DetailField.more,
+              regular: true,
             ),
-          ),
-        ],
-      ));
+            DenReveal(
+              visible: open == DetailField.more,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final row in missing) ...[const _Rule(), row],
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
     }
 
     return DecoratedBox(
@@ -1004,13 +1107,22 @@ class _Rule extends StatelessWidget {
   const _Rule();
 
   @override
-  Widget build(BuildContext context) =>
-      Padding(padding: const EdgeInsets.only(left: 36), child: Container(height: 1, color: context.colors.line));
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(left: 36),
+    child: Container(height: 1, color: context.colors.line),
+  );
 }
 
 /// A detail row: an ink glyph, a bold line and a quiet one. Tap to open it in place.
 class _Row extends StatelessWidget {
-  const _Row({required this.icon, required this.title, this.detail, this.onTap, this.open = false, this.regular = false});
+  const _Row({
+    required this.icon,
+    required this.title,
+    this.detail,
+    this.onTap,
+    this.open = false,
+    this.regular = false,
+  });
 
   final IconData icon;
   final String title;
@@ -1030,23 +1142,23 @@ class _Row extends StatelessWidget {
       child: Align(
         alignment: Alignment.centerLeft,
         child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: Sp.m),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            RowGlyph(icon),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(tidyLine(title), style: regular ? t.body(c.ink) : t.rowTitle(c.ink)),
-                  if (detail != null) ...[const SizedBox(height: 2), Text(tidyLine(detail!), style: t.meta(c.ink2))],
-                ],
+          padding: const EdgeInsets.symmetric(vertical: Sp.m),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              RowGlyph(icon),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(tidyLine(title), style: regular ? t.body(c.ink) : t.rowTitle(c.ink)),
+                    if (detail != null) ...[const SizedBox(height: 2), Text(tidyLine(detail!), style: t.meta(c.ink2))],
+                  ],
+                ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
         ),
       ),
     );
@@ -1142,7 +1254,12 @@ class _AudienceRow extends StatelessWidget {
                           selected: event.audience == value,
                           onTap: event.audience == value
                               ? null
-                              : () => state._write(occ, {'audience': value}, EditScope.all, 'Now ${label == 'Everyone' ? 'everyone' : label.toLowerCase()} can see it'),
+                              : () => state._write(
+                                  occ,
+                                  {'audience': value},
+                                  EditScope.all,
+                                  'Now ${label == 'Everyone' ? 'everyone' : label.toLowerCase()} can see it',
+                                ),
                         ),
                     ],
                   ),
@@ -1214,7 +1331,8 @@ class _RideLine extends StatelessWidget {
             CalendarPill(
               label: there ? 'I’ll drive' : 'I’ll pick up',
               primary: true,
-              onTap: () => state._ride(occ, ride, me!.id, _EventDetailScreenState._rideWords(app, ride.leg, me.id, forWhom)),
+              onTap: () =>
+                  state._ride(occ, ride, me!.id, _EventDetailScreenState._rideWords(app, ride.leg, me.id, forWhom)),
             ),
         ],
       );
@@ -1236,7 +1354,10 @@ class _RideLine extends StatelessWidget {
                 children: [
                   if (driver != null) ...[DenAvatar(driver, size: 26), const SizedBox(width: Sp.s)],
                   Text(name, style: t.rowTitle(c.ink)),
-                  if (canPick) ...[const SizedBox(width: 2), Icon(PhosphorIconsBold.caretRight, size: 14, color: c.ink2)],
+                  if (canPick) ...[
+                    const SizedBox(width: 2),
+                    Icon(PhosphorIconsBold.caretRight, size: 14, color: c.ink2),
+                  ],
                 ],
               ),
             ),
@@ -1256,7 +1377,11 @@ class _RideLine extends StatelessWidget {
         children: [
           ConstrainedBox(
             constraints: const BoxConstraints(minHeight: Targets.adult),
-            child: Align(alignment: Alignment.centerLeft, widthFactor: 1, child: Text(label, style: t.body(c.ink))),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              widthFactor: 1,
+              child: Text(label, style: t.body(c.ink)),
+            ),
           ),
           value,
         ],
@@ -1348,7 +1473,13 @@ class _PlaceRow extends StatelessWidget {
 
 /// A detail being typed in place: the field (17, so iOS doesn't zoom) and Done.
 class _FieldRow extends StatelessWidget {
-  const _FieldRow({required this.icon, required this.controller, required this.hint, required this.onDone, this.multiline = false});
+  const _FieldRow({
+    required this.icon,
+    required this.controller,
+    required this.hint,
+    required this.onDone,
+    this.multiline = false,
+  });
 
   final IconData icon;
   final TextEditingController controller;
@@ -1406,23 +1537,23 @@ class _SheetRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => DenPressable(
-        onTap: onTap,
-        scale: false,
-        shape: const RoundedRectangleBorder(),
-        semanticLabel: label,
-        child: ExcludeSemantics(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 60),
-            child: Row(
-              children: [
-                RowGlyph(icon, color: color),
-                const SizedBox(width: 14),
-                Expanded(child: Text(tidyLine(label), style: context.text.body(color))),
-              ],
-            ),
-          ),
+    onTap: onTap,
+    scale: false,
+    shape: const RoundedRectangleBorder(),
+    semanticLabel: label,
+    child: ExcludeSemantics(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 60),
+        child: Row(
+          children: [
+            RowGlyph(icon, color: color),
+            const SizedBox(width: 14),
+            Expanded(child: Text(tidyLine(label), style: context.text.body(color))),
+          ],
         ),
-      );
+      ),
+    ),
+  );
 }
 
 class _Provenance extends StatelessWidget {

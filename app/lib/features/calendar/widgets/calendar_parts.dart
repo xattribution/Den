@@ -113,7 +113,10 @@ class TitleRow extends StatelessWidget {
             Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [Text(overline!, style: context.text.meta(c.ink2)), heading],
+              children: [
+                Text(overline!, style: context.text.meta(c.ink2)),
+                heading,
+              ],
             ),
           if (trailing.isNotEmpty)
             Wrap(spacing: Sp.s, runSpacing: Sp.s, crossAxisAlignment: WrapCrossAlignment.center, children: trailing),
@@ -127,7 +130,13 @@ class TitleRow extends StatelessWidget {
 /// slides on the UI spring (ink on phones; the card color on iPad, as the family week has it).
 /// The labels never wrap: every segment is as wide as the widest label.
 class ViewSwitch<T> extends StatefulWidget {
-  const ViewSwitch({super.key, required this.options, required this.value, required this.onChanged, this.cardThumb = false});
+  const ViewSwitch({
+    super.key,
+    required this.options,
+    required this.value,
+    required this.onChanged,
+    this.cardThumb = false,
+  });
 
   final List<(T, String)> options;
   final T value;
@@ -184,13 +193,15 @@ class _ViewSwitchState<T> extends State<ViewSwitch<T>> with SingleTickerProvider
     final thumbColor = widget.cardThumb ? c.card : c.primary;
     final count = widget.options.length;
 
-    return LayoutBuilder(builder: (context, constraints) {
-      // Every segment as wide as the widest label with room around it, the room shrinking
-      // before any label would have to.
-      final room = constraints.maxWidth.isFinite ? (constraints.maxWidth - 8) / count : double.infinity;
-      final segment = (widest + 32 > room ? (widest + 12 > room ? widest + 12 : room) : widest + 32).floorToDouble();
-      return _track(context, segment, height, thumbColor);
-    });
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Every segment as wide as the widest label with room around it, the room shrinking
+        // before any label would have to.
+        final room = constraints.maxWidth.isFinite ? (constraints.maxWidth - 8) / count : double.infinity;
+        final segment = (widest + 32 > room ? (widest + 12 > room ? widest + 12 : room) : widest + 32).floorToDouble();
+        return _track(context, segment, height, thumbColor);
+      },
+    );
   }
 
   Widget _track(BuildContext context, double segment, double height, Color thumbColor) {
@@ -214,7 +225,9 @@ class _ViewSwitchState<T> extends State<ViewSwitch<T>> with SingleTickerProvider
                     top: 0,
                     width: segment,
                     height: height,
-                    child: DecoratedBox(decoration: ShapeDecoration(color: thumbColor, shape: const StadiumBorder())),
+                    child: DecoratedBox(
+                      decoration: ShapeDecoration(color: thumbColor, shape: const StadiumBorder()),
+                    ),
                   ),
                   Row(
                     children: [
@@ -244,7 +257,13 @@ class _ViewSwitchState<T> extends State<ViewSwitch<T>> with SingleTickerProvider
 }
 
 class _Segment extends StatelessWidget {
-  const _Segment({required this.label, required this.selected, required this.under, required this.cardThumb, required this.onTap});
+  const _Segment({
+    required this.label,
+    required this.selected,
+    required this.under,
+    required this.cardThumb,
+    required this.onTap,
+  });
 
   final String label;
   final bool selected;
@@ -327,8 +346,8 @@ class PersonFilters extends StatelessWidget {
 bool isOffline(AppState app) {
   final network = app.network;
   if (network == null || !network.connecting) return false;
-  final state = network.status.state;
-  return state == SyncState.offline || state == SyncState.connecting;
+  // Only once a try has failed: "connecting" at start-up is not offline.
+  return network.status.state == SyncState.offline;
 }
 
 /// "Offline. Changes stay on this device and reach the family when it's back online."

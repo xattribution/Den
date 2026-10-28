@@ -47,11 +47,13 @@ class MonthView extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final headerHeight = (MediaQuery.textScalerOf(context).scale(context.text.caption(c.ink2).fontSize!) * 1.3).ceilToDouble() + 20;
+        final headerHeight =
+            (MediaQuery.textScalerOf(context).scale(context.text.caption(c.ink2).fontSize!) * 1.3).ceilToDouble() + 20;
         final available = constraints.hasBoundedHeight ? constraints.maxHeight - headerHeight - weeks : weeks * 120.0;
         final rowHeight = math.max(_minRow, (available / weeks).floorToDouble());
         final columnWidth = constraints.maxWidth / 7;
-        final scrolls = constraints.hasBoundedHeight && rowHeight * weeks + headerHeight + weeks > constraints.maxHeight + 0.5;
+        final scrolls =
+            constraints.hasBoundedHeight && rowHeight * weeks + headerHeight + weeks > constraints.maxHeight + 0.5;
 
         final grid = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -99,7 +101,11 @@ class MonthView extends StatelessWidget {
                           height: rowHeight,
                           maxEvents: maxEvents,
                           leftRule: d > 0,
-                          onDay: onDay ?? (date) => context.go(Uri(path: '/calendar', queryParameters: {'view': 'day', 'date': date}).toString()),
+                          onDay:
+                              onDay ??
+                              (date) => context.go(
+                                Uri(path: '/calendar', queryParameters: {'view': 'day', 'date': date}).toString(),
+                              ),
                         );
                       }(),
                   ],
@@ -168,13 +174,18 @@ class _DaySquare extends StatelessWidget {
       width: width,
       child: Semantics(
         button: true,
-        label: '${f.long(date)}${isToday ? ', today' : ''}, ${count == 0 ? 'nothing planned' : '$count ${count == 1 ? 'event' : 'events'}'}',
+        label:
+            '${f.long(date)}${isToday ? ', today' : ''}, ${count == 0 ? 'nothing planned' : '$count ${count == 1 ? 'event' : 'events'}'}',
         child: DenPressable(
           onTap: () => onDay(date),
           scale: false,
           shape: const RoundedRectangleBorder(),
           child: Container(
-            decoration: leftRule ? BoxDecoration(border: Border(left: BorderSide(color: c.line))) : null,
+            decoration: leftRule
+                ? BoxDecoration(
+                    border: Border(left: BorderSide(color: c.line)),
+                  )
+                : null,
             padding: const EdgeInsets.all(pad),
             child: ClipRect(
               child: Column(
@@ -183,7 +194,9 @@ class _DaySquare extends StatelessWidget {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: DecoratedBox(
-                      decoration: isToday ? ShapeDecoration(color: c.primary, shape: const StadiumBorder()) : const BoxDecoration(),
+                      decoration: isToday
+                          ? ShapeDecoration(color: c.primary, shape: const StadiumBorder())
+                          : const BoxDecoration(),
                       child: ConstrainedBox(
                         constraints: BoxConstraints(minWidth: numberSize, minHeight: numberSize, maxHeight: numberSize),
                         child: Padding(
@@ -209,7 +222,9 @@ class _DaySquare extends StatelessWidget {
                       excluding: !roomy,
                       child: _MonthChip(
                         occ: occ,
-                        onTap: roomy ? () => context.push('/event/${occ.event.id}?at=${occ.start}&from=calendar') : null,
+                        onTap: roomy
+                            ? () => context.push('/event/${occ.event.id}?at=${occ.start}&from=calendar')
+                            : null,
                       ),
                     ),
                     const SizedBox(height: 3),

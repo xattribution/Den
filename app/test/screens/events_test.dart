@@ -22,7 +22,13 @@ void main() {
 
     testWidgets('phone, dark', (tester) async {
       final state = await demo(tester);
-      await shootAt(tester, 'events_detail_phone_dark', state: state, location: detail(findEvent(state, 'Soccer')), night: true);
+      await shootAt(
+        tester,
+        'events_detail_phone_dark',
+        state: state,
+        location: detail(findEvent(state, 'Soccer')),
+        night: true,
+      );
     });
 
     testWidgets('phone, 200 % text', (tester) async {
@@ -44,7 +50,12 @@ void main() {
 
     testWidgets('phone: for everyone', (tester) async {
       final state = await demo(tester);
-      await shootAt(tester, 'events_detail_phone_everyone', state: state, location: detail(findEvent(state, 'Grandma')));
+      await shootAt(
+        tester,
+        'events_detail_phone_everyone',
+        state: state,
+        location: detail(findEvent(state, 'Grandma')),
+      );
     });
 
     testWidgets('phone: for everyone, dark', (tester) async {
@@ -60,7 +71,14 @@ void main() {
 
     testWidgets('iPad: a form sheet over the family week', (tester) async {
       final state = await busyDemo(tester);
-      await shootAt(tester, 'events_detail_pad', state: state, base: '/calendar', location: detail(findEvent(state, 'Soccer')), size: pad);
+      await shootAt(
+        tester,
+        'events_detail_pad',
+        state: state,
+        base: '/calendar',
+        location: detail(findEvent(state, 'Soccer')),
+        size: pad,
+      );
     });
 
     testWidgets('iPad, dark', (tester) async {
@@ -90,7 +108,12 @@ void main() {
           source: const EventSource('ics', 'school', 'Oak Grove School'),
         ),
       );
-      await shootAt(tester, 'events_detail_phone_readonly', state: state, location: detail(findEvent(state, 'Field trip')));
+      await shootAt(
+        tester,
+        'events_detail_phone_readonly',
+        state: state,
+        location: detail(findEvent(state, 'Field trip')),
+      );
     });
 
     testWidgets('phone: an event that no longer exists', (tester) async {
@@ -109,7 +132,13 @@ void main() {
     testWidgets('the title, dark', (tester) async {
       final state = await demo(tester);
       final soccer = findEvent(state, 'Soccer');
-      await shootCalendar(tester, 'events_edit_title_phone_dark', page(soccer, open: DetailField.title), state: state, night: true);
+      await shootCalendar(
+        tester,
+        'events_edit_title_phone_dark',
+        page(soccer, open: DetailField.title),
+        state: state,
+        night: true,
+      );
     });
 
     testWidgets('when and how often', (tester) async {
@@ -159,7 +188,13 @@ void main() {
     testWidgets('more options', (tester) async {
       final state = await demo(tester);
       final party = findEvent(state, 'Sophie');
-      await shootCalendar(tester, 'events_more_options_phone', page(party, open: DetailField.more), state: state, size: tallPhone);
+      await shootCalendar(
+        tester,
+        'events_more_options_phone',
+        page(party, open: DetailField.more),
+        state: state,
+        size: tallPhone,
+      );
     });
 
     testWidgets('who drives: a sheet of people', (tester) async {
@@ -239,7 +274,13 @@ void main() {
     testWidgets('More: deleting a repeating event asks how far', (tester) async {
       final state = await demo(tester);
       final soccer = findEvent(state, 'Soccer');
-      await shootCalendar(tester, 'events_delete_phone', page(soccer), state: state, act: () => tester.tap(find.byTooltip('More')));
+      await shootCalendar(
+        tester,
+        'events_delete_phone',
+        page(soccer),
+        state: state,
+        act: () => tester.tap(find.byTooltip('More')),
+      );
     });
   });
 

@@ -1,4 +1,7 @@
 import 'package:den_app/app/app_state.dart';
+import 'package:den_app/app/den_app.dart';
+import 'package:den_app/design/theme.dart';
+import 'package:den_app/design/tokens.dart';
 import 'package:den_app/features/calendar/screens/calendar_screen.dart';
 import 'package:den_app/features/calendar/screens/event_detail.dart';
 import 'package:den_app/features/calendar/state/day_groups.dart';
@@ -8,6 +11,7 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../helpers/shots.dart';
 import 'calendar_shots.dart';
 
 /// What the calendar does, checked without screenshots.
@@ -18,7 +22,12 @@ void main() {
     testWidgets('who drives is two taps: the driver, then a person; for this day only, with Undo', (tester) async {
       final state = await demo(tester);
       final soccer = findEvent(state, 'Soccer');
-      await pumpCalendar(tester, EventDetailScreen(eventId: soccer.event.id, at: soccer.start), state: state, size: tallPhone);
+      await pumpCalendar(
+        tester,
+        EventDetailScreen(eventId: soccer.event.id, at: soccer.start),
+        state: state,
+        size: tallPhone,
+      );
 
       await tester.tap(find.text('Priya').last);
       await tester.pumpAndSettle();
@@ -28,8 +37,11 @@ void main() {
       Occurrence again() =>
           state.den.occurrences(soccer.start - 1, soccer.start + 1).firstWhere((o) => o.event.id == soccer.event.id);
       expect(again().rides.firstWhere((r) => r.leg == 'to').driver, id(state, 'Maya'));
-      expect(state.den.event(soccer.event.id)!.rides.firstWhere((r) => r.leg == 'to').driver, id(state, 'Priya'),
-          reason: 'one tap changes this day, not the series');
+      expect(
+        state.den.event(soccer.event.id)!.rides.firstWhere((r) => r.leg == 'to').driver,
+        id(state, 'Priya'),
+        reason: 'one tap changes this day, not the series',
+      );
       expect(find.textContaining('Maya is driving Leo'), findsOneWidget);
 
       await tapAndWait(tester, find.text('Undo'));
@@ -39,7 +51,12 @@ void main() {
     testWidgets('I’ll drive takes the leg nobody is driving in one tap', (tester) async {
       final state = await demo(tester);
       final swim = findEvent(state, 'Swim');
-      await pumpCalendar(tester, EventDetailScreen(eventId: swim.event.id, at: swim.start), state: state, size: tallPhone);
+      await pumpCalendar(
+        tester,
+        EventDetailScreen(eventId: swim.event.id, at: swim.start),
+        state: state,
+        size: tallPhone,
+      );
       await tapAndWait(tester, find.text('I’ll drive'));
       final now = state.den.occurrences(swim.start - 1, swim.start + 1).firstWhere((o) => o.event.id == swim.event.id);
       expect(now.rides.single.driver, state.me!.id);
@@ -49,7 +66,12 @@ void main() {
     testWidgets('renaming an event that happens once goes through at once, with Undo', (tester) async {
       final state = await demo(tester);
       final party = findEvent(state, 'Sophie');
-      await pumpCalendar(tester, EventDetailScreen(eventId: party.event.id, at: party.start), state: state, size: tallPhone);
+      await pumpCalendar(
+        tester,
+        EventDetailScreen(eventId: party.event.id, at: party.start),
+        state: state,
+        size: tallPhone,
+      );
       await tester.tap(find.textContaining('birthday'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'Sophie’s party');
@@ -76,7 +98,9 @@ void main() {
       expect(state.den.event(soccer.event.id)!.title, 'Soccer practice', reason: 'nothing changes before the answer');
 
       await tapAndWait(tester, find.text('Just this one'));
-      final day = state.den.occurrences(soccer.start - 1, soccer.start + 1).firstWhere((o) => o.event.id == soccer.event.id);
+      final day = state.den
+          .occurrences(soccer.start - 1, soccer.start + 1)
+          .firstWhere((o) => o.event.id == soccer.event.id);
       expect(day.title, 'Soccer (indoor)');
       expect(state.den.event(soccer.event.id)!.title, 'Soccer practice');
     });
@@ -84,7 +108,12 @@ void main() {
     testWidgets('deleting says so in place, and Undo brings it back', (tester) async {
       final state = await demo(tester);
       final party = findEvent(state, 'Sophie');
-      await pumpCalendar(tester, EventDetailScreen(eventId: party.event.id, at: party.start), state: state, size: tallPhone);
+      await pumpCalendar(
+        tester,
+        EventDetailScreen(eventId: party.event.id, at: party.start),
+        state: state,
+        size: tallPhone,
+      );
       await tester.tap(find.byTooltip('More'));
       await tester.pumpAndSettle();
       await tapAndWait(tester, find.textContaining('Delete Sophie'));
@@ -107,7 +136,12 @@ void main() {
         ),
       );
       final trip = findEvent(state, 'Field trip');
-      await pumpCalendar(tester, EventDetailScreen(eventId: trip.event.id, at: trip.start), state: state, size: tallPhone);
+      await pumpCalendar(
+        tester,
+        EventDetailScreen(eventId: trip.event.id, at: trip.start),
+        state: state,
+        size: tallPhone,
+      );
       expect(find.textContaining('Change it'), findsOneWidget);
       expect(find.byTooltip('More'), findsNothing);
       expect(find.text('More options'), findsNothing);
@@ -115,6 +149,33 @@ void main() {
   });
 
   group('The calendar', () {
+    testWidgets('a block opens its event, flying into the page, and back closes it', (tester) async {
+      final state = await busyDemo(tester);
+      await loadFonts();
+      tester.view.physicalSize = phone;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final router = buildRouter(state);
+      await tester.pumpWidget(
+        DenScope(
+          state: state,
+          child: MaterialApp.router(routerConfig: router, theme: denTheme(DenColors.day)),
+        ),
+      );
+      router.go('/calendar');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dentist'));
+      // Mid-flight: the block's color travels into the page.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(tester.takeException(), isNull);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Bright Smiles'), findsOneWidget);
+      await tester.tap(find.text('Calendar').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Today, Friday'), findsOneWidget);
+    });
+
     testWidgets('a phone opens on the list; an iPad on the family week', (tester) async {
       final state = await demo(tester);
       await pumpCalendar(tester, const CalendarScreen(), state: state);
@@ -210,7 +271,11 @@ void main() {
       );
     }
 
-    final groups = groupDay([occ('A', 900, 960), occ('B', 930, 990), occ('C', 980, 1000), occ('D', 1100, 1130)], f, day);
+    final groups = groupDay(
+      [occ('A', 900, 960), occ('B', 930, 990), occ('C', 980, 1000), occ('D', 1100, 1130)],
+      f,
+      day,
+    );
     expect([for (final g in groups) g.items.map((o) => o.title).join()], ['ABC', 'D']);
     expect(groups.first.time, f.time(start + 900 * 60000));
   });

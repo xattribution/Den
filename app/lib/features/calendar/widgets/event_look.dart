@@ -53,7 +53,11 @@ class EventLook {
     final everyone = named.isEmpty || (family.length > 1 && family.every((m) => occ.assignees.contains(m.id)));
     var people = everyone ? const <Member>[] : named;
     if (!everyone && column != null && people.any((m) => m.id == column.id)) {
-      people = [column, for (final m in people) if (m.id != column.id) m];
+      people = [
+        column,
+        for (final m in people)
+          if (m.id != column.id) m,
+      ];
     }
     final category = occ.category ?? occ.event.category;
     final kind = eventKind(

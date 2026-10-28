@@ -130,23 +130,30 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
     final me = app.me;
     final date = f.localDate(_start);
 
-    Widget rule() => Padding(padding: const EdgeInsets.only(left: 36), child: Container(height: 1, color: c.line));
+    Widget rule() => Padding(
+      padding: const EdgeInsets.only(left: 36),
+      child: Container(height: 1, color: c.line),
+    );
     Widget row(IconData icon, String label, Widget child) => Padding(
-          padding: const EdgeInsets.symmetric(vertical: Sp.m),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              RowGlyph(icon),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [Text(label, style: t.rowTitle(c.ink)), const SizedBox(height: Sp.s + 2), child],
-                ),
-              ),
-            ],
+      padding: const EdgeInsets.symmetric(vertical: Sp.m),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          RowGlyph(icon),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: t.rowTitle(c.ink)),
+                const SizedBox(height: Sp.s + 2),
+                child,
+              ],
+            ),
           ),
-        );
+        ],
+      ),
+    );
 
     final more = <Widget>[
       row(
@@ -172,16 +179,25 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
                 label: label,
                 selected: _rides.any((r) => r.leg == leg),
                 onTap: () => setState(() {
-                  _rides = _rides.any((r) => r.leg == leg)
-                      ? [for (final r in _rides) if (r.leg != leg) r]
-                      : [..._rides, Ride(leg, null)]..sort((a, b) => a.leg == 'to' ? -1 : (b.leg == 'to' ? 1 : 0));
+                  _rides =
+                      _rides.any((r) => r.leg == leg)
+                            ? [
+                                for (final r in _rides)
+                                  if (r.leg != leg) r,
+                              ]
+                            : [..._rides, Ride(leg, null)]
+                        ..sort((a, b) => a.leg == 'to' ? -1 : (b.leg == 'to' ? 1 : 0));
                 }),
               ),
           ],
         ),
       ),
       rule(),
-      row(PhosphorIconsBold.bellSimple, 'Reminder', ReminderChips(value: _reminders, onChanged: (v) => setState(() => _reminders = v))),
+      row(
+        PhosphorIconsBold.bellSimple,
+        'Reminder',
+        ReminderChips(value: _reminders, onChanged: (v) => setState(() => _reminders = v)),
+      ),
       rule(),
       row(
         PhosphorIconsBold.eye,
@@ -195,7 +211,11 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
               if (me?.isParent ?? false) (Audience.parents, 'Parents'),
               (Audience.justMe, 'Just me'),
             ])
-              ChoiceChipPill(label: label, selected: _audience == value, onTap: () => setState(() => _audience = value)),
+              ChoiceChipPill(
+                label: label,
+                selected: _audience == value,
+                onTap: () => setState(() => _audience = value),
+              ),
           ],
         ),
       ),
@@ -257,13 +277,22 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
                 row(
                   PhosphorIconsBold.usersThree,
                   'Who',
-                  PeopleToggles(people: app.den.members, selected: _who, onChanged: (ids) => setState(() => _who = ids)),
+                  PeopleToggles(
+                    people: app.den.members,
+                    selected: _who,
+                    onChanged: (ids) => setState(() => _who = ids),
+                  ),
                 ),
                 rule(),
                 row(
                   PhosphorIconsBold.repeat,
                   'Repeats',
-                  RepeatChips(rrule: _rrule, date: date, seriesStart: date, onChanged: (r) => setState(() => _rrule = r)),
+                  RepeatChips(
+                    rrule: _rrule,
+                    date: date,
+                    seriesStart: date,
+                    onChanged: (r) => setState(() => _rrule = r),
+                  ),
                 ),
                 rule(),
                 DenPressable(
@@ -304,7 +333,9 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
           padding: const EdgeInsets.fromLTRB(DenLayout.gutter + 4, 0, DenLayout.gutter, Sp.m),
           child: Row(
             children: [
-              Expanded(child: Semantics(header: true, child: Text('New event', style: t.sheetTitle(c.ink)))),
+              Expanded(
+                child: Semantics(header: true, child: Text('New event', style: t.sheetTitle(c.ink))),
+              ),
               TextButton(onPressed: () => Navigator.of(context).maybePop(), child: const Text('Cancel')),
             ],
           ),
@@ -320,7 +351,10 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (_error != null) ...[ErrorState(message: _error!, actionLabel: 'Try again', onAction: _add), const SizedBox(height: Sp.s)],
+              if (_error != null) ...[
+                ErrorState(message: _error!, actionLabel: 'Try again', onAction: _add),
+                const SizedBox(height: Sp.s),
+              ],
               if (!canAdd) ...[
                 NoticeLine(
                   message: tidyLine('Adding events needs calendar access. A parent can turn it on for you in Family.'),
@@ -328,7 +362,11 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
                 ),
                 const SizedBox(height: Sp.s),
               ],
-              CalendarPill(label: _saving ? 'Adding…' : 'Add event', primary: true, onTap: canAdd && !_saving ? _add : null),
+              CalendarPill(
+                label: _saving ? 'Adding…' : 'Add event',
+                primary: true,
+                onTap: canAdd && !_saving ? _add : null,
+              ),
             ],
           ),
         ),

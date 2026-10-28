@@ -20,7 +20,9 @@ void main() {
         child: MaterialApp(
           debugShowCheckedModeBanner: false,
           theme: denTheme(DenColors.day),
-          home: Scaffold(body: DayView(date: date, now: demoNow.millisecondsSinceEpoch)),
+          home: Scaffold(
+            body: DayView(date: date, now: demoNow.millisecondsSinceEpoch),
+          ),
         ),
       ),
     );
@@ -98,7 +100,9 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 300));
     });
     await tester.pumpAndSettle();
-    final moved = state.den.occurrences(soccer.start, soccer.start + 7200000).where((o) => o.event.id == soccer.event.id);
+    final moved = state.den
+        .occurrences(soccer.start, soccer.start + 7200000)
+        .where((o) => o.event.id == soccer.event.id);
     expect(moved.single.start, soccer.start + 3600000);
     expect(state.den.event(soccer.event.id)!.start, soccer.event.start, reason: 'the series stays');
     expect(find.text('Undo'), findsOneWidget);

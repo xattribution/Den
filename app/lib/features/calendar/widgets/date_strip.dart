@@ -134,7 +134,12 @@ class _WeekStripState extends State<WeekStrip> {
                     itemBuilder: (context, index) {
                       final f = DenScope.read(context).formats;
                       final start = f.addDays(_epoch, index * 7);
-                      return _WeekPage(start: start, selected: widget.selected, person: widget.person, onPick: widget.onPick);
+                      return _WeekPage(
+                        start: start,
+                        selected: widget.selected,
+                        person: widget.person,
+                        onPick: widget.onPick,
+                      );
                     },
                   ),
                 ),
@@ -225,7 +230,8 @@ class _DayTile extends StatelessWidget {
       color: fill,
       selected: selected,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.tile)),
-      semanticLabel: '${f.long(date)}${today ? ', today' : ''}${dots.isEmpty ? '' : ', ${dots.length} ${dots.length == 1 ? 'person' : 'people'} busy'}',
+      semanticLabel:
+          '${f.long(date)}${today ? ', today' : ''}${dots.isEmpty ? '' : ', ${dots.length} ${dots.length == 1 ? 'person' : 'people'} busy'}',
       child: ExcludeSemantics(
         child: SizedBox(
           height: heightFor(context),
@@ -243,7 +249,11 @@ class _DayTile extends StatelessWidget {
                   children: [
                     for (final (i, color) in dots.indexed) ...[
                       if (i > 0) const SizedBox(width: 3),
-                      Container(width: 7, height: 7, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                      ),
                     ],
                   ],
                 ),
@@ -478,7 +488,11 @@ class _MonthDay extends StatelessWidget {
                   children: [
                     for (final (i, color) in dots.take(3).indexed) ...[
                       if (i > 0) const SizedBox(width: 2),
-                      Container(width: 5, height: 5, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+                      Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                      ),
                     ],
                   ],
                 ),

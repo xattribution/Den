@@ -46,7 +46,10 @@ class ScopeCard extends StatelessWidget {
                 alignment: WrapAlignment.spaceBetween,
                 children: [
                   TextButton(onPressed: () => onPick(EditScope.following), child: const Text('From this one on')),
-                  TextButton(onPressed: onCancel, child: Text('Keep it as it was', style: context.text.label(c.ink2))),
+                  TextButton(
+                    onPressed: onCancel,
+                    child: Text('Keep it as it was', style: context.text.label(c.ink2)),
+                  ),
                 ],
               ),
             ],
@@ -70,7 +73,11 @@ class _SplitButtons extends StatelessWidget {
     final style = context.text.label(context.colors.ink);
     final scaler = MediaQuery.textScalerOf(context);
     double width(String s) {
-      final p = TextPainter(text: TextSpan(text: s, style: style), textDirection: TextDirection.ltr, textScaler: scaler)..layout();
+      final p = TextPainter(
+        text: TextSpan(text: s, style: style),
+        textDirection: TextDirection.ltr,
+        textScaler: scaler,
+      )..layout();
       final w = p.width;
       p.dispose();
       return w + Sp.l * 2;
@@ -88,7 +95,14 @@ class _SplitButtons extends StatelessWidget {
             ],
           );
         }
-        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [first, const SizedBox(height: Sp.s), second]);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            first,
+            const SizedBox(height: Sp.s),
+            second,
+          ],
+        );
       },
     );
   }

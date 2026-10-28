@@ -18,7 +18,13 @@ import '../words/recurrence.dart';
 /// A choice among a few, as a 40 pill in a 44 target: ink when chosen, the page gray on a card
 /// otherwise. The label never wraps.
 class ChoiceChipPill extends StatelessWidget {
-  const ChoiceChipPill({super.key, required this.label, required this.selected, required this.onTap, this.wrap = false});
+  const ChoiceChipPill({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.wrap = false,
+  });
 
   final String label;
   final bool selected;
@@ -42,7 +48,12 @@ class ChoiceChipPill extends StatelessWidget {
             constraints: const BoxConstraints(minHeight: 40),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              child: Text(label, style: context.text.meta(selected ? c.onPrimary : c.ink).bold, maxLines: wrap ? null : 1, softWrap: wrap),
+              child: Text(
+                label,
+                style: context.text.meta(selected ? c.onPrimary : c.ink).bold,
+                maxLines: wrap ? null : 1,
+                softWrap: wrap,
+              ),
             ),
           ),
         ),
@@ -66,7 +77,10 @@ class StepButton extends StatelessWidget {
       onTap: onTap,
       shape: CircleBorder(side: BorderSide(color: c.line, width: 1.5)),
       semanticLabel: label,
-      child: SizedBox.square(dimension: Targets.adult, child: Icon(icon, size: 20, color: onTap == null ? c.ink3 : c.ink)),
+      child: SizedBox.square(
+        dimension: Targets.adult,
+        child: Icon(icon, size: 20, color: onTap == null ? c.ink3 : c.ink),
+      ),
     );
   }
 }
@@ -128,7 +142,14 @@ class WhenEditor extends StatelessWidget {
     // A label, then − value +. The label sits beside the stepper while both fit and above it at
     // large text; the value takes what room is left and wraps at a space ("Tue, Oct" / "20")
     // before anything overflows.
-    Widget line(String label, String value, String what, VoidCallback? back, VoidCallback? forward, {bool days = false}) {
+    Widget line(
+      String label,
+      String value,
+      String what,
+      VoidCallback? back,
+      VoidCallback? forward, {
+      bool days = false,
+    }) {
       final scaler = MediaQuery.textScalerOf(context);
       final labelWidth = math.max(56.0, scaler.scale(56));
       final wanted = scaler.scale(days ? 136 : 96);
@@ -160,9 +181,22 @@ class WhenEditor extends StatelessWidget {
           );
           final name = Text(label, style: context.text.meta(c.ink2));
           if (inline) {
-            return Row(children: [SizedBox(width: labelWidth, child: name), const SizedBox(width: Sp.s), stepper]);
+            return Row(
+              children: [
+                SizedBox(width: labelWidth, child: name),
+                const SizedBox(width: Sp.s),
+                stepper,
+              ],
+            );
           }
-          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [name, const SizedBox(height: Sp.xs), stepper]);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              name,
+              const SizedBox(height: Sp.xs),
+              stepper,
+            ],
+          );
         },
       );
     }
@@ -175,7 +209,13 @@ class WhenEditor extends StatelessWidget {
           const SizedBox(height: Sp.s),
           line('Starts', f.time(start), 'Start', () => moveStart(-_step), () => moveStart(_step)),
           const SizedBox(height: Sp.s),
-          line('Ends', f.time(end), 'End', end - _step * 60000 > start ? () => moveEnd(-_step) : null, () => moveEnd(_step)),
+          line(
+            'Ends',
+            f.time(end),
+            'End',
+            end - _step * 60000 > start ? () => moveEnd(-_step) : null,
+            () => moveEnd(_step),
+          ),
         ],
         const SizedBox(height: Sp.xs),
         MergeSemantics(
@@ -195,7 +235,13 @@ class WhenEditor extends StatelessWidget {
 /// month (on the same weekday of the month). A rule that isn't one of these shows as its own
 /// chosen pill first, so nothing is lost by looking.
 class RepeatChips extends StatelessWidget {
-  const RepeatChips({super.key, required this.rrule, required this.date, required this.seriesStart, required this.onChanged});
+  const RepeatChips({
+    super.key,
+    required this.rrule,
+    required this.date,
+    required this.seriesStart,
+    required this.onChanged,
+  });
 
   /// The rule now; null for once.
   final String? rrule;
@@ -227,8 +273,11 @@ class RepeatChips extends StatelessWidget {
       a.count == null &&
       switch (a.frequency) {
         RepeatFrequency.weekly => a.weekdays.length == b.weekdays.length && a.weekdays.containsAll(b.weekdays),
-        RepeatFrequency.monthly => a.monthlyBy == b.monthlyBy &&
-            (a.monthlyBy == MonthlyBy.day ? a.monthDay == b.monthDay : a.ordinal == b.ordinal && a.ordinalWeekday == b.ordinalWeekday),
+        RepeatFrequency.monthly =>
+          a.monthlyBy == b.monthlyBy &&
+              (a.monthlyBy == MonthlyBy.day
+                  ? a.monthDay == b.monthDay
+                  : a.ordinal == b.ordinal && a.ordinalWeekday == b.ordinalWeekday),
         _ => true,
       };
 
@@ -277,12 +326,19 @@ class ReminderChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final extra = [for (final m in value) if (!choices.contains(m)) m];
+    final extra = [
+      for (final m in value)
+        if (!choices.contains(m)) m,
+    ];
     return Wrap(
       spacing: Sp.s,
       runSpacing: Sp.xs,
       children: [
-        ChoiceChipPill(label: 'No reminder', selected: value.isEmpty, onTap: value.isEmpty ? null : () => onChanged(const [])),
+        ChoiceChipPill(
+          label: 'No reminder',
+          selected: value.isEmpty,
+          onTap: value.isEmpty ? null : () => onChanged(const []),
+        ),
         for (final m in [...extra, ...choices])
           ChoiceChipPill(
             label: reminderWords(m),
@@ -301,7 +357,13 @@ class ReminderChips extends StatelessWidget {
 /// Who it's for, as the family's faces to tap: on is their picture in their ring, off a dashed
 /// ring in their color. Everyone on is everyone. The last one on stays on.
 class PeopleToggles extends StatelessWidget {
-  const PeopleToggles({super.key, required this.people, required this.selected, required this.onChanged, this.enabled = true});
+  const PeopleToggles({
+    super.key,
+    required this.people,
+    required this.selected,
+    required this.onChanged,
+    this.enabled = true,
+  });
 
   final List<Member> people;
 
@@ -329,14 +391,24 @@ class PeopleToggles extends StatelessWidget {
             onTap: !enabled
                 ? null
                 : () {
-                    final chosen = {for (final p in people) if (on(p)) p.id};
+                    final chosen = {
+                      for (final p in people)
+                        if (on(p)) p.id,
+                    };
                     if (chosen.contains(m.id)) {
                       if (chosen.length == 1) return;
                       chosen.remove(m.id);
                     } else {
                       chosen.add(m.id);
                     }
-                    onChanged(chosen.length == people.length ? const [] : [for (final p in people) if (chosen.contains(p.id)) p.id]);
+                    onChanged(
+                      chosen.length == people.length
+                          ? const []
+                          : [
+                              for (final p in people)
+                                if (chosen.contains(p.id)) p.id,
+                            ],
+                    );
                   },
             ink: c.ink,
           ),
@@ -385,7 +457,10 @@ class _PersonToggle extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              AnimatedSwitcher(duration: DenMotion.fade, child: KeyedSubtree(key: ValueKey(on), child: face)),
+              AnimatedSwitcher(
+                duration: DenMotion.fade,
+                child: KeyedSubtree(key: ValueKey(on), child: face),
+              ),
               const SizedBox(height: 4),
               Text(member.name, style: context.text.caption(on ? c.ink : c.ink2), maxLines: 1, softWrap: false),
             ],

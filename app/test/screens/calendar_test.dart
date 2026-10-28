@@ -25,7 +25,14 @@ void main() {
 
     testWidgets('phone, 200 % text', (tester) async {
       final state = await busyDemo(tester);
-      await shootCalendar(tester, 'calendar_list_phone_text200', const CalendarScreen(), state: state, text: 2, size: tallPhone);
+      await shootCalendar(
+        tester,
+        'calendar_list_phone_text200',
+        const CalendarScreen(),
+        state: state,
+        text: 2,
+        size: tallPhone,
+      );
     });
 
     testWidgets('phone, events at the same time combined into one', (tester) async {
@@ -88,12 +95,24 @@ void main() {
 
     testWidgets('phone, dark', (tester) async {
       final state = await busyDemo(tester);
-      await shootCalendar(tester, 'calendar_day_phone_dark', const CalendarScreen(view: CalendarView.day), state: state, night: true);
+      await shootCalendar(
+        tester,
+        'calendar_day_phone_dark',
+        const CalendarScreen(view: CalendarView.day),
+        state: state,
+        night: true,
+      );
     });
 
     testWidgets('phone, 200 % text', (tester) async {
       final state = await busyDemo(tester);
-      await shootCalendar(tester, 'calendar_day_phone_text200', DayView(date: state.today, now: now), state: state, text: 2);
+      await shootCalendar(
+        tester,
+        'calendar_day_phone_text200',
+        DayView(date: state.today, now: now),
+        state: state,
+        text: 2,
+      );
     });
 
     testWidgets('iPad, a column per person', (tester) async {
@@ -116,12 +135,26 @@ void main() {
 
     testWidgets('iPad, dark', (tester) async {
       final state = await busyDemo(tester);
-      await shootCalendar(tester, 'calendar_week_pad_dark', const CalendarScreen(), state: state, size: padContent, night: true);
+      await shootCalendar(
+        tester,
+        'calendar_week_pad_dark',
+        const CalendarScreen(),
+        state: state,
+        size: padContent,
+        night: true,
+      );
     });
 
     testWidgets('iPad, 200 % text', (tester) async {
       final state = await busyDemo(tester);
-      await shootCalendar(tester, 'calendar_week_pad_text200', const CalendarScreen(), state: state, size: padContent, text: 2);
+      await shootCalendar(
+        tester,
+        'calendar_week_pad_text200',
+        const CalendarScreen(),
+        state: state,
+        size: padContent,
+        text: 2,
+      );
     });
 
     testWidgets('iPad, in the app', (tester) async {
@@ -195,7 +228,13 @@ void main() {
 
     testWidgets('on the wall', (tester) async {
       final state = await demo(tester, wall: true);
-      await shootCalendar(tester, 'calendar_month_wall', MonthView(anchor: state.today), state: state, size: wall);
+      await shootCalendar(
+        tester,
+        'calendar_month_wall',
+        MonthView(anchor: state.today),
+        state: state,
+        size: wall,
+      );
     });
   });
 }

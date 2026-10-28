@@ -16,11 +16,17 @@ class DenSheetPage<T> extends Page<T> {
   final bool dismissible;
   final String closeLabel;
 
+  /// The sheet shows the page it was last given, so a route that updates in place (new query
+  /// parameters) updates the sheet too.
   @override
-  Route<T> createRoute(BuildContext context) => DenSheetRoute<T>(
-        builder: (_) => child,
-        dismissible: dismissible,
-        closeLabel: closeLabel,
-        settings: this,
-      );
+  Route<T> createRoute(BuildContext context) {
+    late final DenSheetRoute<T> route;
+    route = DenSheetRoute<T>(
+      builder: (_) => (route.settings as DenSheetPage<T>).child,
+      dismissible: dismissible,
+      closeLabel: closeLabel,
+      settings: this,
+    );
+    return route;
+  }
 }

@@ -40,14 +40,18 @@ class FamilyWeek extends StatelessWidget {
     var widest = 0.0;
     for (final m in people) {
       for (final word in m.name.split(' ')) {
-        final painter = TextPainter(text: TextSpan(text: word, style: style), textDirection: TextDirection.ltr, textScaler: scaler)
-          ..layout();
+        final painter = TextPainter(
+          text: TextSpan(text: word, style: style),
+          textDirection: TextDirection.ltr,
+          textScaler: scaler,
+        )..layout();
         widest = math.max(widest, painter.width);
         painter.dispose();
       }
     }
     return widest;
   }
+
   static const double _minPersonColumn = 100;
   static const double _gap = 8;
   static const double _side = 14;
@@ -70,13 +74,13 @@ class FamilyWeek extends StatelessWidget {
         final fill = fillHeight && constraints.hasBoundedHeight;
 
         Widget row(int i) => _DayRow(
-              date: grid.days[i],
-              first: i == 0,
-              grid: grid,
-              personWidth: person,
-              showChores: showChores,
-              fill: fill,
-            );
+          date: grid.days[i],
+          first: i == 0,
+          grid: grid,
+          personWidth: person,
+          showChores: showChores,
+          fill: fill,
+        );
 
         final card = DecoratedBox(
           decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(Radii.section)),
@@ -106,10 +110,7 @@ class FamilyWeek extends StatelessWidget {
                         itemBuilder: (context, i) => row(i),
                       ),
                     )
-                  else ...[
-                    for (var i = 0; i < grid.days.length; i++) row(i),
-                    const SizedBox(height: Sp.s),
-                  ],
+                  else ...[for (var i = 0; i < grid.days.length; i++) row(i), const SizedBox(height: Sp.s)],
                 ],
               ),
             ),
@@ -137,7 +138,9 @@ class _HeaderRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return DecoratedBox(
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: c.line))),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.line)),
+      ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(FamilyWeek._side, 14, FamilyWeek._side, 10),
         child: Row(
@@ -216,7 +219,10 @@ class _DayRow extends StatelessWidget {
                 crossAxisAlignment: WrapCrossAlignment.end,
                 spacing: Sp.s,
                 children: [
-                  Text('${f.dateTime(date).day}', style: context.text.section(label).copyWith(fontSize: 22 * context.text.scale)),
+                  Text(
+                    '${f.dateTime(date).day}',
+                    style: context.text.section(label).copyWith(fontSize: 22 * context.text.scale),
+                  ),
                   Padding(
                     padding: const EdgeInsets.only(bottom: 2),
                     child: Text(
@@ -246,7 +252,9 @@ class _DayRow extends StatelessWidget {
     );
 
     return DecoratedBox(
-      decoration: BoxDecoration(border: first ? null : Border(top: BorderSide(color: c.line))),
+      decoration: BoxDecoration(
+        border: first ? null : Border(top: BorderSide(color: c.line)),
+      ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: FamilyWeek._side, vertical: Sp.s),
         child: Column(
@@ -274,7 +282,13 @@ class _DayRow extends StatelessWidget {
 }
 
 class _Cell extends StatelessWidget {
-  const _Cell({required this.date, required this.cell, required this.showChores, required this.onAdd, required this.who});
+  const _Cell({
+    required this.date,
+    required this.cell,
+    required this.showChores,
+    required this.onAdd,
+    required this.who,
+  });
 
   final String date;
   final WeekCell? cell;
@@ -329,17 +343,20 @@ class _ChoreLine extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
         child: Row(
           children: [
-            Icon(day.done ? PhosphorIconsFill.checkCircle : choreGlyph(day.chore.icon, day.chore.title), size: 15, color: day.done ? c.ink : c.ink2),
+            Icon(
+              day.done ? PhosphorIconsFill.checkCircle : choreGlyph(day.chore.icon, day.chore.title),
+              size: 15,
+              color: day.done ? c.ink : c.ink2,
+            ),
             const SizedBox(width: Sp.xs + 2),
             Expanded(
               child: Text(
                 day.chore.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: context.text.meta(day.done ? c.ink2 : c.ink).copyWith(
-                      decoration: day.done ? TextDecoration.lineThrough : null,
-                      decorationColor: c.ink2,
-                    ),
+                style: context.text
+                    .meta(day.done ? c.ink2 : c.ink)
+                    .copyWith(decoration: day.done ? TextDecoration.lineThrough : null, decorationColor: c.ink2),
               ),
             ),
           ],

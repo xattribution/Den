@@ -44,8 +44,10 @@ Future<void> shootAt(
         debugShowCheckedModeBanner: false,
         routerConfig: router,
         theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
-        builder: (context, child) =>
-            MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(text)), child: child!),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(text)),
+          child: child!,
+        ),
       ),
     ),
   );
@@ -84,9 +86,11 @@ Future<void> pumpCalendar(
       state: state,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: denTheme(night ? DenColors.night : DenColors.day),
-        builder: (context, child) =>
-            MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(text)), child: child!),
+        theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: state.wall ? DenType.wallScale : 1),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(text)),
+          child: child!,
+        ),
         home: Scaffold(body: screen),
       ),
     ),
@@ -118,7 +122,9 @@ Occurrence findEvent(AppState state, String text, {int days = 60}) {
   final f = state.formats;
   final from = f.startOf(state.today);
   final to = f.startOf(f.addDays(state.today, days));
-  return state.den.occurrences(from, to).firstWhere(
+  return state.den
+      .occurrences(from, to)
+      .firstWhere(
         (o) => o.title.toLowerCase().contains(text.toLowerCase()),
         orElse: () => throw StateError('No event like "$text" in the demo family'),
       );
@@ -133,16 +139,28 @@ Future<AppState> demo(WidgetTester tester, {bool wall = false}) async =>
 /// same time (Zoe's swim lesson and Maya's piano lesson, 4:30 PM), an event for two (the
 /// dentist, Leo with Priya) and one for everyone (movie night).
 Future<AppState> busyDemo(WidgetTester tester) async => (await tester.runAsync(() async {
-      final state = await demoState();
-      final den = state.den;
-      final f = state.formats;
-      String id(String name) => den.members.firstWhere((m) => m.name == name).id;
-      int at(int hour, [int minute = 0]) => f.startOf(state.today) + (hour * 60 + minute) * 60000;
-      await den.addEvent(title: 'Piano lesson', start: at(16, 30), end: at(17, 15), assignees: [id('Maya')], location: 'Music Room');
-      await den.addEvent(title: 'Dentist', start: at(9), end: at(10), assignees: [id('Leo'), id('Priya')], location: 'Bright Smiles Dental');
-      await den.addEvent(title: 'Movie night', start: at(19), end: at(21));
-      return state;
-    }))!;
+  final state = await demoState();
+  final den = state.den;
+  final f = state.formats;
+  String id(String name) => den.members.firstWhere((m) => m.name == name).id;
+  int at(int hour, [int minute = 0]) => f.startOf(state.today) + (hour * 60 + minute) * 60000;
+  await den.addEvent(
+    title: 'Piano lesson',
+    start: at(16, 30),
+    end: at(17, 15),
+    assignees: [id('Maya')],
+    location: 'Music Room',
+  );
+  await den.addEvent(
+    title: 'Dentist',
+    start: at(9),
+    end: at(10),
+    assignees: [id('Leo'), id('Priya')],
+    location: 'Bright Smiles Dental',
+  );
+  await den.addEvent(title: 'Movie night', start: at(19), end: at(21));
+  return state;
+}))!;
 
 /// The demo family on a device whose writes don't go through (storage full, say): every action
 /// comes back failed, the way [AppActions] reports an error it can't name.

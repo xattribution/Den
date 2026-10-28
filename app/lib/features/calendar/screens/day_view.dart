@@ -217,12 +217,16 @@ class _DayViewState extends State<DayView> {
             onCancel: _keep,
           )
         : _error != null
-        ? ErrorState(message: _error!, actionLabel: _retry == null ? 'OK' : 'Try again', onAction: _retry ?? () => setState(() => _error = null))
+        ? ErrorState(
+            message: _error!,
+            actionLabel: _retry == null ? 'OK' : 'Try again',
+            onAction: _retry ?? () => setState(() => _error = null),
+          )
         : done != null
-            ? DoneRow(message: done.$1, onUndo: done.$2 == null ? null : () => _undo(done.$2!))
-            : empty
-                ? _EmptyNote(date: date, canAdd: canAdd)
-                : null;
+        ? DoneRow(message: done.$1, onUndo: done.$2 == null ? null : () => _undo(done.$2!))
+        : empty
+        ? _EmptyNote(date: date, canAdd: canAdd)
+        : null;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -362,7 +366,8 @@ class _DayViewState extends State<DayView> {
         final startMin = dragging ? drag.newStart : slot.start;
         final endMin = dragging ? drag.newEnd : slot.end;
         final laneWidth = laneWidthBase / slot.lanes;
-        final editable = app.allows(DenAction.editEvents) &&
+        final editable =
+            app.allows(DenAction.editEvents) &&
             !occ.event.source.readOnly &&
             occ.start >= dayStart &&
             occ.end <= dayEnd;
@@ -473,12 +478,9 @@ class _DayViewState extends State<DayView> {
     final anchor = !occ.isRepeating ? null : (scope == EditScope.all ? occ.start : occ.seriesStart);
     ActionResult? result;
     final error = await tryWrite(
-      () async => result = await EventActions(actions).update(
-        occ.event,
-        {'start': newStart, 'end': newEnd},
-        scope: scope,
-        occurrence: anchor,
-      ),
+      () async => result = await EventActions(
+        actions,
+      ).update(occ.event, {'start': newStart, 'end': newEnd}, scope: scope, occurrence: anchor),
     );
     if (!mounted) return;
     setState(() {
@@ -490,15 +492,17 @@ class _DayViewState extends State<DayView> {
         _done = null;
         return;
       }
-      final message = drag.resize ? '${occ.title} now ends at ${f.time(newEnd)}' : '${occ.title} moved to ${f.time(newStart)}';
+      final message = drag.resize
+          ? '${occ.title} now ends at ${f.time(newEnd)}'
+          : '${occ.title} moved to ${f.time(newStart)}';
       _done = (message, done.receipt?.undoable ?? false ? done : null);
     });
   }
 
   void _keep() => setState(() {
-        _asking = null;
-        _drag = null;
-      });
+    _asking = null;
+    _drag = null;
+  });
 
   Future<void> _undo(ActionResult result) async {
     final receipt = result.receipt;
@@ -527,7 +531,10 @@ class _EmptyNote extends StatelessWidget {
       runSpacing: Sp.s,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Text(canAdd ? 'Nothing on the calendar. Tap a time to add something.' : 'Nothing on the calendar.', style: context.text.control(c.ink2)),
+        Text(
+          canAdd ? 'Nothing on the calendar. Tap a time to add something.' : 'Nothing on the calendar.',
+          style: context.text.control(c.ink2),
+        ),
       ],
     );
   }
@@ -556,11 +563,17 @@ class _Header extends StatelessWidget {
               child: Row(
                 children: [
                   if (column.member == null)
-                    SizedBox(width: 26, height: 26, child: Center(child: _Dots(members: members)))
+                    SizedBox(
+                      width: 26,
+                      height: 26,
+                      child: Center(child: _Dots(members: members)),
+                    )
                   else
                     DenAvatar(column.member!, size: 26),
                   const SizedBox(width: Sp.s),
-                  Expanded(child: Text(column.member?.name ?? 'Everyone', style: context.text.label(c.ink), maxLines: 2)),
+                  Expanded(
+                    child: Text(column.member?.name ?? 'Everyone', style: context.text.label(c.ink), maxLines: 2),
+                  ),
                 ],
               ),
             ),
@@ -582,7 +595,11 @@ class _Dots extends StatelessWidget {
       runSpacing: 2,
       children: [
         for (final m in members.take(4))
-          Container(width: 8, height: 8, decoration: BoxDecoration(color: c.marker(m.marker), shape: BoxShape.circle)),
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: c.marker(m.marker), shape: BoxShape.circle),
+          ),
       ],
     );
   }
@@ -684,8 +701,12 @@ class _Block extends StatelessWidget {
         // Times never truncate: the whole span where it fits, otherwise when it starts (the
         // block's height already shows how long).
         final room = constraints.maxWidth - Sp.s - Sp.xs - (showIcon ? 22 : 0);
-        final spanPainter = TextPainter(text: TextSpan(text: span, style: timeStyle), textDirection: TextDirection.ltr, textScaler: scaler, maxLines: 1)
-          ..layout();
+        final spanPainter = TextPainter(
+          text: TextSpan(text: span, style: timeStyle),
+          textDirection: TextDirection.ltr,
+          textScaler: scaler,
+          maxLines: 1,
+        )..layout();
         final timeText = spanPainter.width <= room ? span : f.clock(startMin);
         spanPainter.dispose();
         final content = Container(

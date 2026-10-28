@@ -25,11 +25,11 @@ String tidyLine(String text) {
 
 /// "Leo", "Leo and Mia", "Leo, Mia and Zoe".
 String joinNames(List<String> names) => switch (names.length) {
-      0 => '',
-      1 => names.single,
-      2 => '${names.first} and ${names.last}',
-      _ => '${names.take(names.length - 1).join(', ')} and ${names.last}',
-    };
+  0 => '',
+  1 => names.single,
+  2 => '${names.first} and ${names.last}',
+  _ => '${names.take(names.length - 1).join(', ')} and ${names.last}',
+};
 
 /// Who an event is for: "Everyone", or the names.
 String whoLine(List<Member> people, {required bool everyone}) =>

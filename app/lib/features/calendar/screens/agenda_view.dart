@@ -14,7 +14,14 @@ import '../words/calendar_time.dart';
 /// Events only; chores live on Today and in Chores. [header] scrolls with it (the phone's title,
 /// week strip and who to show).
 class AgendaView extends StatefulWidget {
-  const AgendaView({super.key, required this.start, this.person, this.combined, this.header = const [], this.days = 14});
+  const AgendaView({
+    super.key,
+    required this.start,
+    this.person,
+    this.combined,
+    this.header = const [],
+    this.days = 14,
+  });
 
   final String start;
 
@@ -59,18 +66,18 @@ class _AgendaViewState extends State<AgendaView> {
     final occurrences = context.view(OccurrencesModel(f.startOf(from), f.startOf(f.addDays(to, 1))));
     final byDate = occurrencesByDate(occurrences, f, from: from, to: to);
     List<Occurrence> on(String date) => [
-          for (final occ in byDate[date] ?? const <Occurrence>[])
-            if (showsFor(occ, widget.person)) occ,
-        ];
+      for (final occ in byDate[date] ?? const <Occurrence>[])
+        if (showsFor(occ, widget.person)) occ,
+    ];
     final later = [
       for (final date in byDate.keys.toList()..sort())
         if (date != from && on(date).isNotEmpty) date,
     ];
 
     Widget section(String date) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: DenLayout.gutter),
-          child: DaySection(date: date, occurrences: on(date), combined: _combined, person: widget.person),
-        );
+      padding: const EdgeInsets.symmetric(horizontal: DenLayout.gutter),
+      child: DaySection(date: date, occurrences: on(date), combined: _combined, person: widget.person),
+    );
 
     final children = <Widget>[
       ...widget.header,
@@ -81,10 +88,7 @@ class _AgendaViewState extends State<AgendaView> {
         padding: const EdgeInsets.symmetric(horizontal: DenLayout.gutter),
         child: Align(
           alignment: Alignment.centerLeft,
-          child: CalendarPill(
-            label: 'Show the next two weeks',
-            onTap: () => setState(() => _days += 14),
-          ),
+          child: CalendarPill(label: 'Show the next two weeks', onTap: () => setState(() => _days += 14)),
         ),
       ),
     ];

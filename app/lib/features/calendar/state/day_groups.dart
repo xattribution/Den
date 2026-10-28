@@ -63,8 +63,5 @@ List<DayGroup> groupDay(List<Occurrence> occurrences, Formats f, String date) {
     }
   }
   close();
-  return [
-    if (allDay.isNotEmpty) DayGroup(date: date, time: null, items: allDay),
-    ...groups,
-  ];
+  return [if (allDay.isNotEmpty) DayGroup(date: date, time: null, items: allDay), ...groups];
 }

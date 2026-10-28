@@ -22,10 +22,10 @@ enum BlockPosition {
   static BlockPosition at(int index, int count) => count == 1
       ? alone
       : index == 0
-          ? first
-          : index == count - 1
-              ? last
-              : middle;
+      ? first
+      : index == count - 1
+      ? last
+      : middle;
 
   BorderRadius get radius {
     const big = Radius.circular(Radii.block);
@@ -77,7 +77,9 @@ class EventBlock extends StatelessWidget {
     final t = context.text;
     final alone = position == BlockPosition.alone;
     // The pictogram grows a little with the text, so it still reads beside a big title.
-    final iconSize = MediaQuery.textScalerOf(context).scale(alone ? 26.0 : 22.0).clamp(alone ? 26.0 : 22.0, alone ? 34.0 : 30.0);
+    final iconSize = MediaQuery.textScalerOf(
+      context,
+    ).scale(alone ? 26.0 : 22.0).clamp(alone ? 26.0 : 22.0, alone ? 34.0 : 30.0);
     final detail = blockDetail(f, occ, date, look.who);
     final time = blockTime(f, occ, date);
 
@@ -91,12 +93,7 @@ class EventBlock extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  tidyLine(occ.title),
-                  style: t.rowTitle(look.ink),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                Text(tidyLine(occ.title), style: t.rowTitle(look.ink), maxLines: 2, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 2),
                 Text(tidyLine(detail), style: t.meta(look.ink)),
               ],
@@ -142,14 +139,14 @@ class BlockFlight extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-        animation: animation,
-        builder: (context, _) => DecoratedBox(
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(Radii.block + (heroRadius - Radii.block) * animation.value.clamp(0, 1)),
-          ),
-        ),
-      );
+    animation: animation,
+    builder: (context, _) => DecoratedBox(
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(Radii.block + (heroRadius - Radii.block) * animation.value.clamp(0, 1)),
+      ),
+    ),
+  );
 
   /// The corners of the block at the top of an event's page.
   static const double heroRadius = 24;
@@ -200,10 +197,7 @@ class MergedBlock extends StatelessWidget {
                     Container(
                       width: 30,
                       height: 30,
-                      decoration: BoxDecoration(
-                        color: look.everyone ? c.onPrimary : look.fill,
-                        shape: BoxShape.circle,
-                      ),
+                      decoration: BoxDecoration(color: look.everyone ? c.onPrimary : look.fill, shape: BoxShape.circle),
                       child: Icon(look.icon, size: 18, color: look.everyone ? c.primary : look.ink),
                     ),
                 ],
@@ -361,47 +355,47 @@ class EventCell extends StatelessWidget {
   }
 
   List<Widget> _words(DenText t, EventLook look, String? time) => [
-                if (spanning) ...[
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            occ.title,
-                            style: t.meta(look.ink).bold,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                          ),
-                        ),
-                        const SizedBox(width: Sp.s + 2),
-                        Text(
-                          time == null ? 'everyone' : '$time, everyone',
-                          style: t.caption(look.ink).copyWith(fontSize: 14 * t.scale),
-                          maxLines: 1,
-                          softWrap: false,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: Sp.s),
-                  FamilyDots(family: look.family),
-                ] else ...[
-                  Expanded(
-                    child: Text(
-                      occ.title,
-                      style: t.meta(look.ink).bold,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
-                    ),
-                  ),
-                  if (time != null) ...[
-                    const SizedBox(width: Sp.xs),
-                    Text(time, style: t.caption(look.ink).copyWith(fontSize: 14 * t.scale), maxLines: 1, softWrap: false),
-                  ],
-                ],
-              ];
+    if (spanning) ...[
+      Expanded(
+        child: Row(
+          children: [
+            Flexible(
+              child: Text(
+                occ.title,
+                style: t.meta(look.ink).bold,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                softWrap: false,
+              ),
+            ),
+            const SizedBox(width: Sp.s + 2),
+            Text(
+              time == null ? 'everyone' : '$time, everyone',
+              style: t.caption(look.ink).copyWith(fontSize: 14 * t.scale),
+              maxLines: 1,
+              softWrap: false,
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(width: Sp.s),
+      FamilyDots(family: look.family),
+    ] else ...[
+      Expanded(
+        child: Text(
+          occ.title,
+          style: t.meta(look.ink).bold,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          softWrap: false,
+        ),
+      ),
+      if (time != null) ...[
+        const SizedBox(width: Sp.xs),
+        Text(time, style: t.caption(look.ink).copyWith(fontSize: 14 * t.scale), maxLines: 1, softWrap: false),
+      ],
+    ],
+  ];
 }
 
 /// The smallest a time column can be at the current text size: the longest time it shows.

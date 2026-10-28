@@ -52,15 +52,15 @@ class _CombineStackState extends State<CombineStack> with SingleTickerProviderSt
 
   @override
   Widget build(BuildContext context) => _CombineLayout(
-        progress: _t,
-        gap: widget.gap,
-        slide: !_reduced,
-        target: widget.combined ? 1 : 0,
-        children: [
-          for (final block in widget.blocks) RepaintBoundary(child: block),
-          RepaintBoundary(child: widget.merged),
-        ],
-      );
+    progress: _t,
+    gap: widget.gap,
+    slide: !_reduced,
+    target: widget.combined ? 1 : 0,
+    children: [
+      for (final block in widget.blocks) RepaintBoundary(child: block),
+      RepaintBoundary(child: widget.merged),
+    ],
+  );
 }
 
 class _CombineLayout extends MultiChildRenderObjectWidget {
@@ -97,12 +97,18 @@ class _CombineParentData extends ContainerBoxParentData<RenderBox> {}
 /// the combined block's as the progress goes from 0 to 1; each block rides up toward the top by
 /// the same amount and fades as the combined block fades in.
 class _RenderCombine extends RenderBox
-    with ContainerRenderObjectMixin<RenderBox, _CombineParentData>, RenderBoxContainerDefaultsMixin<RenderBox, _CombineParentData> {
-  _RenderCombine({required Animation<double> progress, required double gap, required bool slide, required double target})
-      : _progress = progress,
-        _gap = gap,
-        _slide = slide,
-        _target = target;
+    with
+        ContainerRenderObjectMixin<RenderBox, _CombineParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _CombineParentData> {
+  _RenderCombine({
+    required Animation<double> progress,
+    required double gap,
+    required bool slide,
+    required double target,
+  }) : _progress = progress,
+       _gap = gap,
+       _slide = slide,
+       _target = target;
 
   Animation<double> _progress;
   set progress(Animation<double> value) {

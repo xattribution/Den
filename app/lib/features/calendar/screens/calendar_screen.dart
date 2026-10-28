@@ -56,10 +56,8 @@ class CalendarScreen extends StatefulWidget {
   final bool? offline;
 
   /// The location for [view] on [date].
-  static String location(CalendarView? view, String? date) => Uri(
-        path: '/calendar',
-        queryParameters: {'view': ?view?.name, 'date': ?date},
-      ).toString();
+  static String location(CalendarView? view, String? date) =>
+      Uri(path: '/calendar', queryParameters: {'view': ?view?.name, 'date': ?date}).toString();
 
   @override
   State<CalendarScreen> createState() => _CalendarScreenState();
@@ -126,20 +124,29 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   /// The iPad's ‹ and ›: the shared round button on the card color.
-  static Widget _arrow(BuildContext context, IconData icon, String label, VoidCallback onTap) =>
-      RoundButton(icon: icon, label: label, onTap: onTap, fill: context.colors.card, color: context.colors.ink, size: Targets.adult);
+  static Widget _arrow(BuildContext context, IconData icon, String label, VoidCallback onTap) => RoundButton(
+    icon: icon,
+    label: label,
+    onTap: onTap,
+    fill: context.colors.card,
+    color: context.colors.ink,
+    size: Targets.adult,
+  );
 
   Widget _today(String date, CalendarView view, String today) => CalendarPill(
-        label: 'Today',
-        semanticLabel: date == today ? 'Today, showing' : 'Go to today',
-        onTap: () => _show(view, today),
-      );
+    label: 'Today',
+    semanticLabel: date == today ? 'Today, showing' : 'Go to today',
+    onTap: () => _show(view, today),
+  );
 
   // ---------------------------------------------------------------- phone
 
   Widget _phone(BuildContext context, CalendarView view, String date, String today) {
     final f = DenScope.read(context).formats;
-    Widget gutter(Widget child) => Padding(padding: const EdgeInsets.symmetric(horizontal: DenLayout.gutter), child: child);
+    Widget gutter(Widget child) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: DenLayout.gutter),
+      child: child,
+    );
     final header = <Widget>[
       gutter(TitleRow(title: monthTitle(f, date, today), trailing: [_today(date, view, today)])),
       const SizedBox(height: Sp.m),
@@ -168,7 +175,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
           children: [
             const SizedBox(height: Sp.s),
             ...header,
-            Expanded(child: DayView(date: date, person: _person)),
+            Expanded(
+              child: DayView(date: date, person: _person),
+            ),
           ],
         );
       case CalendarView.month:
@@ -181,12 +190,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         );
       case CalendarView.agenda:
       case CalendarView.family:
-        return AgendaView(
-          start: date,
-          person: _person,
-          combined: _combined,
-          header: header,
-        );
+        return AgendaView(start: date, person: _person, combined: _combined, header: header);
     }
   }
 
@@ -202,10 +206,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
       CalendarView.day => dayHeading(f, date, today),
     };
     String step(int by) => switch (view) {
-          CalendarView.family || CalendarView.agenda => f.addDays(date, 7 * by),
-          CalendarView.month => f.addMonths(date, by),
-          CalendarView.day => f.addDays(date, by),
-        };
+      CalendarView.family || CalendarView.agenda => f.addDays(date, 7 * by),
+      CalendarView.month => f.addMonths(date, by),
+      CalendarView.day => f.addDays(date, by),
+    };
     final onToday = switch (view) {
       CalendarView.family || CalendarView.agenda => weekStart == f.weekStartOf(today, app.den.family?.weekStart ?? 0),
       CalendarView.month => date.substring(0, 7) == today.substring(0, 7),
@@ -219,18 +223,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
     final content = switch (view) {
       // The card holds the week and the page scrolls, so there is no empty card below the last day.
-      CalendarView.family || CalendarView.agenda => SingleChildScrollView(child: FamilyWeek(startDate: weekStart, showChores: false)),
+      CalendarView.family ||
+      CalendarView.agenda => SingleChildScrollView(child: FamilyWeek(startDate: weekStart, showChores: false)),
       CalendarView.month => MonthView(anchor: date, onDay: (d) => _show(CalendarView.day, d)),
       CalendarView.day => DecoratedBox(
-          decoration: BoxDecoration(color: context.colors.card, borderRadius: BorderRadius.circular(Radii.section)),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(Radii.section),
-            child: Padding(
-              padding: const EdgeInsets.only(top: Sp.s),
-              child: DayView(date: date, perPerson: true),
-            ),
+        decoration: BoxDecoration(color: context.colors.card, borderRadius: BorderRadius.circular(Radii.section)),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(Radii.section),
+          child: Padding(
+            padding: const EdgeInsets.only(top: Sp.s),
+            child: DayView(date: date, perPerson: true),
           ),
         ),
+      ),
     };
 
     return Padding(
@@ -278,7 +283,10 @@ class _MonthDay extends StatelessWidget {
     final day = occurrencesByDate(occurrences, f, from: date, to: date)[date] ?? const <Occurrence>[];
     return DaySection(
       date: date,
-      occurrences: [for (final occ in day) if (showsFor(occ, person)) occ],
+      occurrences: [
+        for (final occ in day)
+          if (showsFor(occ, person)) occ,
+      ],
       combined: combined,
       person: person,
     );
