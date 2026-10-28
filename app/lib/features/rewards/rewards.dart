@@ -4,4 +4,5 @@ library;
 
 export 'state/points_model.dart';
 export 'state/reward_actions.dart';
+export 'widgets/points_switch.dart';
 export 'words/points_words.dart';

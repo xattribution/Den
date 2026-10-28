@@ -260,8 +260,8 @@ void main() {
       expect(state.den.points().totals[_id(state.den, 'Maya')], 45);
       await pumpScreen(tester, const PointsScreen(), state: state, size: _tall);
       expect(find.text('Asked'), findsOneWidget);
-      expect(find.text('15 more to go'), findsOneWidget, reason: 'Pick dinner costs 30, and 30 of 45 are asked for');
-      expect(find.text('5 more to go'), findsOneWidget, reason: 'Later bedtime costs 20');
+      expect(findWords('15 more to go'), findsOneWidget, reason: 'Pick dinner costs 30, and 30 of 45 are asked for');
+      expect(findWords('5 more to go'), findsOneWidget, reason: 'Later bedtime costs 20');
     });
 
     testWidgets('a parent turns points off and on in the family settings', (tester) async {

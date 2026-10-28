@@ -425,9 +425,22 @@ action's `ActionResult.receipt` is what Undo takes back.
 - **Calendar**: the month as the title and a Today button; a week strip in a card (selected day
   in ink, people's dots); person filters; the day's events as solid blocks by time; on iPad the
   family week (a column per person, a row per day, everyone's events across the row).
-- **Chores and stars**: each kid's stars and goal bar in their color, then their chores.
-- **Lists**: groceries grouped by store, crossed off in place, "In the cart" collected below,
-  the add bar always there.
+- **Chores** (Chores.dc.html): the day with back, Today and forward, and how many are done;
+  a section per person with their stars and goal bar in their color (while points are on),
+  then their chores in one card. A row's ring checks it (steps fill the ring as an arc); its
+  words open it in place (steps, Give to…, Details); "Give to…" at the end hands it on for the
+  day, and its old section says so with Undo. iPad: the people in two columns. The editor asks
+  only for name, picture, who, when and stars; the rest is under More options.
+- **Points and rewards** (no board; built from Chores): requests waiting for a parent with
+  Approve and Decline in place, each person's stars and goal bar (tap to give or take),
+  the rewards as cards (a kid asks for one, or gets it when it needs no asking, with Undo),
+  goals as one kind ("reach 25 stars by Saturday, each week"), and Recent. Points on or off
+  lives in Settings, under Family (`PointsSwitch`).
+- **Lists** (Lists.dc.html): the lists as chips, pinned first; one add field that reads "2
+  milk @Costco, eggs"; groceries grouped by store with store chips; "In the cart" below with
+  Clear; adding, removing, clearing and "Add to groceries" (meals) each say what they did in
+  place, with Undo. More holds Share, Copy, Reorder, Edit and Delete. iPad: the lists in a
+  column beside the chosen one.
 - **Family**: Needs you, the people (face, name, who they are), parent controls as switches.
 - **Add**: one field that understands a sentence, the kinds as chips, one button naming what it
   will add.
