@@ -63,6 +63,8 @@ dependencies:
   speech_to_text: ^7.4.0
   den_capture:
     path: ../packages/den_capture
+  # Draws the family's picture pack (assets/pictures).
+  flutter_svg: ^2.1.0
 
 dev_dependencies:
   flutter_test:
@@ -89,6 +91,8 @@ flutter:
   assets:
     # The typeface's SIL Open Font License, shown on Settings > About > Licenses.
     - assets/fonts/OFL.txt
+    # The picture pack: 64 people can pick from, one SVG each. See design/pictures.dart.
+    - assets/pictures/
   fonts:
     - family: AtkinsonHyperlegibleNext
       fonts:

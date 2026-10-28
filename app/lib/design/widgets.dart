@@ -5,31 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import 'pictograms.dart';
+import 'avatar.dart';
+import 'motion.dart';
 import 'tokens.dart';
 
-/// A person: their chosen animal on their marker color.
-class DenAvatar extends StatelessWidget {
-  const DenAvatar(this.member, {super.key, this.size = 32});
-
-  final Member member;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Semantics(
-      label: member.name,
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(color: c.marker(member.marker), shape: BoxShape.circle),
-        alignment: Alignment.center,
-        child: Icon(Pictograms.animal(member.animal), size: size * 0.6, color: c.onMarker),
-      ),
-    );
-  }
-}
+export 'avatar.dart';
 
 /// The vertical marker bar beside an event or chore: one segment per person it belongs to.
 /// Items for everyone show every member's segment.
@@ -43,7 +23,7 @@ class PersonBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final segments = markers.isEmpty ? [c.rule] : markers.map(c.marker).toList();
+    final segments = markers.isEmpty ? [c.line] : markers.map(c.marker).toList();
     return ConstrainedBox(
       constraints: BoxConstraints(minHeight: minHeight),
       child: SizedBox(
@@ -98,8 +78,8 @@ class CheckDot extends StatelessWidget {
           height: target,
           child: Center(
             child: AnimatedContainer(
-              duration: Motion.of(context, Motion.state),
-              curve: Motion.curve,
+              duration: DenMotion.reduced(context) ? Duration.zero : DenMotion.uiSettle,
+              curve: DenMotion.uiCurve,
               width: size,
               height: size,
               decoration: BoxDecoration(
@@ -107,7 +87,7 @@ class CheckDot extends StatelessWidget {
                 color: done ? c.ink : Colors.transparent,
                 border: Border.all(color: done ? c.ink : (enabled ? c.ink2 : c.ink3), width: 2),
               ),
-              child: done ? Icon(PhosphorIconsBold.check, size: size * 0.62, color: c.onInk) : null,
+              child: done ? Icon(PhosphorIconsBold.check, size: size * 0.62, color: c.onPrimary) : null,
             ),
           ),
         ),
@@ -139,11 +119,11 @@ class StepRing extends StatelessWidget {
                   width: size,
                   height: size,
                   decoration: BoxDecoration(color: c.ink, shape: BoxShape.circle),
-                  child: Icon(PhosphorIconsBold.check, size: size * 0.62, color: c.onInk),
+                  child: Icon(PhosphorIconsBold.check, size: size * 0.62, color: c.onPrimary),
                 )
               : CustomPaint(
                   size: Size.square(size),
-                  painter: _RingPainter(done / math.max(total, 1), c.ink, c.rule),
+                  painter: _RingPainter(done / math.max(total, 1), c.ink, c.line),
                   child: SizedBox.square(
                     dimension: size,
                     child: Center(
@@ -241,7 +221,7 @@ class PersonChip extends StatelessWidget {
       selected: selected,
       button: true,
       child: Material(
-        color: selected ? c.ink : c.well,
+        color: selected ? c.ink : c.card,
         shape: const StadiumBorder(),
         child: InkWell(
           customBorder: const StadiumBorder(),
@@ -255,7 +235,7 @@ class PersonChip extends StatelessWidget {
                 children: [
                   DenAvatar(member, size: 30),
                   const SizedBox(width: Sp.s),
-                  Text(member.name, style: context.type.body(selected ? c.onInk : c.ink)),
+                  Text(member.name, style: context.type.body(selected ? c.onPrimary : c.ink)),
                 ],
               ),
             ),
@@ -279,7 +259,7 @@ class Segmented<T> extends StatelessWidget {
     final c = context.colors;
     return Container(
       padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(color: c.well, borderRadius: BorderRadius.circular(Radii.control + 2)),
+      decoration: BoxDecoration(color: c.fill, borderRadius: BorderRadius.circular(Radii.pill)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -289,9 +269,9 @@ class Segmented<T> extends StatelessWidget {
               button: true,
               child: Material(
                 color: entry.key == value ? c.ink : Colors.transparent,
-                borderRadius: BorderRadius.circular(Radii.control),
+                borderRadius: BorderRadius.circular(Radii.pill),
                 child: InkWell(
-                  borderRadius: BorderRadius.circular(Radii.control),
+                  borderRadius: BorderRadius.circular(Radii.pill),
                   onTap: () => onChanged(entry.key),
                   child: Container(
                     constraints: const BoxConstraints(minHeight: 38, minWidth: 48),
@@ -299,7 +279,7 @@ class Segmented<T> extends StatelessWidget {
                     alignment: Alignment.center,
                     child: Text(
                       entry.value,
-                      style: entry.key == value ? context.type.bodyStrong(c.onInk) : context.type.body(c.ink2),
+                      style: entry.key == value ? context.type.bodyStrong(c.onPrimary) : context.type.body(c.ink2),
                     ),
                   ),
                 ),
@@ -369,8 +349,8 @@ class InfoTip extends StatelessWidget {
   }
 }
 
-/// A state that needs a person: caution (a gap, a conflict, an approval) or bad (late, failed).
-/// Always icon plus words; color is never the only signal.
+/// A state that needs a person (a gap, a conflict, an approval) in ink, or one that went wrong
+/// (late, failed) in destructive red. Always icon plus words; there is no caution color.
 class AttentionLine extends StatelessWidget {
   const AttentionLine({super.key, required this.message, this.bad = false, this.action});
 
@@ -381,7 +361,7 @@ class AttentionLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final color = bad ? c.bad : c.caution;
+    final color = bad ? c.destructive : c.ink;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: Sp.xs),
       child: Row(
