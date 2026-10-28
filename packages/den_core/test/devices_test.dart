@@ -94,8 +94,23 @@ void main() {
       display.actAs(dana);
       await expectLater(display.setThisDeviceMode(DeviceMode.personal), throwsA(isA<InvalidInput>()));
       await expectLater(parent.updateDevice(display.deviceId, {'mode': DeviceMode.personal}), throwsA(isA<InvalidInput>()));
-      await parent.updateDevice(display.deviceId, {'mode': DeviceMode.personal, 'member': leo});
-      expect(parent.device(display.deviceId)!.member, leo);
+    });
+
+    test('an approved device keeps the person it was approved for', () async {
+      final ipad = await joinDevice(parent, clock, member: dana, name: 'Dana iPad');
+      await expectLater(
+        parent.updateDevice(ipad.deviceId, {'member': leo}),
+        throwsA(isA<PermissionDenied>()),
+        reason: 'it holds the parents\' and Dana\'s private records, which handing it on wouldn\'t remove',
+      );
+      final display = await joinDevice(parent, clock, mode: DeviceMode.shared, name: 'Kitchen', kind: DeviceKind.display);
+      await expectLater(
+        parent.updateDevice(display.deviceId, {'mode': DeviceMode.personal, 'member': leo}),
+        throwsA(isA<PermissionDenied>()),
+      );
+      expect(parent.device(ipad.deviceId)!.member, dana);
+      await parent.updateDevice(ipad.deviceId, {'name': 'Old iPad'});
+      expect(parent.device(ipad.deviceId)!.name, 'Old iPad');
     });
 
     test('approving a shared display shows the week by default', () async {

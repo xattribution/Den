@@ -156,6 +156,36 @@ void main() {
     expect(on('2026-10-12', books).done, isTrue);
   });
 
+  test('late chores: missed days, repeating or not, and today\'s past their time', () async {
+    final bed = await den.addChore(
+      title: 'Make bed',
+      owner: OwnerMember(leo),
+      schedule: const ChoreSchedule.repeating('FREQ=DAILY', '2026-10-01'),
+      dueTime: '09:00',
+    );
+    final cat = await den.addChore(
+      title: 'Feed the cat',
+      owner: OwnerMember(maya),
+      schedule: const ChoreSchedule.repeating('FREQ=DAILY', '2026-10-01'),
+      dueTime: '18:00',
+    );
+    final books = await den.addChore(
+      title: 'Library books',
+      owner: OwnerMember(zoe),
+      schedule: const ChoreSchedule.once('2026-10-11'),
+    );
+    await den.setChoreDone(bed, '2026-10-12', true);
+    await den.setChoreDone(cat, '2026-10-13', true);
+    expect(
+      [for (final cd in den.lateChores()) '${cd.chore.title} ${cd.date}'],
+      ['Library books 2026-10-11', 'Feed the cat 2026-10-12', 'Make bed 2026-10-13', 'Make bed 2026-10-14'],
+    );
+    expect(den.choresOn('2026-10-14').where((c) => c.chore.id != books).map((c) => c.date), everyElement('2026-10-14'),
+        reason: 'today\'s chart doesn\'t carry yesterday\'s repeating chores, so they need this');
+    await den.setChoreDone(books, '2026-10-11', true);
+    expect(den.lateChores(days: 0).map((cd) => cd.chore.title), ['Make bed']);
+  });
+
   test('late after the due time in the family\'s zone, or on any earlier day', () async {
     final bed = await den.addChore(
       title: 'Make bed',
