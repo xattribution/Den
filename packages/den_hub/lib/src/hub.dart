@@ -180,8 +180,8 @@ class DenHub {
     _server!.idleTimeout = const Duration(seconds: 120);
     log.info('Den hub ${den.deviceId} serving on port ${_server!.port}');
     if (config.mdns) {
-      _mdns = MdnsResponder(_advert(), log: log);
-      await _mdns!.start();
+      final mdns = _mdns = MdnsResponder(_advert(), log: log);
+      await _guarded('mDNS', mdns.start);
     }
     final relay = config.relay;
     if (relay != null) {
@@ -203,12 +203,28 @@ class DenHub {
     }
   }
 
-  Future<void> _startService(HubService s) async {
-    try {
-      await s.start();
-    } on Object catch (e, st) {
-      _ctx.log.error('${s.name} didn\'t start: ${describeError(e, st)}');
+  Future<void> _startService(HubService s) => _guarded(s.name, s.start);
+
+  /// Runs [body] in a zone whose uncaught errors are logged instead of reaching the process (or
+  /// the app running the hub). The parts of the hub that act on their own, on timers or on
+  /// packets from the network (mDNS, feeds, reminders), start here, so no packet, feed or
+  /// notifier can take the hub down.
+  Future<void> _guarded(String what, Future<void> Function() body) {
+    final started = Completer<void>();
+    void finish() {
+      if (!started.isCompleted) started.complete();
     }
+
+    runZonedGuarded(() {
+      unawaited(body().then((_) => finish(), onError: (Object e, StackTrace st) {
+        _ctx.log.error('$what didn\'t start: ${describeError(e, st)}');
+        finish();
+      }));
+    }, (e, st) {
+      _ctx.log.error('$what failed: ${describeError(e, st)}');
+      finish();
+    });
+    return started.future;
   }
 
   /// What mDNS advertises: TXT `id`, `name`, `version`, `api` and, in a family, `f`.

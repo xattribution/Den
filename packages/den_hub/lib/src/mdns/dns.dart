@@ -170,9 +170,30 @@ class DnsMessage {
     return out.takeBytes();
   }
 
-  /// Reads a message, expanding compressed names in RDATA. Throws [FormatException].
+  /// Reads a message, expanding compressed names in RDATA. Anything malformed (short records,
+  /// lengths that run past the message, reserved label types) throws [FormatException] and
+  /// nothing else, since anyone on the network can send the hub a packet.
   static DnsMessage decode(List<int> bytes) {
-    final b = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+    try {
+      return _decode(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+    } on FormatException {
+      rethrow;
+    } on Error catch (e) {
+      // A bug in the checks below must still never take the hub down.
+      throw FormatException('malformed DNS message (${e.runtimeType})');
+    }
+  }
+
+  /// The smallest RDATA a record of [type] can have, and whether that size is exact.
+  static (int, bool)? _rdataSize(int type) => switch (type) {
+        DnsType.a => (4, true),
+        DnsType.aaaa => (16, true),
+        DnsType.srv => (7, false),
+        DnsType.ptr => (1, false),
+        _ => null,
+      };
+
+  static DnsMessage _decode(Uint8List b) {
     if (b.length < 12) throw const FormatException('short DNS message');
     int u16(int at) => (b[at] << 8) | b[at + 1];
     final flags = u16(2);
@@ -194,6 +215,10 @@ class DnsMessage {
       final length = u16(next + 8);
       final start = next + 10;
       if (start + length > b.length) throw const FormatException('truncated data');
+      final size = _rdataSize(type);
+      if (size != null && (size.$2 ? length != size.$1 : length < size.$1)) {
+        throw FormatException('bad length for a type $type record');
+      }
       var data = Uint8List.sublistView(b, start, start + length);
       if (type == DnsType.ptr) data = encodeName(decodeName(b, start).$1);
       if (type == DnsType.srv) data = Uint8List.fromList([...data.sublist(0, 6), ...encodeName(decodeName(b, start + 6).$1)]);
@@ -224,26 +249,33 @@ Uint8List encodeName(String name) {
   return out.takeBytes();
 }
 
-/// Reads a possibly compressed name at [offset]; returns it and the offset after it.
+/// Reads a possibly compressed name at [offset]; returns it and the offset after it. Throws
+/// [FormatException] for names that run past the message, loop, use the reserved label types
+/// (`01` and `10` in the top bits) or are longer than DNS allows.
 (String, int) decodeName(List<int> b, int offset) {
   final labels = <String>[];
   var i = offset;
   int? end;
   var jumps = 0;
+  var length = 0;
   while (true) {
-    if (i >= b.length) throw const FormatException('name runs past the message');
+    if (i < 0 || i >= b.length) throw const FormatException('name runs past the message');
     final n = b[i];
     if (n == 0) {
       end ??= i + 1;
       break;
     }
-    if ((n & 0xc0) == 0xc0) {
+    final kind = n & 0xc0;
+    if (kind == 0xc0) {
       if (i + 1 >= b.length || ++jumps > 20) throw const FormatException('bad name pointer');
       end ??= i + 2;
       i = ((n & 0x3f) << 8) | b[i + 1];
       continue;
     }
+    if (kind != 0) throw const FormatException('reserved label type');
     if (i + 1 + n > b.length) throw const FormatException('label runs past the message');
+    length += n + 1;
+    if (length > 255) throw const FormatException('name too long');
     labels.add(utf8.decode(b.sublist(i + 1, i + 1 + n), allowMalformed: true));
     i += 1 + n;
   }
