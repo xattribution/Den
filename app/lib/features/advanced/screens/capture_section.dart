@@ -5,14 +5,13 @@ import 'package:den_core/den_core.dart' show DenAction, DeviceMode;
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../add/state/capture_service.dart';
-import '../../add/state/capture_settings.dart';
 import '../../../platform/capture/platform_capture.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../platform/capabilities.dart';
 import '../../../design/forms/forms.dart';
+import '../../add/add.dart';
 
 /// Settings, AI and automations: who reads what this device shares, and whether what Den finds
 /// is added right away or shown first. The reader and its key belong to this device; the

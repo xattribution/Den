@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:den_capture/den_capture.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../capabilities.dart';
 

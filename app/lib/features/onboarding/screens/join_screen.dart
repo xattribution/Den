@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import '../../family/words/family_words.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
@@ -12,6 +11,7 @@ import 'home_screen_steps.dart';
 import '../../../platform/capabilities.dart';
 import '../../../design/forms/forms.dart';
 import '../state/this_device.dart';
+import '../../family/family.dart';
 
 /// Joining a family from a parent's invite: the four words from an invite message (filled in
 /// when the invite's link opened Den), or a QR code on a phone or tablet with a camera. The

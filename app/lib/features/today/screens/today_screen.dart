@@ -7,10 +7,9 @@ import '../../../design/pictograms.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
-import '../../calendar/words/event_words.dart';
 import 'join_requests.dart';
-import '../../chores/state/chore_groups.dart';
-import '../../chores/widgets/chore_row.dart';
+import '../../calendar/calendar.dart';
+import '../../chores/chores.dart';
 
 /// The first screen for every adult: what's happening today and who's doing what.
 class TodayScreen extends StatelessWidget {

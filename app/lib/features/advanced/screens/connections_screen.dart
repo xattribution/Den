@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../family/words/family_words.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/hub_client.dart';
@@ -15,6 +14,7 @@ import '../../../app/app_state.dart';
 import 'capture_section.dart';
 import '../widgets/scope_picker.dart';
 import '../../../design/forms/forms.dart';
+import '../../family/family.dart';
 
 /// AI and automations: apps signing in to the hub (let in or turned away), requests waiting for
 /// a parent's approval, then every connection with what it may do and whose permissions it uses.

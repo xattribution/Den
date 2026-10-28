@@ -4,9 +4,9 @@ import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../design/tokens.dart';
-import '../features/add/screens/capture_sheet.dart';
 import '../design/widgets.dart';
 import 'app_state.dart';
+import '../features/add/add.dart';
 
 class _Destination {
   const _Destination(this.label, this.icon, this.selectedIcon);

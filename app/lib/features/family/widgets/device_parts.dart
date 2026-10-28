@@ -15,7 +15,7 @@ import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
 import '../../../platform/web/web_app.dart';
-import 'member_editor.dart';
+import '../screens/member_editor.dart';
 import '../../../platform/capabilities.dart';
 import '../../../design/pictograms.dart';
 

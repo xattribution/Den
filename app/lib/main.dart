@@ -10,9 +10,6 @@ import 'app/boot_screen.dart';
 import 'app/other_tab_screen.dart';
 import 'platform/calendars/device_calendar_source.dart';
 import 'platform/calendars/phone_calendars.dart';
-import 'features/add/state/capture_service.dart';
-import 'features/add/state/capture_settings.dart';
-import 'features/add/state/hub_link.dart';
 import 'platform/capture/platform_capture.dart';
 import 'platform/sync/den_network.dart';
 import 'platform/sync/net_pairing.dart';
@@ -22,6 +19,7 @@ import 'platform/notifications/reminder_scheduler.dart';
 import 'app/app_state.dart';
 import 'platform/web/web_app.dart';
 import 'platform/capabilities.dart';
+import 'features/add/add.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

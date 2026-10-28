@@ -10,7 +10,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
-import 'device_parts.dart';
+import '../widgets/device_parts.dart';
 import '../../../design/forms/forms.dart';
 import '../../../platform/capabilities.dart';
 

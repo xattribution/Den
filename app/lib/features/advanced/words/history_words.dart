@@ -1,9 +1,7 @@
 import 'package:den_core/den_core.dart';
 
 import '../../../app/family_reads.dart';
-import '../../calendar/words/calendar_time.dart';
-import '../../calendar/words/event_words.dart';
-import '../../calendar/words/recurrence.dart';
+import '../../calendar/calendar_words.dart';
 
 /// Kinds of record people filter History by.
 enum HistoryKind {

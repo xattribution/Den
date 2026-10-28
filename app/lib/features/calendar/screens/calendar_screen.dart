@@ -7,8 +7,8 @@ import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import 'agenda_view.dart';
 import 'day_view.dart';
-import 'family_week.dart';
-import 'month_view.dart';
+import '../widgets/family_week.dart';
+import '../widgets/month_view.dart';
 
 enum CalendarView { family, month, day, agenda }
 

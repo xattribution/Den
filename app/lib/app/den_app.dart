@@ -1,58 +1,17 @@
+export 'router.dart' show buildRouter;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../features/add/state/capture_service.dart';
+import 'router.dart';
 import '../design/theme.dart';
 import '../design/tokens.dart';
-import 'calendar_routes.dart';
-import 'family_routes.dart';
-import 'home_routes.dart';
-import '../features/calendar/screens/calendar_screen.dart';
-import '../features/today/screens/today_screen.dart';
-import 'shell.dart';
 import 'app_state.dart';
 import '../platform/web/web_app.dart';
 import '../platform/web/web_insets.dart';
-
-GoRouter buildRouter(AppState state) => GoRouter(
-      initialLocation: '/today',
-      refreshListenable: state,
-      redirect: (context, route) => familyRedirect(state, route),
-      routes: [
-        GoRoute(path: '/', redirect: (_, _) => '/today'),
-        StatefulShellRoute.indexedStack(
-          builder: (context, routeState, shell) => AppShell(navigationShell: shell),
-          branches: [
-            StatefulShellBranch(routes: [GoRoute(path: '/today', builder: (_, _) => const TodayScreen())]),
-            StatefulShellBranch(routes: [
-              GoRoute(
-                path: '/calendar',
-                builder: (_, _) => const CalendarScreen(),
-                routes: [
-                  GoRoute(
-                    path: ':view/:date',
-                    builder: (_, s) => CalendarScreen(
-                      view: CalendarView.values.firstWhere(
-                        (v) => v.name == s.pathParameters['view'],
-                        orElse: () => CalendarView.family,
-                      ),
-                      date: s.pathParameters['date'],
-                    ),
-                  ),
-                ],
-              ),
-            ]),
-            StatefulShellBranch(routes: [GoRoute(path: '/chores', builder: (_, _) => choresTab())]),
-            StatefulShellBranch(routes: [GoRoute(path: '/lists', builder: (_, _) => listsTab())]),
-          ],
-        ),
-        ...calendarRoutes,
-        ...homeRoutes,
-        ...familyRoutes,
-      ],
-    );
+import '../features/add/add.dart';
 
 /// The root widget: theme from tokens (day, night, or following the system), larger type on a
 /// wall display.

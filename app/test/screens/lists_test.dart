@@ -1,4 +1,4 @@
-import 'package:den_app/features/add/screens/grocery_add.dart';
+import 'package:den_app/features/lists/screens/grocery_add.dart';
 import 'package:den_app/features/lists/screens/list_detail.dart';
 import 'package:den_app/features/lists/screens/list_editor.dart';
 import 'package:den_app/features/lists/words/list_words.dart';

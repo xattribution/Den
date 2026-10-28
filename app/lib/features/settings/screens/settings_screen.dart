@@ -5,19 +5,18 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../family/words/family_words.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../platform/calendars/phone_calendars.dart';
 import '../../../platform/notifications/reminder_scheduler.dart';
-import '../../onboarding/state/demo_session.dart';
-import '../../advanced/screens/device_sync.dart';
-import '../../advanced/state/export.dart';
 import 'web_reminders.dart';
 import '../../../platform/capabilities.dart';
 import '../../../design/forms/forms.dart';
 import '../../../design/pictograms.dart';
+import '../../family/family.dart';
+import '../../onboarding/onboarding.dart';
+import '../../advanced/advanced.dart';
 
 
 /// Settings: this device's look and role, notifications, AI and automations, Home Assistant,

@@ -6,9 +6,8 @@ import '../state/capture_controller.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
-import '../../calendar/words/calendar_time.dart';
-import '../../calendar/words/recurrence.dart';
 import '../../../design/forms/forms.dart';
+import '../../calendar/calendar.dart';
 
 /// Issues a person settles by looking at an entry and saving it.
 const Set<IssueKind> _settled = {IssueKind.needsDay, IssueKind.unknownPerson, IssueKind.guessed};

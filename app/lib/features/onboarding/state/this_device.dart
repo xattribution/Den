@@ -3,7 +3,7 @@ import 'package:flutter/widgets.dart';
 
 import '../../../platform/capabilities.dart';
 import '../../../platform/web/web_app.dart';
-import '../../family/words/family_words.dart';
+import '../../family/family.dart';
 
 /// The kinds a person picks for the device in their hand; hubs and displays are chosen by mode.
 const personalKinds = [DeviceKind.phone, DeviceKind.tablet, DeviceKind.desktop, DeviceKind.browser];

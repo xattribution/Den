@@ -7,7 +7,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../design/pickers/pattern_pad.dart';
 import '../../../design/pickers/pin_pad.dart';
-import '../../family/words/family_words.dart';
+import '../../family/family.dart';
 
 /// Asks who is acting on a shared screen: the family's avatars, then that person's PIN or
 /// picture pattern, then [Den.actAs] for [window]. Returns the member, or null if dismissed.

@@ -4,7 +4,7 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../widgets/event_line.dart';
+import 'event_line.dart';
 import '../../../design/tokens.dart';
 import '../../../app/app_state.dart';
 import '../words/calendar_time.dart';

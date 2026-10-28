@@ -3,14 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../family/words/family_words.dart';
 import '../../../design/pickers/picture_picker.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
-import '../../family/screens/device_parts.dart';
 import 'hub_adoption_panel.dart';
 import '../../../design/forms/forms.dart';
+import '../../family/family.dart';
 
 /// The short step after creating a family: kids (name, age, look) and a partner with an invite
 /// for their phone. Everything here can also be done later in Family.

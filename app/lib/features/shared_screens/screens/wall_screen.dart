@@ -7,16 +7,14 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../widgets/sign_in.dart';
-import '../../family/words/family_words.dart';
 import '../../../design/glyphs.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
-import '../../../app/family_routes.dart';
+import '../state/kids.dart';
 import '../../../app/app_state.dart';
-import '../../calendar/screens/family_week.dart';
-import '../../calendar/screens/month_view.dart';
-import '../../family/screens/device_parts.dart';
-import '../../chores/state/chore_groups.dart';
+import '../../family/family.dart';
+import '../../calendar/calendar.dart';
+import '../../chores/chores.dart';
 
 /// The kitchen wall: the date and a large clock, the family week as the main region, and a strip
 /// with today's chores per person and the grocery list. Anyone can read it; writes ask "Who's

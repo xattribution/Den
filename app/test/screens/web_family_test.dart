@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:den_app/platform/sync/hub_push.dart';
 import 'package:den_app/platform/sync/pairing.dart';
-import 'package:den_app/features/family/screens/device_parts.dart';
+import 'package:den_app/features/family/widgets/device_parts.dart';
 import 'package:den_app/features/settings/screens/web_reminders.dart';
 import 'package:den_app/features/today/screens/today_screen.dart';
 import 'package:den_app/platform/web/web_app.dart';

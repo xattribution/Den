@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
-import '../../family/screens/device_parts.dart';
+import '../../family/family.dart';
 
 /// Devices asking to join, at the top of Today for parents on their own devices (a shared screen
 /// can't approve anyone). A device whose invite named a person is approved for them with one

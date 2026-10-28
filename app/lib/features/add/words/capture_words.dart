@@ -2,8 +2,7 @@ import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart';
 
 import '../../../app/family_reads.dart';
-import '../../calendar/words/calendar_time.dart';
-import '../../calendar/words/recurrence.dart';
+import '../../calendar/calendar_words.dart';
 
 /// "from a photo", "from an email", "said out loud": where a change came from, as History says it.
 String originWords(CaptureKind kind) => switch (kind) {

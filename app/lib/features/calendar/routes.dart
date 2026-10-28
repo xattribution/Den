@@ -1,21 +1,39 @@
 import 'package:go_router/go_router.dart';
 
-import 'side_panel.dart';
-import '../features/calendar/screens/event_detail.dart';
-import '../features/calendar/screens/event_editor.dart';
-import '../features/advanced/screens/history_screen.dart';
-import '../features/advanced/screens/search_screen.dart';
+import '../../app/side_panel.dart';
+import 'screens/calendar_screen.dart';
+import 'screens/event_detail.dart';
+import 'screens/event_editor.dart';
 
 int? _ms(String? value) => value == null ? null : int.tryParse(value);
 
-/// Routes owned by the calendar area: event detail and editor, history, search.
-/// The calendar tab itself lives in the shell (screens/calendar/calendar_screen.dart).
+/// The Calendar tab: `/calendar`, or `/calendar/:view/:date` for a view on a day.
+StatefulShellBranch calendarBranch() => StatefulShellBranch(
+      routes: [
+        GoRoute(
+          path: '/calendar',
+          builder: (_, _) => const CalendarScreen(),
+          routes: [
+            GoRoute(
+              path: ':view/:date',
+              builder: (_, s) => CalendarScreen(
+                view: CalendarView.values.firstWhere(
+                  (v) => v.name == s.pathParameters['view'],
+                  orElse: () => CalendarView.family,
+                ),
+                date: s.pathParameters['date'],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+
+/// Events, over whatever is showing (a side panel when wide):
 ///
 /// - `/event/new?date=YYYY-MM-DD&time=HH:mm&who=<memberId>`: add an event
-/// - `/event/:id?at=<occurrence start ms>`: an occurrence's detail (a side panel when wide)
+/// - `/event/:id?at=<occurrence start ms>`: an occurrence's detail
 /// - `/event/:id/edit?at=<occurrence start ms>`: edit it
-/// - `/history?q=`: what changed
-/// - `/search?q=`: find an event, chore, list or item
 final List<RouteBase> calendarRoutes = [
   GoRoute(
     path: '/event/new',
@@ -47,6 +65,4 @@ final List<RouteBase> calendarRoutes = [
       EventDetailScreen(eventId: s.pathParameters['id']!, at: _ms(s.uri.queryParameters['at'])),
     ),
   ),
-  GoRoute(path: '/history', builder: (_, s) => HistoryScreen(query: s.uri.queryParameters['q'])),
-  GoRoute(path: '/search', builder: (_, s) => SearchScreen(query: s.uri.queryParameters['q'])),
 ];

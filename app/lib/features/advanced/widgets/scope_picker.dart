@@ -2,11 +2,11 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../family/words/family_words.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../design/forms/forms.dart';
+import '../../family/family.dart';
 
 const Map<Scope, String> _scopeHelp = {
   Scope.read: 'See everything the person it acts as can see.',

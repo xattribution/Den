@@ -1,7 +1,6 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 
-import '../../family/words/family_words.dart';
 import '../../../design/pickers/picture_picker.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
@@ -11,6 +10,7 @@ import '../../../design/forms/forms.dart';
 import '../../../design/pickers/time_zone_picker.dart';
 import '../../../platform/time_zone.dart';
 import '../state/this_device.dart';
+import '../../family/family.dart';
 
 /// Starting a family: its name and time zone, you (the first parent), and this device. Creating
 /// it writes the genesis changes; the router then moves on to "Add people".

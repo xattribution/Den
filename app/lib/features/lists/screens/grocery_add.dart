@@ -4,8 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
-import '../../lists/screens/list_detail.dart';
-import '../../lists/words/list_words.dart';
+import 'list_detail.dart';
+import '../words/list_words.dart';
 
 /// The Add sheet's "Grocery item": the first pinned shopping list with its add row focused.
 /// `/lists/groceries/add`.

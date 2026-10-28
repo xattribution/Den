@@ -6,11 +6,11 @@ import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
-import '../../family/words/family_words.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../design/forms/forms.dart';
+import '../../family/family.dart';
 
 /// Linking this browser through the hub that served it: a link code to scan with a parent's
 /// phone, the hub's address, and the time left. When the phone answers, the browser asks to join
