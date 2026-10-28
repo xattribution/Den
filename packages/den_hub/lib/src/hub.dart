@@ -154,7 +154,7 @@ class DenHub {
     final actions = standardRunner();
     _api = RestApi(_ctx, runner: actions, reader: _capture.reader);
     _mcp = McpServer(_ctx, runner: actions, reader: _capture.reader);
-    _mcpHttp = McpHttp(_ctx, _mcp);
+    _mcpHttp = McpHttp(_ctx, _mcp, _feed);
     _oauth = OAuthServer(_ctx, _auth);
     _ics = IcsExport(_ctx);
     _feeds = FeedService(_ctx);
@@ -427,6 +427,7 @@ class DenHub {
     if (_stopped) return;
     _stopped = true;
     await _stream.shutdown();
+    await _mcpHttp.shutdown();
     for (final s in _services.reversed) {
       try {
         await s.stop();

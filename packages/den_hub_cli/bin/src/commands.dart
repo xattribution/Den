@@ -85,18 +85,56 @@ Future<int> _bridge(Uri hub, String token, CliIo io) async {
   String? session;
   await for (final line in io.input.transform(utf8.decoder).transform(const LineSplitter())) {
     if (line.trim().isEmpty) continue;
+    Object? message;
+    try {
+      message = jsonDecode(line);
+    } on FormatException {
+      message = null;
+    }
+    // A 2026-07-28 request names itself in headers too; an earlier one rides its session.
+    final modern = mcpRequestHeaders(message);
+    if (modern['mcp-method'] == 'subscriptions/listen' && message is Map) {
+      // The bridge handles one request at a time, so it can't hold a stream open: acknowledge
+      // nothing and end the subscription, as the hub's own stdio server does.
+      final id = message['id'];
+      io.out.writeln(jsonEncode({
+        'jsonrpc': '2.0',
+        'method': 'notifications/subscriptions/acknowledged',
+        'params': {
+          '_meta': {McpMeta.subscriptionId: id},
+          'notifications': <String, Object?>{},
+        },
+      }));
+      io.out.writeln(jsonEncode({
+        'jsonrpc': '2.0',
+        'id': id,
+        'result': {
+          'resultType': 'complete',
+          '_meta': {McpMeta.subscriptionId: id},
+        },
+      }));
+      continue;
+    }
     final r = await client.post(
       hub.resolve('/mcp'),
       headers: {
         'authorization': 'Bearer $token',
         'content-type': 'application/json',
         'accept': 'application/json, text/event-stream',
-        'mcp-session-id': ?session,
+        ...modern,
+        if (modern.isEmpty) 'mcp-session-id': ?session,
       },
       body: line,
     );
-    session = r.headers['mcp-session-id'] ?? session;
+    if (modern.isEmpty) session = r.headers['mcp-session-id'] ?? session;
     if (r.statusCode == 202 || r.body.isEmpty) continue;
+    if ((r.headers['content-type'] ?? '').startsWith('text/event-stream')) {
+      // A stream's messages, one per event, as stdio carries them.
+      for (final l in const LineSplitter().convert(r.body)) {
+        if (l.startsWith('data:')) io.out.writeln(l.substring(5).trim());
+      }
+      continue;
+    }
     io.out.writeln(r.body.trim());
   }
   client.close();
