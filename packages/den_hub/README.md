@@ -17,8 +17,10 @@ await hub.stop();
 CLI code, so the Den app can run a hub in-process on desktop and Android. `HubConfig`: `port`,
 `host`, `dataDir` (the hub's own state; the change log is the `Den`'s storage), `webDir`,
 `relay`, `name`, `homeAssistantUrl` and `homeAssistantToken`, `notify` (per member, by id or
-name: Home Assistant notify service and ntfy topic), `publicUrl`, `allowedOrigins`, `mailbox`,
-`mdns`, `log`, `onSetupCode`. Logs never carry tokens, PINs, invite secrets or change contents.
+name: Home Assistant notify service and ntfy topic), `publicUrl`, `allowedOrigins`,
+`trustedProxies`, `public`, `contentSecurityPolicy`, `mailbox`, `mdns`, `log`, `onSetupCode`.
+Logs never carry tokens, PINs, invite secrets or change contents. Hosting a hub on a server
+behind HTTPS is in [docs/hosting.md](../../docs/hosting.md).
 
 ## Command line
 
@@ -29,16 +31,19 @@ beside it.
 
 | Command | |
 | --- | --- |
-| `serve` (default) | Env `DEN_DATA` (default `./den-data`), `DEN_WEB`, `DEN_PORT`, `DEN_HOST`, `DEN_RELAY`, `DEN_NAME`, `DEN_HA_URL`, `DEN_HA_TOKEN`, `DEN_PUBLIC_URL`, `DEN_ALLOWED_ORIGINS`, `DEN_MAILBOX`, `DEN_MDNS`, `DEN_LOG`, `DEN_NOTIFY` (JSON, or `notify.json` in the data directory) |
+| `serve` (default) | Env `DEN_DATA` (default `./den-data`), `DEN_WEB`, `DEN_PORT`, `DEN_HOST`, `DEN_RELAY`, `DEN_NAME`, `DEN_HA_URL`, `DEN_HA_TOKEN`, `DEN_PUBLIC_URL`, `DEN_ALLOWED_ORIGINS`, `DEN_TRUSTED_PROXIES` (reverse proxies whose `X-Forwarded-*` headers count: addresses or CIDRs), `DEN_PUBLIC` (`1`: reachable from the internet; default on for an `https` `DEN_PUBLIC_URL`), `DEN_CSP` (replaces the web app's Content-Security-Policy), `DEN_MAILBOX`, `DEN_MDNS` (default off in the public posture), `DEN_LOG`, `DEN_NOTIFY` (JSON, or `notify.json` in the data directory) |
 | `mcp --token T` | MCP over stdio. Bridges to a running hub's `/mcp`, else serves from the data directory |
 | `import-sett coord.db --as NAME` | Imports Sett as that parent through the hub device (changes say "via Sett import") |
 | `setup-code` | A fresh hub's setup code |
+| `open-linking [--minutes N]` | In the public posture, lets browsers ask for a link code for N minutes (default 10), as if a parent had opened "Add a device" |
 | `status` | What the hub is doing |
-| `backup --out FILE --passphrase-env VAR` / `restore --in FILE --passphrase-env VAR [--force]` | Keys, log and hub state sealed with den_net's backup format |
+| `backup --out FILE --passphrase-env VAR` | Keys, the change log, the hub's own state and `notify.json`, sealed with den_net's backup format. Works while the hub runs (`docker compose exec hub /app/bin/den_hub backup ...`): it reads the log's metadata before the log and cuts the log after its last complete line, so the copy is consistent without the hub's lock |
+| `restore --in FILE --passphrase-env VAR [--force]` | Refuses while a hub runs on the directory (stop it, then `docker compose run --rm hub restore ...`); `--force` first removes the hub that is there. Afterwards, let the family's devices connect before changing anything: what the hub wrote after the backup comes back from them, and the hub's change counter moves past it |
 
 Data directory: `keys.json` (device keys, owner-only), `log/` (change log), `hub/` (reminders
-sent, OAuth clients and refresh-token hashes, feed caches, invites waiting in `invites.json`, the
-Web Push key and subscriptions in `push.json`), `hub.lock` (one process at a time).
+sent, OAuth clients and refresh-token hashes, the capture reader, feed caches, invites waiting in
+`invites.json`, the Web Push key and subscriptions in `push.json`), `notify.json` (optional
+reminder targets), `hub.lock` (one process at a time).
 
 ## Invites and reminders for browsers
 
@@ -54,7 +59,9 @@ A fresh hub has no family. It prints a one-time setup code (`ABCD-EFGH`, from
 to the hub, so a stranger on the LAN can't claim it.
 
 1. The parent's phone makes an ordinary invite (`node.createInvite()`) and calls
-   `POST /api/v1/hub/setup {"code", "invite", "direct"?}`. Five wrong codes print a new one.
+   `POST /api/v1/hub/setup {"code", "invite", "direct"?}`. Each address gets five wrong codes, then
+   waits a minute (doubling with each further wrong code, up to an hour); the code never changes
+   because of wrong tries, so nobody else on the network can make it change under its owner.
 2. With the invite's hub URLs or relay, the hub dials the phone (`openInviteChannel`: relay
    rendezvous when the phone hosts one). With `"direct": true` (or neither), the phone opens
    the WebSocket `GET /api/v1/hub/setup/ws` and serves its side there (`node.serve(socket)`);
@@ -67,7 +74,8 @@ to the hub, so a stranger on the LAN can't claim it.
    `matching_words`. The hub logs the same words and `den_hub status` prints them, so a parent
    can compare them with the three the phone shows before approving.
 
-Errors: `403 permission_denied` with `details.tries_left`, `409 already_set_up`, `409 busy`.
+Errors: `403 permission_denied` with `details.tries_left`, `429 rate_limited` (with `Retry-After`)
+while that address waits, `409 already_set_up`, `409 busy`.
 
 ## Linking a browser
 
@@ -84,6 +92,12 @@ Errors: `403 permission_denied` with `details.tries_left`, `409 already_set_up`,
 Slots last 10 minutes (32 at most). Errors: `404` (unknown, expired or wrong secret), `403`
 (grant refused), `409 already_linked`, `429 rate_limited`.
 
+In the public posture (a hub reachable from the internet, `DEN_PUBLIC=1` or an `https`
+`DEN_PUBLIC_URL`), step 1 works only while a parent has "Add a device" open: their phone sends a
+signed `POST /api/v1/link/window` ([docs/hub-api.md](../../docs/hub-api.md#post-apiv1linkwindow))
+first (or the owner runs `den_hub open-linking` on the server), and the browser otherwise gets
+`403 link_closed`.
+
 ## MCP and OAuth
 
 `/mcp` is Streamable HTTP with JSON responses: `initialize` (2025-11-25, 2025-06-18,
@@ -93,12 +107,16 @@ hub itself on an IP, `localhost`, `.local` name or the public URL (DNS-rebinding
 A missing token gets `401` with `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource"`.
 
 OAuth: `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`,
-`/oauth/register` (RFC 7591), `/oauth/authorize` (PKCE S256 required; creates a pending
-connection and shows "Approve <client> in the Den app: Settings → AI and automations" until a
-parent approves on their phone, which reaches the hub as a synced change; declined or 15 minutes
-without an answer redirects with `access_denied`), `/oauth/token` (authorization code with PKCE,
-refresh-token rotation with reuse detection). Access tokens last an hour and are stored only as
-hashes in the connection record; refresh tokens (90 days) only as hashes in `hub/oauth.json`.
+`/oauth/register` (RFC 7591; 10 an hour per address, unused registrations forgotten after a
+day), `/oauth/authorize` (PKCE S256 required; holds the request in the hub, writing nothing to
+the family's log, and shows "Approve the client in the Den app", the host its sign-in returns
+to and a code; a parent's app lists it with `GET /api/v1/connections/requests`, admits it with
+`POST /api/v1/connections/requests/{id}`, which writes the pending connection, then approves
+that as before ([docs/hub-api.md](../../docs/hub-api.md#apps-asking-to-connect-oauth)); declined
+or 15 minutes without an answer redirects with `access_denied`), `/oauth/token` (authorization
+code with PKCE, refresh-token rotation with reuse detection). Access tokens last an hour and are
+stored only as hashes in the connection record; refresh tokens (90 days) only as hashes in
+`hub/oauth.json`.
 
 ## Calendar feeds
 
@@ -107,7 +125,11 @@ In: every `subscription` is fetched every 30 minutes and when it changes (15 s, 
 dates, DURATION, RRULE, EXDATE, RECURRENCE-ID, STATUS:CANCELLED, X-WR-CALNAME), filtered
 (include and exclude words in titles, skip all-day, series that ended over 90 days ago), and
 written by the hub with `source {kind: ics, ref: UID, label}` into the subscription's space.
-Its `status` says how it went ("12 events, updated 3:42 PM").
+Its `status` says how it went ("12 events, updated 3:42 PM", or "12 events (2 Den couldn't
+read), updated 3:42 PM" when some events had dates Den can't place; those are skipped, never
+the whole feed). Which UID became which event is saved as a sync goes, and a sync that starts
+over finds the feed's events by `source.ref`, so a hub stopped mid-sync never adds an event
+twice (and removes copies an older hub left).
 
 Out: `GET /ics/<token>/family.ics` and `GET /ics/<token>/<memberId>.ics` (that member's events
 and everyone's; `?everyone=0` for only theirs), with RRULE, EXDATE, RECURRENCE-ID and VTIMEZONE.

@@ -65,8 +65,10 @@ Scopes gate what a token may *attempt*. Every write is then checked with den_cor
 token's member (`connection.member`); a token with no member acts with parent-level permissions
 and its changes are signed with `actor: null` and the token's label in `fields._via`. Reads are
 filtered to the spaces the token's member may read (`canRead`); a token with no member reads what
-a parent reads. A record in a space the token can't read does not exist as far as the API is
-concerned (`404`, never `403`).
+a parent reads, which honors the family's oversight policy: a member whose
+`oversight.parentsSeePrivate` is `false` keeps their "Just me" space from it, including the titles
+den_core puts in derived views (points lines, Today's gaps, store names). A record in a space the
+token can't read does not exist as far as the API is concerned (`404`, never `403`).
 
 **Bodies.** Requests with a body send `Content-Type: application/json` (UTF-8), at most 256 KiB.
 Responses are `application/json; charset=utf-8`, except the event stream. Unknown request fields
@@ -134,9 +136,71 @@ Every error, at every status, has this body:
 | 404 | `not_found` | No such route, or no such record the token can read | `type` and `id` when a record was asked for |
 | 405 | `method_not_allowed` | Known path, wrong method. Also sends `Allow` | |
 | 409 | `read_only` | Editing or deleting an event imported from a subscribed calendar (`source.kind` is not `manual`) | |
-| 413 | `too_large` | Body over 256 KiB | |
+| 408 | `timeout` | The body took more than 60 seconds to arrive | |
+| 413 | `too_large` | Body over 256 KiB (refused by its `Content-Length` before it is read) | |
+| 429 | `rate_limited` | Too many requests from this client (below). Also sends `Retry-After` | `retry_after` (seconds) |
 | 500 | `internal` | Anything unexpected. The message carries no stack trace | |
 | 503 | `not_ready` | The hub hasn't joined or created a family yet, isn't approved yet, or is still loading its log | |
+
+### Limits per client
+
+The hub counts what each client does, by IP address (an IPv6 address by its /64), and answers
+`429 rate_limited` past these budgets:
+
+| What | Budget |
+| --- | --- |
+| Requests with neither a token nor a device signature (health, status, the web app's files, OAuth metadata and polling) | 600 a minute. Requests from this machine itself (loopback, not through a proxy) aren't counted |
+| Tokens or device signatures that don't work, link codes that don't match | 30 in 5 minutes; then every authenticated request from that client gets `429` until the budget refills |
+| Browser link slots and link grants | 20 in 10 minutes |
+| Wrong setup codes | 5, then that client waits a minute, doubling to an hour with each further wrong code |
+| OAuth: registrations, sign-in requests, token requests | 10 an hour, 10 in 15 minutes, 60 in 5 minutes |
+| WebSocket connections (`/ws`, `/api/v1/hub/setup/ws`) | 120 new a minute, 64 open at once. A message may be 2 MiB (a session frame, base64 encoded); a frame announcing more closes the socket as its header arrives, before any of it is buffered |
+
+### Behind a reverse proxy
+
+The hub believes `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` only from the
+proxies listed in `DEN_TRUSTED_PROXIES` (addresses or CIDR networks, comma separated). From those,
+the client is the right-most `X-Forwarded-For` address that isn't itself a trusted proxy, and the
+public URL (OAuth metadata, link codes, the web app's WebSocket origin) takes the forwarded scheme
+and host unless `DEN_PUBLIC_URL` is set. From anyone else the headers are ignored, so a client
+can't choose its own address or the hub's public URL; the hub logs a warning the first time an
+unlisted proxy sends them.
+
+### Security headers
+
+Every answer carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, and
+`Strict-Transport-Security: max-age=31536000` when the request came over HTTPS (through a trusted
+proxy, or by an `https` `DEN_PUBLIC_URL`). JSON answers carry
+`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`. Pages carry
+`X-Frame-Options: DENY` and `Cross-Origin-Opener-Policy: same-origin`.
+
+The web app (the Flutter build in `DEN_WEB`) is served with this policy, where `<ws origin>` is
+the hub's own `ws://` or `wss://` origin and the hashes are those of any inline `<script>` in
+`index.html`:
+
+```text
+default-src 'self'; script-src 'self' 'wasm-unsafe-eval' <inline script hashes>;
+style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;
+connect-src 'self' <ws origin>; media-src 'self' data: blob:; worker-src 'self' blob:;
+manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+```
+
+So the build must load nothing from a CDN: CanvasKit from the hub (`flutter build web --csp
+--dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/`), fonts bundled, and Flutter's fallback
+fonts (`fontFallbackBaseUrl`, by default `https://fonts.gstatic.com/s/`) self-hosted or left out.
+`DEN_CSP` replaces the whole policy for a build that needs more. Files whose names carry a content
+hash (`main.dart.3f2a9c1b.js`) are sent with `Cache-Control: public, max-age=31536000, immutable`;
+everything else, `index.html` and the service worker included, with `no-cache` (revalidated with
+`Last-Modified`, a `304` when unchanged).
+
+### Public posture
+
+A hub reachable from the internet runs in the public posture (`DEN_PUBLIC=1`, and by default
+whenever `DEN_PUBLIC_URL` is `https`): `/health` answers only `ok`, `api` and `ready`;
+`/api/v1/hub/status` of a hub already in a family answers only `{"paired": true, "setup_needed":
+false, "stage": "ready"}`; `POST /api/v1/link` works only while a parent has opened "Add a device"
+(`POST /api/v1/link/window`, below) or the owner ran `den_hub open-linking` on the server; and
+mDNS is off unless `DEN_MDNS=1`.
 
 ## Discovery (mDNS)
 
@@ -417,6 +481,8 @@ Scope: none (no `Authorization` needed). Never returns family data.
 | `device` | string | The hub's device id; the same value as mDNS TXT `id` |
 | `name` | string | The hub device's name |
 | `ready` | bool | The hub is in a family, approved, and its log is loaded. While `false`, `/api/v1` answers `503 not_ready` |
+
+In the public posture `version`, `device` and `name` are left out: `{"ok": true, "api": 1, "ready": true}`.
 
 ### `GET /api/v1/members`
 
@@ -829,7 +895,8 @@ Scope: `read`. Every list the token can read, in display order, with items.
 }
 ```
 
-`stores` are store names used on items, most used first (den_core `stores`).
+`stores` are store names used on items of the returned lists, most used first (as den_core
+`stores` counts them).
 
 ### `POST /api/v1/lists/{id}/items`
 
@@ -928,7 +995,7 @@ Query: `recent` (int 0–200, default 50) limits `recent`.
 
 | Field | Type | |
 | --- | --- | --- |
-| `totals` | object | Member id → current balance (earned + adjustments − approved redemptions), for every member the token can see, including zeros |
+| `totals` | object | Member id → current balance (earned + adjustments − approved redemptions), for every member the token can see, including zeros. Balances count every point a member earned; `recent` leaves out lines from chores in spaces the token can't read, since their `reason` is the chore's title |
 | `goals[].members` | string[]? | `null` means every kid |
 | `goals[].window_start`, `window_end` | date, date? | The measured window (end exclusive, `null` when open-ended) |
 | `goals[].winner` | string? | Races: the first member to reach the target |
@@ -1121,10 +1188,74 @@ No token. Where the hub is in joining a family, for the app's "Add a hub" screen
 | `matching_words` | Present only while the pairing session with the inviting phone is up (`joining` through `syncing`): the three words both ends derive from that session's transcript (den_net's matching words). The phone shows its own three; a parent approves only if they're the same. The hub also logs them at info level and `den_hub status` prints them |
 | `last_error` | Why the last join didn't finish (`timed-out`, `unreachable`, or the phone's reason), until the hub is ready |
 
+In the public posture a hub already in a family answers only `paired`, `setup_needed` and
+`stage`.
+
+### `POST /api/v1/link/window`
+
+Signed by a parent's own device ([`DeviceRequest`](#capture-reading-for-every-device), not a
+shared display), no body. Opens "Add a device" for 10 minutes: in the public posture,
+`POST /api/v1/link` (a new browser asking for a link code) answers `403 link_closed` unless a
+parent opened it. Answer: `{"open_until": "<ISO 8601>", "open_until_ms": 1792535400000}`. On a
+home network linking is always open and this is harmless to call.
+
 The words are not a secret: a relay or anything else in the middle that ran two sessions would
 produce two transcripts, so the two ends would show different words. This answer travels over
 plain HTTP on the home network, so it backs up, and doesn't replace, comparing with the hub's log
 when the network itself isn't trusted.
+
+## Apps asking to connect (OAuth)
+
+A remote MCP client (claude.ai, ChatGPT) signs in with OAuth 2.1 (`/oauth/register`,
+`/oauth/authorize`, `/oauth/token`; see `packages/den_hub/README.md`). Those endpoints need no
+credentials, so a sign-in request stays in the hub's memory and nothing reaches the family's log
+until a parent acts. The sign-in page shows the app's name, the host its sign-in returns to
+(`claude.ai`), what it asked for, and a code (`K7QP-M4XD`). A parent's app lists the waiting
+requests with the same code and lets the right one in; the hub then writes a `pending` connection
+(labelled `"<client name> (<redirect host>)"`) that the parent approves with den_core's
+`approveConnection`, choosing scopes and whose permissions it uses, exactly as before. Requests
+expire after 15 minutes (the sign-in page then returns `access_denied`), at most 20 wait at once,
+one address can start 10 in 15 minutes, and the hub turns down pending connections nobody
+approved within 15 minutes.
+
+Both endpoints are signed by a parent's own device ([`DeviceRequest`](#capture-reading-for-every-device),
+not a shared display); anyone else gets `401` or `403 permission_denied`.
+
+### `GET /api/v1/connections/requests`
+
+The requests waiting for a parent, newest first:
+
+```json
+{
+  "requests": [
+    {
+      "id": "q7ZK3m1VbT0aYc2E",
+      "code": "K7QP-M4XD",
+      "client_name": "Claude",
+      "redirect_host": "claude.ai",
+      "scopes": ["read", "calendar", "chores", "lists", "points"],
+      "connection": null,
+      "requested": "2026-10-20T22:30:00.000Z",
+      "requested_ms": 1792535400000,
+      "expires": "2026-10-20T22:45:00.000Z",
+      "expires_ms": 1792536300000
+    }
+  ]
+}
+```
+
+`client_name` is whatever the app registered with; `redirect_host` is where its sign-in returns
+and can't be made up, so show both, and the `code`, which the person signing in sees on their
+screen. `connection` is the pending connection's id once a parent admitted it.
+
+### `POST /api/v1/connections/requests/{id}`
+
+Body `{"decision": "admit"}` or `{"decision": "decline"}`. Admitting writes the pending
+connection (or returns the one already written) and answers
+`{"connection": "<connection id>", "request": {...}}`; the parent's app then approves that
+connection once it has synced (`Den.approveConnection(id, scopes:, member:)`), or revokes it.
+Declining answers `{"ok": true}` and sends the app back with `access_denied`. `404 not_found` for
+an unknown or expired request, `409 declined` once it was declined.
 
 ## Capture: reading for every device
 
@@ -1144,9 +1275,17 @@ These endpoints take no token. Every request is signed with the device's own key
 | `X-Den-Nonce` | Random; refused if the hub has seen it |
 | `X-Den-Actor` | The member acting on the device, when it names one |
 | `X-Den-Signature` | base64url Ed25519 over `"den/device-request/v1" 0x00` and the canonical JSON `[method, path with query, time, nonce, hex SHA-256 of the body, device, actor, hub device id]` |
+| `X-Den-Body-SHA256` | Recommended: the lowercase hex SHA-256 of the body, the same value the signature covers. With it the hub checks the signature from the headers alone and turns a forged request away before reading its body |
 
 The hub accepts a request only from an approved, unrevoked device of its family, addressed to
-itself. A personal device acts for its owner and no one else; a shared display for the member
+itself. A request with `X-Den-Body-SHA256` is verified before its body is read (`401` when the
+signature is wrong; the hub keeps none of the body, discarding it as it arrives, and the answer
+may come only once the client has sent it). Without it the hub can check only the headers that
+need no body (signed, fresh, naming an approved device) before reading, so it reads such bodies one per
+client and two at a time, answering `429 busy` (`details.retry`: true) past that, and verifies
+the signature once the body is in. Bodies are capped (64 KiB for `PUT`, 30 MB for
+`/api/v1/capture/read`, refused by `Content-Length` before reading) and must arrive within
+3 minutes. A personal device acts for its owner and no one else; a shared display for the member
 signed in on it, or nobody; a hub-mode device for its owner. Anything else is `401 unauthorized`.
 
 ### `GET /api/v1/capture/reader`
@@ -1268,8 +1407,11 @@ The hub starts accepting the invite on `/ws` (see ARCHITECTURE.md, "Pairing"); t
 with it there, pinning the hub's key from the invite. An invite works for every device that uses
 it until it expires; each one still needs a parent's approval. Errors: `400 invalid_input` (not
 four words from the list), `404 not_found` (no such invite, expired, or its parent's device was
-revoked since), `429 rate_limited` (10 wrong codes in 10 minutes; every wrong code counts, against
-every invite), `503 not_ready`.
+revoked since), `429 rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from anywhere, against every
+invite; and per client, redeeming counts against the browser link budget and a wrong code
+against the failed-tries budget, see [Limits per client](#limits-per-client)), `503 not_ready`.
+Redeeming needs no open "Add a device" window in the public posture: the invite is a parent's
+consent already.
 
 ## Web Push: reminders in browsers
 

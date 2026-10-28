@@ -109,7 +109,7 @@ void main() {
     final info = await pairing.hubStatus('127.0.0.1:${hub.port}');
     final session = pairing.setUpHub(info, 'AAAA-AAAA');
     await until(() => session.stage == HubSetupStage.failed, what: 'the refusal');
-    expect(session.error, "That setup code isn't right. 4 tries left before the hub makes a new one.");
+    expect(session.error, "That setup code isn't right. Check it in the hub's log: 4 more tries, then the hub makes you wait a minute.");
   });
 
   test('A browser links through the hub with a parent phone answering its code', () async {

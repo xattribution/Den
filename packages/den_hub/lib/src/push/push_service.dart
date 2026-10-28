@@ -4,11 +4,11 @@ import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:den_core/den_core.dart';
-import 'package:den_net/den_net.dart';
 import 'package:shelf/shelf.dart';
 
 import '../body.dart';
 import '../context.dart';
+import '../device_auth.dart';
 import '../http_util.dart';
 import '../hub.dart';
 import '../reminders.dart';
@@ -21,18 +21,21 @@ import 'web_push_crypto.dart';
 /// - The hub's VAPID key pair (RFC 8292) is made once and kept in `<data>/hub/push.json`,
 ///   readable by the hub's user only, with each device's subscription.
 /// - A device turns reminders on with `PUT /api/v1/push`, signed with its own key like every
-///   device request to the hub ([DeviceRequest]); `GET` says whether it has, `DELETE` turns them
+///   device request to the hub ([DeviceAuth]); `GET` says whether it has, `DELETE` turns them
 ///   off, `POST /api/v1/push/test` sends one to see it work.
 /// - Each reminder the hub's [ReminderService] sends goes to the subscribed devices of the
 ///   people it is for, encrypted for each browser (RFC 8291) so the push service sees nothing.
 /// - Nudges: a device asking to join (to parents), a reward asked for (to whoever decides
 ///   rewards), and a chore given to someone for today or tomorrow (to them: their turn).
 class WebPushService implements HubService, ReminderSink {
-  /// Creates the service for [hub].
-  WebPushService(this.hub);
+  /// Creates the service for [hub], checking device requests with [auth].
+  WebPushService(this.hub, this.auth);
 
   /// Shared hub context.
   final HubContext hub;
+
+  /// Checks signed device requests (and counts failed ones against the client).
+  final DeviceAuth auth;
 
   @override
   String get name => 'Web Push';
@@ -51,7 +54,6 @@ class WebPushService implements HubService, ReminderSink {
 
   static const String _doc = 'push';
 
-  final NonceBook _nonces = NonceBook();
   final Set<String> _changed = {};
   StreamSubscription<Set<String>>? _changes;
   Timer? _settle;
@@ -103,33 +105,19 @@ class WebPushService implements HubService, ReminderSink {
       ..add('POST', '/api/v1/push/test', (r, _) => test(r));
   }
 
-  Future<Device> _check(Request request, List<int> body) async {
-    if (!hub.ready) throw ApiError.notReady();
-    final c = await DeviceRequest.verify(
-      hub.den,
-      method: request.method,
-      url: request.requestedUri,
-      headers: request.headers,
-      body: body,
-      seen: _nonces,
-    );
-    if (!c.ok) {
-      hub.log.warn('Refused a push request: ${c.problem}');
-      throw ApiError.unauthorized('This needs a request signed by a device in this family.');
-    }
-    return c.device!;
-  }
+  Future<Device> _check(Request request) async => (await auth.check(request)).device!;
 
   Response _answer(String deviceId) =>
       jsonResponse({'key': b64url(keys.publicKey), 'subscribed': _devices.containsKey(deviceId)});
 
   /// `GET /api/v1/push`: the hub's public key, and whether this device gets reminders.
-  Future<Response> status(Request request) async => _answer((await _check(request, const [])).id);
+  Future<Response> status(Request request) async => _answer((await _check(request)).id);
 
   /// `PUT /api/v1/push`: this device's push subscription, as the browser gives it.
   Future<Response> subscribe(Request request) async {
-    final bytes = await readBodyBytes(request, limit: 16 * 1024);
-    final device = await _check(request, bytes);
+    final signed = await auth.withBody(request);
+    final bytes = signed.body;
+    final device = signed.check.device!;
     if (device.mode != DeviceMode.personal || device.member == null) {
       throw ApiError.denied("Reminders go to a person's own device. A shared screen shows them where it hangs.");
     }
@@ -153,7 +141,7 @@ class WebPushService implements HubService, ReminderSink {
     if (p256dh is! String || auth is! String || !_validKeys(p256dh, auth)) {
       throw ApiError.invalid("That subscription's keys aren't a browser's.", field: 'keys');
     }
-    final base = requestBase(request, hub.config.publicUrl);
+    final base = hub.base(request);
     _devices[device.id] = {
       'endpoint': endpoint.toString(),
       'p256dh': p256dh,
@@ -177,14 +165,14 @@ class WebPushService implements HubService, ReminderSink {
 
   /// `DELETE /api/v1/push`: no more reminders on this device.
   Future<Response> unsubscribe(Request request) async {
-    final device = await _check(request, const []);
+    final device = await _check(request);
     if (_devices.remove(device.id) != null) await _save();
     return _answer(device.id);
   }
 
   /// `POST /api/v1/push/test`: one notification to this device, to see reminders work.
   Future<Response> test(Request request) async {
-    final device = await _check(request, const []);
+    final device = await _check(request);
     if (!_devices.containsKey(device.id)) throw ApiError.notFound(message: "This device hasn't turned reminders on.");
     final sent = await _push(device.id, {
       'title': 'Reminders are on',

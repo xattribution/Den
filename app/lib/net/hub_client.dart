@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:den_core/den_core.dart';
 import 'package:http/http.dart' as http;
 
+import 'hub_api.dart';
+
 /// What `GET /api/v1/hub/status` says about a hub.
 class HubInfo {
   const HubInfo({
@@ -87,14 +89,17 @@ class RedeemedInvite {
 
 /// A hub turned a request down; [message] says why and what to do, for people.
 class HubException implements Exception {
-  const HubException(this.message, {this.code, this.triesLeft});
+  const HubException(this.message, {this.code, this.triesLeft, this.retryAfter});
   final String message;
 
   /// The API's error code (`permission_denied`, `already_set_up`, `busy`, ...).
   final String? code;
 
-  /// Setup codes left before the hub prints a new one.
+  /// Setup codes left before the hub makes this device wait.
   final int? triesLeft;
+
+  /// Seconds to wait before trying again, after `429`.
+  final int? retryAfter;
 
   @override
   String toString() => message;
@@ -246,20 +251,9 @@ class HubClient {
         'Check the address and the connection, then try again.',
       );
     }
-    Map<String, Object?> body;
-    try {
-      body = Map<String, Object?>.from(jsonDecode(response.body) as Map);
-    } on Object {
-      body = const {};
-    }
+    final body = decodeHubJson(response.body);
     if (response.statusCode >= 200 && response.statusCode < 300) return body;
-    final error = body['error'] is Map ? Map<String, Object?>.from(body['error']! as Map) : body;
-    final details = error['details'] is Map ? Map<String, Object?>.from(error['details']! as Map) : const {};
-    throw HubException(
-      error['message'] as String? ?? 'The hub refused that (${response.statusCode}).',
-      code: error['code'] as String?,
-      triesLeft: (details['tries_left'] as num?)?.toInt(),
-    );
+    throw hubError(response, body);
   }
 }
 

@@ -205,7 +205,7 @@ commit too (`Den.restoreAll`).
 | `list` | any | `title`, `icon`, `kind` (`shopping`\|`checklist`\|`packing`\|`meal`), `lifecycle` (`running`\|`dated`\|`event`), `needBy` (local date), `event` (id), `pinned`, `order` |
 | `item` | same as list | `list`, `text`, `qty`, `store`, `checked`, `checkedBy`, `order` (fractional index string), `toGroceries` (meal items) |
 | `subscription` | `p` | ICS feed: `url`, `label`, `category`, `assignee`, `space` for imported events, `include`, `exclude`, `skipAllDay`, `status` |
-| `connection` | `p` | AI or automation access: `label`, `kind` (`token`\|`oauth`), `scopes`, `member` (whose permissions it uses; null = parent-level), `tokenHash` (SHA-256 hex), `client` (OAuth client id), `status` (`pending`\|`active`\|`revoked`), `expires`. A hub may create `pending` OAuth connections and set `tokenHash` on approved ones; only a parent's device may set `active` or change scopes |
+| `connection` | `p` | AI or automation access: `label`, `kind` (`token`\|`oauth`), `scopes`, `member` (whose permissions it uses; null = parent-level), `tokenHash` (SHA-256 hex), `client` (OAuth client id), `status` (`pending`\|`active`\|`revoked`), `expires`. A hub may create `pending` OAuth connections and set `tokenHash` on approved ones; only a parent's device may set `active` or change scopes. The hub writes a `pending` one only after a parent's own device admits the sign-in request (a request needs no credentials, so the hub holds it until then), and turns down pending ones nobody approved within 15 minutes |
 
 **Points are derived, not stored.** A done completion awards the chore's points to the day's owner
 (`completion.owner`, else the rotation's owner that day, else the chore owner, else `doneBy`) and
@@ -452,10 +452,15 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `GET /ws` | session handshake | Device sync |
 | `POST /mcp` | bearer or OAuth | MCP Streamable HTTP |
 | OAuth: `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`, `/oauth/register`, `/oauth/authorize`, `/oauth/token` | | OAuth 2.1 with PKCE and dynamic client registration, for remote MCP clients such as claude.ai |
+| `GET /api/v1/connections/requests`, `POST /api/v1/connections/requests/{id}` | signed by a parent's own device | Sign-in requests waiting at the hub (client name, redirect host, a code to match); admitting one writes its `pending` connection |
+| `POST /api/v1/link/window` | signed by a parent's own device | Opens "Add a device" for 10 minutes; in the public posture browsers can ask to link only then |
 
 The hub is a device in the family: it holds its own key and every space, signs the changes it
 makes for API and MCP callers with `actor` set to the token's member (or null with the token
-label recorded in `fields._via`).
+label recorded in `fields._via`). A token with no member reads at parent level, so it honors the
+oversight policy like a parent's device: nothing from a member's space whose `parentsSeePrivate`
+is false reaches it, not even in derived views (points lines, Today's gaps, store names), which
+the hub filters because it computes them over every space it holds.
 
 ## MCP
 

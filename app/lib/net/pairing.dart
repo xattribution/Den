@@ -165,6 +165,11 @@ abstract class PairingService {
   /// pending device to approve.
   Future<String> answerBrowserLink(String code) async => throw const PairingException(LocalOnlyPairing.message);
 
+  /// On a parent's own device: opens "Add a device" on the family's hub for 10 minutes, so a
+  /// browser can ask for a link code where the hub is reachable from the internet. Best effort:
+  /// a hub on the home network is always open.
+  Future<void> openLinking() async {}
+
   /// In a browser: the hub that served this page, or null when there is none or it doesn't
   /// answer.
   Future<HubInfo?> servingHub() async => null;

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import 'edge.dart';
 import 'log.dart';
 
 /// The hub's default port, shared by HTTP, WebSocket sync and MCP.
@@ -43,6 +44,9 @@ class HubConfig {
     this.notify = const {},
     this.publicUrl,
     this.allowedOrigins = const [],
+    this.trustedProxies = const [],
+    this.public,
+    this.contentSecurityPolicy,
     this.mailbox = false,
     this.mdns = true,
     this.log,
@@ -90,6 +94,24 @@ class HubConfig {
 
   /// Extra browser origins allowed to call `/mcp` and OAuth endpoints (`https://claude.ai`).
   final List<String> allowedOrigins;
+
+  /// Reverse proxies whose `X-Forwarded-For`, `-Proto` and `-Host` the hub believes
+  /// (`DEN_TRUSTED_PROXIES`). From anyone else those headers are ignored, so per-client limits
+  /// and the public URL can't be spoofed.
+  final List<IpNetwork> trustedProxies;
+
+  /// The public posture, for a hub reachable from the internet (`DEN_PUBLIC`): `/health` says
+  /// nothing that identifies the hub or family, `/api/v1/hub/status` says only whether it is
+  /// paired once it is, and browsers can ask to be linked only while a parent has opened
+  /// "Add a device". Null decides by [publicUrl]: on for an `https` public URL.
+  final bool? public;
+
+  /// Replaces the Content-Security-Policy the hub sends with the web app (`DEN_CSP`), for a web
+  /// build that needs more than the default allows. Null keeps the default.
+  final String? contentSecurityPolicy;
+
+  /// Whether the hub runs in the public posture (see [public]).
+  bool get publicPosture => public ?? (publicUrl?.scheme == 'https');
 
   /// Also sync through the relay's mailboxes, for devices that only reach the relay.
   final bool mailbox;

@@ -4,10 +4,10 @@ import 'dart:io';
 
 import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart';
-import 'package:den_net/den_net.dart';
 import 'package:shelf/shelf.dart';
 
 import 'context.dart';
+import 'device_auth.dart';
 import 'http_util.dart';
 import 'setup.dart' show restrictToOwner;
 
@@ -18,11 +18,14 @@ import 'setup.dart' show restrictToOwner;
 /// device's key ([DeviceRequest]); there are no tokens. The key lives in the hub's own data
 /// directory, readable by its owner only, and never in the family's log or an answer.
 class HubCapture {
-  /// Creates the capture endpoints for [hub].
-  HubCapture(this.hub);
+  /// Creates the capture endpoints for [hub], checking signatures with [auth].
+  HubCapture(this.hub, this.auth);
 
   /// Shared hub context.
   final HubContext hub;
+
+  /// Checks the signed requests.
+  final DeviceAuth auth;
 
   /// Most reads running at once; more wait for a free one with `429`.
   static const int maxReading = 4;
@@ -30,10 +33,17 @@ class HubCapture {
   /// Largest request: a few photos or a PDF, base64.
   static const int maxBody = 30 * 1024 * 1024;
 
+  /// How long a large body may take to arrive.
+  static const Duration bodyTime = Duration(minutes: 3);
+
+  /// Bodies read at once from devices that didn't send `X-Den-Body-SHA256`, whose signature
+  /// can only be checked once the body is in: at most one per client and this many in all.
+  static const int maxUnverified = 2;
+
   static const String _doc = 'capture';
 
-  final NonceBook _nonces = NonceBook();
   int _reading = 0;
+  final Map<String, int> _unverified = {};
 
   /// Adds the capture routes.
   void register(Routes routes) {
@@ -78,44 +88,41 @@ class HubCapture {
     );
   }
 
-  /// Turns away a request from no device of this family before its body is read.
-  void _precheck(Request request) {
-    if (!hub.ready) throw ApiError.notReady();
-    final id = request.headers[DeviceRequest.device];
-    final d = id == null ? null : hub.den.device(id);
-    if (d == null || !d.approved || d.revoked) {
-      throw ApiError.unauthorized('This needs a request signed by a device in this family.');
+  /// Reads [request]'s body once its headers pass [DeviceAuth.precheck]. A device that signed
+  /// the body's hash in the headers is already known to be in the family; one that didn't is
+  /// only known to name an approved device, so those bodies are read one per client and
+  /// [maxUnverified] at a time, and anything over is `429 busy`.
+  Future<List<int>> _body(Request request, {required int limit, Duration deadline = bodyDeadline}) async {
+    final claimed = await auth.precheck(request);
+    if (claimed != null) return readBodyBytes(request, limit: limit, deadline: deadline);
+    final key = hub.clientOf(request);
+    final total = _unverified.values.fold(0, (a, b) => a + b);
+    if ((_unverified[key] ?? 0) >= 1 || total >= maxUnverified) {
+      throw ApiError(429, 'busy', 'The hub is busy. Try again in a moment.', details: {'retry': true});
     }
-  }
-
-  Future<DeviceRequestCheck> _check(Request request, List<int> body) async {
-    if (!hub.ready) throw ApiError.notReady();
-    final c = await DeviceRequest.verify(
-      hub.den,
-      method: request.method,
-      url: request.requestedUri,
-      headers: request.headers,
-      body: body,
-      seen: _nonces,
-    );
-    if (!c.ok) {
-      hub.log.warn('Refused a capture request: ${c.problem}');
-      throw ApiError.unauthorized('This needs a request signed by a device in this family.');
+    _unverified[key] = (_unverified[key] ?? 0) + 1;
+    try {
+      return await readBodyBytes(request, limit: limit, deadline: deadline);
+    } finally {
+      final left = (_unverified[key] ?? 1) - 1;
+      if (left <= 0) {
+        _unverified.remove(key);
+      } else {
+        _unverified[key] = left;
+      }
     }
-    return c;
   }
 
   /// `GET /api/v1/capture/reader`: the hub's reader, for any device in the family.
   Future<Response> status(Request request) async {
-    await _check(request, const []);
+    await auth.check(request);
     return jsonResponse(describe().toJson());
   }
 
   /// `PUT /api/v1/capture/reader`: a parent's phone (or the hub's own owner) sets the reader.
   Future<Response> configure(Request request) async {
-    _precheck(request);
-    final bytes = await readBodyBytes(request, limit: 64 * 1024);
-    final c = await _check(request, bytes);
+    final bytes = await _body(request, limit: 64 * 1024);
+    final c = await auth.verify(request, bytes);
     final parent = c.actor?.isParent ?? false;
     if (!parent || c.device!.mode == DeviceMode.shared) {
       throw ApiError.denied('Only a parent\'s phone can choose what the hub reads with.');
@@ -165,9 +172,8 @@ class HubCapture {
 
   /// `POST /api/v1/capture/read`: reads what a device shared with the family's reader.
   Future<Response> read(Request request) async {
-    _precheck(request);
-    final bytes = await readBodyBytes(request, limit: maxBody);
-    final c = await _check(request, bytes);
+    final bytes = await _body(request, limit: maxBody, deadline: bodyTime);
+    final c = await auth.verify(request, bytes);
     final actor = c.actor;
     if (actor == null) throw ApiError.denied('Sign in on this screen to add things.');
     final allowed = const [DenAction.editEvents, DenAction.editChores, DenAction.editLists].any((a) => can(actor, a));

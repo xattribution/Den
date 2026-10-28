@@ -1,11 +1,12 @@
 @Timeout(Duration(seconds: 90))
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
-import 'package:test/test.dart';
+import 'support/test.dart';
 
 import 'support/fixture.dart';
 
@@ -20,10 +21,14 @@ class FeedServer {
   int notModified = 0;
   int status = 200;
 
+  /// Never answers, like a calendar server that hangs.
+  bool hang = false;
+
   static Future<FeedServer> start() async {
     final s = FeedServer._(await HttpServer.bind(InternetAddress.loopbackIPv4, 0));
     s.server.listen((request) async {
       s.requests++;
+      if (s.hang) return;
       final etag = '"${s.body.hashCode}"';
       if (s.status != 200) {
         request.response.statusCode = s.status;
@@ -43,6 +48,19 @@ class FeedServer {
 
   String get url => 'http://127.0.0.1:${server.port}/school.ics';
 }
+
+/// [ics] with four events Den can't place (a cut-short date, letters in a date, month 13, a
+/// RECURRENCE-ID that isn't a date) and one whose EXDATE and DURATION are partly broken.
+String withBroken(String ics) => ics.replaceFirst('END:VCALENDAR', [
+      'BEGIN:VEVENT', 'UID:short@school', 'DTSTART;VALUE=DATE:2026', 'SUMMARY:Short date', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:letters@school', 'DTSTART;VALUE=DATE:2026AB01', 'SUMMARY:Letters', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:month@school', 'DTSTART:20261345T100000', 'SUMMARY:Month 13', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:band@school', 'RECURRENCE-ID;VALUE=DATE:20', 'DTSTART:20261103T120000Z', 'SUMMARY:Broken override',
+      'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:exdate@school', 'DTSTART:20261101T100000Z', 'RRULE:FREQ=DAILY;COUNT=3',
+      'EXDATE:2026,20261102T100000Z', 'DURATION:P99999999W', 'SUMMARY:Bad exdate', 'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\n'));
 
 void main() {
   final fixture = File('test/fixtures/school.ics').readAsStringSync();
@@ -66,6 +84,17 @@ void main() {
       expect(zoneForTzid('Eastern Standard Time'), 'America/New_York');
       expect(zoneForTzid('/mozilla.org/20050126_1/Europe/Paris'), 'Europe/Paris');
       expect(() => parseIcs('hello', defaultZone: 'UTC'), throwsA(isA<IcsFormatException>()));
+    });
+
+    test('a malformed date skips that event, never the whole calendar', () {
+      final cal = parseIcs(withBroken(fixture), defaultZone: 'America/Chicago');
+      expect(cal.skipped, 4);
+      expect(cal.events.map((e) => e.uid).toSet(), containsAll(['band@school', 'fair@school', 'exdate@school']));
+      expect(cal.events.map((e) => e.uid), isNot(contains('short@school')));
+      final exdate = cal.events.firstWhere((e) => e.uid == 'exdate@school');
+      expect(exdate.exdates.map((x) => x.utc), [utc(2026, 11, 2, 10)], reason: 'the readable EXDATE still counts');
+      expect(exdate.duration, isNull, reason: 'a duration of millions of weeks is ignored');
+      expect(parseIcsDuration('P99999999W'), isNull);
     });
   });
 
@@ -123,6 +152,47 @@ void main() {
       expect(f.phone.history(type: 'event').first.via, 'Oak Grove School');
     });
 
+    test('a sync that starts over finds what it wrote by UID: no copies, and old copies go', () async {
+      await f.hub.feeds.syncAll();
+      final first = {for (final e in imported()) e.source.ref: e.id};
+      expect(first.keys.toSet(), {'band@school', 'picture@school', 'fair@school'});
+      final band = imported().firstWhere((e) => e.source.ref == 'band@school');
+      // A copy an interrupted sync of an older hub left behind.
+      await f.hubDen.addEvent(
+        title: band.title,
+        start: band.start,
+        end: band.end,
+        tz: band.tz,
+        rrule: band.rrule,
+        assignees: band.assignees,
+        source: const EventSource('ics', 'band@school', 'Oak Grove School'),
+      );
+      expect(imported(), hasLength(4));
+      // The hub stopped before it saved which UID became which event.
+      f.hub.context.state.read('feeds').remove(subId);
+      await f.hub.feeds.syncAll();
+      final again = {for (final e in imported()) e.source.ref: e.id};
+      expect(imported(), hasLength(3), reason: 'no event was added twice, and the old copy is gone');
+      expect(again, first, reason: 'the same events were kept and updated');
+      expect(f.hubDen.subscription(subId)!.status, startsWith('3 events'));
+    });
+
+    test('a malformed event is skipped and reported; the rest of the feed still comes in', () async {
+      feed.body = withBroken(fixture);
+      await f.hub.feeds.syncAll();
+      expect(imported().map((e) => e.title).toSet(), {'Band practice', 'Picture day', 'Book fair, evening', 'Bad exdate'});
+      expect(f.hubDen.subscription(subId)!.status, matches(RegExp(r"^4 events \(4 Den couldn't read\), updated ")));
+    });
+
+    test('stopping doesn\'t wait for a calendar server that never answers', () async {
+      feed.hang = true;
+      unawaited(f.hub.feeds.syncAll());
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      final watch = Stopwatch()..start();
+      await f.hub.feeds.stop();
+      expect(watch.elapsed, lessThan(FeedService.stopWait + const Duration(seconds: 2)));
+    });
+
     test('a broken link is reported in words, and removing the feed removes its events', () async {
       await f.hub.feeds.syncAll();
       expect(imported(), isNotEmpty);
@@ -142,12 +212,15 @@ void main() {
     final f = await HubFixture.start();
     addTearDown(f.stop);
     final soccer = f.phone.events.firstWhere((e) => e.title == 'Soccer practice');
-    final today = f.phone.dayStart(f.phone.todayDate());
-    final practices = f.phone.occurrences(today, today + 28 * 86400000).where((o) => o.event.id == soccer.id).toList();
-    final next = practices.first;
+    final upcoming = f.phone
+        .occurrences(f.phone.dayStart(f.phone.todayDate()), f.phone.dayStart(f.phone.todayDate()) + 21 * 86400000)
+        .where((o) => o.event.id == soccer.id)
+        .toList();
+    final next = upcoming[0];
     await f.phone.updateEvent(soccer.id, {'location': 'Field 9', 'start': next.start + 3600000}, scope: EditScope.one, occurrence: next.seriesStart);
-    // The one after, from the series itself: a week later is an hour off when the clocks change.
-    final later = practices[1].seriesStart;
+    // The following occurrence as Den expands it (in wall-clock time, so across a DST change
+    // it isn't exactly a week of UTC milliseconds later).
+    final later = upcoming[1].seriesStart;
     await f.phone.deleteEvent(soccer.id, scope: EditScope.one, occurrence: later);
     await f.toHub();
     final token = await f.token();

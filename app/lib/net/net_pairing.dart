@@ -5,6 +5,7 @@ import 'package:den_net/den_net.dart' as net;
 import 'package:flutter/foundation.dart';
 
 import 'den_network.dart';
+import 'hub_api.dart';
 import 'hub_client.dart';
 import 'hub_flows.dart';
 import 'local_stub.dart' if (dart.library.io) 'local_io.dart' as local;
@@ -194,6 +195,19 @@ class NetPairing extends PairingService {
       unawaited(network.addHub(link.base.toString()));
     }
     return den.device(link.hubDevice)?.name ?? 'the hub';
+  }
+
+  @override
+  Future<void> openLinking() async {
+    if (network.hubDevice == null) return;
+    final api = HubApi(network);
+    try {
+      await api.send('POST', '/api/v1/link/window');
+    } on HubException {
+      // An older hub, or one out of reach: the browser says what to do if linking is closed.
+    } finally {
+      api.close();
+    }
   }
 
   /// The hub that served this page: [servedBy], or the page's own origin on the web.

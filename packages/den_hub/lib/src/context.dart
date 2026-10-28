@@ -1,9 +1,14 @@
+import 'dart:io';
+
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
 import 'package:http/http.dart' as http_client;
+import 'package:shelf/shelf.dart';
 
 import 'config.dart';
+import 'edge.dart';
 import 'gate.dart';
+import 'http_util.dart';
 import 'log.dart';
 import 'state.dart';
 
@@ -52,4 +57,39 @@ class HubContext {
 
   /// UTC milliseconds now.
   int now() => DateTime.now().toUtc().millisecondsSinceEpoch;
+
+  /// Per-client limits on what strangers can do.
+  final RateLimiter limits = RateLimiter();
+
+  /// The public base URL [request] came to (the configured public URL, else what a trusted
+  /// proxy says, else the request's `Host`).
+  Uri base(Request request) => requestBase(request, config.publicUrl, trusted: config.trustedProxies);
+
+  /// Whether [request] reached the hub over HTTPS (at a trusted proxy, or by the public URL).
+  bool secure(Request request) => base(request).scheme == 'https';
+
+  /// The client [request] came from, through trusted proxies only.
+  InternetAddress? client(Request request) => clientAddress(request, config.trustedProxies);
+
+  /// The key [request]'s client is limited under.
+  String clientOf(Request request) => clientKey(client(request));
+
+  /// Takes one from [request]'s client's [name] budget, or throws `429 rate_limited`.
+  void limit(Request request, String name, Rate rate, {String? message}) {
+    final key = clientOf(request);
+    if (limits.allow(name, key, rate)) return;
+    final wait = limits.retryAfter(name, key, rate);
+    throw message == null ? ApiError.rateLimited(wait) : ApiError.rateLimited(wait, message);
+  }
+
+  /// Throws `429 rate_limited` when [request]'s client has used up its failed tries.
+  void checkFailures(Request request) {
+    final key = clientOf(request);
+    if (limits.exhausted('failures', key, Limits.failures)) {
+      throw ApiError.rateLimited(limits.retryAfter('failures', key, Limits.failures));
+    }
+  }
+
+  /// Counts a failed try (a bad token or signature) against [request]'s client.
+  void failed(Request request) => limits.allow('failures', clientOf(request), Limits.failures);
 }

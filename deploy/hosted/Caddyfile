@@ -1,0 +1,9 @@
+# Caddy in front of one family's hub. It gets and renews the certificate for DEN_DOMAIN by
+# itself: the domain's DNS must point at this server, and ports 80 and 443 must reach it.
+# Caddy sends X-Forwarded-For, -Proto and -Host, passes WebSockets (/ws) through, and flushes
+# the event stream as it comes; the hub sets its own security headers.
+{$DEN_DOMAIN} {
+	@compressible not path /api/v1/stream
+	encode @compressible zstd gzip
+	reverse_proxy hub:{$DEN_PORT:47733}
+}

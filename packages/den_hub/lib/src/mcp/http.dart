@@ -7,6 +7,7 @@ import 'package:shelf/shelf.dart';
 
 import '../access.dart';
 import '../context.dart';
+import '../edge.dart';
 import '../http_util.dart';
 import 'server.dart';
 
@@ -31,8 +32,11 @@ bool originAllowed(Request request, HubContext hub) {
   } on FormatException {
     return false;
   }
-  final host = request.headers['host'];
-  if (host == null || '${parsed.host}${parsed.hasPort ? ':${parsed.port}' : ''}' != host) return false;
+  final hosts = {
+    request.headers['host'],
+    if (viaTrustedProxy(request, hub.config.trustedProxies)) requestBase(request, null, trusted: hub.config.trustedProxies).authority,
+  };
+  if (!hosts.contains('${parsed.host}${parsed.hasPort ? ':${parsed.port}' : ''}')) return false;
   final name = parsed.host.toLowerCase();
   if (InternetAddress.tryParse(name.replaceAll(RegExp(r'^\[|\]$'), '')) != null) return true;
   return name == 'localhost' ||
@@ -81,14 +85,21 @@ class McpHttp {
 
   /// The `WWW-Authenticate` challenge pointing OAuth clients at the resource metadata.
   String challenge(Request request, {bool invalid = false}) {
-    final base = requestBase(request, hub.config.publicUrl);
+    final base = hub.base(request);
     return 'Bearer resource_metadata="${urlOf(base, '/.well-known/oauth-protected-resource')}"'
         '${invalid ? ', error="invalid_token"' : ''}';
   }
 
+  /// The caller's access, or null without a working token. A token that doesn't work counts
+  /// against the client's failed tries (`429` past them); no token at all is how OAuth clients
+  /// discover the hub, so it doesn't.
   Access? _auth(Request request) {
     if (!hub.ready) throw ApiError.notReady();
-    return accessForToken(hub.den, bearerToken(request.headers['authorization']));
+    hub.checkFailures(request);
+    final token = bearerToken(request.headers['authorization']);
+    final access = accessForToken(hub.den, token);
+    if (access == null && token != null) hub.failed(request);
+    return access;
   }
 
   /// `OPTIONS /mcp`.

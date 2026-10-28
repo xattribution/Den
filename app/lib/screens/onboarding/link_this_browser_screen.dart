@@ -112,8 +112,16 @@ class _LinkThisBrowserScreenState extends State<LinkThisBrowserScreen> {
         ),
         if (_loading)
           FormBlock(top: 0, child: Text('Getting a code from the hub', style: context.type.body(c.ink2)))
-        else if (_error != null)
-          FormBlock(top: 0, child: AttentionLine(message: _error!, bad: true))
+        else if (_error != null) ...[
+          FormBlock(top: 0, child: AttentionLine(message: _error!, bad: true)),
+          FormBlock(
+            top: Sp.m,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton(onPressed: _open, child: const Text('Try again')),
+            ),
+          ),
+        ]
         else if (link != null) ...[
           FormBlock(
             top: 0,

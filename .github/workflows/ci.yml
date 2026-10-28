@@ -27,6 +27,7 @@ jobs:
       packages: ${{ steps.pick.outputs.packages }}
       app: ${{ steps.pick.outputs.app }}
       homeassistant: ${{ steps.pick.outputs.homeassistant }}
+      images: ${{ steps.pick.outputs.images }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -43,6 +44,7 @@ jobs:
             den_hub_cli: ['packages/**', 'deploy/hub/**']
             app: ['packages/den_core/**', 'packages/den_net/**', 'packages/den_capture/**', 'packages/den_hub/**', 'packages/den_relay/**', 'app/**']
             homeassistant: ['integrations/**']
+            images: ['packages/**', 'app/**', 'deploy/**']
       - id: pick
         env:
           CHANGES: ${{ steps.f.outputs.changes }}
@@ -51,12 +53,13 @@ jobs:
         run: |
           all='["den_core","den_net","den_capture","den_relay","den_hub","den_hub_cli","den_sett_import"]'
           if [ "$EVENT" = workflow_dispatch ] || [[ "$REF" == refs/tags/* ]] || echo "$CHANGES" | grep -q '"ci"'; then
-            echo "packages=$all" >> "$GITHUB_OUTPUT"; echo "app=true" >> "$GITHUB_OUTPUT"; echo "homeassistant=true" >> "$GITHUB_OUTPUT"
+            echo "packages=$all" >> "$GITHUB_OUTPUT"; echo "app=true" >> "$GITHUB_OUTPUT"; echo "homeassistant=true" >> "$GITHUB_OUTPUT"; echo "images=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "packages=$(echo "$CHANGES" | jq -c '[.[] | select(startswith("den_"))]')" >> "$GITHUB_OUTPUT"
           echo "app=$(echo "$CHANGES" | jq 'index("app") != null')" >> "$GITHUB_OUTPUT"
           echo "homeassistant=$(echo "$CHANGES" | jq 'index("homeassistant") != null')" >> "$GITHUB_OUTPUT"
+          echo "images=$(echo "$CHANGES" | jq 'index("images") != null')" >> "$GITHUB_OUTPUT"
 
   packages:
     name: Dart packages
@@ -137,10 +140,12 @@ jobs:
       # The service worker, against a fake build, in Node.
       - working-directory: app
         run: node test/web/sw_test.mjs web/sw.js
-      # The web app as the hub serves it: CanvasKit and fonts from the hub, no CDN.
+      # The web app as the hub serves it (deploy/hub/Dockerfile): CanvasKit and fonts from the
+      # hub, no CDN; and the fallback fonts the hub image ships are still where the build names
+      # them.
       - working-directory: app
         run: |
-          flutter build web --release --no-web-resources-cdn --csp > build.txt 2>&1 && { cat build.txt; exit 0; }
+          flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ > build.txt 2>&1 && { cat build.txt; sh ../deploy/hub/fallback_fonts.sh build/web '' --list; exit $?; }
           status=$?
           cat build.txt
           grep -iE 'error' build.txt | head -40 | sed 's/^ */::error::/'
@@ -261,6 +266,32 @@ jobs:
         with:
           name: den-${{ matrix.target }}
           path: ${{ matrix.artifact }}
+
+  # Build the hub and relay images on every change that touches them (one platform, nothing
+  # pushed), so a broken Dockerfile or a web build that fails under --csp shows up in review
+  # rather than at release.
+  image-check:
+    name: Image builds (${{ matrix.image }})
+    needs: [changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.images == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [hub, relay]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/${{ matrix.image }}/Dockerfile
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
   images:
     name: Docker images

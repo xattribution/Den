@@ -99,7 +99,7 @@ class NetHubSetup extends HubSetupSession {
       _set(
         HubSetupStage.failed,
         error: e.code == 'permission_denied' && tries != null && tries > 0
-            ? "That setup code isn't right. $tries ${tries == 1 ? 'try' : 'tries'} left before the hub makes a new one."
+            ? "That setup code isn't right. Check it in the hub's log: $tries more ${tries == 1 ? 'try' : 'tries'}, then the hub makes you wait a minute."
             : e.message,
       );
     } on TimeoutException {

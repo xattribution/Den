@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -8,19 +10,27 @@ import '../../design/parts/family_frame.dart';
 import '../../design/parts/family_words.dart';
 import '../../design/tokens.dart';
 import '../../design/widgets.dart';
+import '../../net/hub_client.dart';
+import '../../net/hub_connections.dart';
 import '../../state/app_state.dart';
 import 'capture_section.dart';
 import 'scope_picker.dart';
 
-/// AI and automations: requests waiting for a parent, then every connection with what it may
-/// do and whose permissions it uses. Tokens are created here and shown once.
+/// AI and automations: apps signing in to the hub (let in or turned away), requests waiting for
+/// a parent's approval, then every connection with what it may do and whose permissions it uses.
+/// Tokens are created here and shown once.
 class ConnectionsScreen extends StatelessWidget {
-  const ConnectionsScreen({super.key});
+  const ConnectionsScreen({super.key, this.signIns});
+
+  /// The hub's waiting sign-ins, for tests; by default asked of the family's hub.
+  final HubConnections? signIns;
 
   @override
   Widget build(BuildContext context) {
     final app = context.app;
     final parent = app.allows(DenAction.manageFamily);
+    // Letting an app in and approving it are trust decisions: a parent's own device only.
+    final trusted = app.allowsTrust(DenAction.manageFamily);
     final all = parent ? app.den.connections : const <Connection>[];
     final pending = all.where((x) => x.status == ConnectionStatus.pending).toList();
     final active = all.where((x) => x.status == ConnectionStatus.active).toList();
@@ -38,7 +48,8 @@ class ConnectionsScreen extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: Sp.xxxl),
               children: [
                 if (!parent) const EmptyLine(message: 'Only parents can manage AI and automations.'),
-                for (final x in pending) _Request(x),
+                if (trusted) SignInRequests(client: signIns),
+                if (trusted) for (final x in pending) _Request(x),
                 if (parent) const CaptureSection(),
                 if (parent) ...[
                   SectionHeader(
@@ -58,6 +69,125 @@ class ConnectionsScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Apps signing in to the hub (claude.ai, ChatGPT), each waiting for a parent to let it in: its
+/// name, where its sign-in returns, and the code the person signing in sees. Once let in, it
+/// waits below for approval like any other request.
+class SignInRequests extends StatefulWidget {
+  const SignInRequests({super.key, this.client});
+
+  /// The hub's sign-ins, for tests; by default the family's hub.
+  final HubConnections? client;
+
+  @override
+  State<SignInRequests> createState() => _SignInRequestsState();
+}
+
+class _SignInRequestsState extends State<SignInRequests> {
+  HubConnections? _client;
+  List<ConnectionRequest> _requests = const [];
+  final Set<String> _busy = {};
+  Timer? _poll;
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    final network = context.app.network;
+    final hasHub = network != null && (network.isHub || network.hubDevice != null);
+    _client = widget.client ?? (hasHub ? HubConnections(network) : null);
+    if (_client == null) return;
+    unawaited(_load());
+    // Someone signing in on another screen is waiting; look again every few seconds.
+    _poll = Timer.periodic(const Duration(seconds: 5), (_) => unawaited(_load()));
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final client = _client;
+    if (client == null) return;
+    try {
+      final all = await client.requests();
+      if (mounted) setState(() => _requests = [for (final r in all) if (r.connection == null) r]);
+    } on HubException catch (e) {
+      // An older hub has no such list; one that can't be reached is tried again shortly.
+      if (e.code == 'not_found') _poll?.cancel();
+    }
+  }
+
+  Future<void> _decide(ConnectionRequest r, {required bool admit}) async {
+    setState(() => _busy.add(r.id));
+    try {
+      if (admit) {
+        await _client!.admit(r);
+      } else {
+        await _client!.decline(r);
+      }
+      if (!mounted) return;
+      setState(() => _requests = [for (final x in _requests) if (x.id != r.id) x]);
+      if (admit) showNote(context, 'Approve ${r.clientName} below once it shows up.');
+    } on HubException catch (e) {
+      if (mounted) showNote(context, e.message);
+    } finally {
+      if (mounted) setState(() => _busy.remove(r.id));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    if (_requests.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final r in _requests)
+          Container(
+            decoration: BoxDecoration(border: Border(bottom: BorderSide(color: c.rule))),
+            padding: const EdgeInsets.fromLTRB(Sp.l, Sp.m, Sp.l, Sp.l),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AttentionLine(
+                  message: r.redirectHost.isEmpty
+                      ? '${r.clientName} wants to connect'
+                      : '${r.clientName} (${r.redirectHost}) wants to connect',
+                ),
+                const SizedBox(height: Sp.s),
+                Row(
+                  children: [
+                    Text('Code ${r.code}', style: context.type.title(c.ink)),
+                    const InfoTip('The same code shows where it is signing in. Let it in only if they match.'),
+                  ],
+                ),
+                const SizedBox(height: Sp.m),
+                Wrap(
+                  spacing: Sp.s,
+                  runSpacing: Sp.s,
+                  children: [
+                    FilledButton(
+                      onPressed: _busy.contains(r.id) ? null : () => _decide(r, admit: true),
+                      child: Text('Let ${r.clientName} in'),
+                    ),
+                    OutlinedButton(
+                      onPressed: _busy.contains(r.id) ? null : () => _decide(r, admit: false),
+                      child: const Text('Decline'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }

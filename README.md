@@ -29,6 +29,9 @@ runs the extras: Home Assistant, AI access over MCP, calendar feeds, reminders.
   the code. The phone then shows three words and checks that the hub reports the same three
   (they're in its log too); approve it if they match. Any browser can then open
   `http://<hub-address>:47733` and link itself by showing a QR code for a parent's phone to scan.
+- A server, behind HTTPS, for a family whose phones should reach it from anywhere through the
+  web app on their home screen (one hub per family; several families can share a server):
+  [docs/hosting.md](docs/hosting.md).
 
 **Just the web app, on iPhones.** Put the hub behind an HTTPS reverse proxy (set
 `DEN_PUBLIC_URL` to its address) and open that address in Safari:
@@ -76,10 +79,11 @@ hub's family.
 | `packages/den_relay/` | The relay: tunnel, mailbox and pairing rendezvous |
 | `packages/den_sett_import/` | Reads Sett's `coord.db` |
 | `integrations/homeassistant/` | The Home Assistant integration (calendars, to-do lists, sensors, services, events) |
-| `deploy/` | Docker images for the hub and the relay |
+| `deploy/` | Docker images for the hub and the relay; `deploy/hosted/` for a hub on a server behind HTTPS (Caddy, one or two families) |
 | `DESIGN.md` | The design system every screen follows |
 | `ARCHITECTURE.md` | The contract every package builds against |
 | `docs/hub-api.md` | The hub's REST, stream and mDNS contract |
+| `docs/hosting.md` | Hosting hubs on a server behind HTTPS, for the web app on phones |
 
 ## Status
 

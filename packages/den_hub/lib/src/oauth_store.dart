@@ -150,4 +150,19 @@ class OAuthStore {
 
   /// Drops expired refresh tokens.
   void prune(int now) => _section('refresh').removeWhere((_, v) => v is! Map || (v['expires'] as int? ?? 0) <= now);
+
+  /// Clients that hold a refresh token.
+  Set<String> get clientsWithTokens => {
+        for (final v in _section('refresh').values)
+          if (v is Map && v['client'] is String) v['client'] as String,
+      };
+
+  /// Forgets clients registered before [before] (seconds) that aren't in [keep]: registrations
+  /// that never led to a connection, so strangers registering can't fill the hub's list.
+  Future<void> pruneClients({required int before, required Set<String> keep}) async {
+    final clients = _section('clients');
+    final count = clients.length;
+    clients.removeWhere((id, v) => !keep.contains(id) && (v is! Map || (v['created'] as int? ?? 0) < before));
+    if (clients.length != count) await state.save('oauth');
+  }
 }

@@ -6,6 +6,7 @@ import 'package:shelf/shelf.dart';
 
 import 'body.dart';
 import 'context.dart';
+import 'edge.dart';
 import 'http_util.dart';
 import 'setup.dart' show restrictToOwner;
 
@@ -102,7 +103,7 @@ class HubInvites {
     await _save();
     hub.log.info('A parent made an invite');
     final words = code.split(' ');
-    final base = requestBase(request, hub.config.publicUrl);
+    final base = hub.base(request);
     return jsonResponse({
       'code': code,
       'words': words,
@@ -117,10 +118,13 @@ class HubInvites {
   /// join with it over `/ws`.
   Future<Response> redeem(Request request) async {
     if (!hub.ready) throw ApiError.notReady();
+    hub.checkFailures(request);
+    hub.limit(request, 'pairing', Limits.pairing);
     final now = hub.now();
     _wrong.removeWhere((at) => at <= now - wrongWindow.inMilliseconds);
     if (_wrong.length >= maxWrong) {
-      throw ApiError(429, 'rate_limited', 'Too many wrong codes were tried. Wait ten minutes, then try again.');
+      final wait = ((_wrong.first + wrongWindow.inMilliseconds - now) / 1000).ceil();
+      throw ApiError.rateLimited(wait < 1 ? 1 : wait, 'Too many wrong codes were tried. Wait ten minutes, then try again.');
     }
     final b = Body(await readJsonObject(request, required: true));
     final code = normalizeCode(b.string('code', required: true, min: 1, max: 200)!);
@@ -139,6 +143,7 @@ class HubInvites {
     }
     if (grant == null) {
       _wrong.add(now);
+      hub.failed(request);
       hub.log.warn('Someone tried words that match no invite');
       throw ApiError.notFound(type: 'invite', message: "That code isn't right, or the invite has expired. Ask for a new invite.");
     }
