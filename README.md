@@ -114,6 +114,10 @@ render each screen to `app/test/goldens`; review the images after any UI change:
 cd app && flutter test --update-goldens
 ```
 
+Without Flutter at hand, label the pull request `screenshots`: CI renders `test/design` (the
+design gallery) and `test/screens` and pushes the images to the branch `screenshots/<branch>`
+(DESIGN.md, "Screenshots").
+
 The hub from source:
 
 ```bash
