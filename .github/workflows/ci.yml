@@ -75,12 +75,19 @@ jobs:
       - name: Resolve
         working-directory: packages/${{ matrix.package }}
         run: dart pub get
+      # Failures also become annotations, so they show on the pull request and through the
+      # checks API without the full log.
       - name: Analyze
         working-directory: packages/${{ matrix.package }}
-        run: dart analyze --fatal-infos
+        run: |
+          dart analyze --fatal-infos > analyze.txt 2>&1 && { cat analyze.txt; exit 0; }
+          status=$?
+          cat analyze.txt
+          grep -E ' (error|warning|info) - ' analyze.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
       - name: Test
         working-directory: packages/${{ matrix.package }}
-        run: dart test
+        run: dart test --reporter github
       - name: Build the hub binary
         if: matrix.package == 'den_hub_cli'
         working-directory: packages/den_hub_cli
@@ -101,21 +108,31 @@ jobs:
       - working-directory: app
         run: flutter pub get
       - working-directory: app
-        run: flutter analyze
+        run: |
+          flutter analyze > analyze.txt 2>&1 && { cat analyze.txt; exit 0; }
+          status=$?
+          cat analyze.txt
+          grep -E ' (error|warning|info) [-•] ' analyze.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
       # Golden images are rendered on Windows by the people reviewing them; elsewhere
       # test/flutter_test_config.dart renders every screen without comparing pixels. The app
       # icon's source (tagged golden) is skipped.
       - working-directory: app
-        run: flutter test --exclude-tags golden
+        run: flutter test --exclude-tags golden --reporter github
       # The browser's own storage (IndexedDB), in Chrome.
       - working-directory: app
-        run: flutter test --platform chrome test/web
+        run: flutter test --platform chrome --reporter github test/web
       # The service worker, against a fake build, in Node.
       - working-directory: app
         run: node test/web/sw_test.mjs web/sw.js
       # The web app as the hub serves it: CanvasKit and fonts from the hub, no CDN.
       - working-directory: app
-        run: flutter build web --release --no-web-resources-cdn --csp
+        run: |
+          flutter build web --release --no-web-resources-cdn --csp > build.txt 2>&1 && { cat build.txt; exit 0; }
+          status=$?
+          cat build.txt
+          grep -iE 'error' build.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
 
   homeassistant:
     name: Home Assistant integration
