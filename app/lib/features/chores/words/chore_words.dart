@@ -2,6 +2,7 @@ import 'package:den_core/den_core.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app/format.dart';
+import '../../../app/words.dart';
 
 /// How a chore repeats, as the editor offers it. Reads and writes the subset of RFC 5545
 /// RRULEs the editor produces; anything else is kept as is and described as "Repeats".
@@ -204,6 +205,20 @@ String rotationWords(
   if (order.length > 1) parts.add('${name(order[1])} $next');
   if (order.length > 2) parts.add('then ${order.skip(2).map(name).join(', ')}');
   return 'Rotates ${weekly ? 'weekly' : 'daily'}: ${parts.join(', ')}';
+}
+
+/// A chore row's second line (Chores.dc.html): when it's due, its stars, how far through its
+/// steps it is, and whether it's late or carried over: "By 7:30 PM, 2 stars", "Any time, 1 of
+/// 4 steps", "Late, from Wed, Oct 14". [stars] is null while points are off.
+String choreMeta(ChoreDay d, {required String date, required String today, required Formats f, required int? stars}) {
+  final due = d.chore.dueTime;
+  return [
+    if (d.late && !d.done) 'Late',
+    if (d.date != date) 'from ${f.relative(d.date, today)}'
+    else if (!(d.late && !d.done)) due == null ? 'Any time' : 'By ${clockWords(due)}',
+    if (d.stepsDone > 0 && !d.done) '${d.stepsDone} of ${d.stepCount} steps',
+    if (stars != null && stars > 0) '$stars ${stars == 1 ? 'star' : 'stars'}',
+  ].join(', ');
 }
 
 /// Reminder offsets offered for a chore, in minutes before its due time.

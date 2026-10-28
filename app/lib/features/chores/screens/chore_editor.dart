@@ -25,8 +25,9 @@ class _StepDraft {
   int points;
 }
 
-/// Adds or edits a chore: picture, name, who does it (a person, anyone, or turns), when it
-/// repeats, due time, points, steps, reminders and who sees it. `/chore/new`, `/chore/:id/edit`.
+/// Adds or edits a chore: its name and picture, who does it (a person, anyone, or turns), when
+/// it repeats, and its stars (only for someone who may set them). Due time and reminders, steps,
+/// who sees it and notes sit under More options. `/chore/new`, `/chore/:id/edit`.
 class ChoreEditorScreen extends StatefulWidget {
   const ChoreEditorScreen({super.key, this.id});
 
@@ -330,47 +331,12 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
                 ),
                 ..._whoSection(app),
                 ..._whenSection(app),
-                FieldLabel(
-                  'Due by',
-                  info: _due == null ? 'With a due time, a chore shows as late once it passes.' : null,
-                ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: PickerButton.outlined(
-                    icon: PhosphorIconsRegular.clock,
-                    label: _due == null ? 'Any time that day' : _due!.format(context),
-                    onTap: () async {
-                      final t = await showTimePicker(
-                        context: context,
-                        initialTime: _due ?? const TimeOfDay(hour: 18, minute: 0),
-                      );
-                      if (t != null) setState(() => _due = t);
-                    },
-                    onClear: _due == null ? null : () => setState(() => _due = null),
-                  ),
-                ),
-                if (_due != null) ...[
-                  const FieldLabel('Reminders', info: 'Reminders count back from the due time.'),
-                  Wrap(
-                    spacing: Sp.s,
-                    children: [
-                      for (final entry in reminderChoices.entries)
-                        ChoiceTile.chip(
-                          label: entry.value,
-                          selected: _reminders.contains(entry.key),
-                          onTap: () => setState(() {
-                            if (!_reminders.remove(entry.key)) _reminders.add(entry.key);
-                          }),
-                        ),
-                    ],
-                  ),
-                ],
                 if (pointsOn) ...[
-                  const FieldLabel('Points', info: 'Points go to whoever the chore belongs to that day.'),
+                  const FieldLabel('Stars', info: 'Stars go to whoever the chore belongs to that day.'),
                   Align(
                     alignment: Alignment.centerLeft,
                     child: NumberStepper(
-                      label: 'Points',
+                      label: 'Stars',
                       value: _points,
                       max: 100,
                       onChanged: (v) => setState(() => _points = v),
@@ -378,16 +344,67 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
                     ),
                   ),
                 ],
-                ..._stepsSection(app, pointsOn),
-                ..._audienceSection(app),
-                const FieldLabel('Notes'),
-                TextField(
-                  controller: _notes,
-                  minLines: 2,
-                  maxLines: 6,
-                  textCapitalization: TextCapitalization.sentences,
-                  style: context.type.body(c.ink),
-                  decoration: const InputDecoration(hintText: 'Anything to know, like where the bags are'),
+                const SizedBox(height: Sp.xl),
+                // Due time, steps, who sees it and notes stay out of the way until asked for,
+                // and show from the start when the chore already uses one.
+                MoreOptions(
+                  initiallyOpen: _due != null ||
+                      _steps.isNotEmpty ||
+                      _notes.text.isNotEmpty ||
+                      (_existing != null && _audience != Audience.everyone),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FieldLabel(
+                        'Due by',
+                        top: Sp.s,
+                        info: _due == null ? 'With a due time, a chore shows as late once it passes.' : null,
+                      ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: PickerButton.outlined(
+                          icon: PhosphorIconsRegular.clock,
+                          label: _due == null ? 'Any time that day' : _due!.format(context),
+                          onTap: () async {
+                            final t = await showTimePicker(
+                              context: context,
+                              initialTime: _due ?? const TimeOfDay(hour: 18, minute: 0),
+                            );
+                            if (t != null) setState(() => _due = t);
+                          },
+                          onClear: _due == null ? null : () => setState(() => _due = null),
+                        ),
+                      ),
+                      if (_due != null) ...[
+                        const FieldLabel('Reminders', info: 'Reminders count back from the due time.'),
+                        Wrap(
+                          spacing: Sp.s,
+                          runSpacing: Sp.s,
+                          children: [
+                            for (final entry in reminderChoices.entries)
+                              TagChip(
+                                label: entry.value,
+                                selected: _reminders.contains(entry.key),
+                                onTap: () => setState(() {
+                                  if (!_reminders.remove(entry.key)) _reminders.add(entry.key);
+                                }),
+                              ),
+                          ],
+                        ),
+                      ],
+                      ..._stepsSection(app, pointsOn),
+                      ..._audienceSection(app),
+                      const FieldLabel('Notes'),
+                      TextField(
+                        controller: _notes,
+                        minLines: 2,
+                        maxLines: 6,
+                        textCapitalization: TextCapitalization.sentences,
+                        style: context.text.body(c.ink),
+                        decoration: const InputDecoration(hintText: 'Anything to know, like where the bags are'),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -418,7 +435,7 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
       const FieldLabel('Who does it'),
       Align(
         alignment: Alignment.centerLeft,
-        child: Segmented<_OwnerKind>(
+        child: DenSegmented<_OwnerKind>(
           options: const {_OwnerKind.person: 'One person', _OwnerKind.anyone: 'Anyone', _OwnerKind.turns: 'Take turns'},
           value: _kind,
           onChanged: (k) => setState(() {
@@ -435,8 +452,9 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
           children: [
             for (final m in people)
               _kind == _OwnerKind.person
-                  ? PersonChip(
-                      member: m,
+                  ? PersonPill(
+                      face: DenAvatar(m, size: 32),
+                      name: m.name,
                       selected: _person == m.id,
                       onTap: () => setState(() {
                         _person = m.id;
@@ -458,7 +476,7 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
         const SizedBox(height: Sp.m),
         Row(
           children: [
-            Segmented<String>(
+            DenSegmented<String>(
               options: const {'day': 'Switch daily', 'week': 'Switch weekly'},
               value: _every,
               onChanged: (v) => setState(() => _every = v),
@@ -499,9 +517,10 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
       FieldLabel('When', trailing: spec.raw != null ? Text(spec.words(f), style: context.type.meta(c.ink2)) : null),
       Wrap(
         spacing: Sp.s,
+        runSpacing: Sp.s,
         children: [
           for (final e in choices.entries)
-            ChoiceTile.chip(label: e.value, selected: spec.raw == null && spec.repeat == e.key, onTap: () => set(e.key)),
+            TagChip(label: e.value, selected: spec.raw == null && spec.repeat == e.key, onTap: () => set(e.key)),
         ],
       ),
       const SizedBox(height: Sp.s),
@@ -652,7 +671,7 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
       const FieldLabel('Who sees it'),
       Align(
         alignment: Alignment.centerLeft,
-        child: Segmented<Audience>(
+        child: DenSegmented<Audience>(
           options: options,
           value: options.containsKey(_audience) ? _audience : Audience.everyone,
           onChanged: (a) => setState(() {
