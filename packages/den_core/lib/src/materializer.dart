@@ -23,6 +23,12 @@ int changeOrder(Change a, Change b) {
 /// built from the valid changes before it; a change that arrives older than the newest one
 /// applied triggers a replay from scratch in HLC order, so every replica holding the same changes
 /// agrees on both the state and which changes were rejected.
+///
+/// A device's clock is its own to set, so a revoked device could sign new changes with clocks
+/// from before its revocation. A revocation therefore names the last change the revoking device
+/// held from it (`revokedAfter`), and a replay runs in two passes: the first finds the valid
+/// revocations, the second replays with their cutoffs (see [Cutoff]) applied from the start.
+/// Both passes depend only on the log, so every replica still agrees.
 class Materializer {
   Materializer(TrustRoot Function() root) {
     validator = Validator(store, root);
@@ -63,7 +69,13 @@ class Materializer {
     }
     if (fresh.isEmpty) return const {};
     fresh.sort(changeOrder);
-    if (_log.isEmpty || changeOrder(fresh.first, _log.last) > 0) {
+    if (fresh.any(_namesCutoff)) {
+      // A revocation can make changes already applied, clocked before it, count for nothing.
+      _log
+        ..addAll(fresh)
+        ..sort(changeOrder);
+      replay();
+    } else if (_log.isEmpty || changeOrder(fresh.first, _log.last) > 0) {
       _log.addAll(fresh);
       fresh.forEach(_applyOne);
     } else {
@@ -102,10 +114,35 @@ class Materializer {
 
   void replay() {
     replays++;
+    validator.cutoffs.clear();
+    _replayOnce();
+    final cutoffs = <String, List<Cutoff>>{};
+    for (final a in applied) {
+      final cut = Cutoff.of(a.change);
+      if (cut != null) (cutoffs[a.change.rid] ??= []).add(cut);
+    }
+    if (cutoffs.isEmpty) return;
+    validator.cutoffs.addAll(cutoffs);
+    bool excluded(Change c) {
+      final n = _counterIn(c.id);
+      return n != null && (cutoffs[c.device]?.any((k) => k.excludes(n, c.hlc)) ?? false);
+    }
+
+    if (_log.any(excluded)) _replayOnce();
+  }
+
+  void _replayOnce() {
     store.clear();
     rejected.clear();
     applied.clear();
     _log.forEach(_applyOne);
+  }
+
+  static bool _namesCutoff(Change c) => c.type == RecordType.device && c.fields.containsKey('revokedAfter');
+
+  static int? _counterIn(String id) {
+    final colon = id.lastIndexOf(':');
+    return colon > 0 ? int.tryParse(id.substring(colon + 1)) : null;
   }
 
   void _applyOne(Change c) {

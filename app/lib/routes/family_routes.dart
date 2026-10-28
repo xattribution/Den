@@ -30,6 +30,8 @@ bool isLittleKid(Member? m) => m != null && m.isKid && (m.tier == Tier.preReader
 
 /// Where the app sends someone before the main shell. Null means stay.
 ///
+/// 0. An invite's link (`/join/<words>`): joining with its words, or Today for a device that is
+///    already in a family.
 /// 1. No family on this device: onboarding (`/welcome`).
 /// 2. A join request sent but not approved yet: the waiting screen, whatever was asked for.
 /// 3. Right after creating a family: the short "Add people" step; any other onboarding route
@@ -44,6 +46,13 @@ String? familyRedirect(AppState state, GoRouterState route) {
   final den = state.den;
   final loc = route.matchedLocation;
   final inWelcome = loc == '/welcome' || loc.startsWith('/welcome/');
+
+  final path = route.uri.path;
+  if (path.startsWith('/join/')) {
+    if (den.hasFamily) return '/today';
+    final words = path.substring('/join/'.length);
+    return Uri(path: '/welcome/join', queryParameters: {'code': words}).toString();
+  }
 
   if (!den.hasFamily) return inWelcome ? null : '/welcome';
   if (!den.isApproved) return loc == '/welcome/waiting' ? null : '/welcome/waiting';
@@ -70,7 +79,10 @@ final List<RouteBase> familyRoutes = [
     routes: [
       GoRoute(path: 'start', builder: (_, _) => const StartFamilyScreen()),
       GoRoute(path: 'people', builder: (_, _) => const AddPeopleScreen()),
-      GoRoute(path: 'join', builder: (_, _) => const JoinScreen()),
+      GoRoute(
+        path: 'join',
+        builder: (_, s) => JoinScreen(code: s.uri.queryParameters['code']?.replaceAll(RegExp(r'[-_]+'), ' ')),
+      ),
       GoRoute(path: 'link', builder: (_, _) => const LinkThisBrowserScreen()),
       GoRoute(path: 'waiting', builder: (_, _) => const WaitingScreen()),
     ],
@@ -105,6 +117,8 @@ final List<RouteBase> familyRoutes = [
       GoRoute(path: 'phone-calendars', builder: (_, _) => const PhoneCalendarsScreen()),
     ],
   ),
+  // An invite's link; familyRedirect sends it on.
+  GoRoute(path: '/join/:code', redirect: (_, _) => '/welcome/join'),
   GoRoute(path: '/wall', builder: (_, _) => const WallScreen()),
   GoRoute(path: '/kid', builder: (_, _) => const KidScreen()),
 ];

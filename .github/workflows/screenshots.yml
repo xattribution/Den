@@ -1,10 +1,14 @@
 name: screenshots
 
 # Renders the golden screenshots on Linux with the real bundled fonts and pushes the images to
-# the branch screenshots/<branch>, so how the app looks can be reviewed without a local
-# Flutter: `git fetch origin screenshots/<branch>` and open the PNGs. It runs on a pull request
-# labeled "screenshots" (and on every push to it while the label is on), or by hand from the
-# Actions tab once this file is on the default branch. See DESIGN.md, "Screenshots".
+# the branch screenshots/<branch>. These CI renders are the project's golden images: bring
+# them into the branch with
+#   git fetch origin screenshots/<branch>:refs/remotes/origin/screenshots/<branch>
+#   git checkout origin/screenshots/<branch> -- app/test
+# and commit. Tests never compare pixels (app/test/flutter_test_config.dart), so the images are
+# for review. It runs on a pull request labeled "screenshots" (and on every push to it while
+# the label is on), or by hand from the Actions tab once this file is on the default branch.
+# See DESIGN.md, "Screenshots".
 
 on:
   pull_request:
@@ -12,9 +16,14 @@ on:
   workflow_dispatch:
     inputs:
       tests:
-        description: Test files or folders under app/ to render, separated by spaces
+        description: Test files or folders under app/ to render, separated by spaces (empty renders every test)
         required: false
-        default: test/design test/screens
+        default: ''
+      sources:
+        description: Also render the app icon and Home Assistant brand sources (tests tagged golden)
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: screenshots-${{ github.head_ref || github.ref_name }}
@@ -41,20 +50,20 @@ jobs:
           cache: true
       - working-directory: app
         run: flutter pub get
-      # Brand images (tagged golden) are written outside app/ and rendered by hand.
       - name: Render
         id: render
         working-directory: app
         env:
-          TESTS: ${{ inputs.tests || 'test/design test/screens' }}
+          TESTS: ${{ inputs.tests }}
+          SOURCES: ${{ inputs.sources == true && 'yes' || 'no' }}
         run: |
           touch "$RUNNER_TEMP/start"
           sleep 1
+          tags='--exclude-tags golden'
+          if [ "$SOURCES" = yes ]; then tags=''; fi
           # shellcheck disable=SC2086
-          flutter test --update-goldens --exclude-tags golden $TESTS > "$RUNNER_TEMP/test.txt" 2>&1 && status=0 || status=$?
-          cat "$RUNNER_TEMP/test.txt"
-          if [ "$status" -ne 0 ]; then
-            python3 ../.github/scripts/annotate_failures.py test "$RUNNER_TEMP/test.txt" "flutter test"
+          if ! flutter test --update-goldens $tags --reporter github --file-reporter json:"$RUNNER_TEMP/shots.jsonl" $TESTS; then
+            python ../.github/scripts/test_failures.py "$RUNNER_TEMP/shots.jsonl"
             echo "failed=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Push to screenshots/<branch>
@@ -65,21 +74,22 @@ jobs:
         run: |
           out="$RUNNER_TEMP/shots"
           mkdir -p "$out/app"
-          cd app
-          find test -name '*.png' -newer "$RUNNER_TEMP/start" -print0 | while IFS= read -r -d '' f; do
-            mkdir -p "$out/app/$(dirname "$f")"
-            cp "$f" "$out/app/$f"
-          done
+          find . -path ./.git -prune -o -path '*/build/*' -prune -o -name '*.png' -newer "$RUNNER_TEMP/start" -print0 |
+            while IFS= read -r -d '' f; do
+              f="${f#./}"
+              mkdir -p "$out/$(dirname "$f")"
+              cp "$f" "$out/$f"
+            done
           # The lockfile this run resolved, for updating the branch's own after a dependency change.
-          cp pubspec.lock "$out/app/pubspec.lock"
+          cp app/pubspec.lock "$out/app/pubspec.lock"
           cd "$out"
-          count=$(find app -name '*.png' | wc -l)
+          count=$(find . -name '*.png' | wc -l)
           {
             echo "# Screenshots of $BRANCH"
             echo
             echo "$count images rendered from $SHA in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             echo
-            find app -name '*.png' | sort | sed 's/^/- /'
+            find . -name '*.png' | sed 's|^\./||' | sort | sed 's/^/- /'
           } > README.md
           target="screenshots/$BRANCH"
           git init -q
@@ -95,6 +105,7 @@ jobs:
             echo
             echo '```'
             echo "git fetch origin $target:refs/remotes/origin/$target"
+            echo "git checkout origin/$target -- app/test"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

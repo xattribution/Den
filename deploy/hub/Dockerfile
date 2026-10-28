@@ -7,8 +7,16 @@ FROM ghcr.io/cirruslabs/flutter:3.38.5 AS web
 WORKDIR /src
 COPY packages packages
 COPY app app
+COPY deploy/hub/fallback_fonts.sh /usr/local/bin/fallback_fonts.sh
 WORKDIR /src/app
-RUN flutter pub get && flutter build web --release
+# The hub serves the web app under a Content-Security-Policy that allows nothing from a CDN:
+# --csp keeps dart2js from generating code at run time, CanvasKit loads from the hub
+# (build/web/canvaskit/) instead of gstatic.com, and so do the fonts Flutter falls back to for
+# emoji and symbols (build/web/fonts/fallback/). DEN_FALLBACK_FONTS=. ships every script's.
+ARG DEN_FALLBACK_FONTS=
+RUN flutter pub get \
+ && flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ \
+ && sh /usr/local/bin/fallback_fonts.sh build/web "$DEN_FALLBACK_FONTS"
 
 FROM dart:3.10 AS hub
 WORKDIR /src
@@ -24,7 +32,8 @@ RUN cd packages/den_hub_cli && dart pub get
 COPY packages packages
 # den_sett_import links SQLite through a build hook, which `dart compile exe` doesn't run;
 # `dart build cli` does, and bundles the library next to the binary (bundle/lib).
-RUN cd packages/den_hub \
+# The entry point lives in den_hub_cli (bin/den_hub.dart); den_hub is the library it serves.
+RUN cd packages/den_hub_cli \
  && dart pub get --offline \
  && dart build cli -t bin/den_hub.dart -o /out \
  && mkdir -p /out/data
@@ -43,6 +52,6 @@ EXPOSE 47733
 ENV DEN_DATA=/data \
     DEN_WEB=/app/web \
     DEN_PORT=47733
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD curl -fsS http://127.0.0.1:47733/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD curl -fsS "http://127.0.0.1:${DEN_PORT:-47733}/health" || exit 1
 ENTRYPOINT ["/app/bin/den_hub"]
 CMD ["serve"]

@@ -4,8 +4,13 @@ import 'dart:typed_data';
 
 import 'package:shelf/shelf.dart';
 
+import 'edge.dart';
+
 /// Largest request body the API reads.
 const int maxBodyBytes = 256 * 1024;
+
+/// How long the hub waits for a request body to arrive, at most.
+const Duration bodyDeadline = Duration(seconds: 60);
 
 /// An error answered with the API's error body (docs/hub-api.md, "Errors").
 class ApiError implements Exception {
@@ -53,6 +58,13 @@ class ApiError implements Exception {
         'This hub isn\'t part of a family yet, or is still starting.',
       );
 
+  /// `429 rate_limited`, with `Retry-After` in seconds.
+  factory ApiError.rateLimited(int retryAfter, [String message = 'Too many tries from here. Wait a minute and try again.']) =>
+      ApiError(429, 'rate_limited', message, details: {'retry_after': retryAfter}, headers: {'retry-after': '$retryAfter'});
+
+  /// `413 too_large`.
+  factory ApiError.tooLarge() => ApiError(413, 'too_large', 'That request is too large.');
+
   /// HTTP status.
   final int status;
 
@@ -88,14 +100,22 @@ Response jsonResponse(Object? body, {int status = 200, Map<String, String> heade
       headers: {'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers},
     );
 
-/// Reads the request body, refusing more than [limit] bytes with `413 too_large`.
-Future<Uint8List> readBodyBytes(Request request, {int limit = maxBodyBytes}) async {
+/// Reads the request body, refusing more than [limit] bytes with `413 too_large` (a declared
+/// length before reading anything, a streamed one as soon as it passes the limit) and a body
+/// that takes longer than [deadline] with `408 timeout`.
+Future<Uint8List> readBodyBytes(Request request, {int limit = maxBodyBytes, Duration deadline = bodyDeadline}) async {
   final declared = request.contentLength;
-  if (declared != null && declared > limit) throw ApiError(413, 'too_large', 'That request is too large.');
+  if (declared != null && declared > limit) throw ApiError.tooLarge();
   final out = BytesBuilder(copy: false);
-  await for (final chunk in request.read()) {
-    out.add(chunk);
-    if (out.length > limit) throw ApiError(413, 'too_large', 'That request is too large.');
+  final watch = Stopwatch()..start();
+  try {
+    await for (final chunk in request.read().timeout(deadline)) {
+      out.add(chunk);
+      if (out.length > limit) throw ApiError.tooLarge();
+      if (watch.elapsed > deadline) throw TimeoutException('slow body');
+    }
+  } on TimeoutException {
+    throw ApiError(408, 'timeout', 'That request took too long to arrive.');
   }
   return out.takeBytes();
 }
@@ -202,12 +222,15 @@ bool queryBool(Request request, String name, bool fallback) {
   throw ApiError.invalid('"$name" must be true or false.', field: name);
 }
 
-/// The public base URL a request came to: `https://den.example.com`, honoring a proxy's
-/// forwarded scheme and host.
-Uri requestBase(Request request, Uri? configured) {
+/// The public base URL a request came to: `https://den.example.com`. The configured public URL
+/// wins; else a [trusted] reverse proxy's `X-Forwarded-Proto` and `X-Forwarded-Host`, else the
+/// request's own `Host`. Forwarded headers from anyone but a trusted proxy are ignored.
+Uri requestBase(Request request, Uri? configured, {List<IpNetwork> trusted = const []}) {
   if (configured != null) return configured.replace(path: '', query: null, fragment: null);
-  final proto = request.headers['x-forwarded-proto']?.split(',').first.trim();
-  final host = request.headers['x-forwarded-host']?.split(',').first.trim() ?? request.headers['host'];
+  final proxied = viaTrustedProxy(request, trusted);
+  final proto = proxied ? request.headers['x-forwarded-proto']?.split(',').first.trim() : null;
+  final forwardedHost = proxied ? request.headers['x-forwarded-host']?.split(',').first.trim() : null;
+  final host = forwardedHost ?? request.headers['host'];
   final scheme = (proto == 'https' || proto == 'http') ? proto! : request.requestedUri.scheme;
   if (host == null || host.isEmpty) {
     return Uri(scheme: scheme, host: request.requestedUri.host, port: request.requestedUri.port);

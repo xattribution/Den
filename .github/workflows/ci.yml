@@ -27,6 +27,7 @@ jobs:
       packages: ${{ steps.pick.outputs.packages }}
       app: ${{ steps.pick.outputs.app }}
       homeassistant: ${{ steps.pick.outputs.homeassistant }}
+      images: ${{ steps.pick.outputs.images }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -39,24 +40,27 @@ jobs:
             den_capture: ['packages/den_core/**', 'packages/den_capture/**']
             den_relay: ['packages/den_core/**', 'packages/den_net/**', 'packages/den_relay/**']
             den_sett_import: ['packages/den_core/**', 'packages/den_sett_import/**']
+            den_assistant: ['packages/den_assistant/**']
             den_hub: ['packages/**', 'deploy/hub/**']
             den_hub_cli: ['packages/**', 'deploy/hub/**']
             app: ['packages/den_core/**', 'packages/den_net/**', 'packages/den_capture/**', 'packages/den_hub/**', 'packages/den_relay/**', 'app/**']
             homeassistant: ['integrations/**']
+            images: ['packages/**', 'app/**', 'deploy/**']
       - id: pick
         env:
           CHANGES: ${{ steps.f.outputs.changes }}
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
         run: |
-          all='["den_core","den_net","den_capture","den_relay","den_hub","den_hub_cli","den_sett_import"]'
+          all='["den_core","den_net","den_capture","den_relay","den_hub","den_hub_cli","den_sett_import","den_assistant"]'
           if [ "$EVENT" = workflow_dispatch ] || [[ "$REF" == refs/tags/* ]] || echo "$CHANGES" | grep -q '"ci"'; then
-            echo "packages=$all" >> "$GITHUB_OUTPUT"; echo "app=true" >> "$GITHUB_OUTPUT"; echo "homeassistant=true" >> "$GITHUB_OUTPUT"
+            echo "packages=$all" >> "$GITHUB_OUTPUT"; echo "app=true" >> "$GITHUB_OUTPUT"; echo "homeassistant=true" >> "$GITHUB_OUTPUT"; echo "images=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "packages=$(echo "$CHANGES" | jq -c '[.[] | select(startswith("den_"))]')" >> "$GITHUB_OUTPUT"
           echo "app=$(echo "$CHANGES" | jq 'index("app") != null')" >> "$GITHUB_OUTPUT"
           echo "homeassistant=$(echo "$CHANGES" | jq 'index("homeassistant") != null')" >> "$GITHUB_OUTPUT"
+          echo "images=$(echo "$CHANGES" | jq 'index("images") != null')" >> "$GITHUB_OUTPUT"
 
   packages:
     name: Dart packages
@@ -75,12 +79,23 @@ jobs:
       - name: Resolve
         working-directory: packages/${{ matrix.package }}
         run: dart pub get
+      # Failures also become annotations, so they show on the pull request and through the
+      # checks API without the full log.
       - name: Analyze
         working-directory: packages/${{ matrix.package }}
-        run: dart analyze --fatal-infos
+        run: |
+          dart analyze --fatal-infos > analyze.txt 2>&1 && { cat analyze.txt; exit 0; }
+          status=$?
+          cat analyze.txt
+          grep -E ' (error|warning|info) - ' analyze.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
       - name: Test
         working-directory: packages/${{ matrix.package }}
-        run: dart test
+        run: |
+          dart test --reporter github --file-reporter json:test.jsonl && exit 0
+          status=$?
+          python ../../.github/scripts/test_failures.py test.jsonl
+          exit $status
       - name: Build the hub binary
         if: matrix.package == 'den_hub_cli'
         working-directory: packages/den_hub_cli
@@ -103,23 +118,41 @@ jobs:
       # Failures also become an annotation on the check, readable without the log.
       - working-directory: app
         run: |
-          flutter analyze > "$RUNNER_TEMP/analyze.txt" 2>&1 && status=0 || status=$?
-          cat "$RUNNER_TEMP/analyze.txt"
-          if [ "$status" -ne 0 ]; then
-            python3 ../.github/scripts/annotate_failures.py analyze "$RUNNER_TEMP/analyze.txt" "flutter analyze"
-          fi
-          exit "$status"
-      # Golden images are rendered on Windows by the people reviewing them; elsewhere
-      # test/flutter_test_config.dart renders every screen without comparing pixels. The app
-      # icon's source (tagged golden) is skipped.
+          flutter analyze > analyze.txt 2>&1 && { cat analyze.txt; exit 0; }
+          status=$?
+          cat analyze.txt
+          grep -E ' (error|warning|info) [-•] ' analyze.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
+      # Every screen renders (overflows and exceptions fail) but golden pixels aren't compared:
+      # the images are rendered on CI by the screenshots workflow and committed from there
+      # (test/flutter_test_config.dart, DESIGN.md "Screenshots"). The app icon's and Home
+      # Assistant brand sources (tagged golden) are skipped.
       - working-directory: app
         run: |
-          flutter test --exclude-tags golden > "$RUNNER_TEMP/test.txt" 2>&1 && status=0 || status=$?
-          cat "$RUNNER_TEMP/test.txt"
-          if [ "$status" -ne 0 ]; then
-            python3 ../.github/scripts/annotate_failures.py test "$RUNNER_TEMP/test.txt" "flutter test"
-          fi
-          exit "$status"
+          flutter test --exclude-tags golden --reporter github --file-reporter json:test.jsonl && exit 0
+          status=$?
+          python ../.github/scripts/test_failures.py test.jsonl
+          exit $status
+      # The browser's own storage (IndexedDB), in Chrome.
+      - working-directory: app
+        run: |
+          flutter test --platform chrome --reporter github --file-reporter json:web-test.jsonl test/web && exit 0
+          status=$?
+          python ../.github/scripts/test_failures.py web-test.jsonl
+          exit $status
+      # The service worker, against a fake build, in Node.
+      - working-directory: app
+        run: node test/web/sw_test.mjs web/sw.js
+      # The web app as the hub serves it (deploy/hub/Dockerfile): CanvasKit and fonts from the
+      # hub, no CDN; and the fallback fonts the hub image ships are still where the build names
+      # them.
+      - working-directory: app
+        run: |
+          flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ > build.txt 2>&1 && { cat build.txt; sh ../deploy/hub/fallback_fonts.sh build/web '' --list; exit $?; }
+          status=$?
+          cat build.txt
+          grep -iE 'error' build.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
 
   homeassistant:
     name: Home Assistant integration
@@ -195,7 +228,7 @@ jobs:
             artifact: app/build/app/outputs/flutter-apk/app-release.apk
           - target: web
             os: ubuntu-latest
-            command: flutter build web --release
+            command: flutter build web --release --no-web-resources-cdn --csp
             artifact: app/build/web
           - target: linux
             os: ubuntu-latest
@@ -236,6 +269,43 @@ jobs:
         with:
           name: den-${{ matrix.target }}
           path: ${{ matrix.artifact }}
+
+  # Build the hub and relay images on every change that touches them (one platform, nothing
+  # pushed), so a broken Dockerfile or a web build that fails under --csp shows up in review
+  # rather than at release.
+  image-check:
+    name: Image builds (${{ matrix.image }})
+    needs: [changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.images == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [hub, relay]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          file: deploy/${{ matrix.image }}/Dockerfile
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      # Job logs aren't always readable by reviewers; repeat the failing step's output (the
+      # builder still holds every layer before it, so this is quick) as an annotation.
+      - name: Explain a failed build
+        if: failure() && steps.build.outcome == 'failure'
+        run: |
+          docker buildx build --progress=plain --platform linux/amd64 \
+            -f deploy/${{ matrix.image }}/Dockerfile . > build.log 2>&1 || true
+          msg=$(grep -vE '^#[0-9]+ (sha256:|extracting|resolve|DONE|CACHED|\[internal\]|transferring)' build.log \
+            | tail -n 120 | sed 's/%/%25/g; s/\r/%0D/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::error title=Image build (${{ matrix.image }})::$msg"
 
   images:
     name: Docker images

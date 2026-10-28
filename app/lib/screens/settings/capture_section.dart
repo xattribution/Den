@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart' show DenAction, DeviceMode;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -123,9 +124,13 @@ class _CaptureSectionState extends State<CaptureSection> {
                   ? '$_deviceWords, then the family\'s hub'
                   : '$_deviceWords. Nothing leaves this device.',
             ),
-            choice(ReaderChoice.home, 'A model at home', 'Through Ollama on the hub\'s computer or another one at home'),
-            choice(ReaderChoice.claude, 'Claude', 'Anthropic reads what you share and your family\'s first names and lists'),
-            if (s.reader == ReaderChoice.home) ...[
+            // A browser reaches readers only through the family's hub (below): the page may
+            // talk to the hub and nothing else.
+            if (!kIsWeb) ...[
+              choice(ReaderChoice.home, 'A model at home', 'Through Ollama on the hub\'s computer or another one at home'),
+              choice(ReaderChoice.claude, 'Claude', 'Anthropic reads what you share and your family\'s first names and lists'),
+            ],
+            if (!kIsWeb && s.reader == ReaderChoice.home) ...[
               FormBlock(
                 child: TextField(
                   controller: _address,
@@ -141,7 +146,7 @@ class _CaptureSectionState extends State<CaptureSection> {
                 ),
               ),
             ],
-            if (s.reader == ReaderChoice.claude) ...[
+            if (!kIsWeb && s.reader == ReaderChoice.claude) ...[
               if (s.hasClaudeKey && !_showKey)
                 ListTile(
                   leading: Icon(PhosphorIconsRegular.key, color: c.ink2),
@@ -187,7 +192,7 @@ class _CaptureSectionState extends State<CaptureSection> {
                 ),
               ),
             ],
-            if (s.reader != ReaderChoice.device)
+            if (!kIsWeb && s.reader != ReaderChoice.device)
               SwitchListTile(
                 title: const Row(
                   children: [

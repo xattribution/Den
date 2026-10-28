@@ -8,6 +8,7 @@ import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
 import '../events/event_words.dart';
+import 'join_requests.dart';
 
 /// The first screen for every adult: what's happening today and who's doing what.
 class TodayScreen extends StatelessWidget {
@@ -87,14 +88,14 @@ class TodayScreen extends StatelessWidget {
         if (constraints.maxWidth < 900) {
           return ListView(
             padding: bottom,
-            children: [heading, ...calendar, ...choreSection, ...listSection],
+            children: [const JoinRequests(), heading, ...calendar, ...choreSection, ...listSection],
           );
         }
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: ListView(padding: bottom, children: [heading, ...calendar, ...listSection]),
+              child: ListView(padding: bottom, children: [const JoinRequests(), heading, ...calendar, ...listSection]),
             ),
             VerticalDivider(width: 1, color: c.rule),
             Expanded(

@@ -67,7 +67,7 @@ void main() {
   testWidgets('Join without a hub says so', (tester) async {
     final state = await empty(tester);
     await pumpScreen(tester, const JoinScreen(scan: false), state: state);
-    await tester.enterText(find.widgetWithText(TextField, 'Device name'), "Leo's iPad");
+    await tester.enterText(find.widgetWithText(TextField, 'Device name (optional)'), "Leo's iPad");
     await tester.enterText(find.widgetWithText(TextField, 'The four words'), 'maple river candle tiger');
     await tester.tap(find.text('Join the family'));
     await tester.pumpAndSettle();

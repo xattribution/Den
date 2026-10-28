@@ -63,17 +63,34 @@ int countBefore(Event e, String familyZone, int start) {
   return n;
 }
 
+const int _dstSlack = 3 * 60 * 60 * 1000;
+
 bool _overlaps(int s, int e, int start, int end) => e > s ? s < end && e > start : s >= start && s < end;
 
-/// One occurrence with an exception's patch applied.
-Occurrence buildOccurrence(Event e, int seriesStart, EventException? exception) {
+/// Where an occurrence of [e] starting at [start] ends: an all-day event spans as many local
+/// days as the event does, ending at local midnight; a timed one lasts as long on the wall clock
+/// of the event's zone. So neither gains or loses an hour, or spills into the next day, across a
+/// DST change.
+int occurrenceEnd(Event e, int start, String familyZone) {
+  if (start == e.start || e.end <= e.start) return start + (e.end - e.start);
+  final zoneName = eventZone(e, familyZone);
+  if (e.allDay) {
+    final first = dateIn(zoneName, e.start);
+    final days = daysBetween(first, dateIn(zoneName, e.end - 1)) + 1;
+    return dayStartIn(zoneName, addDays(dateIn(zoneName, start), days));
+  }
+  return shiftWall(zoneName, start, wallDelta(zoneName, e.start, e.end));
+}
+
+/// One occurrence with an exception's patch applied. [familyZone] is the zone an event without
+/// its own repeats in.
+Occurrence buildOccurrence(Event e, int seriesStart, EventException? exception, {String familyZone = 'UTC'}) {
   final patch = {
     for (final e in (exception?.patch ?? const <String, Object?>{}).entries)
       if (e.value != null) e.key: e.value,
   };
-  final duration = e.end - e.start;
   final start = (patch['start'] as num?)?.toInt() ?? seriesStart;
-  final end = (patch['end'] as num?)?.toInt() ?? start + duration;
+  final end = (patch['end'] as num?)?.toInt() ?? occurrenceEnd(e, start, familyZone);
   T pick<T>(String name, T fallback) => patch.containsKey(name) ? patch[name] as T : fallback;
   return Occurrence(
     event: e,
@@ -111,19 +128,20 @@ List<Occurrence> occurrencesOf(
   String familyZone,
 ) {
   final out = <Occurrence>[];
-  final duration = e.end - e.start < 0 ? 0 : e.end - e.start;
+  // Occurrences can run up to a DST shift longer than the event itself; look back that far too.
+  final duration = (e.end - e.start < 0 ? 0 : e.end - e.start) + _dstSlack;
   final seen = <int>{};
   for (final s in seriesStarts(e, familyZone, notBefore: start - duration)) {
     if (s >= end) break;
     seen.add(s);
     final x = exceptions[s];
     if (x != null && x.cancelled) continue;
-    final o = buildOccurrence(e, s, x);
+    final o = buildOccurrence(e, s, x, familyZone: familyZone);
     if (_overlaps(o.start, o.end, start, end)) out.add(o);
   }
   for (final x in exceptions.values) {
     if (x.cancelled || seen.contains(x.occurrence) || !x.patch.containsKey('start')) continue;
-    final o = buildOccurrence(e, x.occurrence, x);
+    final o = buildOccurrence(e, x.occurrence, x, familyZone: familyZone);
     if (!_overlaps(o.start, o.end, start, end)) continue;
     if (!isSeriesStart(e, familyZone, x.occurrence)) continue;
     out.add(o);

@@ -40,6 +40,13 @@ const Hlc _origin = Hlc(0, 0, '');
 /// Every points line: done chores to the day's owner (else whoever did it), checked steps to the
 /// step's owner (else whoever checked it), adjustments, and approved rewards as negatives. In the
 /// order the changes behind them were made.
+///
+/// A chore or step is worth what the completion recorded when it was done (what the chore was
+/// worth then), else what it is worth now. Its line is dated when it was done, but never after
+/// the end of the completion's own day: finishing an old chore late, or moving a chore to
+/// another space (which writes its completions again), doesn't count toward this week's goals.
+/// A chore moved while a device that hadn't heard of it checked it off can have a completion
+/// for the same day in both spaces; it is paid once.
 List<PointsLine> pointsLines(PointsInput input) {
   final lines = <(Hlc, PointsLine)>[];
   final live = {for (final m in input.members) m.id};
@@ -47,28 +54,47 @@ List<PointsLine> pointsLines(PointsInput input) {
         at,
         PointsLine(member: member, delta: delta, reason: reason, when: at.millis, source: source, ref: ref),
       ));
+  final byDay = <String, (Completion, Chore)>{};
   for (final completion in input.completions) {
     final chore = input.choreFor(completion);
     if (chore == null) continue;
+    final kept = byDay[completion.id];
+    if (kept == null || _preferred(completion, chore, kept.$1, kept.$2)) byDay[completion.id] = (completion, chore);
+  }
+  for (final (completion, chore) in byDay.values) {
     final times = completion.rec.fieldTimes;
     final checked = completion.steps;
+    final dayEnd = isLocalDate(completion.date) ? dayStartIn(input.zone, addDays(completion.date, 1)) - 1 : null;
+    Hlc dated(Hlc at) => dayEnd != null && at.millis > dayEnd ? Hlc(dayEnd, at.counter, at.device) : at;
     Hlc stepTime(String id) => times['steps.$id'] ?? times['steps'] ?? completion.rec.updated;
-    if (isDone(chore, completion) && chore.points > 0) {
+    // The recorded price counts when it was written as (or after) it was done; an older one
+    // never pays more than the chore is worth now.
+    int worth(int? recorded, Hlc? recordedAt, Hlc doneAt, int now) {
+      if (recorded == null) return now;
+      if (recordedAt != null && recordedAt.compareTo(doneAt) >= 0) return recorded;
+      return recorded < now ? recorded : now;
+    }
+
+    if (isDone(chore, completion)) {
       final owner = dayOwner(chore, completion.date, completion, input.weekStart) ?? completion.doneBy;
       final at = completion.done
           ? times['done'] ?? completion.rec.updated
           : chore.steps.map((s) => stepTime(s.id)).fold(_origin, (a, b) => a > b ? a : b);
-      if (owner != null && live.contains(owner)) {
-        add(at, owner, chore.points, chore.title, PointsSource.chore, completion.id);
+      final points = worth(completion.points, times['points'], at, chore.points);
+      if (points > 0 && owner != null && live.contains(owner)) {
+        add(dated(at), owner, points, chore.title, PointsSource.chore, completion.id);
       }
     }
+    final stepWorth = completion.stepPoints;
     for (final step in chore.steps) {
       final by = checked[step.id];
-      if (by == null || step.points <= 0) continue;
+      if (by == null) continue;
+      final at = stepTime(step.id);
+      final points = worth(stepWorth[step.id], times['stepPoints.${step.id}'] ?? times['stepPoints'], at, step.points);
+      if (points <= 0) continue;
       final owner = step.owner ?? (by.isEmpty ? null : by);
       if (owner == null || !live.contains(owner)) continue;
-      add(stepTime(step.id), owner, step.points, '${chore.title}: ${step.text}', PointsSource.step,
-          '${completion.id}#${step.id}');
+      add(dated(at), owner, points, '${chore.title}: ${step.text}', PointsSource.step, '${completion.id}#${step.id}');
     }
   }
   for (final a in input.adjustments) {
@@ -85,6 +111,16 @@ List<PointsLine> pointsLines(PointsInput input) {
     return w != 0 ? w : (a.$2.ref ?? '').compareTo(b.$2.ref ?? '');
   });
   return [for (final l in lines) l.$2];
+}
+
+/// Of two completions for the same chore and day in different spaces (a chore moved while a
+/// device that hadn't heard of the move checked it off), the one whose chore is still there,
+/// else the one made last.
+bool _preferred(Completion a, Chore aChore, Completion b, Chore bChore) {
+  if (aChore.rec.deleted != bChore.rec.deleted) return !aChore.rec.deleted;
+  final created = a.rec.created.compareTo(b.rec.created);
+  if (created != 0) return created > 0;
+  return a.space.compareTo(b.space) > 0;
 }
 
 /// The window a goal measures today: local dates, end exclusive.

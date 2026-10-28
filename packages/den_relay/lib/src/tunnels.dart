@@ -9,11 +9,19 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'config.dart';
 
 class _Tunnel {
-  _Tunnel(this.hubId, this.socket);
+  _Tunnel(this.hubId, this.socket, this.owner);
 
   final String hubId;
   final WebSocketChannel socket;
+
+  /// The client (see `clientKeyOf`) the hub connected from.
+  final String owner;
   final Map<int, WebSocketChannel> clients = {};
+
+  /// Stream id -> the client it came from.
+  final Map<int, String> from = {};
+
+  int streamsFrom(String client) => clients.keys.where((id) => from[id] == client).length;
   int _nextStream = 1;
   bool closed = false;
 
@@ -56,8 +64,22 @@ class TunnelRegistry {
   /// Whether [hubId] has an open tunnel.
   bool has(String hubId) => _tunnels.containsKey(hubId);
 
-  /// Whether a new tunnel for [hubId] would fit under the cap.
-  bool canOpen(String hubId) => _tunnels.containsKey(hubId) || _tunnels.length < config.maxTunnels;
+  /// Whether a new tunnel for [hubId] from [client] would fit under the caps: the relay's, and
+  /// the client's share. A hub replacing its own tunnel always fits.
+  bool canOpen(String hubId, {String client = ''}) {
+    if (_tunnels.containsKey(hubId)) return true;
+    if (_tunnels.length >= config.maxTunnels) return false;
+    return _tunnels.values.where((t) => t.owner == client).length < config.maxTunnelsPerClient;
+  }
+
+  /// Whether [client] may open another stream through [hubId]'s tunnel: under the tunnel's cap
+  /// and the client's share of it, so nobody can take a family's every slot.
+  bool canConnect(String hubId, {String client = ''}) {
+    final tunnel = _tunnels[hubId];
+    if (tunnel == null || tunnel.closed) return false;
+    return tunnel.clients.length < config.maxStreamsPerTunnel &&
+        tunnel.streamsFrom(client) < config.maxStreamsPerClient;
+  }
 
   /// Runs the challenge, then forwards frames until the hub disconnects.
   ///
@@ -65,7 +87,7 @@ class TunnelRegistry {
   /// `{"t":"auth","pubkey","sig"}` where `sig` signs [tunnelAuthBytes] and `pubkey` hashes to
   /// [hubId]. A forged or late answer closes the socket with [RelayClose.unauthorized]. A newer
   /// authenticated tunnel for the same hub replaces the older one.
-  Future<void> serveHub(WebSocketChannel socket, String hubId) async {
+  Future<void> serveHub(WebSocketChannel socket, String hubId, {String client = ''}) async {
     final nonce = b64e(randomBytes(32));
     socket.sink.add(jsonEncode({'t': 'challenge', 'nonce': nonce}));
     final queue = StreamQueue<dynamic>(socket.stream);
@@ -91,13 +113,13 @@ class TunnelRegistry {
       await socket.sink.close(RelayClose.unauthorized);
       return;
     }
-    if (!canOpen(hubId)) {
+    if (!canOpen(hubId, client: client)) {
       await queue.cancel(immediate: true);
       await socket.sink.close(RelayClose.full);
       return;
     }
     _tunnels.remove(hubId)?.close(RelayClose.replaced);
-    final tunnel = _Tunnel(hubId, socket);
+    final tunnel = _Tunnel(hubId, socket, client);
     _tunnels[hubId] = tunnel;
     socket.sink.add(jsonEncode({'t': 'ready'}));
     try {
@@ -134,19 +156,21 @@ class TunnelRegistry {
     }
   }
 
-  /// Pipes one client socket through [hubId]'s tunnel until either side closes.
-  void serveClient(WebSocketChannel client, String hubId) {
+  /// Pipes one client socket through [hubId]'s tunnel until either side closes. [from] is the
+  /// client it came from (see `clientKeyOf`).
+  void serveClient(WebSocketChannel client, String hubId, {String from = ''}) {
     final tunnel = _tunnels[hubId];
     if (tunnel == null || tunnel.closed) {
       unawaited(client.sink.close(RelayClose.notFound));
       return;
     }
-    if (tunnel.clients.length >= config.maxStreamsPerTunnel) {
+    if (!canConnect(hubId, client: from)) {
       unawaited(client.sink.close(RelayClose.full));
       return;
     }
     final id = tunnel.nextStream();
     tunnel.clients[id] = client;
+    tunnel.from[id] = from;
     tunnel.send(TunnelOp.open, id);
     client.stream.listen(
       (message) {
@@ -171,6 +195,7 @@ class TunnelRegistry {
         tunnel.send(op, id, bytes);
       },
       onDone: () {
+        tunnel.from.remove(id);
         if (identical(tunnel.clients.remove(id), client)) tunnel.send(TunnelOp.close, id);
       },
       onError: (Object _) {},

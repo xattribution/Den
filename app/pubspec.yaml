@@ -63,6 +63,7 @@ dependencies:
   speech_to_text: ^7.4.0
   den_capture:
     path: ../packages/den_capture
+  web: ^1.1.1
   # Draws the family's picture pack (assets/pictures).
   flutter_svg: ^2.1.0
 

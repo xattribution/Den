@@ -18,6 +18,7 @@ class NetHubSetup extends HubSetupSession {
     required this.hub,
     required this.code,
     this.waitFor = const Duration(minutes: 2),
+    this.autoApprove = false,
   });
 
   final DenNetwork network;
@@ -25,6 +26,10 @@ class NetHubSetup extends HubSetupSession {
   @override
   final HubInfo hub;
   final String code;
+
+  /// Approves the hub without a tap once it reports the same words this device shows: for a
+  /// browser the hub itself served, where nothing sits between the two to compare against.
+  final bool autoApprove;
 
   /// How long to wait for the hub to ask to join, and then to catch up after approval.
   final Duration waitFor;
@@ -80,12 +85,21 @@ class NetHubSetup extends HubSetupSession {
       await _pendingSub?.cancel();
       _hubWords = await _wordsFromHub();
       _set(HubSetupStage.confirm);
+      if (autoApprove && wordsMatch == true) {
+        await approve();
+      } else if (autoApprove && wordsMatch == false) {
+        await _node.decline(_join!);
+        _set(
+          HubSetupStage.failed,
+          error: "${hub.name} showed different words than this page, so it wasn't added. Reload Den and try again.",
+        );
+      }
     } on HubException catch (e) {
       final tries = e.triesLeft;
       _set(
         HubSetupStage.failed,
         error: e.code == 'permission_denied' && tries != null && tries > 0
-            ? "That setup code isn't right. $tries ${tries == 1 ? 'try' : 'tries'} left before the hub makes a new one."
+            ? "That setup code isn't right. Check it in the hub's log: $tries more ${tries == 1 ? 'try' : 'tries'}, then the hub makes you wait a minute."
             : e.message,
       );
     } on TimeoutException {

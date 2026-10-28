@@ -102,7 +102,7 @@ void main() {
       AddHubScreen(
         session: FakeHubSetup(
           HubSetupStage.failed,
-          error: "That setup code isn't right. 4 tries left before the hub makes a new one.",
+          error: "That setup code isn't right. Check it in the hub's log: 4 more tries, then the hub makes you wait a minute.",
         ),
       ),
       state: state,

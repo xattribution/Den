@@ -1,6 +1,7 @@
 import 'package:den_core/den_core.dart';
 
 import '../api.dart' show searchHitVisible;
+import '../privacy.dart';
 import '../times.dart';
 import '../wire.dart';
 import 'resolve.dart';
@@ -123,6 +124,7 @@ ToolResult _today(ToolContext c, Args a) {
   Wire.sortOccurrences(events);
   final chores = c.choresOn(date);
   final lists = [for (final l in view.lists) if (c.readable.contains(l.list.space)) l];
+  final gaps = visibleGaps(c.den, view.gaps, c.readable);
   final done = chores.where((x) => x.done).length;
   final text = StringBuffer('${longDate(date)} (${c.zone})\n');
   text.writeln(events.isEmpty ? 'No events.' : 'Events:');
@@ -132,7 +134,7 @@ ToolResult _today(ToolContext c, Args a) {
   for (final l in lists) {
     text.writeln('List ${l.list.title}: ${l.open} open of ${l.items.length}');
   }
-  for (final g in view.gaps) {
+  for (final g in gaps) {
     text.writeln('Needs someone: ${g.message}');
   }
   return ToolResult(text.toString().trim(), {
@@ -142,7 +144,7 @@ ToolResult _today(ToolContext c, Args a) {
     'chores': [for (final cd in chores) c.wire.choreDay(cd)],
     'chore_summary': Wire.choreSummary(chores),
     'lists': [for (final l in lists) Wire.list(l)],
-    'gaps': [for (final g in view.gaps) c.wire.gap(g)],
+    'gaps': [for (final g in gaps) c.wire.gap(g)],
   });
 }
 
@@ -275,7 +277,7 @@ ToolResult _lists(ToolContext c, Args a) {
 }
 
 ToolResult _points(ToolContext c, Args a) {
-  final summary = c.den.points();
+  final summary = visiblePoints(c.den, c.den.points(), c.readable);
   final data = c.wire.points(summary, recent: 20);
   final totals = (data['totals'] as Map).cast<String, Object?>();
   final text = StringBuffer(c.den.family?.pointsEnabled == false ? 'Points are turned off.\n' : '');

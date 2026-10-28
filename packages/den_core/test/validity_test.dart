@@ -3,6 +3,9 @@ import 'package:test/test.dart';
 
 import 'support.dart';
 
+int maxCounter(Den den) =>
+    den.changesSince(const {}).where((c) => c.device == den.deviceId).fold(0, (m, c) => c.counter > m ? c.counter : m);
+
 void main() {
   late TestClock clock;
   late Den parent;
@@ -152,8 +155,10 @@ void main() {
         fields: {'name': 'Before'},
         actor: priya,
       );
+      await parent.ingest([before]);
       clock.advance(const Duration(minutes: 1));
       await parent.revokeDevice(second.deviceId);
+      expect(parent.device(second.deviceId)!.revokedAfter, 100, reason: 'the last change the parent held');
       clock.advance(const Duration(minutes: 1));
       final after = await forge(
         second.keys,
@@ -173,11 +178,47 @@ void main() {
         fields: {'revoked': false, 'approved': true},
         actor: priya,
       );
-      final result = await parent.ingest([after, unrevoke, before]);
+      final result = await parent.ingest([after, unrevoke]);
       expect(result.invalid.keys, unorderedEquals([after.id, unrevoke.id]));
       expect(parent.categories.map((c) => c.name), ['Before']);
       expect(parent.device(second.deviceId)!.revoked, isTrue);
       expect(parent.spacesForDevice(second.deviceId), isEmpty);
+    });
+
+    test('a revoked device can\'t backdate a change to before its revocation', () async {
+      final priya = await parent.addMember(name: 'Priya', role: Role.parent);
+      final second = await joinDevice(parent, clock, member: priya, name: 'Priya phone');
+      final observer = await joinDevice(parent, clock, member: dana, name: 'Dana laptop');
+      clock.advance(const Duration(minutes: 1));
+      await second.addCategory(name: 'Sent before');
+      await sync(second, parent);
+      final revokedAt = clock.now + const Duration(minutes: 1).inMilliseconds;
+      clock.set(DateTime.fromMillisecondsSinceEpoch(revokedAt, isUtc: true));
+      await parent.revokeDevice(second.deviceId);
+
+      // The stolen phone signs a new change, claiming a clock from before the revocation.
+      clock.advance(const Duration(hours: 1));
+      final backdated = await forge(
+        second.keys,
+        counter: maxCounter(second) + 1,
+        millis: revokedAt - const Duration(seconds: 30).inMilliseconds,
+        type: RecordType.category,
+        rid: 'backdatedcategory',
+        fields: {'name': 'Backdated'},
+        actor: priya,
+      );
+      final result = await parent.ingest([backdated]);
+      expect(result.invalid[backdated.id], contains('removed'));
+      expect(parent.categories.map((c) => c.name), ['Sent before']);
+
+      // A replica that takes the backdated change before it hears of the revocation drops it
+      // once the revocation arrives, and agrees with the parent.
+      final early = await observer.ingest([backdated]);
+      expect(early.invalid, isEmpty);
+      expect(observer.categories.map((c) => c.name), contains('Backdated'));
+      await sync(parent, observer);
+      expect(observer.categories.map((c) => c.name), ['Sent before']);
+      expect(observer.exportJson(), parent.exportJson());
     });
 
     test('a personal device acts only for its owner', () async {

@@ -5,9 +5,10 @@ import 'dart:convert';
 
 import 'package:cryptography/dart.dart';
 import 'package:den_core/den_core.dart';
+import 'package:den_hub/src/edge.dart' show Limits;
 import 'package:den_net/den_net.dart';
 import 'package:http/http.dart' as http;
-import 'package:test/test.dart';
+import 'support/test.dart';
 
 import 'support/fixture.dart';
 
@@ -39,6 +40,16 @@ void main() {
     return {'status': r.statusCode, ...(jsonDecode(r.body) as Map).cast<String, Object?>()};
   }
 
+  Future<String> register({String name = 'Claude'}) async {
+    final reg = await f.call('POST', '/oauth/register', body: {
+      'redirect_uris': [redirect],
+      'client_name': name,
+      'token_endpoint_auth_method': 'none',
+    });
+    expect(reg.status, 201);
+    return reg.body['client_id'] as String;
+  }
+
   Future<(String, String)> authorize(String clientId, String challenge, {String state = 'xyz'}) async {
     final url = f.base.replace(path: '/oauth/authorize', queryParameters: {
       'response_type': 'code',
@@ -63,7 +74,30 @@ void main() {
   Future<Map<String, Object?>> status(String id) async =>
       (jsonDecode((await http.get(f.base.resolve('/oauth/authorize/status?request=$id'))).body) as Map).cast<String, Object?>();
 
-  test('register, authorize with a parent approving on a synced phone, exchange, use, refresh', () async {
+  // What a parent's phone does in the Den app, signed with its own key.
+  Future<Map<String, String>> signed(String method, String path, [List<int> body = const []]) => DeviceRequest.sign(
+        keys: f.phone.keys,
+        method: method,
+        url: f.base.resolve(path),
+        body: body,
+        hub: f.hubDen.deviceId,
+        actorId: f.phone.actor?.id,
+      );
+
+  Future<List<Map<String, Object?>>> waiting() async {
+    const path = '/api/v1/connections/requests';
+    final r = await f.call('GET', path, headers: await signed('GET', path));
+    expect(r.status, 200);
+    return [for (final x in r.body['requests'] as List) (x as Map).cast<String, Object?>()];
+  }
+
+  Future<ApiResult> decide(String request, String decision) async {
+    final path = '/api/v1/connections/requests/$request';
+    final body = jsonEncode({'decision': decision});
+    return f.call('POST', path, body: body, headers: await signed('POST', path, utf8.encode(body)));
+  }
+
+  test('register, authorize with a parent letting it in and approving on a synced phone, exchange, use, refresh', () async {
     final meta = await f.call('GET', '/.well-known/oauth-authorization-server');
     expect(meta.body['code_challenge_methods_supported'], ['S256']);
     expect(meta.body['token_endpoint'], '${f.base}/oauth/token');
@@ -83,12 +117,28 @@ void main() {
 
     final verifier = 'v' * 20 + base64Url.encode(List.generate(32, (i) => i)).replaceAll('=', '');
     final challenge = base64Url.encode(const DartSha256().hashSync(utf8.encode(verifier)).bytes).replaceAll('=', '');
-    final (id, _) = await authorize(clientId, challenge);
+    final changes = f.hubDen.changesSince(const {}).length;
+    final (id, page) = await authorize(clientId, challenge);
+    expect(page, contains('<strong>claude.ai</strong>'), reason: 'the page says where the app signs in, not only its name');
+    final shown = RegExp(r'class="code">([A-Z0-9-]+)<').firstMatch(page)!.group(1)!;
     expect((await status(id))['state'], 'pending');
+    expect(f.hubDen.changesSince(const {}).length, changes, reason: 'nothing reaches the family\'s log before a parent acts');
+    expect(f.phone.connections.where((c) => c.client == clientId), isEmpty);
 
-    await eventually(() => f.phone.connections.any((c) => c.client == clientId && c.status == ConnectionStatus.pending));
-    final pending = f.phone.connections.firstWhere((c) => c.client == clientId);
-    expect(pending.label, 'Claude');
+    expect((await f.call('GET', '/api/v1/connections/requests')).status, 401, reason: 'only a family device may look');
+    final request = (await waiting()).firstWhere((r) => r['code'] == shown);
+    expect(request['client_name'], 'Claude');
+    expect(request['redirect_host'], 'claude.ai');
+    expect(request['scopes'], ['read', 'lists']);
+    final admitted = await decide(request['id'] as String, 'admit');
+    expect(admitted.status, 200);
+    final connection = admitted.body['connection'] as String;
+    expect((await decide(request['id'] as String, 'admit')).body['connection'], connection, reason: 'admitting twice is the same');
+
+    await eventually(() => f.phone.connections.any((c) => c.id == connection && c.status == ConnectionStatus.pending));
+    final pending = f.phone.connections.firstWhere((c) => c.id == connection);
+    expect(pending.label, 'Claude (claude.ai)');
+    expect(pending.client, clientId);
     expect(pending.scopes, {Scope.read, Scope.lists});
     await f.phone.approveConnection(pending.id, scopes: {Scope.read, Scope.lists});
 
@@ -134,22 +184,59 @@ void main() {
   });
 
   test('a parent declining sends the app back with access_denied', () async {
-    final reg = await f.call('POST', '/oauth/register', body: {'redirect_uris': [redirect], 'client_name': 'Claude', 'token_endpoint_auth_method': 'none'});
-    final clientId = reg.body['client_id'] as String;
+    final clientId = await register();
     final (id, _) = await authorize(clientId, 'c' * 43, state: 'nope');
-    await eventually(() => f.phone.connections.any((c) => c.client == clientId));
-    await f.phone.revokeConnection(f.phone.connections.firstWhere((c) => c.client == clientId).id);
+    final request = (await waiting()).first;
+    expect((await decide(request['id'] as String, 'decline')).status, 200);
+    expect(f.hubDen.connections.where((c) => c.client == clientId), isEmpty, reason: 'declined before it reached the log');
     Map<String, Object?> decided = {};
     await eventually(() async => (decided = await status(id))['state'] == 'declined');
     final back = Uri.parse(decided['redirect'] as String);
     expect(back.queryParameters['error'], 'access_denied');
     expect(back.queryParameters['state'], 'nope');
+    expect((await decide(request['id'] as String, 'admit')).status, 409);
+  });
+
+  test('requests nobody answers expire, and pending connections left in the log are turned down', () async {
+    // Earlier hubs wrote a pending connection for every request; a stranger's is still there.
+    final old = await f.phone.requestOAuthConnection(label: 'Home Assistant', client: 'made-up', scopes: {Scope.admin});
+    await eventually(() => f.hubDen.connections.any((c) => c.id == old));
+    final clientId = await register();
+    final (id, _) = await authorize(clientId, 'd' * 43);
+    final request = (await waiting()).first;
+    final admitted = (await decide(request['id'] as String, 'admit')).body['connection'] as String;
+    await f.hub.oauth.sweep(now: DateTime.now().millisecondsSinceEpoch + const Duration(minutes: 16).inMilliseconds);
+    ConnectionStatus statusOf(String connection) => f.hubDen.connections.firstWhere((c) => c.id == connection).status;
+    expect(statusOf(old), ConnectionStatus.revoked);
+    expect(statusOf(admitted), ConnectionStatus.revoked, reason: 'admitted but never approved in time');
+    expect((await waiting()).where((r) => r['id'] == request['id']), isEmpty);
+    expect((await status(id))['state'], 'declined');
+  });
+
+  test('one address can only start so many sign-ins', () async {
+    final clientId = await register();
+    var limited = false;
+    for (var i = 0; i <= Limits.oauthAuthorize.burst && !limited; i++) {
+      final page = await http.get(f.base.replace(path: '/oauth/authorize', queryParameters: {
+        'response_type': 'code',
+        'client_id': clientId,
+        'redirect_uri': redirect,
+        'code_challenge': 'e' * 43,
+        'code_challenge_method': 'S256',
+      }));
+      if (page.statusCode == 429) {
+        limited = true;
+        expect(page.body, contains('Too many sign-in requests from here'));
+      }
+    }
+    expect(limited, isTrue);
   });
 
   test('authorize refuses unknown clients, unregistered redirects and missing PKCE', () async {
     final unknown = await http.get(f.base.replace(path: '/oauth/authorize', queryParameters: {'client_id': 'nope', 'response_type': 'code'}));
     expect(unknown.statusCode, 400);
     expect(unknown.body, contains('This sign-in link doesn'));
+    expect(unknown.headers['content-security-policy'], contains("script-src 'nonce-"));
     final reg = await f.call('POST', '/oauth/register', body: {'redirect_uris': [redirect], 'client_name': 'Claude'});
     expect(reg.body['client_secret'], isA<String>());
     final clientId = reg.body['client_id'] as String;

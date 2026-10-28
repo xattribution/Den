@@ -64,7 +64,7 @@ Future<bool> refreshInBackground() async {
   }
   try {
     tzdata.initializeTimeZones();
-    final den = await Boot.start();
+    final den = await Boot.start(background: true);
     try {
       await BackgroundRefresh(
         den,

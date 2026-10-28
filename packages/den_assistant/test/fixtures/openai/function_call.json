@@ -1,0 +1,39 @@
+{
+  "id": "resp_68f0denfixture01",
+  "object": "response",
+  "created_at": 1793200000,
+  "status": "completed",
+  "error": null,
+  "incomplete_details": null,
+  "instructions": null,
+  "model": "gpt-6-luna",
+  "output": [
+    {
+      "id": "rs_68f0denreasoning",
+      "type": "reasoning",
+      "summary": [],
+      "encrypted_content": "gAAAAABoDenEncryptedReasoningFixture"
+    },
+    {
+      "id": "fc_68f0dencall",
+      "type": "function_call",
+      "status": "completed",
+      "arguments": "{\"list\":\"Groceries\",\"items\":[{\"text\":\"Eggs\"}]}",
+      "call_id": "call_k9Xr2QfDenFixture",
+      "name": "add_items"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "store": false,
+  "usage": {
+    "input_tokens": 4300,
+    "input_tokens_details": {
+      "cached_tokens": 3840
+    },
+    "output_tokens": 61,
+    "output_tokens_details": {
+      "reasoning_tokens": 24
+    },
+    "total_tokens": 4361
+  }
+}

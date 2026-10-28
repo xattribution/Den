@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:cryptography/cryptography.dart';
 import 'package:den_core/den_core.dart';
 
 import 'util.dart';
@@ -51,30 +54,69 @@ String? normalizeCode(String input) {
   return words.join(' ');
 }
 
-/// The joiner's proof of knowing [code] in one session: HMAC-SHA256 keyed by the code over a
-/// label, the session's transcript hash and the joiner's Ed25519 key. Binding it to the
-/// transcript means it can't be replayed into another session.
+/// Argon2id memory, in KiB, for stretching a spoken code ([stretchCode]).
+const int codeStretchMemoryKiB = 4 * 1024;
+
+/// Argon2id passes for stretching a spoken code.
+const int codeStretchIterations = 3;
+
+/// The fixed Argon2id salt for spoken codes. Both sides know only the code, so nothing else can
+/// go in; a table of every code's stretch would still cost 2^44 Argon2id runs.
+final Uint8List _codeSalt = utf8Bytes('den/spoken-code/v2');
+
+final Map<String, Future<Uint8List>> _stretched = {};
+
+/// [code] stretched with Argon2id (memory [codeStretchMemoryKiB], [codeStretchIterations]
+/// passes, one lane, 32 bytes): the key the rendezvous slot and both session proofs are made
+/// with. A code has only 44 bits, so every guess at it, by a relay holding the slot or a device
+/// holding a proof, costs a memory-hard computation, which keeps a search far beyond reach in the
+/// code's ten minutes; on a phone or in a browser it is one short wait per join. The last few
+/// codes are kept in memory, so one join stretches its code once.
+Future<Uint8List> stretchCode(String code) {
+  final normalized = normalizeCode(code) ?? code;
+  final known = _stretched[normalized];
+  if (known != null) return known;
+  while (_stretched.length >= 16) {
+    _stretched.remove(_stretched.keys.first);
+  }
+  return _stretched[normalized] = _stretch(normalized);
+}
+
+Future<Uint8List> _stretch(String normalized) async {
+  final kdf = Argon2id(
+    parallelism: 1,
+    memory: codeStretchMemoryKiB,
+    iterations: codeStretchIterations,
+    hashLength: 32,
+  );
+  final key = await kdf.deriveKey(secretKey: SecretKey(utf8Bytes(normalized)), nonce: _codeSalt);
+  return Uint8List.fromList(await key.extractBytes());
+}
+
+/// The joiner's proof of knowing [code] in one session: HMAC-SHA256 keyed by the stretched code
+/// ([stretchCode]) over a label, the session's transcript hash and the joiner's Ed25519 key.
+/// Binding it to the transcript means it can't be replayed into another session.
 Future<String> joinerCodeProof(String code, List<int> transcriptHash, String joinerPubkey) =>
-    _codeProof('den/pair/v1/joiner', code, transcriptHash, joinerPubkey);
+    _codeProof('den/pair/v2/joiner', code, transcriptHash, joinerPubkey);
 
 /// The inviting side's proof that it knows [code] too, so a joiner never pairs with a device
 /// that merely answered at the rendezvous point.
 Future<String> hostCodeProof(String code, List<int> transcriptHash, String hostPubkey) =>
-    _codeProof('den/pair/v1/host', code, transcriptHash, hostPubkey);
+    _codeProof('den/pair/v2/host', code, transcriptHash, hostPubkey);
 
 Future<String> _codeProof(String label, String code, List<int> transcript, String pubkey) async {
-  final normalized = normalizeCode(code) ?? code;
   return b64e(await hmacSha256(
-    utf8Bytes(normalized),
+    await stretchCode(code),
     concatBytes([utf8Bytes(label), [0], transcript, b64d(pubkey)]),
   ));
 }
 
-/// The relay rendezvous slot for a spoken code.
+/// The relay rendezvous slot for a spoken code: hex HMAC-SHA256 of a label under the stretched
+/// code ([stretchCode]).
 Future<String> codeRendezvousSlot(String code) async {
   final normalized = normalizeCode(code);
   if (normalized == null) throw const FormatException('Not a spoken code');
-  return hexEncode(await sha256(utf8Bytes('den/rendezvous/v1/code|$normalized')));
+  return hexEncode(await hmacSha256(await stretchCode(normalized), utf8Bytes('den/rendezvous/v2/code')));
 }
 
 /// The inviting side's live spoken codes.

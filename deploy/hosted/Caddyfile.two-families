@@ -1,0 +1,16 @@
+# One Caddy in front of two families' hubs, routed by hostname. Each domain gets its own
+# certificate; a request for one family's address never reaches the other family's hub.
+(den) {
+	@compressible not path /api/v1/stream
+	encode @compressible zstd gzip
+}
+
+{$FAMILY_A_DOMAIN} {
+	import den
+	reverse_proxy hub-a:47733
+}
+
+{$FAMILY_B_DOMAIN} {
+	import den
+	reverse_proxy hub-b:47735
+}

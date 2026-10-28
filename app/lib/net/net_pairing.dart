@@ -5,6 +5,7 @@ import 'package:den_net/den_net.dart' as net;
 import 'package:flutter/foundation.dart';
 
 import 'den_network.dart';
+import 'hub_api.dart';
 import 'hub_client.dart';
 import 'hub_flows.dart';
 import 'local_stub.dart' if (dart.library.io) 'local_io.dart' as local;
@@ -13,7 +14,14 @@ import 'pairing.dart';
 /// [PairingService] on den_net: QR invites and spoken codes over the hub, the relay's
 /// rendezvous, or (with neither) a direct connection on the same Wi-Fi.
 class NetPairing extends PairingService {
-  NetPairing(this.network, {HubClient? client, this.servedBy}) : _client = client ?? HubClient();
+  NetPairing(this.network, {HubClient? client, this.servedBy}) : _client = client ?? HubClient() {
+    network.addListener(_watchTurnedAway);
+  }
+
+  static const _turnedAway = JoinStatus(
+    JoinState.declined,
+    message: 'A parent turned this device away. Ask them for a new invite, then start over.',
+  );
 
   final DenNetwork network;
 
@@ -26,8 +34,20 @@ class NetPairing extends PairingService {
   /// invites made here.
   net.SyncNode get _node => network.activeNode;
 
+  bool _toldTurnedAway = false;
+
+  /// A device waiting for approval learns it was turned away from its connection to the family.
+  void _watchTurnedAway() {
+    if (!network.turnedAway || _toldTurnedAway) return;
+    _toldTurnedAway = true;
+    _status.add(_turnedAway);
+  }
+
   @override
-  Stream<JoinStatus> get joinStatus => _status.stream;
+  Stream<JoinStatus> get joinStatus async* {
+    if (network.turnedAway) yield _turnedAway;
+    yield* _status.stream;
+  }
 
   @override
   Future<JoinTicket> joinWithQr(String uri, {required String deviceName, required DeviceKind kind}) async {
@@ -39,6 +59,7 @@ class NetPairing extends PairingService {
     }
     final channel = await _open(() => net.openInviteChannel(invite));
     final attempt = await _node.joinWithInvite(channel, invite, deviceName: deviceName, kind: kind);
+    await network.rememberJoin(invite.inviterDevice, invite.hubs.firstOrNull);
     _follow(attempt, hubs: invite.hubs);
     return JoinTicket(familyId: invite.familyId, words: attempt.matchingWords);
   }
@@ -62,6 +83,7 @@ class NetPairing extends PairingService {
       throw const PairingException("Enter the hub's address to join with a code, or scan the QR code instead.");
     });
     final attempt = await _node.joinWithCode(channel, code, deviceName: deviceName, kind: kind);
+    if (hub != null) await network.rememberJoin(attempt.peer.deviceId, hub);
     _follow(attempt, hubs: [?hub]);
     return JoinTicket(familyId: network.den.familyId ?? '', words: attempt.matchingWords);
   }
@@ -143,6 +165,7 @@ class NetPairing extends PairingService {
   Future<JoinTicket> _joinLinked(net.Invite invite, Uri sync, String deviceName) async {
     final channel = await _open(() => net.connectWebSocket(sync));
     final attempt = await _node.joinWithInvite(channel, invite, deviceName: deviceName, kind: DeviceKind.browser);
+    await network.rememberJoin(invite.inviterDevice, sync);
     _follow(attempt, hubs: [sync]);
     return JoinTicket(familyId: invite.familyId, words: attempt.matchingWords);
   }
@@ -174,6 +197,136 @@ class NetPairing extends PairingService {
     return den.device(link.hubDevice)?.name ?? 'the hub';
   }
 
+  @override
+  Future<void> openLinking() async {
+    if (network.hubDevice == null) return;
+    final api = HubApi(network);
+    try {
+      await api.send('POST', '/api/v1/link/window');
+    } on HubException {
+      // An older hub, or one out of reach: the browser says what to do if linking is closed.
+    } finally {
+      api.close();
+    }
+  }
+
+  /// The hub that served this page: [servedBy], or the page's own origin on the web.
+  Uri? get _servedBase {
+    final base = servedBy ?? (kIsWeb ? Uri.base : null);
+    if (base == null || base.host.isEmpty) return null;
+    return Uri(scheme: base.scheme, host: base.host, port: base.port);
+  }
+
+  @override
+  Future<HubInfo?> servingHub() async {
+    final base = _servedBase;
+    if (base == null) return null;
+    try {
+      return await _client.status(base);
+    } on HubException {
+      return null;
+    }
+  }
+
+  @override
+  HubSetupSession adoptServingHub(HubInfo hub, String code) =>
+      NetHubSetup(network: network, client: _client, hub: hub, code: code, autoApprove: true)..run();
+
+  /// How long an invite sent as a message works.
+  static const inviteLife = Duration(days: 3);
+
+  @override
+  Future<InviteMessage> createInvite({String? memberId}) async {
+    final den = network.den;
+    final hub = network.hubDevice;
+    if (network.isHub) {
+      throw const PairingException('This device is the hub. Invite from your phone, or show the code below to the new device.');
+    }
+    if (hub == null) {
+      throw const PairingException("Invites by message go through the family's hub. Add the hub first: Family, Devices, Add a device.");
+    }
+    final bases = await network.hubBases();
+    if (bases.isEmpty) throw const PairingException("Den doesn't know the hub's address yet. Open Den at home once, then try again.");
+    HubException? last;
+    for (final base in bases) {
+      final net.Invite invite;
+      try {
+        invite = _node.createHubInvite(hub.id, hubs: [HubClient.syncUri(base)], validFor: inviteLife);
+      } on StateError {
+        throw const PairingException("This device doesn't know the family's hub well enough yet. Wait a moment, then try again.");
+      }
+      final grant = await net.InviteGrant.sign(
+        invite,
+        keys: den.keys,
+        context: memberId == null ? 'invite' : 'invite:$memberId',
+      );
+      try {
+        final made = await _client.createInvite(base, grant.toJson());
+        return InviteMessage(
+          words: made.words,
+          link: made.link,
+          expires: made.expires,
+          familyName: den.family?.name ?? 'the family',
+          qr: invite.toUrl(),
+          forName: memberId == null ? null : den.member(memberId)?.name,
+        );
+      } on HubException catch (e) {
+        if (e.code != null) {
+          throw PairingException(e.code == 'not_found'
+              ? "The family's hub can't make invites yet. Update it, then try again."
+              : e.message);
+        }
+        last = e;
+      }
+    }
+    throw PairingException(last?.message ?? "Couldn't reach the family's hub. Try again.");
+  }
+
+  @override
+  Future<JoinTicket> joinWithInvite(
+    String words, {
+    String? hubUrl,
+    required String Function(String? forName) deviceName,
+    required DeviceKind kind,
+  }) async {
+    final code = net.normalizeCode(words);
+    if (code == null) {
+      throw const PairingException("Those aren't the four words from an invite. Check them against the message.");
+    }
+    final base = hubUrl == null || hubUrl.trim().isEmpty ? _servedBase : HubClient.baseFor(hubUrl);
+    if (base == null) throw const PairingException("Type the hub's address too. It's the start of the invite's link.");
+    final RedeemedInvite redeemed;
+    try {
+      redeemed = await _client.redeemInvite(base, code);
+    } on HubException catch (e) {
+      if (e.code == 'not_found') {
+        throw const PairingException(
+          "That code isn't right, or the invite has expired. Ask for a new invite.",
+          reason: PairingException.unknownCode,
+        );
+      }
+      throw PairingException(e.code == 'not_ready' ? "This hub isn't in a family yet. Start your family first." : e.message);
+    }
+    final net.Invite invite;
+    try {
+      invite = await net.Invite.parse(redeemed.invite);
+    } on FormatException {
+      throw const PairingException('This invite has expired. Ask for a new one.');
+    }
+    final sync = HubClient.syncUri(base);
+    final channel = await _open(() => net.connectWebSocket(sync));
+    final attempt = await _node.joinWithInvite(
+      channel,
+      invite,
+      deviceName: deviceName(redeemed.memberName),
+      kind: kind,
+      memberId: redeemed.member,
+    );
+    await network.rememberJoin(invite.inviterDevice, sync);
+    _follow(attempt, hubs: [sync]);
+    return JoinTicket(familyId: invite.familyId, familyName: redeemed.familyName);
+  }
+
   List<PendingJoin> _convert(List<net.PendingJoin> joins) => [
         for (final j in joins)
           PendingJoin(deviceId: j.deviceId, deviceName: j.name, kind: j.kind, words: j.matchingWords),
@@ -203,6 +356,11 @@ class NetPairing extends PairingService {
   }
 
   void _follow(net.JoinAttempt attempt, {required List<Uri> hubs}) {
+    // Whether the request reached the family, so it can be waited on again after a disconnect.
+    var asked = false;
+    attempt.stages.listen((stage) {
+      if (stage == net.JoinStage.waitingForApproval || stage == net.JoinStage.syncing) asked = true;
+    });
     _status.add(const JoinStatus(JoinState.waiting));
     attempt.completed.then((_) async {
       _status.add(const JoinStatus(JoinState.approved));
@@ -212,6 +370,12 @@ class NetPairing extends PairingService {
       await network.start();
     }, onError: (Object error) {
       final reason = error is net.JoinException ? error.reason : '';
+      if (asked && attempt.stage != net.JoinStage.rejected && network.canAwaitApproval) {
+        // The request reached the family; wait for the approval on a new connection.
+        _status.add(const JoinStatus(JoinState.waiting));
+        unawaited(network.start());
+        return;
+      }
       _status.add(switch (attempt.stage) {
         net.JoinStage.rejected => JoinStatus(
             JoinState.declined,

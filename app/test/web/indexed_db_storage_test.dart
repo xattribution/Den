@@ -1,0 +1,70 @@
+// Runs in a real browser: flutter test --platform chrome test/web
+@TestOn('browser')
+library;
+
+import 'package:den_app/boot/storage_web.dart';
+import 'package:den_core/den_core.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:timezone/data/latest_all.dart' as tzdata;
+
+void main() {
+  setUpAll(tzdata.initializeTimeZones);
+
+  test('a reopened browser has its family, and its next change continues the counter', () async {
+    final name = 'den-test-${DateTime.now().microsecondsSinceEpoch}';
+    final keys = await DeviceKeys.generate();
+
+    final first = await IndexedDbStorage.open(name: name);
+    final den = await Den.open(storage: first, keys: keys);
+    await den.createFamily(
+      familyName: 'The Testers',
+      timezone: 'America/Chicago',
+      yourName: 'Sam',
+      marker: Marker.blue,
+      animal: Animal.cat,
+      deviceName: "Sam's iPhone",
+      deviceKind: DeviceKind.phone,
+    );
+    final held = den.changesSince(const {}).length;
+    first.close();
+
+    final second = await IndexedDbStorage.open(name: name);
+    final again = await Den.open(storage: second, keys: keys);
+    expect(again.familyId, den.familyId);
+    expect(again.family?.name, 'The Testers');
+    expect(again.isApproved, isTrue);
+    expect(again.changesSince(const {}), hasLength(held));
+
+    await again.updateFamily({'name': 'The Riveras'});
+    final ids = again.changesSince(const {}).map((c) => c.id).toSet();
+    expect(ids, hasLength(held + 1), reason: 'no change id is reused after reopening');
+    second.close();
+
+    final third = await IndexedDbStorage.open(name: name);
+    expect((await Den.open(storage: third, keys: keys)).family?.name, 'The Riveras');
+    await third.clear();
+    expect(await third.loadMeta(), isNull);
+    expect(await third.loadChanges(), isEmpty);
+    third.close();
+  });
+
+  test('storing the same change twice keeps one', () async {
+    final storage = await IndexedDbStorage.open(name: 'den-test-twice-${DateTime.now().microsecondsSinceEpoch}');
+    final keys = await DeviceKeys.generate();
+    final den = await Den.open(storage: MemoryStorage(), keys: keys);
+    await den.createFamily(
+      familyName: 'The Testers',
+      timezone: 'America/Chicago',
+      yourName: 'Sam',
+      marker: Marker.blue,
+      animal: Animal.cat,
+      deviceName: "Sam's laptop",
+      deviceKind: DeviceKind.browser,
+    );
+    final changes = den.changesSince(const {});
+    await storage.appendChanges(changes);
+    await storage.appendChanges(changes);
+    expect(await storage.loadChanges(), hasLength(changes.length));
+    storage.close();
+  });
+}

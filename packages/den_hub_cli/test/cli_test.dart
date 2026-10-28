@@ -130,4 +130,67 @@ void main() {
     expect(again, 1);
     expect(againErr, contains('--force'));
   });
+
+  test('open-linking lets browsers ask a public hub for a link code for a while, and stays out of backups', () async {
+    final (code, out, err) = await run(['open-linking', '--data', dataPath, '--minutes', '5']);
+    expect(code, 0, reason: err);
+    expect(out, contains('Link this browser'));
+    final file = File('$dataPath${Platform.pathSeparator}hub${Platform.pathSeparator}link-open');
+    final until = int.parse(file.readAsStringSync().trim());
+    expect(until, greaterThan(DateTime.now().millisecondsSinceEpoch + 4 * 60000));
+    expect((await run(['open-linking', '--data', dataPath, '--minutes', '600'])).$1, 64);
+    expect((await DataDir(dataPath).readBackup()).keys, isNot(contains('hub/link-open')));
+  });
+
+  test('a backup taken while the hub runs and writes is consistent, and holds notify.json', () async {
+    final hubDir = DataDir(dataPath);
+    await hubDir.lock();
+    final den = await hubDir.open();
+    File('$dataPath${Platform.pathSeparator}notify.json').writeAsStringSync('{"members": {"Alex": {"ntfy": "den-alex"}}}');
+    final before = den.changesSince(const {}).length;
+    var writing = true;
+    Future<void> keepWriting() async {
+      for (var n = 0; writing && n < 60; n++) {
+        await den.addEvent(title: 'While backing up $n', start: 1792535400000 + n * 60000, end: 1792539000000 + n * 60000);
+      }
+    }
+
+    final writer = keepWriting();
+    final file = '${tmp.path}${Platform.pathSeparator}live.denbackup';
+    final env = {'DEN_PASS': 'correct horse battery'};
+    final (code, _, err) = await run(['backup', '--out', file, '--passphrase-env', 'DEN_PASS', '--data', dataPath], env: env);
+    writing = false;
+    await writer;
+    final after = den.changesSince(const {}).length;
+    await den.close();
+    await hubDir.unlock();
+    expect(code, 0, reason: err);
+    expect(err, contains('running'), reason: 'it didn\'t need the running hub\'s lock');
+
+    final target = '${tmp.path}${Platform.pathSeparator}live-restored';
+    final (ok, out, okErr) = await run(['restore', '--in', file, '--passphrase-env', 'DEN_PASS', '--data', target], env: env);
+    expect(ok, 0, reason: okErr);
+    expect(out, contains('let the family'));
+    expect(File('$target${Platform.pathSeparator}notify.json').readAsStringSync(), contains('den-alex'));
+    final restored = await DataDir(target).open();
+    final count = restored.changesSince(const {}).length;
+    final approved = restored.isApproved;
+    await restored.close();
+    expect(count, inInclusiveRange(before, after));
+    expect(approved, isTrue);
+
+    // A restore never runs under a running hub, and --force leaves nothing of the old one.
+    File('$target${Platform.pathSeparator}hub${Platform.pathSeparator}stale.json')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('{}');
+    final running = DataDir(target);
+    await running.lock();
+    final (busy, _, busyErr) = await run(['restore', '--in', file, '--passphrase-env', 'DEN_PASS', '--data', target, '--force'], env: env);
+    await running.unlock();
+    expect(busy, 1);
+    expect(busyErr, contains('Stop it first'));
+    final (forced, _, forcedErr) = await run(['restore', '--in', file, '--passphrase-env', 'DEN_PASS', '--data', target, '--force'], env: env);
+    expect(forced, 0, reason: forcedErr);
+    expect(File('$target${Platform.pathSeparator}hub${Platform.pathSeparator}stale.json').existsSync(), isFalse);
+  });
 }

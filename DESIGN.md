@@ -450,22 +450,28 @@ a position and a word, and the one celebration is a star landing on a kid's own 
 
 ## Screenshots
 
-Golden tests render with the real bundled fonts. `test/design/gallery_test.dart` draws the
-foundation the way the canvas does (Today, the type ramp and controls, the family colors, the
-picture pack, the picture sheet on phone and iPad, 200 % text) in light and dark; screen tests
-in `test/screens` draw every screen.
+Golden tests are screenshots for review, rendered with the real bundled fonts:
+`test/design/gallery_test.dart` draws the foundation the way the canvas does (Today, the type
+ramp and controls, the family colors, the picture pack, the picture sheet on phone and iPad,
+200 % text) in light and dark, and the tests in `test/screens` draw every screen.
 
-- On CI (Linux) goldens render without comparing pixels: overflows and exceptions fail, pixels
-  don't (the reviewers' goldens are rendered on Windows).
-- Label a pull request `screenshots` and `.github/workflows/screenshots.yml` renders
-  `test/design` and `test/screens` with `--update-goldens` and pushes the images, and the
-  `pubspec.lock` it resolved, to the branch `screenshots/<branch>`, on every push while the
-  label is on. Once the workflow is on `main` it can also be run by hand with other test paths.
-- Look at them:
+- **One source: CI on Linux.** The images in the repository are the ones the screenshots
+  workflow renders. Tests never compare pixels on any machine
+  (`app/test/flutter_test_config.dart`): every screen still renders, so overflows and
+  exceptions fail, but text rasterizes differently from one platform to the next and a pixel
+  diff would mostly measure that.
+- **Make them**: label the pull request `screenshots`. On every push while the label is on,
+  `.github/workflows/screenshots.yml` runs all the tests with `--update-goldens` and pushes the
+  images, and the `pubspec.lock` it resolved, to the branch `screenshots/<branch>`. It pushes
+  what rendered even when a test fails, and then fails itself. Once the workflow is on `main`
+  it can also be run by hand, for some tests only, or with the app icon and Home Assistant
+  brand sources (the tests tagged `golden`).
+- **Look at them and bring them in**:
 
   ```bash
   git fetch origin screenshots/<branch>:refs/remotes/origin/screenshots/<branch>
   git show origin/screenshots/<branch>:app/test/design/goldens/today_phone.png > today_phone.png
+  git checkout origin/screenshots/<branch> -- app/test    # then commit
   ```
 
 ## Migrating a screen

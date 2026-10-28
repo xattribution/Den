@@ -7,8 +7,11 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'config.dart';
 
 class _Slot {
-  _Slot(this.host);
+  _Slot(this.host, this.owner);
   final WebSocketChannel host;
+
+  /// The client (see `clientKeyOf`) the host connected from.
+  final String owner;
   WebSocketChannel? guest;
   Timer? expiry;
   StreamSubscription<dynamic>? hostSubscription;
@@ -34,16 +37,20 @@ class RendezvousSlots {
   /// Whether a host is waiting at [slot].
   bool hasHost(String slot) => _slots.containsKey(slot);
 
-  /// Whether a new host may wait at [slot].
-  bool canHost(String slot) => !_slots.containsKey(slot) && _slots.length < config.maxSlots;
+  /// Whether a new host from [client] may wait at [slot]: under the relay's cap and the client's
+  /// share of it.
+  bool canHost(String slot, {String client = ''}) =>
+      !_slots.containsKey(slot) &&
+      _slots.length < config.maxSlots &&
+      _slots.values.where((s) => s.owner == client).length < config.maxSlotsPerClient;
 
-  /// Parks a host socket at [slot].
-  void host(WebSocketChannel socket, String slot) {
-    if (!canHost(slot)) {
+  /// Parks a host socket from [client] at [slot].
+  void host(WebSocketChannel socket, String slot, {String client = ''}) {
+    if (!canHost(slot, client: client)) {
       unawaited(socket.sink.close(_slots.containsKey(slot) ? RelayClose.replaced : RelayClose.full));
       return;
     }
-    final entry = _Slot(socket);
+    final entry = _Slot(socket, client);
     _slots[slot] = entry;
     entry.expiry = Timer(config.slotTtl, () {
       if (identical(_slots[slot], entry)) _slots.remove(slot);

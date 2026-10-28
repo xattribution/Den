@@ -11,7 +11,7 @@ class StoreFull implements Exception {
   /// Creates the exception.
   StoreFull(this.reason);
 
-  /// Which cap: `mailbox`, `mailboxes` or `relay`.
+  /// Which cap: `mailbox`, `mailboxes`, `client` (this client's share) or `relay`.
   final String reason;
 
   @override
@@ -46,16 +46,23 @@ class MailboxSlice {
 }
 
 class _Entry {
-  _Entry(this.cursor, this.created, this.offset, this.length);
+  _Entry(this.cursor, this.created, this.offset, this.length, [this.client]);
   final int cursor;
   final int created;
   int offset;
   final int length;
+
+  /// Who appended it, while this process runs (not persisted: blobs from before a restart count
+  /// toward no client).
+  final String? client;
 }
 
 class _Mailbox {
-  _Mailbox(this.file);
+  _Mailbox(this.file, [this.creator]);
   final File file;
+
+  /// The client that created the mailbox, while this process runs.
+  final String? creator;
   final List<_Entry> entries = [];
   int bytes = 0;
   int lastCursor = 0;
@@ -85,7 +92,31 @@ class MailboxStore {
 
   final Directory _root;
   final Map<String, _Mailbox> _boxes = {};
+  final Map<String, int> _clientBytes = {};
+  final Map<String, int> _clientBoxes = {};
   int _totalBytes = 0;
+
+  /// Bytes [client] has stored that are still held.
+  int bytesOf(String client) => _clientBytes[client] ?? 0;
+
+  /// Mailboxes [client] created that still hold blobs.
+  int mailboxesOf(String client) => _clientBoxes[client] ?? 0;
+
+  void _count(Map<String, int> counts, String? client, int delta) {
+    if (client == null) return;
+    final n = (counts[client] ?? 0) + delta;
+    if (n <= 0) {
+      counts.remove(client);
+    } else {
+      counts[client] = n;
+    }
+  }
+
+  void _drop(String id, _Mailbox box) {
+    if (!identical(_boxes[id], box)) return;
+    _boxes.remove(id);
+    _count(_clientBoxes, box.creator, -1);
+  }
 
   /// Mailboxes held.
   int get mailboxCount => _boxes.length;
@@ -147,18 +178,22 @@ class MailboxStore {
 
   File _fileFor(String id) => File(p.join(_root.path, id.substring(0, 2), '$id.box'));
 
-  /// Appends [blob] to mailbox [id] and returns its cursor. Throws [StoreFull] at a cap.
-  Future<int> append(String id, List<int> blob) async {
+  /// Appends [blob] to mailbox [id] for [client] (see `clientKeyOf`) and returns its cursor.
+  /// Throws [StoreFull] at a cap: the mailbox's, the client's share, or the relay's.
+  Future<int> append(String id, List<int> blob, {String? client}) async {
     var box = _boxes[id];
     if (box == null) {
       if (_boxes.length >= config.maxMailboxes) throw StoreFull('mailboxes');
-      box = _boxes[id] = _Mailbox(_fileFor(id));
+      if (client != null && mailboxesOf(client) >= config.maxClientMailboxes) throw StoreFull('client');
+      box = _boxes[id] = _Mailbox(_fileFor(id), client);
+      _count(_clientBoxes, client, 1);
     }
     final target = box;
     return target.lock(() async {
       if (target.entries.length >= config.maxMailboxEntries || target.bytes + blob.length > config.maxMailboxBytes) {
         throw StoreFull('mailbox');
       }
+      if (client != null && bytesOf(client) + blob.length > config.maxClientBytes) throw StoreFull('client');
       if (_totalBytes + blob.length > config.maxTotalBytes) throw StoreFull('relay');
       final now = config.currentMillis();
       final cursor = target.lastCursor + 1 > now * 1000 ? target.lastCursor + 1 : now * 1000;
@@ -177,13 +212,14 @@ class MailboxStore {
       } finally {
         await raf.close();
       }
-      target.entries.add(_Entry(cursor, now, offset + _recordHeader, blob.length));
+      target.entries.add(_Entry(cursor, now, offset + _recordHeader, blob.length, client));
       target.bytes += blob.length;
       target.lastCursor = cursor;
       _totalBytes += blob.length;
+      _count(_clientBytes, client, blob.length);
       return cursor;
     }).whenComplete(() {
-      if (target.entries.isEmpty && identical(_boxes[id], target)) _boxes.remove(id);
+      if (target.entries.isEmpty) _drop(id, target);
     });
   }
 
@@ -230,11 +266,14 @@ class MailboxStore {
         final dropped = box.entries.length - keep.length;
         if (dropped == 0) return 0;
         final droppedBytes = box.bytes - keep.fold<int>(0, (s, e) => s + e.length);
+        for (final e in box.entries) {
+          if (e.created < cutoff) _count(_clientBytes, e.client, -e.length);
+        }
         if (keep.isEmpty) {
           if (await box.file.exists()) await box.file.delete();
           box.entries.clear();
           box.bytes = 0;
-          _boxes.remove(id);
+          _drop(id, box);
         } else {
           final tmp = File('${box.file.path}.tmp');
           final source = await box.file.open();

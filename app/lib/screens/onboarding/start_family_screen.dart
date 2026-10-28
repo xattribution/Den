@@ -1,19 +1,28 @@
 import 'package:den_core/den_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../design/parts/family_frame.dart';
 import '../../design/parts/family_pickers.dart';
 import '../../design/parts/family_words.dart';
 import '../../design/widgets.dart';
+import '../../net/pairing.dart';
 import '../../state/app_state.dart';
 
 /// Starting a family: its name and time zone, you (the first parent), and this device. Creating
 /// it writes the genesis changes; the router then moves on to "Add people".
+///
+/// In a browser served by a fresh hub, the hub's setup code goes here too: once the family
+/// exists, this browser takes the hub in (see [PairingService.adoptServingHub]) while "Add
+/// people" shows how that goes.
 class StartFamilyScreen extends StatefulWidget {
-  const StartFamilyScreen({super.key, this.initialTimeZone});
+  const StartFamilyScreen({super.key, this.initialTimeZone, this.hub});
 
   /// Overrides the device's time zone, for tests and screenshots.
   final String? initialTimeZone;
+
+  /// The fresh hub that served this page, for tests; by default asked of the hub on the web.
+  final HubInfo? hub;
 
   @override
   State<StartFamilyScreen> createState() => _StartFamilyScreenState();
@@ -23,6 +32,9 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
   final _family = TextEditingController();
   final _name = TextEditingController();
   final _device = TextEditingController();
+  final _code = TextEditingController();
+  HubInfo? _hub;
+  bool _askedHub = false;
   Marker _marker = Marker.blue;
   Animal _animal = Animal.cat;
   String _zone = 'UTC';
@@ -51,6 +63,21 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
       _kind = guessDeviceKind(context);
       _suggestDevice();
     }
+    if (!_askedHub) {
+      _askedHub = true;
+      _hub = widget.hub;
+      if (_hub == null && kIsWeb) {
+        Pairing.of(context).servingHub().then((hub) {
+          if (mounted) setState(() => _hub = hub);
+        });
+      }
+    }
+  }
+
+  /// A fresh hub this browser can take in with its setup code.
+  bool get _adopting {
+    final hub = _hub;
+    return hub != null && !hub.paired && hub.stage == 'waiting_for_code';
   }
 
   void _suggestDevice() {
@@ -63,14 +90,19 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
     _family.dispose();
     _name.dispose();
     _device.dispose();
+    _code.dispose();
     super.dispose();
   }
 
   Future<void> _create() async {
     setState(() => _tried = true);
     if (_family.text.trim().isEmpty || _name.text.trim().isEmpty) return;
+    final hub = _adopting ? _hub : null;
+    final code = _code.text.trim();
+    if (hub != null && code.isEmpty) return;
     setState(() => _saving = true);
     final den = context.den;
+    final pairing = Pairing.of(context);
     final ok = await attempt(
       context,
       () => den.createFamily(
@@ -83,6 +115,14 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
         deviceKind: _kind!,
       ),
     );
+    if (ok && hub != null) {
+      // The router has already moved on to Add people, which follows this.
+      try {
+        Pairing.adoption.value = pairing.adoptServingHub(hub, code);
+      } on PairingException {
+        Pairing.adoption.value = null;
+      }
+    }
     if (mounted && !ok) setState(() => _saving = false);
   }
 
@@ -148,6 +188,30 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
           top: 0,
           child: MarkerPicker(value: _marker, onChanged: (m) => setState(() => _marker = m)),
         ),
+        if (_adopting) ...[
+          InfoHeader(
+            'Your hub',
+            info: 'The hub printed a setup code when it started, like ABCD-EFGH. '
+                "Whoever set up ${_hub!.name} can find it in the hub's log.",
+          ),
+          FormBlock(
+            top: 0,
+            child: TextField(
+              controller: _code,
+              textCapitalization: TextCapitalization.characters,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: InputDecoration(
+                labelText: 'Setup code',
+                hintText: 'ABCD-EFGH',
+                errorText: need(_code, "Add the hub's setup code."),
+              ),
+              onChanged: (_) {
+                if (_tried) setState(() {});
+              },
+            ),
+          ),
+        ],
         const SectionHeader('This device'),
         FormBlock(
           top: 0,

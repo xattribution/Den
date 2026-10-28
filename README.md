@@ -29,6 +29,25 @@ runs the extras: Home Assistant, AI access over MCP, calendar feeds, reminders.
   the code. The phone then shows three words and checks that the hub reports the same three
   (they're in its log too); approve it if they match. Any browser can then open
   `http://<hub-address>:47733` and link itself by showing a QR code for a parent's phone to scan.
+- A server, behind HTTPS, for a family whose phones should reach it from anywhere through the
+  web app on their home screen (one hub per family; several families can share a server):
+  [docs/hosting.md](docs/hosting.md).
+
+**Just the web app, on iPhones.** Put the hub behind an HTTPS reverse proxy (set
+`DEN_PUBLIC_URL` to its address; [docs/hosting.md](docs/hosting.md)) and open that address in
+Safari:
+
+1. Tap Share, then Add to Home Screen, and open Den from the Home Screen. (Safari shows these
+   steps first; the Home Screen app keeps its own storage, and only it gets reminders.)
+2. Start a family, with the hub's setup code from its log. That iPhone is the first parent's
+   device and the hub joins the family.
+3. Invite people from Add people, or Family → Devices → Add a device: Send invite shares a link
+   and four words. They open the link, add Den to their Home Screen the same way, type the words
+   if Den asks, and a parent taps Approve on Today.
+4. Settings → Notifications → Turn on reminders on this iPhone (iOS 16.4 or later).
+
+The web app opens from local data at once, works with no connection, and updates itself the next
+time it opens.
 
 **Add anything by sharing it.** Tap Add and type, snap or say it ("soccer every Wednesday at 5
 for Leo"), or share a flyer photo, a screenshot, an email, a link or a PDF to Den from any app.
@@ -61,10 +80,11 @@ hub's family.
 | `packages/den_relay/` | The relay: tunnel, mailbox and pairing rendezvous |
 | `packages/den_sett_import/` | Reads Sett's `coord.db` |
 | `integrations/homeassistant/` | The Home Assistant integration (calendars, to-do lists, sensors, services, events) |
-| `deploy/` | Docker images for the hub and the relay |
+| `deploy/` | Docker images for the hub and the relay; `deploy/hosted/` for a hub on a server behind HTTPS (Caddy, one or two families) |
 | `DESIGN.md` | The design system every screen follows |
 | `ARCHITECTURE.md` | The contract every package builds against |
 | `docs/hub-api.md` | The hub's REST, stream and mDNS contract |
+| `docs/hosting.md` | Hosting hubs on a server behind HTTPS, for the web app on phones |
 
 ## Status
 
@@ -89,9 +109,9 @@ install, add that repository to HACS as a custom repository of type Integration.
 
 Known gaps:
 
-- Phones refresh reminders in the background about hourly, but desktops only while Den runs. iOS
-  can't read the device's keys while the phone is locked, so its background refresh waits for an
-  unlocked moment. Browsers get no reminders.
+- Phones refresh reminders in the background about hourly, but desktops only while Den runs.
+  Browsers get reminders from the hub by Web Push once someone turns them on; that has been
+  checked against RFC test vectors and a recorded push service, not yet on a real iPhone.
 - Capture's native parts have run only on an Android emulator, where Gemini Nano reports itself
   unavailable (the image has no AICore), so reading with the phone's own model is untested on a
   phone that has it. Apple Intelligence, Vision and the iOS share extension are written but not
@@ -108,15 +128,17 @@ cd app && flutter run -d chrome --dart-define=DEN_DEMO=true
 ```
 
 `DEN_DEMO=true` starts with a demo family so every screen has something on it. Screenshot tests
-render each screen to `app/test/goldens`; review the images after any UI change:
+render each screen (and the design gallery in `app/test/design`); review the images after any UI
+change. The committed images are rendered on CI: label the pull request `screenshots` and the
+screenshots workflow pushes them to the branch `screenshots/<branch>`, then bring them in:
 
 ```bash
-cd app && flutter test --update-goldens
+git fetch origin screenshots/<branch>:refs/remotes/origin/screenshots/<branch>
+git checkout origin/screenshots/<branch> -- app/test
 ```
 
-Without Flutter at hand, label the pull request `screenshots`: CI renders `test/design` (the
-design gallery) and `test/screens` and pushes the images to the branch `screenshots/<branch>`
-(DESIGN.md, "Screenshots").
+Tests never compare pixels, so rendering locally (`cd app && flutter test --update-goldens`) is
+for a quick look only. See DESIGN.md, "Screenshots".
 
 The hub from source:
 

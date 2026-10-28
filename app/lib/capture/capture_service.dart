@@ -52,7 +52,9 @@ class CaptureService {
     final device = await abilities();
     final own = <CaptureReader>[if (device.model != null) DeviceModelReader(device, platform: platform), const RulesReader()];
     CaptureReader? remote;
-    switch (settings.reader) {
+    // In a browser the hub serves, the page may talk to the hub and nothing else (its
+    // Content-Security-Policy), so a model at home or Claude is reached through the hub's reader.
+    switch (kIsWeb ? ReaderChoice.device : settings.reader) {
       case ReaderChoice.device:
         break;
       case ReaderChoice.home:

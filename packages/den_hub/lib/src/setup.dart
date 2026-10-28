@@ -4,22 +4,44 @@ import 'dart:math';
 
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
+import 'package:den_net/io.dart' show boundedWebSocketHandler, maxSyncSocketMessageBytes;
 import 'package:shelf/shelf.dart';
-import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'body.dart';
 import 'config.dart';
 import 'context.dart';
+import 'device_auth.dart';
+import 'edge.dart';
 import 'http_util.dart';
 import 'log.dart';
 
 /// Letters for setup codes: no 0, 1, I, L, O or U, so a code read off a log can't be misread.
 const String setupAlphabet = '23456789ABCDEFGHJKMNPQRSTVWXYZ';
 
-/// Wrong setup codes allowed before the hub prints a new one.
+/// Wrong setup codes one client may send before it has to wait. The code itself stays: eight
+/// letters from [setupAlphabet] are about 39 bits, and a client gets five guesses, then a
+/// minute's wait that doubles with every further wrong code up to an hour, so no number of
+/// addresses can find it, and nobody can make the hub change it under its owner.
 const int setupTries = 5;
+
+/// How long a client waits after [setupTries] wrong setup codes the first time.
+const Duration setupLockout = Duration(minutes: 1);
+
+/// The longest a client ever waits.
+const Duration setupLockoutMax = Duration(hours: 1);
+
+/// The file in the hub's state directory (`<data>/hub/`) that `den_hub open-linking` writes:
+/// until when (UTC ms) browsers may ask to link in the public posture, opened from the server.
+const String linkOpenFile = 'link-open';
+
+class _Tries {
+  int wrong = 0;
+  int level = 0;
+  int until = 0;
+  int last = 0;
+}
 
 /// Where a hub is in joining a family.
 enum SetupStage {
@@ -64,7 +86,7 @@ class HubSetup {
   final Random _random = Random.secure();
   SetupStage _stage = SetupStage.waitingForCode;
   String? _code;
-  int _wrong = 0;
+  final Map<String, _Tries> _tries = {};
   String? _lastError;
   Completer<StreamChannel<dynamic>>? _backChannel;
   JoinAttempt? _attempt;
@@ -94,7 +116,7 @@ class HubSetup {
 
   void _issueCode() {
     _code = _newCode(_random);
-    _wrong = 0;
+    _tries.clear();
     final shown = display(_code!);
     _log.info('Setup code for this hub: $shown (enter it in the Den app to add this hub to your family)');
     final file = _codeFile;
@@ -132,8 +154,11 @@ class HubSetup {
     onReady();
   }
 
-  /// `GET /api/v1/hub/status` (no token).
-  Response status(Request request) => jsonResponse({
+  /// `GET /api/v1/hub/status` (no token). In the public posture a hub that is already in a
+  /// family says only that.
+  Response status(Request request) => hub.config.publicPosture && hub.ready
+      ? jsonResponse({'paired': true, 'setup_needed': false, 'stage': 'ready'})
+      : jsonResponse({
         'paired': hub.ready,
         'device': hub.den.deviceId,
         'name': hub.name,
@@ -164,9 +189,45 @@ class HubSetup {
     return diff == 0;
   }
 
-  /// `POST /api/v1/hub/setup {code, invite, direct?}`.
+  /// Throws `429 rate_limited` while the client [key] waits after wrong setup codes.
+  void _checkWaiting(String key) {
+    final t = _tries[key];
+    final now = hub.now();
+    if (t == null || now >= t.until) return;
+    throw ApiError.rateLimited(
+      ((t.until - now) / 1000).ceil(),
+      'Too many wrong setup codes from here. Wait a little, then try again.',
+    );
+  }
+
+  /// Counts a wrong code from [key]; returns how many it has left before it must wait (0: it
+  /// waits now, [setupLockout] doubling with each round up to [setupLockoutMax]).
+  int _wrongCode(String key) {
+    final now = hub.now();
+    if (_tries.length > 10000) {
+      _tries.removeWhere((_, t) => t.until < now && now - t.last > 2 * setupLockoutMax.inMilliseconds);
+      while (_tries.length > 10000) {
+        _tries.remove(_tries.keys.first);
+      }
+    }
+    final t = _tries.putIfAbsent(key, _Tries.new)..last = now;
+    t.wrong++;
+    if (t.wrong < setupTries) return setupTries - t.wrong;
+    final wait = min(setupLockout.inMilliseconds << t.level, setupLockoutMax.inMilliseconds);
+    t
+      ..until = now + wait
+      ..wrong = 0
+      ..level = min(t.level + 1, 8);
+    _log.warn('$setupTries wrong setup codes from one address; it waits ${wait ~/ 60000} min. The code stays the same.');
+    return 0;
+  }
+
+  /// `POST /api/v1/hub/setup {code, invite, direct?}`. Wrong codes are limited per client
+  /// ([setupTries], then a wait); the code never changes because of them.
   Future<Response> setup(Request request) async {
     if (hub.ready) throw ApiError(409, 'already_set_up', 'This hub is already part of a family.');
+    final key = hub.clientOf(request);
+    _checkWaiting(key);
     if (_attempt != null || _backChannel != null) {
       throw ApiError(409, 'busy', 'This hub is already joining a family. Approve it in the Den app.');
     }
@@ -175,15 +236,15 @@ class HubSetup {
     final inviteUrl = b.string('invite', required: true, min: 1, max: 4000)!;
     final direct = b.flag('direct', fallback: false)!;
     if (!_codeMatches(given)) {
-      _wrong++;
-      if (_wrong >= setupTries) {
-        _log.warn('$setupTries wrong setup codes; issuing a new one');
-        _issueCode();
-        throw ApiError(403, 'permission_denied', 'That setup code isn\'t right. The hub made a new one; find it in its log.',
-            details: {'tries_left': 0});
-      }
-      throw ApiError(403, 'permission_denied', 'That setup code isn\'t right.', details: {'tries_left': setupTries - _wrong});
+      final left = _wrongCode(key);
+      throw ApiError(
+        403,
+        'permission_denied',
+        left == 0 ? 'That setup code isn\'t right. Wait a minute, then check it in the hub\'s log.' : 'That setup code isn\'t right.',
+        details: {'tries_left': left},
+      );
     }
+    _tries.remove(key);
     final Invite invite;
     try {
       invite = await Invite.parse(inviteUrl);
@@ -214,19 +275,23 @@ class HubSetup {
 
   /// `GET /api/v1/hub/setup/ws`: the inviting phone opens this WebSocket and serves its side of
   /// the pairing session on it. The hub pins the inviter's key from the invite, so only the
-  /// phone that made the invite can complete the session.
+  /// phone that made the invite can complete the session. Its messages are session frames,
+  /// bounded as they arrive like `/ws`'s.
   Handler get backChannel => (Request request) {
         final waiting = _backChannel;
         if (waiting == null || waiting.isCompleted) {
           throw ApiError.notFound(message: 'This hub isn\'t waiting for a phone.');
         }
-        return webSocketHandler((WebSocketChannel socket, String? _) {
-          if (waiting.isCompleted) {
-            unawaited(socket.sink.close());
-          } else {
-            waiting.complete(socket);
-          }
-        })(request);
+        return boundedWebSocketHandler(
+          (WebSocketChannel socket) {
+            if (waiting.isCompleted) {
+              unawaited(socket.sink.close());
+            } else {
+              waiting.complete(socket);
+            }
+          },
+          maxMessageBytes: maxSyncSocketMessageBytes,
+        )(request);
       };
 
   Future<void> _join(Invite invite, Future<StreamChannel<dynamic>> Function() open) async {
@@ -289,12 +354,19 @@ class LinkSlot {
 }
 
 /// WhatsApp-Web-style linking of browsers through the hub (`/api/v1/link`).
+///
+/// In the public posture a browser can ask for a slot only while "Add a device" is open: a
+/// parent's own device opens it for [windowLength] with a signed `POST /api/v1/link/window`,
+/// so nobody on the internet can collect link codes from the hub.
 class LinkSlots {
-  /// Creates the slots for [hub].
-  LinkSlots(this.hub);
+  /// Creates the slots for [hub]; [auth] checks the parent's signed request that opens them.
+  LinkSlots(this.hub, this.auth);
 
   /// Shared hub context.
   final HubContext hub;
+
+  /// Checks signed requests from the family's devices.
+  final DeviceAuth auth;
 
   /// Most slots alive at once.
   static const int maxSlots = 32;
@@ -302,8 +374,41 @@ class LinkSlots {
   /// How long a slot works.
   static const Duration lifetime = Duration(minutes: 10);
 
+  /// How long "Add a device" stays open.
+  static const Duration windowLength = Duration(minutes: 10);
+
   final Map<String, LinkSlot> _slots = {};
   final Random _random = Random.secure();
+  int _openUntil = 0;
+
+  /// Whether browsers may ask for a slot now: always on a home network, and in the public
+  /// posture only while a parent has "Add a device" open, or until the time (UTC ms) the
+  /// owner wrote into `<data>/hub/link-open` with `den_hub open-linking`.
+  bool get open {
+    if (!hub.config.publicPosture) return true;
+    final now = hub.now();
+    if (now < _openUntil) return true;
+    final dir = hub.config.dataDir;
+    if (dir == null) return false;
+    try {
+      final until = int.tryParse(File('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$linkOpenFile').readAsStringSync().trim());
+      return until != null && now < until;
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  /// `POST /api/v1/link/window`, signed by a parent's own device: opens "Add a device" for
+  /// [windowLength]. Answers `{open_until, open_until_ms}`.
+  Future<Response> openWindow(Request request) async {
+    final c = await auth.parent(request, message: 'Only a parent\'s own phone can add a device.');
+    _openUntil = hub.now() + windowLength.inMilliseconds;
+    hub.log.info('${c.actor!.name} opened Add a device for ${windowLength.inMinutes} minutes');
+    return jsonResponse({
+      'open_until': DateTime.fromMillisecondsSinceEpoch(_openUntil, isUtc: true).toIso8601String(),
+      'open_until_ms': _openUntil,
+    });
+  }
 
   String _token(int bytes) => b64e(List.generate(bytes, (_) => _random.nextInt(256)));
 
@@ -315,13 +420,18 @@ class LinkSlots {
   /// `POST /api/v1/link`: a new slot and the `den://link` URI to show as a QR code.
   Response create(Request request) {
     if (!hub.ready) throw ApiError.notReady();
+    if (!open) {
+      throw ApiError(403, 'link_closed',
+          'A parent needs to open Add a device in Den first, on their phone. Then try again here.');
+    }
+    hub.limit(request, 'pairing', Limits.pairing);
     _prune();
     if (_slots.length >= maxSlots) {
       throw ApiError(429, 'rate_limited', 'Too many browsers are waiting to link. Try again in a few minutes.');
     }
     final slot = LinkSlot._(_token(16), _token(24), hub.now() + lifetime.inMilliseconds);
     _slots[slot.id] = slot;
-    final base = requestBase(request, hub.config.publicUrl);
+    final base = hub.base(request);
     final uri = 'den://link?hub=${hub.den.deviceId}&slot=${slot.id}&u=${Uri.encodeQueryComponent(base.toString())}';
     return jsonResponse({
       'slot': slot.id,
@@ -336,6 +446,7 @@ class LinkSlots {
   /// hub, signed by the phone's device key) for the slot.
   Future<Response> grant(Request request, String id) async {
     if (!hub.ready) throw ApiError.notReady();
+    hub.limit(request, 'pairing', Limits.pairing);
     _prune();
     final slot = _slots[id];
     if (slot == null) throw ApiError.notFound(type: 'link', message: 'That link code expired. Show a new one.');
@@ -349,6 +460,7 @@ class LinkSlots {
     }
     final problem = await hub.gate.asHub(() => hub.node.acceptInviteGrant(grant, context: 'link:$id'));
     if (problem != null) {
+      hub.failed(request);
       hub.log.warn('Refused a link grant: $problem');
       throw ApiError.denied('Only a parent\'s phone in this family can link a browser.');
     }
@@ -358,10 +470,12 @@ class LinkSlots {
 
   /// `GET /api/v1/link/{slot}` with `X-Den-Link-Secret`: `waiting`, or `ready` with the invite.
   Response poll(Request request, String id) {
+    hub.checkFailures(request);
     _prune();
     final slot = _slots[id];
     final secret = request.headers['x-den-link-secret'];
     if (slot == null || secret == null || !_same(secret, slot.secret)) {
+      hub.failed(request);
       throw ApiError.notFound(type: 'link', message: 'That link code expired. Show a new one.');
     }
     return jsonResponse({

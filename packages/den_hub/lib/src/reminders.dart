@@ -20,16 +20,29 @@ class Notice {
   final String body;
 }
 
+/// Another way reminders reach people, besides Home Assistant and ntfy: Web Push to the
+/// browsers they turned reminders on in.
+abstract class ReminderSink {
+  /// Whether anyone gets reminders this way now.
+  bool get active;
+
+  /// Sends [reminder] to the people it is for.
+  Future<void> remind(ReminderDue reminder);
+}
+
 /// Reminders from the hub: every [HubConfig.reminderInterval] it asks the engine what comes due
 /// next and sends each reminder once (keys kept in the hub's state) through Home Assistant's
-/// `notify` service and ntfy. Items outside the family space reach ntfy only as "A reminder from
-/// Den".
+/// `notify` service, ntfy and every [sinks] entry. Items outside the family space reach ntfy only
+/// as "A reminder from Den".
 class ReminderService implements HubService {
   /// Creates the service for [hub].
   ReminderService(this.hub);
 
   /// Shared hub context.
   final HubContext hub;
+
+  /// Further ways reminders go out (Web Push).
+  final List<ReminderSink> sinks = [];
 
   @override
   String get name => 'Reminders';
@@ -55,6 +68,7 @@ class ReminderService implements HubService {
   }
 
   bool get _configured =>
+      sinks.any((s) => s.active) ||
       hub.config.notify.values.any((n) => n.ntfyTopic != null || n.homeAssistantService != null);
 
   /// Looks ahead one interval and schedules what comes due.
@@ -80,6 +94,13 @@ class ReminderService implements HubService {
     final targets = await hub.gate.asHub(() => _targets(r));
     for (final t in targets) {
       await _send(t.$1, t.$2);
+    }
+    for (final sink in sinks) {
+      try {
+        await sink.remind(r);
+      } on Object catch (e) {
+        hub.log.warn('A reminder sink failed: ${e.runtimeType}');
+      }
     }
   }
 
