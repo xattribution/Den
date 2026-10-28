@@ -46,6 +46,13 @@ class ReminderDue {
   final List<String> members;
 }
 
+/// What [Den.undo] will write, and what it leaves alone.
+class _UndoPlan {
+  _UndoPlan(this.drafts, this.skipped);
+  final List<_Draft> drafts;
+  final List<UndoSkip> skipped;
+}
+
 class _Draft {
   _Draft(this.type, this.rid, this.space, this.fields, {this.hlc, this.actor, this.setsActor = false});
   final String type;
@@ -638,6 +645,315 @@ class Den {
       if (e.deleted) drafts.add(_Draft(type, id, e.space, {'_deleted': false}));
     }
     await _commit(drafts);
+  }
+
+  // ---------------------------------------------------------------- recording, undo and previews
+
+  /// The zone value [recording] keeps its lists of change ids under.
+  static final Object _recorders = Object();
+
+  /// Runs [body] and returns what it returned with the ids of the changes this device committed
+  /// while it ran: the changes an action made, for its receipt. Only writes made from [body]'s own
+  /// zone count, not writes other callers make meanwhile. Recordings nest; an outer one also sees
+  /// what an inner one recorded.
+  ///
+  /// With [undoOnError], a body that throws after writing has what it wrote taken back ([undo])
+  /// before the error is passed on, so an action that fails half way leaves nothing behind.
+  Future<Recorded<T>> recording<T>(FutureOr<T> Function() body, {bool undoOnError = false}) async {
+    final ids = <String>[];
+    final outer = Zone.current[_recorders];
+    final sinks = <List<String>>[if (outer is List<List<String>>) ...outer, ids];
+    try {
+      final value = await runZoned(() => Future<T>.sync(body), zoneValues: {_recorders: sinks});
+      return Recorded(value, List.unmodifiable(ids));
+    } on Object {
+      if (undoOnError && ids.isNotEmpty) {
+        try {
+          await undo(ids);
+        } on Object {
+          // The body's error is the one to report.
+        }
+      }
+      rethrow;
+    }
+  }
+
+  /// Takes back the changes [changeIds] names, field by field, as the actor and with the
+  /// permission each change back needs (refused as a whole, with [PermissionDenied], when one
+  /// isn't allowed):
+  ///
+  /// - a record they made is removed (and can be restored again);
+  /// - a record they removed comes back as it was ([restore]);
+  /// - a field they changed gets its old value back, one entry of a map field (`steps.<id>`,
+  ///   `patch.<field>`) at a time;
+  /// - points given or taken get a new adjustment the other way, since adjustments never change.
+  ///
+  /// What it leaves alone is reported in [UndoResult.skipped]: fields someone changed since
+  /// (theirs is newer), a record someone removed or restored since, and what Den can't take
+  /// back: adding or removing a person (removal revokes their devices and rotates keys), device
+  /// and AI-access changes, and asking for a reward.
+  Future<UndoResult> undo(Iterable<String> changeIds) => _locked(() async {
+        final plan = _planUndo(changeIds);
+        final made = await _commitNow(plan.drafts);
+        return UndoResult(changes: [for (final c in made) c.id], skipped: plan.skipped);
+      });
+
+  /// Whether [undo] would write anything back for [changeIds] now. It may still be refused.
+  bool canUndo(Iterable<String> changeIds) {
+    try {
+      return _planUndo(changeIds).drafts.isNotEmpty;
+    } on InvalidInput {
+      return false;
+    }
+  }
+
+  /// A copy of this engine in memory, with the same log, keys and acting member, to try a change
+  /// on before making it (a preview). What it writes is never stored or sent: don't sync it.
+  /// Close it when done.
+  Future<Den> fork() async {
+    final storage = MemoryStorage();
+    await storage.appendChanges(List.of(_mat.log));
+    await storage.saveMeta({
+      ..._meta,
+      'counter': _counter,
+      'floor': Map<String, Object?>.of(_floor),
+      'spaceKeys': _keyringJson(),
+    });
+    final copy = await Den.open(storage: storage, keys: _keys, now: _now);
+    copy
+      .._actingMember = _actingMember
+      .._actingUntil = _actingUntil
+      .._actingVia = _actingVia;
+    return copy;
+  }
+
+  static const String _trustRecords = 'Devices and AI access change only on a parent\'s own device';
+
+  /// What a field that was never set means, for fields an undo may have to write back that way
+  /// and whose schema takes no null. Other such fields are left as they are: without the rest
+  /// of the record's changes taken back they mean nothing (what a step was worth when checked).
+  static const Map<String, Object?> _unsetValues = {
+    'completion.done': false,
+    'eventException.cancelled': false,
+    'item.checked': false,
+    'item.toGroceries': false,
+    'event.allDay': false,
+    'event.countdown': false,
+    'list.pinned': false,
+    'subscription.skipAllDay': false,
+    'chore.active': true,
+    'reward.active': true,
+    'reward.needsApproval': true,
+    'family.pointsEnabled': true,
+  };
+
+  /// Whether [c] wrote [field]: the field itself, any entry of it when it's a map, or the whole
+  /// map when [field] is one entry.
+  static bool _touches(Change c, String field) {
+    final dot = field.indexOf('.');
+    for (final k in c.fields.keys) {
+      if (k == field) return true;
+      if (dot > 0 && k == field.substring(0, dot)) return true;
+      if (dot < 0 && k.startsWith('$field.')) return true;
+    }
+    return false;
+  }
+
+  /// Whether the actor may remove a completion, which needs completing anyone's chores.
+  bool get _mayRemoveCompletions {
+    final a = actor;
+    return a == null || can(a, DenAction.completeAnyChore);
+  }
+
+  /// A completion back to nothing done, for someone who may not remove it; null when it records
+  /// a swap, which only a removal takes back.
+  static Map<String, Object?>? _completionReset(Entry e) {
+    if (e.fields.containsKey('owner')) return null;
+    final steps = e.fields['steps'];
+    return {
+      if (e.fields['done'] == true || e.fields['doneBy'] != null) ...{'done': false, 'doneBy': null},
+      if (steps is Map)
+        for (final s in steps.entries)
+          if (s.value != null) 'steps.${s.key}': null,
+    };
+  }
+
+  /// Who has a chore on a completion's day before any swap.
+  String? _scheduledOwnerOf(Entry completion) {
+    final chore = _mat.store.at(completion.space, RecordType.chore, '${completion.fields['chore']}');
+    final date = completion.fields['date'];
+    if (chore == null || date is! String) return null;
+    return scheduledOwner(Chore(chore.rec), date, _weekStart);
+  }
+
+  static String _undoReason(String reason) {
+    final text = reason.trim().isEmpty ? 'Undo' : 'Undo: ${reason.trim()}';
+    return text.length > maxTitle ? text.substring(0, maxTitle) : text;
+  }
+
+  /// The drafts [undo] writes for [changeIds], newest record first, and what it leaves alone.
+  _UndoPlan _planUndo(Iterable<String> changeIds) {
+    final want = <String>{};
+    for (final id in changeIds) {
+      if (!_mat.contains(id)) throw const InvalidInput('Den doesn\'t know that change');
+      if (!_mat.rejected.containsKey(id)) want.add(id);
+    }
+    final drafts = <_Draft>[];
+    final skipped = <UndoSkip>[];
+    if (want.isEmpty) return _UndoPlan(drafts, skipped);
+    // Walk back from the newest valid change until every one to undo is found; the others met on
+    // the way came after the first of them.
+    final ours = <Applied>[];
+    final others = <Applied>[];
+    final applied = _mat.applied;
+    for (var i = applied.length - 1; i >= 0 && want.isNotEmpty; i--) {
+      final a = applied[i];
+      if (want.remove(a.change.id)) {
+        ours.add(a);
+      } else {
+        others.add(a);
+      }
+    }
+    String keyOf(Change c) => '${c.space}\u0000${c.type}\u0000${c.rid}';
+    // Record -> the changes to undo that touched it, oldest first.
+    final records = <String, List<Applied>>{};
+    for (final a in ours.reversed) {
+      (records[keyOf(a.change)] ??= []).add(a);
+    }
+    // Record -> later changes by anyone else, newest first.
+    final since = <String, List<Applied>>{};
+    for (final a in others) {
+      final k = keyOf(a.change);
+      if (records.containsKey(k)) (since[k] ??= []).add(a);
+    }
+    final readable = readableSpaces;
+    final me = actor;
+    // What was made last is taken back first: items before their list.
+    for (final k in records.keys.toList().reversed) {
+      final list = records[k]!;
+      final first = list.first;
+      final c0 = first.change;
+      final type = c0.type;
+      final entry = _mat.store.at(c0.space, type, c0.rid);
+      if (entry == null) continue;
+      if (!readable.contains(c0.space)) throw const InvalidInput('That doesn\'t exist');
+      final title = titleOf(entry, _mat.store);
+      UndoSkip skip(String reason, [String? field]) =>
+          UndoSkip(type: type, id: c0.rid, title: title, reason: reason, field: field);
+      _Draft draft(Map<String, Object?> fields) => _Draft(type, c0.rid, c0.space, fields);
+
+      if (type == RecordType.device || type == RecordType.connection) {
+        skipped.add(skip(_trustRecords));
+        continue;
+      }
+      if (type == RecordType.member && list.any((a) => a.created || a.change.fields.containsKey('_deleted'))) {
+        skipped.add(skip(first.created
+            ? 'Den can\'t take back adding someone; a parent can remove them in the app'
+            : 'Den can\'t bring back someone who was removed, since their devices were too; a parent can add them again'));
+        continue;
+      }
+      if (type == RecordType.redemption && first.created) {
+        skipped.add(skip('Asking for a reward can\'t be taken back; a parent can decline it'));
+        continue;
+      }
+      if (type == RecordType.adjustment) {
+        if (first.created) {
+          final adjustment = Adjustment(entry.rec);
+          drafts.add(_Draft(RecordType.adjustment, newId(), Space.family, {
+            'member': adjustment.member,
+            'delta': -adjustment.delta,
+            'reason': _undoReason(adjustment.reason),
+            'by': me?.id,
+          }));
+        }
+        continue;
+      }
+      if (first.created) {
+        if (entry.deleted) continue;
+        if (type == RecordType.completion && !_mayRemoveCompletions) {
+          final reset = _completionReset(entry);
+          if (reset == null) {
+            skipped.add(skip('${me?.name ?? 'This screen'} can\'t take back a swap; a parent can'));
+          } else if (reset.isNotEmpty) {
+            drafts.add(draft(reset));
+          }
+          continue;
+        }
+        drafts.add(draft({'_deleted': true}));
+        continue;
+      }
+
+      final later = since[k] ?? const <Applied>[];
+      if (later.any((o) => o.change.fields.containsKey('_deleted'))) {
+        skipped.add(skip(entry.deleted ? 'It was removed since' : 'It was removed and put back since'));
+        continue;
+      }
+      final firstTouch = <String, Applied>{};
+      for (final a in list) {
+        for (final f in a.change.fields.keys) {
+          if (f != '_via' && f != '_from') firstTouch.putIfAbsent(f, () => a);
+        }
+      }
+      final restore = <String, Object?>{};
+      for (final e in firstTouch.entries) {
+        final f = e.key;
+        final at = e.value;
+        final dot = f.indexOf('.');
+        if (dot > 0) {
+          // An entry written after its whole map: taking the map back covers it.
+          final whole = firstTouch[f.substring(0, dot)];
+          if (whole != null && changeOrder(whole.change, at.change) < 0) continue;
+        }
+        final newer = later.firstWhereOrNull((o) => o.change.hlc > at.change.hlc && _touches(o.change, f));
+        if (newer != null) {
+          skipped.add(skip('${_historyEntry(newer).actorName} changed it since', f));
+          continue;
+        }
+        Object? value = copyJson(at.before[f]);
+        if (value == null && at.absent.contains(f)) {
+          final unset = '$type.$f';
+          if (type == RecordType.completion && f == 'owner') {
+            // A swap to anyone stores a null owner: unswapped is the owner the schedule gives.
+            value = _scheduledOwnerOf(entry);
+          } else if (_unsetValues.containsKey(unset)) {
+            value = _unsetValues[unset];
+          } else if (checkFields(type, {f: null}, creating: false) != null) {
+            continue;
+          }
+        }
+        restore[f] = value;
+      }
+      // An entry first written before its whole map goes into the map's old value.
+      for (final f in [for (final key in restore.keys) if (key.indexOf('.') > 0) key]) {
+        final dot = f.indexOf('.');
+        final head = f.substring(0, dot);
+        if (!restore.containsKey(head)) continue;
+        final value = restore.remove(f);
+        final whole = restore[head];
+        if (whole is Map) {
+          final merged = Map<String, Object?>.from(whole);
+          if (value == null && firstTouch[f]!.absent.contains(f)) {
+            merged.remove(f.substring(dot + 1));
+          } else {
+            merged[f.substring(dot + 1)] = value;
+          }
+          restore[head] = merged;
+        }
+      }
+      if (firstTouch.containsKey('_deleted')) {
+        final wasRemoved = restore.remove('_deleted') == true;
+        if (wasRemoved) {
+          // They restored it: put back what else they changed, then remove it again.
+          if (restore.isNotEmpty) drafts.add(draft(restore));
+          drafts.add(draft({'_deleted': true}));
+        } else {
+          drafts.add(draft({'_deleted': false, ...restore}));
+        }
+      } else if (restore.isNotEmpty) {
+        drafts.add(draft(restore));
+      }
+    }
+    return _UndoPlan(drafts, skipped);
   }
 
   // ---------------------------------------------------------------- calendar
@@ -1882,7 +2198,23 @@ class Den {
       space: c.space,
       via: c.fields['_via'] as String?,
       from: CaptureOrigin.parse(c.fields['_from']),
+      change: c.id,
     );
+  }
+
+  /// History entries for the changes [changeIds] names (what [recording] returned, say), oldest
+  /// first. Changes that didn't count, or that the actor may not read, are left out.
+  List<HistoryEntry> historyOf(Iterable<String> changeIds) {
+    final want = changeIds.toSet();
+    final readable = readableSpaces;
+    final out = <HistoryEntry>[];
+    final applied = _mat.applied;
+    for (var i = applied.length - 1; i >= 0 && want.isNotEmpty; i--) {
+      final a = applied[i];
+      if (!want.remove(a.change.id) || !readable.contains(a.change.space)) continue;
+      out.add(_historyEntry(a));
+    }
+    return out.reversed.toList();
   }
 
   static Object? _redact(String field, Object? value) {
@@ -2590,6 +2922,12 @@ class Den {
     }
     _counter = counter;
     await _saveMeta();
+    final sinks = Zone.current[_recorders];
+    if (sinks is List<List<String>>) {
+      for (final ids in sinks) {
+        ids.addAll([for (final c in made) c.id]);
+      }
+    }
     _emit({for (final c in made) c.type});
     return made;
   }

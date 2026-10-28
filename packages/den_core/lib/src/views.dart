@@ -215,10 +215,14 @@ class HistoryEntry {
     required this.space,
     this.via,
     this.from,
+    this.change,
   });
 
   final Hlc when;
   final String? actor;
+
+  /// The change's id (`"<deviceId>:<counter>"`), which [Den.undo] takes.
+  final String? change;
 
   /// The member's name, or the device's name for open check-off and the hub.
   final String actorName;
@@ -241,6 +245,41 @@ class HistoryEntry {
 
   /// What a capture read to make this change ("from a photo"), or null for a change made by hand.
   final CaptureOrigin? from;
+}
+
+/// What [Den.recording]'s body returned, with the ids of the changes this device committed
+/// while it ran, oldest first.
+class Recorded<T> {
+  const Recorded(this.value, this.changes);
+  final T value;
+  final List<String> changes;
+}
+
+/// Part of an undo that wasn't done, and why, for people.
+class UndoSkip {
+  const UndoSkip({required this.type, required this.id, required this.title, required this.reason, this.field});
+
+  /// The record's type and id.
+  final String type;
+  final String id;
+
+  /// What people know the record by.
+  final String title;
+
+  /// The field left as it is, or null when the whole record was.
+  final String? field;
+  final String reason;
+}
+
+/// What [Den.undo] did: the changes it wrote, and what it left alone.
+class UndoResult {
+  const UndoResult({required this.changes, required this.skipped});
+
+  /// Ids of the changes the undo wrote; empty when there was nothing it could take back.
+  final List<String> changes;
+  final List<UndoSkip> skipped;
+
+  bool get isEmpty => changes.isEmpty;
 }
 
 enum GapKind {
