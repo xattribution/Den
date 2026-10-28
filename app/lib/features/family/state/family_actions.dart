@@ -23,8 +23,6 @@ class FamilyActions {
   /// [day] is 0 for Sunday to 6 for Saturday.
   Future<ActionResult> setWeekStart(int day) => _settings({'week_start': _weekdays[day]});
 
-  Future<ActionResult> setPointsOn(bool on) => _settings({'points_enabled': on});
-
   /// Whether what Den reads from photos and messages waits for a look first.
   Future<ActionResult> setCaptureReview(bool review) => _settings({'capture': review ? 'review' : 'direct'});
 

@@ -243,22 +243,14 @@ class _StarCardState extends State<_StarCard> with SingleTickerProviderStateMixi
                   Text('$stars', style: t.display(c.ink).withWeight(FontWeight.w800)),
                   if (goal != null) ...[
                     const SizedBox(height: Sp.s),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: SizedBox(
-                        height: 12,
-                        child: ColoredBox(
-                          color: c.track,
-                          child: FractionallySizedBox(
-                            alignment: AlignmentDirectional.centerStart,
-                            widthFactor: goal.$2 <= 0 ? 1 : (goal.$1 / goal.$2).clamp(0.0, 1.0),
-                            child: ColoredBox(color: widget.color),
-                          ),
-                        ),
-                      ),
+                    ProgressBar(
+                      fraction: goal.$2 <= 0 ? 1 : goal.$1 / goal.$2,
+                      color: widget.color,
+                      label: label!,
+                      height: 12,
                     ),
                     const SizedBox(height: Sp.s),
-                    Text(label!, style: t.rowTitle(c.ink)),
+                    Text(label, style: t.rowTitle(c.ink)),
                   ],
                 ],
               ),

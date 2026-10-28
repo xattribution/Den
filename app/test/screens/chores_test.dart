@@ -2,6 +2,7 @@ import 'package:den_app/features/chores/screens/chore_detail.dart';
 import 'package:den_app/features/chores/screens/chore_editor.dart';
 import 'package:den_app/features/chores/screens/chores_board.dart';
 import 'package:den_app/app/app_state.dart';
+import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -9,6 +10,15 @@ import '../helpers/shots.dart';
 import 'chores_shots.dart';
 
 String _chore(AppState state, String title) => state.den.chores.firstWhere((c) => c.title == title).id;
+
+/// Lets the sheet close on the test's clock, then the write it started finish on the real one.
+Future<void> settle(WidgetTester tester) async {
+  await tester.pumpAndSettle();
+  for (var i = 0; i < 3; i++) {
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+    await tester.pumpAndSettle();
+  }
+}
 
 void main() {
   testWidgets('Chores board, phone, day', (tester) async {
@@ -20,6 +30,28 @@ void main() {
       state: state,
       size: tall,
     );
+  });
+
+  testWidgets('Chores board at 200 % text: everything wraps, Give to… moves into the open row', (tester) async {
+    final state = await demo(tester);
+    withTextScale(tester, 2);
+    await shoot(tester, 'chores_board_phone_200', ChoresBoard(date: state.den.todayDate()), state: state, size: const Size(390, 2000));
+  });
+
+  testWidgets('Chores board on a day with nothing on it', (tester) async {
+    final state = (await tester.runAsync(() async {
+      final den = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate(), now: () => demoNow.millisecondsSinceEpoch);
+      await den.createFamily(
+        familyName: 'The Testers',
+        timezone: 'America/Chicago',
+        yourName: 'Sam',
+        deviceName: 'Sam\'s iPhone',
+        deviceKind: DeviceKind.phone,
+      );
+      return AppState(den);
+    }))!;
+    await shoot(tester, 'chores_board_empty_phone', ChoresBoard(date: state.den.todayDate()), state: state);
+    expect(find.text('Add chore'), findsOneWidget);
   });
 
   testWidgets('Chores board, phone, night', (tester) async {
@@ -96,18 +128,47 @@ void main() {
     await shootPath(tester, 'chores_tab_shell_phone', '/chores?date=$tomorrow', state: state);
   });
 
-  testWidgets('Swap sheet from a long-press', (tester) async {
+  testWidgets('A chore opens in place: its steps, Give to… and Details', (tester) async {
     final state = await demo(tester);
     await shootAfter(
       tester,
-      'chores_swap_sheet_phone',
+      'chores_board_open_phone',
       ChoresBoard(date: state.den.todayDate()),
       state: state,
+      size: tall,
       act: (tester) async {
-        await tester.longPress(find.text('Dishes').first);
+        await tester.tap(findWords('Clean the kitchen'));
         await tester.pumpAndSettle();
+        expect(find.text('Details'), findsOneWidget);
       },
     );
+  });
+
+  testWidgets('Give to… from a row: the people sheet, then the row says what it did, with Undo', (tester) async {
+    final state = await demo(tester);
+    await shootAfter(
+      tester,
+      'chores_give_sheet_phone',
+      ChoresBoard(date: state.den.todayDate()),
+      state: state,
+      size: tall,
+      act: (tester) async {
+        await tester.tap(find.text('Give to…').first);
+        await tester.pumpAndSettle();
+        expect(find.text('Anyone'), findsWidgets);
+      },
+    );
+    ChoreDay day(String title) => state.den.today().chores.firstWhere((d) => d.chore.title == title);
+    final first = state.den.today().chores.firstWhere((d) => !d.done && d.owner != null);
+    final title = first.chore.title;
+    final owner = first.owner;
+    await tester.tap(find.text('Anyone').last);
+    await settle(tester);
+    expect(state.den.today().chores.where((d) => d.chore.id == first.chore.id && d.owner == null), isNotEmpty);
+    expect(findWords('Anyone can do $title today'), findsOneWidget);
+    await tester.tap(find.text('Undo'));
+    await settle(tester);
+    expect(day(title).owner, owner);
   });
 
   testWidgets('Chore detail with step owners, phone', (tester) async {

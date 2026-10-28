@@ -2,4 +2,7 @@
 /// beside it), never the folders behind it, and reach its pages by their routes.
 library;
 
+export 'state/points_model.dart';
 export 'state/reward_actions.dart';
+export 'widgets/points_switch.dart';
+export 'words/points_words.dart';

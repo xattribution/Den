@@ -5,3 +5,4 @@ library;
 export 'state/chore_actions.dart';
 export 'state/chore_groups.dart';
 export 'widgets/chore_row.dart';
+export 'widgets/give.dart';

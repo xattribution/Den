@@ -387,10 +387,15 @@ take plain values and den_core model types, never the app's state, so any featur
 | `GroupCard`, `RowRule`, `ruled()` | The card itself; hairlines between rows | `RowRule(indent: RowRule.afterFace)` after 40 pt faces. Never a card in a card. |
 | `ActionRow` | A row that asks for one thing (Needs you, requests) | Face, bold sentence, detail, one action. The action sits under the words below 360 pt (a phone's card) and past 135 % text, at the end otherwise (an iPad column). |
 | `DoneRow`, `DoneSwap` | What a row did, with Undo in place | `DoneSwap(done: …, child: row)` crossfades on the UI spring; pass a receipt's undo as `onUndo`. Never a toast. |
+| `InfoRow` | One fact on a detail page (Repeats, Due, Who sees it) | Label in meta beside the value, or over it on a narrow card and at large text. |
 | `NavRow` | A row that goes somewhere (menus, "Or add one thing", settings) | Optional glyph or face, label, detail, what it's set to (`value`: "Off"), chevron; 56 tall. |
 | `FaceStack` | Who something is for | `DenAvatar`s 26 across, each ringed in the card color. |
-| `CheckPill` | A chore (or anything checked off) as a pill | Ring in the person's color. Ring tap checks; label tap opens details (steps, Give to…). `stars: null` when points are off. |
-| `CheckRow`, `CheckRing` | The same as a full-width row (PadToday's chores); the ring alone (a step) | 32 pt ring in a 48 target, whose it is at the end; 60 tall. |
+| `CheckPill` | A chore (or anything checked off) as a pill | Ring in the person's color. Ring tap checks; label tap opens details (steps, Give to…). `stars: null` when points are off. With steps, the ring fills as an arc and "1 of 4" follows the name once a step is done. |
+| `CheckRow`, `CheckRing` | The same as a full-width row (PadToday's chores); the ring alone (a step) | 32 pt ring in a 48 target, whose it is at the end; 60 tall. `CheckRing(progress:)` draws steps as an arc of the person's color: never a digit in a ring (the slashed zero reads as a glitch at that size). |
+| `ChipRow` | Chips that may not fit (the lists, people to filter by) | Scrolls sideways edge to edge; the first chip lines up with the page. |
+| `ProgressBar` | Progress toward a goal | 8 pt, round ends, the person's color on a quiet track; say the words beside it and in `label`. |
+| `MoreOptions` | An editor's rarely used fields | A quiet "More options" row that reveals them; `initiallyOpen` when one is already set. |
+| `DayStepper` | Moving a page by days (Chores, a calendar day) | Back, Today (only when it isn't today), forward; the page's heading names the day. |
 | `TagChip` | One of a few choices (a category, a kind) | Ink when chosen. |
 | `PersonPill` | A person to filter by or pick | 32 pt face; ink edge when chosen. |
 | `ValueChip` | One thing Den understood, to adjust (When, Who, Repeats) | `missing: true` asks for it. |
@@ -413,7 +418,9 @@ take plain values and den_core model types, never the app's state, so any featur
 | `showDenSheet` | Every sheet | Springs, drag to close, centered form sheet on iPad. |
 
 Writes from these pieces go through the feature's actions (ARCHITECTURE.md, "The app"); an
-action's `ActionResult.receipt` is what Undo takes back.
+action's `ActionResult.receipt` is what Undo takes back. A screen keeps what a tap did as a
+`Done` (`app/actions.dart`: the words, "Gave Maya 5 stars", and that receipt) in the place the
+tap happened, and shows it in a `DoneRow`.
 
 ## Screens (phone)
 
@@ -436,9 +443,22 @@ action's `ActionResult.receipt` is what Undo takes back.
 - **Calendar**: the month as the title and a Today button; a week strip in a card (selected day
   in ink, people's dots); person filters; the day's events as solid blocks by time; on iPad the
   family week (a column per person, a row per day, everyone's events across the row).
-- **Chores and stars**: each kid's stars and goal bar in their color, then their chores.
-- **Lists**: groceries grouped by store, crossed off in place, "In the cart" collected below,
-  the add bar always there.
+- **Chores** (Chores.dc.html): the day with back, Today and forward, and how many are done;
+  a section per person with their stars and goal bar in their color (while points are on),
+  then their chores in one card. A row's ring checks it (steps fill the ring as an arc); its
+  words open it in place (steps, Give to…, Details); "Give to…" at the end hands it on for the
+  day, and its old section says so with Undo. iPad: the people in two columns. The editor asks
+  only for name, picture, who, when and stars; the rest is under More options.
+- **Points and rewards** (no board; built from Chores): requests waiting for a parent with
+  Approve and Decline in place, each person's stars and goal bar (tap to give or take),
+  the rewards as cards (a kid asks for one, or gets it when it needs no asking, with Undo),
+  goals as one kind ("reach 25 stars by Saturday, each week"), and Recent. Points on or off
+  lives in Settings, under Family (`PointsSwitch`).
+- **Lists** (Lists.dc.html): the lists as chips, pinned first; one add field that reads "2
+  milk @Costco, eggs"; groceries grouped by store with store chips; "In the cart" below with
+  Clear; adding, removing, clearing and "Add to groceries" (meals) each say what they did in
+  place, with Undo. More holds Share, Copy, Reorder, Edit and Delete. iPad: the lists in a
+  column beside the chosen one.
 - **Family**: Needs you, the people (face, name, who they are), parent controls as switches.
 - **Add**: one field that understands a sentence, the kinds as chips, one button naming what it
   will add.

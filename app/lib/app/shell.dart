@@ -73,19 +73,9 @@ class AppShell extends StatelessWidget {
 
     final Widget frame;
     if (DenLayout.of(context).isCompact) {
+      // Each place heads itself (the boards have no bar over them); Today carries the person.
       frame = Scaffold(
-        body: SafeArea(
-          bottom: false,
-          child: Column(
-            children: [
-              // Today carries the person in its own header and Calendar has its own title (the
-              // canvas has no bar there); the other places keep a slim bar with it until their
-              // screens are redone.
-              if (index > 1) const DenTopBar(),
-              Expanded(child: navigationShell),
-            ],
-          ),
-        ),
+        body: SafeArea(bottom: false, child: navigationShell),
         bottomNavigationBar: DenTabBar(places: places, onAdd: () => showAddSheet(context)),
       );
     } else {
@@ -102,6 +92,12 @@ class AppShell extends StatelessWidget {
                   icon: PhosphorIconsRegular.usersThree,
                   selectedIcon: PhosphorIconsBold.usersThree,
                   onTap: () => context.push('/family'),
+                ),
+                NavPlace(
+                  label: 'Search',
+                  icon: PhosphorIconsRegular.magnifyingGlass,
+                  selectedIcon: PhosphorIconsBold.magnifyingGlass,
+                  onTap: () => context.push('/search'),
                 ),
               ],
               onAdd: () => showAddSheet(context),
@@ -123,31 +119,8 @@ class AppShell extends StatelessWidget {
   }
 }
 
-/// The phone's slim bar on the places Today doesn't head: the family's name and the person.
-class DenTopBar extends StatelessWidget {
-  const DenTopBar({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.watch(const {});
-    final c = context.colors;
-    final me = app.me;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(DenLayout.gutter + DenLayout.headingInset, Sp.xs, Sp.s, Sp.xs),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(app.den.family?.name ?? 'Den', style: context.text.meta(c.ink2).bold, overflow: TextOverflow.ellipsis),
-          ),
-          const SearchButton(),
-          PersonButton(member: me, size: 36),
-        ],
-      ),
-    );
-  }
-}
-
-/// Search, in the top bar: a magnifying glass that opens it (⌘F does too).
+/// Search: a magnifying glass that opens it (⌘F does too). On Today's header beside the face,
+/// and in the iPad sidebar.
 class SearchButton extends StatelessWidget {
   const SearchButton({super.key});
 

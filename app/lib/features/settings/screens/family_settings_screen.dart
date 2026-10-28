@@ -7,10 +7,11 @@ import '../../../design/pickers/time_zone_picker.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../family/family.dart';
+import '../../rewards/rewards.dart' show PointsSwitch;
 
 /// Settings → Family: the family's name, time zone and first day of the week, whether it uses
-/// stars, and whether what Den reads from a photo or a message is added right away or shown
-/// first. Each saves as it changes.
+/// points (the rewards' [PointsSwitch]), and whether what Den reads from a photo or a message is
+/// added right away or shown first. Each saves as it changes.
 class FamilySettingsScreen extends StatefulWidget {
   const FamilySettingsScreen({super.key});
 
@@ -97,14 +98,7 @@ class _FamilySettingsScreenState extends State<FamilySettingsScreen> {
             onChanged: (d) => _write(() => actions.setWeekStart(d)),
           ),
         ),
-        GroupCard(
-          child: SwitchLine(
-            label: 'Stars and rewards',
-            detail: family.pointsEnabled ? 'Kids earn stars for chores and ask for rewards' : 'Off: no stars anywhere',
-            value: family.pointsEnabled,
-            onChanged: (on) => _write(() => actions.setPointsOn(on)),
-          ),
-        ),
+        const GroupCard(child: PointsSwitch()),
         DenSection(
           title: 'When Den reads a photo or message',
           child: ChoiceRows<bool>(
