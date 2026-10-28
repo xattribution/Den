@@ -226,6 +226,16 @@ void main() {
       await expectLater(find.byType(MaterialApp), matchesGoldenFile('../goldens/events_undo_phone.png'));
     });
 
+    testWidgets('a change that can’t be saved says why, where it was made, with the way out', (tester) async {
+      final state = await failingDemo(tester);
+      final party = findEvent(state, 'Sophie');
+      await pumpCalendar(tester, page(party, open: DetailField.title), state: state);
+      await tester.enterText(find.byType(TextField), 'Sophie’s party');
+      await tapAndWait(tester, find.text('Done'));
+      expect(find.text('Try again'), findsOneWidget);
+      await expectLater(find.byType(MaterialApp), matchesGoldenFile('../goldens/events_error_phone.png'));
+    });
+
     testWidgets('More: deleting a repeating event asks how far', (tester) async {
       final state = await demo(tester);
       final soccer = findEvent(state, 'Soccer');

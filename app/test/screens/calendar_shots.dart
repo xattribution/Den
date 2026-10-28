@@ -144,6 +144,28 @@ Future<AppState> busyDemo(WidgetTester tester) async => (await tester.runAsync((
       return state;
     }))!;
 
+/// The demo family on a device whose writes don't go through (storage full, say): every action
+/// comes back failed, the way [AppActions] reports an error it can't name.
+Future<AppState> failingDemo(WidgetTester tester) async =>
+    (await tester.runAsync(() async => _FailingState((await demoState()).den)))!;
+
+class _FailingState extends AppState {
+  _FailingState(super.den);
+
+  late final AppActions _failing = _FailingActions(() => den);
+
+  @override
+  AppActions get actions => _failing;
+}
+
+class _FailingActions extends AppActions {
+  _FailingActions(super.den);
+
+  @override
+  Future<ActionResult> run(String name, Map<String, Object?> args) async =>
+      ActionResult.failed(writeFailedMessage, code: 'internal');
+}
+
 /// Runs an engine write outside the fake clock and lets the screen rebuild.
 Future<void> write(WidgetTester tester, Future<void> Function() body) async {
   await tester.runAsync(body);

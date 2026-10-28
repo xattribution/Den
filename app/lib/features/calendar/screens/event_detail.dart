@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -28,6 +26,7 @@ import '../widgets/driver_sheet.dart';
 import '../widgets/event_block.dart';
 import '../widgets/event_look.dart';
 import '../widgets/field_editors.dart';
+import '../widgets/scope_card.dart';
 
 /// The part of an event open for changing, in place.
 enum DetailField { title, when, who, place, remind, notes, more }
@@ -491,9 +490,9 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       const OfflineNote(),
     ];
 
-    final scope = pending == null ? null : _ScopeCard(occ: occ, onPick: (s) => _write(occ, pending.patch, s, pending.message), onCancel: () => setState(() => _pending = null));
+    final scope = pending == null ? null : ScopeCard(occ: occ, onPick: (s) => _write(occ, pending.patch, s, pending.message), onCancel: () => setState(() => _pending = null));
     final status = _error != null
-        ? ErrorLine(message: _error!, onAction: _retry)
+        ? (_open == DetailField.title ? null : ErrorLine(message: _error!, onAction: _retry))
         : done != null
             ? UndoLine(message: done.message, onUndo: done.result?.receipt?.undoable ?? false ? () => _undo(done) : null)
             : null;
@@ -516,6 +515,9 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           _propose(occ, {'title': title}, 'Renamed it $title');
         },
       ),
+      // A rename that didn't go through says why right under the field it was typed in.
+      if (_error != null && _open == DetailField.title)
+        Padding(padding: const EdgeInsets.fromLTRB(4, Sp.s, 0, 0), child: ErrorLine(message: _error!, onAction: _retry)),
       for (final n in notes) Padding(padding: const EdgeInsets.only(top: Sp.m), child: n),
       const SizedBox(height: Sp.l),
       _Details(
@@ -625,6 +627,8 @@ class _Hero extends StatelessWidget {
             controller: controller,
             autofocus: true,
             textCapitalization: TextCapitalization.sentences,
+            // As long as a title may be, so a rename never fails for its length.
+            inputFormatters: [LengthLimitingTextInputFormatter(200)],
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => onDone(),
             cursorColor: look.fill,
@@ -1388,88 +1392,6 @@ class _FieldRow extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// "Change just this Wednesday, or every Wednesday?", in place under the change.
-class _ScopeCard extends StatelessWidget {
-  const _ScopeCard({required this.occ, required this.onPick, required this.onCancel});
-
-  final Occurrence occ;
-  final ValueChanged<EditScope> onPick;
-  final VoidCallback onCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    final f = DenScope.read(context).formats;
-    final c = context.colors;
-    final (question, all) = scopeQuestion(f, occ);
-    return Semantics(
-      liveRegion: true,
-      child: DecoratedBox(
-        decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(Radii.section)),
-        child: Padding(
-          padding: const EdgeInsets.all(Sp.l),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(tidyLine(question), style: context.text.rowTitle(c.ink)),
-              const SizedBox(height: Sp.m),
-              _SplitButtons(
-                first: CalendarPill(label: 'Just this one', edge: true, onTap: () => onPick(EditScope.one)),
-                second: CalendarPill(label: all, primary: true, onTap: () => onPick(EditScope.all)),
-                labels: ('Just this one', all),
-              ),
-              const SizedBox(height: Sp.xs),
-              Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                children: [
-                  TextButton(onPressed: () => onPick(EditScope.following), child: const Text('From this one on')),
-                  TextButton(onPressed: onCancel, child: Text('Keep it as it was', style: context.text.label(c.ink2))),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Two buttons sharing a row while both labels fit, one above the other when they don't.
-class _SplitButtons extends StatelessWidget {
-  const _SplitButtons({required this.first, required this.second, required this.labels});
-
-  final Widget first;
-  final Widget second;
-  final (String, String) labels;
-
-  @override
-  Widget build(BuildContext context) {
-    final style = context.text.label(context.colors.ink);
-    final scaler = MediaQuery.textScalerOf(context);
-    double width(String s) {
-      final p = TextPainter(text: TextSpan(text: s, style: style), textDirection: TextDirection.ltr, textScaler: scaler)..layout();
-      final w = p.width;
-      p.dispose();
-      return w + Sp.l * 2;
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final half = (constraints.maxWidth - Sp.s) / 2;
-        if (math.max(width(labels.$1), width(labels.$2)) <= half) {
-          return Row(
-            children: [
-              Expanded(child: first),
-              const SizedBox(width: Sp.s),
-              Expanded(child: second),
-            ],
-          );
-        }
-        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [first, const SizedBox(height: Sp.s), second]);
-      },
     );
   }
 }

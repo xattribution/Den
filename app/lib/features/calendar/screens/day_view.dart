@@ -16,12 +16,12 @@ import '../../../design/tokens.dart';
 import '../state/calendar_models.dart';
 import '../state/day_layout.dart';
 import '../state/event_actions.dart';
-import '../words/block_words.dart';
 import '../words/calendar_time.dart';
 import '../widgets/calendar_parts.dart';
 import '../widgets/day_list.dart';
 import '../widgets/event_block.dart';
 import '../widgets/event_look.dart';
+import '../widgets/scope_card.dart';
 
 /// One day as a time grid. On a phone it's one column, events side by side where they overlap;
 /// with room ([perPerson]) it's a column per person who has something that day, plus Everyone.
@@ -80,6 +80,9 @@ class _DayViewState extends State<DayView> {
 
   /// The last change, shown above the grid with Undo, or why it didn't go through.
   (String, ActionResult?)? _done;
+
+  /// A move of a repeating event waiting for "just this one, or every one?".
+  _Drag? _asking;
   String? _error;
 
   static const int _snap = 15;
@@ -203,7 +206,15 @@ class _DayViewState extends State<DayView> {
     final shown = columns.isEmpty ? [_Column(null)] : columns;
 
     final done = _done;
-    final note = _error != null
+    final asking = _asking;
+    final note = asking != null
+        ? ScopeCard(
+            occ: asking.occ,
+            verb: asking.resize ? 'Change' : 'Move',
+            onPick: (scope) => _commit(asking, scope),
+            onCancel: _keep,
+          )
+        : _error != null
         ? ErrorLine(message: _error!)
         : done != null
             ? UndoLine(message: done.$1, onUndo: done.$2 == null ? null : () => _undo(done.$2!))
@@ -437,44 +448,54 @@ class _DayViewState extends State<DayView> {
       return;
     }
     drag.committing = true;
+    if (drag.occ.isRepeating) {
+      // The block stays where it was dropped while the question waits above the grid.
+      setState(() => _asking = drag);
+      return;
+    }
+    await _commit(drag, EditScope.all);
+  }
+
+  /// Writes [drag]'s move for [scope], then says what it did with Undo.
+  Future<void> _commit(_Drag drag, EditScope scope) async {
     final app = DenScope.read(context);
     final f = app.formats;
     final occ = drag.occ;
     final shift = drag.delta * 60000;
     final newStart = drag.resize ? occ.start : occ.start + shift;
     final newEnd = occ.end + shift;
-    var scope = EditScope.all;
-    if (occ.isRepeating) {
-      final chosen = await askScope(context, occ, verb: drag.resize ? 'Change' : 'Move');
-      if (!mounted) return;
-      if (chosen == null) {
-        setState(() => _drag = null);
-        return;
-      }
-      scope = chosen;
-    }
-    if (!mounted) return;
     final actions = context.actions;
+    setState(() => _asking = null);
     // One and following address the occurrence by its place in the series; all events move by
     // however far this occurrence moved.
     final anchor = !occ.isRepeating ? null : (scope == EditScope.all ? occ.start : occ.seriesStart);
-    final error = await tryWrite(() async {
-      final result = await EventActions(actions).update(occ.event, {'start': newStart, 'end': newEnd}, scope: scope, occurrence: anchor);
-      if (!result.isError && mounted) {
-        final message = drag.resize
-            ? '${occ.title} now ends at ${f.time(newEnd)}'
-            : '${occ.title} moved to ${f.time(newStart)}';
-        _done = (message, result.receipt?.undoable ?? false ? result : null);
-      }
-      return result;
-    });
+    ActionResult? result;
+    final error = await tryWrite(
+      () async => result = await EventActions(actions).update(
+        occ.event,
+        {'start': newStart, 'end': newEnd},
+        scope: scope,
+        occurrence: anchor,
+      ),
+    );
     if (!mounted) return;
     setState(() {
       _drag = null;
       _error = error;
-      if (error != null) _done = null;
+      final done = result;
+      if (error != null || done == null) {
+        _done = null;
+        return;
+      }
+      final message = drag.resize ? '${occ.title} now ends at ${f.time(newEnd)}' : '${occ.title} moved to ${f.time(newStart)}';
+      _done = (message, done.receipt?.undoable ?? false ? done : null);
     });
   }
+
+  void _keep() => setState(() {
+        _asking = null;
+        _drag = null;
+      });
 
   Future<void> _undo(ActionResult result) async {
     final receipt = result.receipt;
@@ -487,46 +508,6 @@ class _DayViewState extends State<DayView> {
       _done = null;
     });
   }
-}
-
-/// Asks, in place of a dialog's jargon, how far a change to a repeating event reaches.
-Future<EditScope?> askScope(BuildContext context, Occurrence occ, {String verb = 'Change'}) {
-  final f = DenScope.read(context).formats;
-  final (question, all) = scopeQuestion(f, occ, verb: verb);
-  return showDialog<EditScope>(
-    context: context,
-    builder: (dialogContext) {
-      final c = dialogContext.colors;
-      return Dialog(
-        insetPadding: const EdgeInsets.all(Sp.l),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 380),
-          child: Padding(
-            padding: const EdgeInsets.all(Sp.l),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Semantics(header: true, child: Text(question, style: dialogContext.text.rowTitle(c.ink))),
-                const SizedBox(height: Sp.l),
-                CalendarPill(label: 'Just this one', edge: true, onTap: () => Navigator.of(dialogContext).pop(EditScope.one)),
-                const SizedBox(height: Sp.s),
-                CalendarPill(label: all, primary: true, onTap: () => Navigator.of(dialogContext).pop(EditScope.all)),
-                const SizedBox(height: Sp.s),
-                Row(
-                  children: [
-                    TextButton(onPressed: () => Navigator.of(dialogContext).pop(EditScope.following), child: const Text('From this one on')),
-                    const Spacer(),
-                    TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Cancel')),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    },
-  );
 }
 
 class _EmptyNote extends StatelessWidget {

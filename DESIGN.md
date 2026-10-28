@@ -357,9 +357,15 @@ From the canvas; phase 2 builds them in `app/lib/design/` on the pieces above.
   chosen segment in ink (or `card` on iPad, as the week view has it).
 - **Event blocks**: the person's color at full strength with `#141414` text and a line pictogram
   of the kind of event (ball, tooth, music, car); everyone's events are a solid ink block with
-  `onPrimary` text and the family's dots. Stacked blocks share 6 corners.
+  `onPrimary` text and the family's dots. Stacked blocks share 6 corners. The pictograms are
+  `Pictograms.event(kind)` (Phosphor bold line icons, keys in `Pictograms.events`); the
+  calendar reads the kind from the title, then the place, then an imported category
+  (`features/calendar/words/event_kinds.dart`). In a person's column (the family week, the
+  iPad day) or a list narrowed to one person, the block takes that person's color.
 - **Sheets**: `bg` with 28 top corners, a 40 x 5 `handle`, the title and its Done at the top,
-  primary action within reach of the thumb. On iPad, a centered form sheet.
+  primary action within reach of the thumb. On iPad, a centered form sheet. A route that opens
+  as a sheet (`/event/new`, an event on iPad) uses `DenSheetPage` (`design/sheet_page.dart`)
+  as its page, so it gets the same route, springs and drag.
 - **Empty states**: one sentence in `ink2` and one action, inside the section where content
   would be.
 - **Errors**: inline, next to what failed, `destructive` text and icon, naming the cause and the

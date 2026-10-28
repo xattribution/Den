@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
@@ -217,6 +218,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
       children: [
         TextField(
           controller: _title,
+          inputFormatters: [LengthLimitingTextInputFormatter(200)],
           autofocus: canAdd,
           enabled: canAdd,
           textCapitalization: TextCapitalization.sentences,
