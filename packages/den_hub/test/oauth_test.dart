@@ -7,7 +7,7 @@ import 'package:cryptography/dart.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
 import 'package:http/http.dart' as http;
-import 'package:test/test.dart';
+import 'support/test.dart';
 
 import 'support/fixture.dart';
 

@@ -9,7 +9,7 @@ import 'package:den_net/io.dart' show parseServiceTxt;
 // ignore: implementation_imports
 import 'package:multicast_dns/src/packet.dart';
 import 'package:multicast_dns/multicast_dns.dart';
-import 'package:test/test.dart';
+import 'support/test.dart';
 
 void main() {
   const advert = MdnsAdvert(

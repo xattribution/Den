@@ -12,7 +12,7 @@ import 'package:den_hub/src/http_util.dart' show requestBase;
 import 'package:den_hub/src/web.dart';
 import 'package:den_net/den_net.dart';
 import 'package:shelf/shelf.dart';
-import 'package:test/test.dart';
+import 'support/test.dart';
 
 import 'support/fixture.dart';
 
