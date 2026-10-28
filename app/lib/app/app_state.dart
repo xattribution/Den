@@ -7,13 +7,32 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../platform/calendars/phone_calendars.dart';
 import '../platform/sync/den_network.dart';
 import '../platform/notifications/reminder_scheduler.dart';
-import 'format.dart';
+import 'actions.dart';
+import 'den_scope.dart';
 import 'family_reads.dart';
+import 'format.dart';
+
+export 'actions.dart';
+export 'den_scope.dart';
 
 enum ThemeChoice { auto, day, night }
 
-/// The app's live state: the device's [Den] engine plus UI preferences. Rebuilds listeners on
-/// every change the engine applies, whether made here or synced from another device.
+/// What a change can touch besides record types ([RecordType]).
+abstract final class Changes {
+  /// The theme or the wall setting of this device.
+  static const prefs = 'prefs';
+
+  /// Everything: the engine itself was swapped (the demo family).
+  static const all = 'all';
+
+  /// Who's who and what they may do, which nearly every screen reads: the family's settings,
+  /// its people, its devices, and who is acting on this device.
+  static const people = {RecordType.family, RecordType.member, RecordType.device, Den.actingChanged};
+}
+
+/// The app's live state: the device's [Den] engine plus UI preferences. Tells listeners what
+/// each change touched ([lastChange]), whether made here or synced from another device, so
+/// [DenScope] rebuilds only the widgets that read it.
 class AppState extends ChangeNotifier with FamilyReads {
   AppState(
     Den den, {
@@ -64,14 +83,59 @@ class AppState extends ChangeNotifier with FamilyReads {
   @override
   Den get den => _den;
 
+  /// Every change the app makes goes through these.
+  late final AppActions actions = AppActions(() => _den);
+
   /// Swaps the engine, for example when entering or leaving the demo family.
   void replaceDen(Den den) {
     _sub?.cancel();
     _den = den;
     _formats = null;
+    _views.clear();
     _listen();
+    _changed(const {Changes.all});
+  }
+
+  /// What the latest change touched: record types, [Den.actingChanged], [Changes.prefs], or
+  /// [Changes.all].
+  Set<String> get lastChange => _lastChange;
+  Set<String> _lastChange = const {};
+  final Map<String, int> _versions = {};
+
+  void _changed(Set<String> touched) {
+    _lastChange = touched;
+    for (final t in touched) {
+      _versions[t] = (_versions[t] ?? 0) + 1;
+    }
     notifyListeners();
   }
+
+  /// A number that changes exactly when one of [types] (or everything) has changed.
+  int versionOf(Iterable<String> types) {
+    var n = _versions[Changes.all] ?? 0;
+    for (final t in types) {
+      n += _versions[t] ?? 0;
+    }
+    return n;
+  }
+
+  final Map<Object, (int, Object?)> _views = {};
+
+  /// [view]'s value: kept from the last time until one of the record types it reads, who's
+  /// who, or the day changes.
+  T view<T>(DenView<T> view) {
+    final key = (view.key, today);
+    final version = versionOf({...Changes.people, ...view.reads});
+    final kept = _views[key];
+    if (kept != null && kept.$1 == version) return kept.$2 as T;
+    final value = view.compute(this);
+    _views[key] = (version, value);
+    return value;
+  }
+
+  /// A listenable that fires only for changes to [types] (or to everything), for the router and
+  /// the theme. Its owner disposes it.
+  ChangeNotifier watching(Set<String> types) => _Watching(this, types);
 
   bool _wall;
 
@@ -80,7 +144,7 @@ class AppState extends ChangeNotifier with FamilyReads {
   set wall(bool value) {
     if (value == _wall) return;
     _wall = value;
-    notifyListeners();
+    _changed(const {Changes.prefs});
     _save((p) => p.setBool(_wallKey, value));
   }
 
@@ -88,7 +152,7 @@ class AppState extends ChangeNotifier with FamilyReads {
   ThemeChoice get theme => _theme;
   set theme(ThemeChoice value) {
     _theme = value;
-    notifyListeners();
+    _changed(const {Changes.prefs});
     _save((p) => p.setString(_themeKey, value.name));
   }
 
@@ -98,7 +162,7 @@ class AppState extends ChangeNotifier with FamilyReads {
   void _listen() {
     _sub = _den.onChange.listen((types) {
       if (types.contains(RecordType.family)) _formats = null;
-      notifyListeners();
+      _changed(types);
     });
   }
 
@@ -116,18 +180,22 @@ class AppState extends ChangeNotifier with FamilyReads {
   }
 }
 
-/// Makes [AppState] available below it and rebuilds dependents when it changes.
-class DenScope extends InheritedNotifier<AppState> {
-  const DenScope({super.key, required AppState state, required super.child}) : super(notifier: state);
+class _Watching extends ChangeNotifier {
+  _Watching(this._state, this._types) {
+    _state.addListener(_check);
+  }
 
-  static AppState of(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<DenScope>()!.notifier!;
+  final AppState _state;
+  final Set<String> _types;
 
-  static AppState read(BuildContext context) =>
-      (context.getElementForInheritedWidgetOfExactType<DenScope>()!.widget as DenScope).notifier!;
-}
+  void _check() {
+    final touched = _state.lastChange;
+    if (touched.contains(Changes.all) || touched.any(_types.contains)) notifyListeners();
+  }
 
-extension DenContext on BuildContext {
-  AppState get app => DenScope.of(this);
-  Den get den => DenScope.of(this).den;
+  @override
+  void dispose() {
+    _state.removeListener(_check);
+    super.dispose();
+  }
 }

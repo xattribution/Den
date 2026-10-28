@@ -15,6 +15,8 @@ import '../../../app/app_state.dart';
 import '../../family/family.dart';
 import '../../calendar/calendar.dart';
 import '../../chores/chores.dart';
+import '../state/sign_in_actions.dart';
+import '../../lists/lists.dart';
 
 /// The kitchen wall: the date and a large clock, the family week as the main region, and a strip
 /// with today's chores per person and the grocery list. Anyone can read it; writes ask "Who's
@@ -75,7 +77,7 @@ class _WallScreenState extends State<WallScreen> {
       if (!mounted) return;
       final left = (den.actingUntil ?? 0) - _now().millisecondsSinceEpoch;
       if (left <= 0) {
-        den.actAs(null);
+        SignInActions(den).signOut();
         _second?.cancel();
         _second = null;
       }
@@ -170,7 +172,7 @@ class _Header extends StatelessWidget {
           member: actor,
           left: Duration(milliseconds: until - ms),
           onDone: () {
-            den.actAs(null);
+            SignInActions(den).signOut();
             onChanged();
           },
         )
@@ -279,7 +281,7 @@ Future<void> switchPerson(BuildContext context) async {
 Future<void> wallWrite(
   BuildContext context,
   DenAction Function(Member? actor) actionFor,
-  Future<void> Function() write, {
+  Future<Object?> Function() write, {
   String? likely,
 }) async {
   final app = context.app;
@@ -398,7 +400,7 @@ class _WallChore extends StatelessWidget {
       await wallWrite(
         context,
         (actor) => _choreAction(day, actor),
-        () => den.setChoreDone(chore.id, day.date, v),
+        () => context.choreActions.setDone(day, v),
         likely: day.owner,
       );
       onAct();
@@ -441,7 +443,6 @@ class _ListPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final den = context.den;
     final c = context.colors;
     final open = state.items.where((i) => !i.checked).toList();
     final shown = limit == null ? open : open.take(limit!).toList();
@@ -461,7 +462,7 @@ class _ListPanel extends StatelessWidget {
                   size: 32,
                   label: item.text,
                   onChanged: (v) async {
-                    await wallWrite(context, (_) => DenAction.checkItems, () => den.setItemChecked(item.id, v));
+                    await wallWrite(context, (_) => DenAction.checkItems, () => context.listActions.setChecked(item, v));
                     onAct();
                   },
                 ),

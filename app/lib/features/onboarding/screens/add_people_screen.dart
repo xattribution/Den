@@ -142,18 +142,18 @@ class _QuickPersonState extends State<_QuickPerson> {
     setState(() => _tried = true);
     final name = _name.text.trim();
     if (name.isEmpty) return;
-    final den = context.den;
-    String? id;
-    final ok = await attempt(context, () async {
-      id = await den.addMember(
+    final result = await perform(
+      context,
+      () => context.familyActions.addPerson(
         name: name,
         role: widget.kid ? Role.kid : Role.parent,
         tier: widget.kid ? _tier : null,
         marker: _marker,
         picture: _picture,
-      );
-    });
-    if (ok && mounted) Navigator.of(context).pop(id);
+      ),
+    );
+    final id = (result?.data['member'] as Map?)?['id'] as String?;
+    if (result != null && mounted) Navigator.of(context).pop(id);
   }
 
   @override

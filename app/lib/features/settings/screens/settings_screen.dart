@@ -88,7 +88,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final device = den.thisDevice;
     final name = _deviceName.text.trim();
     if (device == null || name.isEmpty || name == device.name) return;
-    attempt(context, () => den.updateDevice(device.id, {'name': name}));
+    attempt(context, () => context.trustActions.renameDevice(device.id, name));
   }
 
   void _setWall(AppState app, bool on) => app.wall = on;

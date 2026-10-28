@@ -4,9 +4,9 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../design/glyphs.dart';
 import '../../../design/tokens.dart';
-import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../widgets/kid_parts.dart';
+import '../../chores/chores.dart';
 
 /// The pre-reader's app: pictures only. Each of today's jobs is a big card with its pictogram,
 /// its step pictures and a huge check; a speaker reads it aloud. "My stars" is the sticker chart.
@@ -100,7 +100,6 @@ class _PictureJob extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final den = context.den;
     final c = context.colors;
     final day = job.day;
     final chore = day.chore;
@@ -131,7 +130,7 @@ class _PictureJob extends StatelessWidget {
                   done: day.done,
                   size: 104,
                   label: chore.title,
-                  onChanged: (v) => attempt(context, () => den.setChoreDone(chore.id, day.date, v)),
+                  onChanged: (v) => attempt(context, () => context.choreActions.setDone(day, v)),
                 ),
               ],
             ],
@@ -148,8 +147,7 @@ class _PictureJob extends StatelessWidget {
                     size: job.owned ? 80 : 104,
                     step: steps[i],
                     checked: job.stepDone(steps[i]),
-                    onTap: () =>
-                        attempt(context, () => den.setStep(chore.id, day.date, steps[i].id, !job.stepDone(steps[i]))),
+                    onTap: () => attempt(context, () => context.choreActions.setStep(day, steps[i].id, !job.stepDone(steps[i]))),
                   ),
               ],
             ),

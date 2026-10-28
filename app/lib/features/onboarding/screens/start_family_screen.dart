@@ -11,6 +11,7 @@ import '../../../design/pickers/time_zone_picker.dart';
 import '../../../platform/time_zone.dart';
 import '../state/this_device.dart';
 import '../../family/family.dart';
+import '../state/onboarding_actions.dart';
 
 /// Starting a family: its name and time zone, you (the first parent), and this device. Creating
 /// it writes the genesis changes; the router then moves on to "Add people".
@@ -104,11 +105,11 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
     final code = _code.text.trim();
     if (hub != null && code.isEmpty) return;
     setState(() => _saving = true);
-    final den = context.den;
+    final onboarding = context.onboardingActions;
     final pairing = Pairing.of(context);
     final ok = await attempt(
       context,
-      () => den.createFamily(
+      () => onboarding.foundFamily(
         familyName: _family.text.trim(),
         timezone: _zone,
         yourName: _name.text.trim(),

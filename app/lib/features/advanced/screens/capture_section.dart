@@ -12,6 +12,7 @@ import '../../../app/app_state.dart';
 import '../../../platform/capabilities.dart';
 import '../../../design/forms/forms.dart';
 import '../../add/add.dart';
+import '../../family/family.dart';
 
 /// Settings, AI and automations: who reads what this device shares, and whether what Den finds
 /// is added right away or shown first. The reader and its key belong to this device; the
@@ -111,7 +112,7 @@ class _CaptureSectionState extends State<CaptureSection> {
                   child: Segmented<bool>(
                     options: const {false: 'Add right away', true: 'Show me first'},
                     value: family.captureNeedsReview,
-                    onChanged: (review) => attempt(context, () => app.den.updateFamily({'capture': review ? 'review' : 'direct'})),
+                    onChanged: (review) => attempt(context, () => context.familyActions.setCaptureReview(review)),
                   ),
                 ),
               ),

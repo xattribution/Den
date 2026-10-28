@@ -15,6 +15,7 @@ import 'capture_section.dart';
 import '../widgets/scope_picker.dart';
 import '../../../design/forms/forms.dart';
 import '../../family/family.dart';
+import '../state/connection_actions.dart';
 
 /// AI and automations: apps signing in to the hub (let in or turned away), requests waiting for
 /// a parent's approval, then every connection with what it may do and whose permissions it uses.
@@ -231,7 +232,7 @@ class _Request extends StatelessWidget {
             children: [
               FilledButton(onPressed: () => _approve(context), child: Text('Approve ${x.label}')),
               OutlinedButton(
-                onPressed: () => attempt(context, () => context.den.revokeConnection(x.id)),
+                onPressed: () => attempt(context, () => context.connectionActions.revoke(x.id)),
                 child: const Text('Decline'),
               ),
             ],
@@ -248,7 +249,7 @@ class _Request extends StatelessWidget {
       builder: (_) => _ApproveSheet(connection),
     );
     if (result == null || !context.mounted) return;
-    await attempt(context, () => context.den.approveConnection(connection.id, scopes: result.$1, member: result.$2));
+    await attempt(context, () => context.connectionActions.approve(connection.id, scopes: result.$1, member: result.$2));
   }
 }
 
@@ -346,6 +347,6 @@ class _ConnectionRow extends StatelessWidget {
         ],
       ),
     );
-    if (yes == true && context.mounted) await attempt(context, () => context.den.revokeConnection(x.id));
+    if (yes == true && context.mounted) await attempt(context, () => context.connectionActions.revoke(x.id));
   }
 }

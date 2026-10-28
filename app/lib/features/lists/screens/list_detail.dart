@@ -65,33 +65,38 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
   }
 
   Future<void> _remove(ListState lv, Item item) async {
-    final den = context.den;
+    final actions = context.actions;
     final keep = Navigator.of(context, rootNavigator: true).context;
     setState(() => _hidden.add(item.id));
-    final ok = await attempt(context, () => den.removeItem(item.id));
+    final result = await perform(context, () => ListActions(actions).remove(item));
     if (!mounted) return;
-    if (!ok) {
+    if (result == null) {
       setState(() => _hidden.remove(item.id));
       return;
     }
-    showUndo(context, '${item.text} removed', () => _restore(keep, den, [item.id]));
+    _offerRestore(keep, '${item.text} removed', result, [item.id]);
   }
 
   Future<void> _clearDone(ListState lv) async {
-    final den = context.den;
+    final actions = context.actions;
     final keep = Navigator.of(context, rootNavigator: true).context;
     final done = [for (final i in lv.items) if (i.checked) i.id];
-    var count = 0;
-    final ok = await attempt(context, () async => count = await den.clearChecked(lv.list.id));
-    if (!ok || !mounted) return;
-    showUndo(context, 'Cleared $count done ${count == 1 ? 'item' : 'items'}', () => _restore(keep, den, done));
+    final result = await perform(context, () => ListActions(actions).clearChecked(lv.list.id));
+    if (result == null || !mounted) return;
+    final count = (result.data['removed'] as int?) ?? done.length;
+    _offerRestore(keep, 'Cleared $count done ${count == 1 ? 'item' : 'items'}', result, done);
   }
 
-  /// Undo: the same items come back where they were, checked or not, in one change. [keep]
-  /// outlives this page, since Undo can be tapped after leaving it.
-  void _restore(BuildContext keep, Den den, List<String> ids) {
-    if (mounted) setState(() => _hidden.removeAll(ids));
-    restoreItems(keep, den, ids);
+  /// Undo: the same items come back where they were, checked or not. [keep] outlives this
+  /// page, since Undo can be tapped after leaving it.
+  void _offerRestore(BuildContext keep, String message, ActionResult result, List<String> ids) {
+    final actions = context.actions;
+    final receipt = result.receipt;
+    if (receipt == null || !receipt.undoable) return;
+    showUndo(context, message, () {
+      if (mounted) setState(() => _hidden.removeAll(ids));
+      attempt(keep, () => actions.undo(receipt));
+    });
   }
 
   void _reorder(List<Item> items, int from, int to) {
@@ -103,7 +108,7 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
     final before = to < rest.length ? rest[to].id : null;
     rest.insert(to, moved);
     setState(() => _optimistic = rest.map((i) => i.id).toList());
-    attempt(context, () => context.den.moveItem(moved.id, after: after, before: before));
+    attempt(context, () => context.listActions.move(moved, after: after, before: before));
   }
 
   void _scrollToEnd() {
@@ -418,10 +423,9 @@ class _ItemRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
     final c = context.colors;
     final checked = item.checked;
-    void toggle() => attempt(context, () => app.den.setItemChecked(item.id, !checked));
+    void toggle() => attempt(context, () => context.listActions.setChecked(item, !checked));
     final qty = item.qty ?? '';
     final store = item.store ?? '';
 
@@ -543,7 +547,7 @@ class _GroceriesAction extends StatelessWidget {
           return;
         }
         // Marking a meal item for groceries copies it onto the groceries list.
-        await attempt(context, () => den.updateItem(item.id, {'toGroceries': true}));
+        await attempt(context, () => context.listActions.sendToGroceries(item));
       },
     );
   }
@@ -598,9 +602,9 @@ class _AddItemRowState extends State<AddItemRow> {
     final store = _store.text.trim();
     final ok = await attempt(
       context,
-      () => context.den.addItem(
+      () => context.listActions.addItem(
         widget.listId,
-        text: text,
+        text,
         qty: qty.isEmpty ? null : qty,
         store: _shopping && store.isNotEmpty ? store : null,
         toGroceries: widget.kind == ListKind.meal && _toGroceries,
@@ -757,13 +761,15 @@ class _ItemSheetState extends State<_ItemSheet> {
       return;
     }
     final nav = Navigator.of(context);
-    final ok = await attempt(context, () {
-      return context.den.updateItem(widget.item.id, {
-        'text': text,
-        'qty': _qty.text.trim().isEmpty ? null : _qty.text.trim(),
-        'store': _store.text.trim().isEmpty ? null : _store.text.trim(),
-      });
-    });
+    final ok = await attempt(
+      context,
+      () => context.listActions.edit(
+        widget.item,
+        text: text,
+        qty: _qty.text.trim().isEmpty ? null : _qty.text.trim(),
+        store: _store.text.trim().isEmpty ? null : _store.text.trim(),
+      ),
+    );
     if (ok) nav.pop();
   }
 

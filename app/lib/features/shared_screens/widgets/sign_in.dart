@@ -8,6 +8,7 @@ import '../../../design/widgets.dart';
 import '../../../design/pickers/pattern_pad.dart';
 import '../../../design/pickers/pin_pad.dart';
 import '../../family/family.dart';
+import '../state/sign_in_actions.dart';
 
 /// Asks who is acting on a shared screen: the family's avatars, then that person's PIN or
 /// picture pattern, then [Den.actAs] for [window]. Returns the member, or null if dismissed.
@@ -74,7 +75,7 @@ class _WhoSheetState extends State<_WhoSheet> {
     final m = _chosen!;
     final den = context.den;
     setState(() => _checking = true);
-    final ok = await den.verifySignIn(m.id, secret);
+    final ok = await SignInActions(den).verify(m.id, secret);
     if (!mounted) return;
     setState(() => _checking = false);
     if (ok) {
@@ -84,7 +85,7 @@ class _WhoSheetState extends State<_WhoSheet> {
         return;
       }
       try {
-        den.actAs(m.id, window: widget.window);
+        SignInActions(den).actAs(m.id, window: widget.window);
       } on PermissionDenied catch (e) {
         setState(() => _error = e.message);
         return;

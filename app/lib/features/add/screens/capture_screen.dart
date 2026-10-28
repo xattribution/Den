@@ -40,7 +40,7 @@ class _CaptureRouteState extends State<CaptureRoute> {
     super.didChangeDependencies();
     final input = widget.input;
     if (_controller != null || input == null) return;
-    _controller = CaptureController(service: Capture.of(context), den: context.den, input: input);
+    _controller = CaptureController(service: Capture.of(context), den: context.den, input: input, actions: context.actions);
     unawaited(_controller!.start());
   }
 

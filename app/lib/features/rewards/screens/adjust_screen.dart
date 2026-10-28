@@ -6,6 +6,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../design/forms/forms.dart';
+import '../state/reward_actions.dart';
 
 /// A parent gives or takes points: who, how many, and why (a reason is required so everyone
 /// can see it in Recent). `/points/adjust?member=`.
@@ -37,7 +38,6 @@ class _AdjustScreenState extends State<AdjustScreen> {
   }
 
   Future<void> _save() async {
-    final den = context.den;
     setState(() {
       _memberError = _member == null ? 'Choose who gets the points.' : null;
       _reasonError = _reason.text.trim().isEmpty ? 'Add a reason, so everyone can see why.' : null;
@@ -46,7 +46,7 @@ class _AdjustScreenState extends State<AdjustScreen> {
     setState(() => _saving = true);
     final ok = await attempt(
       context,
-      () => den.adjustPoints(_member!, _take ? -_amount : _amount, _reason.text.trim()),
+      () => context.rewardActions.adjust(_member!, _take ? -_amount : _amount, _reason.text.trim()),
     );
     if (!mounted) return;
     setState(() => _saving = false);

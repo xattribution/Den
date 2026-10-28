@@ -5,6 +5,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../design/forms/forms.dart';
+import '../state/chore_actions.dart';
 
 /// Whether the actor may hand [day] to someone else: kids only their own chores.
 bool canSwap(AppState app, ChoreDay day) {
@@ -33,12 +34,13 @@ Future<void> showSwapSheet(BuildContext context, ChoreDay day) {
   Future<void> give(BuildContext sheetContext, String? to) async {
     Navigator.of(sheetContext).pop();
     if (to == current) return;
-    final ok = await attempt(context, () => den.swapForDay(day.chore.id, day.date, to));
-    if (!ok || !context.mounted) return;
+    final actions = context.actions;
+    final result = await perform(context, () => ChoreActions(actions).swap(day, to));
+    if (result == null || !context.mounted) return;
     final who = to == null
         ? 'Anyone can do ${day.chore.title} $when'
         : '${day.chore.title} is ${den.member(to)?.name ?? 'theirs'}\'s $when';
-    showUndo(context, who, () => attempt(context, () => den.swapForDay(day.chore.id, day.date, current)));
+    offerUndo(context, actions, who, result);
   }
 
   return showModalBottomSheet<void>(

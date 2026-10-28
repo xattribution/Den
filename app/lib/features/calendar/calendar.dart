@@ -3,5 +3,6 @@
 library;
 
 export 'calendar_words.dart';
+export 'state/event_actions.dart';
 export 'widgets/family_week.dart';
 export 'widgets/month_view.dart';

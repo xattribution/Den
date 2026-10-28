@@ -9,6 +9,7 @@ import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../words/points_words.dart';
 import '../../../design/chore_pictograms.dart';
+import '../state/reward_actions.dart';
 
 /// Points and rewards: everyone's balance, goals as each person's progress in their marker,
 /// requests waiting for a parent, the rewards store, and recent points in and out. `/points`.
@@ -38,7 +39,7 @@ class _PointsScreenState extends State<PointsScreen> {
               ? 'Points are turned off for this family.'
               : 'Points are turned off for this family. A parent can turn them on.',
           actionLabel: canTurnOn ? 'Turn on points' : null,
-          onAction: () => attempt(context, () => den.updateFamily({'pointsEnabled': true})),
+          onAction: () => attempt(context, () => context.rewardActions.setPointsOn(true)),
         ),
       );
     }
@@ -242,12 +243,12 @@ class _Pending extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       TextButton(
-                        onPressed: () => attempt(context, () => den.decideRedemption(r.id, approve: false)),
+                        onPressed: () => attempt(context, () => context.rewardActions.decide(r, approve: false)),
                         child: const Text('Decline'),
                       ),
                       const SizedBox(width: Sp.s),
                       FilledButton(
-                        onPressed: () => attempt(context, () => den.decideRedemption(r.id, approve: true)),
+                        onPressed: () => attempt(context, () => context.rewardActions.decide(r, approve: true)),
                         child: const Text('Approve'),
                       ),
                     ],
@@ -482,7 +483,6 @@ class _RewardCard extends StatelessWidget {
   final bool manage;
 
   Future<void> _ask(BuildContext context) async {
-    final den = context.den;
     if (!reward.needsApproval) {
       final c = context.colors;
       final sure = await showDialog<bool>(
@@ -501,7 +501,7 @@ class _RewardCard extends StatelessWidget {
       );
       if (sure != true || !context.mounted) return;
     }
-    await attempt(context, () => den.requestReward(reward.id));
+    await attempt(context, () => context.rewardActions.request(reward));
   }
 
   @override

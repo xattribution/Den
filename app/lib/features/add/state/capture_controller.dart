@@ -2,6 +2,7 @@ import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../../app/actions.dart';
 import 'capture_service.dart';
 
 enum CaptureStage { reading, failed, ready }
@@ -10,15 +11,21 @@ enum CaptureStage { reading, failed, ready }
 /// been added and can be taken back. With the family's `capture` set to `direct`, entries that
 /// need no look are added as soon as they're read; with `review`, nothing is added until the
 /// person says so.
+///
+/// What a reviewed draft becomes isn't one action's input, so its writes go through
+/// [AppActions.record]: each add keeps a receipt of exactly the changes it made, and [undo]
+/// takes those back. (den_capture writes the same way for MCP's `add_from_text`.)
 class CaptureController extends ChangeNotifier {
-  CaptureController({required this.service, required this.den, required this.input, CaptureResult? result})
-      : _result = result {
+  CaptureController({required this.service, required this.den, required this.input, CaptureResult? result, AppActions? actions})
+      : _result = result,
+        _actions = actions ?? AppActions(() => den) {
     if (result != null) _take(result);
   }
 
   final CaptureService service;
   final Den den;
   final CaptureInput input;
+  final AppActions _actions;
 
   CaptureStage _stage = CaptureStage.reading;
   CaptureStage get stage => _stage;
@@ -37,6 +44,7 @@ class CaptureController extends ChangeNotifier {
   final Set<String> chosen = {};
   final Set<String> added = {};
   final List<CaptureReceipt> receipts = [];
+  final List<Receipt> _kept = [];
 
   /// The record each added entry became, by entry key.
   final Map<String, Added> records = {};
@@ -93,7 +101,11 @@ class CaptureController extends ChangeNotifier {
     _busy = true;
     _notify();
     try {
-      final receipt = await writeDraft(den, draft, keys: which);
+      late final CaptureReceipt receipt;
+      final kept = await _actions.record('Added what Den read', () async {
+        receipt = await writeDraft(den, draft, keys: which);
+      });
+      if (kept != null) _kept.add(kept);
       receipts.add(receipt);
       added.addAll(receipt.keys);
       for (final a in receipt.added) {
@@ -119,9 +131,10 @@ class CaptureController extends ChangeNotifier {
     _busy = true;
     _notify();
     try {
-      for (final r in receipts.reversed) {
-        await r.undo(den);
+      for (final r in _kept.reversed) {
+        await _actions.undo(r);
       }
+      _kept.clear();
       receipts.clear();
       added.clear();
       records.clear();

@@ -2,7 +2,6 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 
 import 'tokens.dart';
-import 'widgets.dart';
 
 /// Asks how far a change to a repeating event reaches: "Just this one", "This and following",
 /// "All events". Returns null when the person backs out. [title] names the action and the
@@ -50,9 +49,9 @@ Future<EditScope?> askEditScope(BuildContext context, {required String title, bo
   );
 }
 
-/// The design system's Undo message, shown through a messenger captured before the page that
-/// made the change went away.
-void showUndoOn(ScaffoldMessengerState messenger, String message, VoidCallback onUndo) {
+/// Shows a message with Undo, the way reversible actions confirm themselves.
+void showUndo(BuildContext context, String message, VoidCallback onUndo) {
+  final messenger = ScaffoldMessenger.of(context);
   messenger.hideCurrentSnackBar();
   messenger.showSnackBar(
     SnackBar(
@@ -63,18 +62,9 @@ void showUndoOn(ScaffoldMessengerState messenger, String message, VoidCallback o
   );
 }
 
-/// The person-facing reason a write failed, or null when it succeeded. A failure with no reason
-/// written for people (storage, say) still comes back as words, never as an error.
-Future<String?> tryWrite(Future<void> Function() write) async {
-  try {
-    await write();
-    return null;
-  } on PermissionDenied catch (e) {
-    return e.message;
-  } on InvalidInput catch (e) {
-    return e.message;
-  } on Object catch (e, stack) {
-    debugPrint('A write failed: $e\n$stack');
-    return writeFailedMessage;
-  }
+/// Shows a plain message (errors name the cause and the way out).
+void showNote(BuildContext context, String message) {
+  final messenger = ScaffoldMessenger.of(context);
+  messenger.hideCurrentSnackBar();
+  messenger.showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 5)));
 }

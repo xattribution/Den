@@ -117,7 +117,7 @@ class TodayScreen extends StatelessWidget {
   Future<void> _takeRide(BuildContext context, Occurrence occ, Gap gap) async {
     final app = DenScope.read(context);
     final leg = gap.leg ?? occ.rides.firstWhere((r) => r.driver == null, orElse: () => const Ride('to', null)).leg;
-    await attempt(context, () => app.den.claimRide(occ.event.id, occurrence: occ.seriesStart, leg: leg, driver: app.me?.id));
+    await attempt(context, () => context.eventActions.setRide(occ, leg, app.me?.id));
   }
 
   List<Widget> _choreGroups(BuildContext context, List<ChoreDay> chores) => [

@@ -8,6 +8,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../design/forms/forms.dart';
+import '../state/reward_actions.dart';
 
 /// A points goal: who's in it, the target, whether everyone can reach it or the first one wins,
 /// the window it counts over, and what it's for. `/points/goal/new`, `/points/goal/:id`.
@@ -67,7 +68,7 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
   }
 
   Future<void> _save() async {
-    final den = context.den;
+    final rewards = context.rewardActions;
     setState(() {
       _titleError = _title.text.trim().isEmpty ? 'Give the goal a name.' : null;
       _membersError = _members != null && _members!.isEmpty ? 'Choose who is in it, or choose every kid.' : null;
@@ -75,31 +76,20 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
     if (_titleError != null || _membersError != null) return;
     setState(() => _saving = true);
     final end = _repeat == GoalRepeat.none ? _end : null;
-    final ok = await attempt(context, () async {
-      if (_isNew) {
-        await den.addGoal(
-          title: _title.text.trim(),
-          target: _target,
-          mode: _mode,
-          members: _members,
-          start: _start,
-          end: end,
-          repeat: _repeat,
-          reward: _reward.text.trim(),
-        );
-      } else {
-        await den.updateGoal(widget.id!, {
-          'title': _title.text.trim(),
-          'target': _target,
-          'mode': _mode.name,
-          'members': _members,
-          'start': _start,
-          'end': end,
-          'repeat': _repeat.name,
-          'reward': _reward.text.trim(),
-        });
-      }
-    });
+    final ok = await attempt(
+      context,
+      () => rewards.saveGoal(
+        _existing,
+        title: _title.text.trim(),
+        target: _target,
+        mode: _mode,
+        members: _members,
+        start: _start,
+        end: end,
+        repeat: _repeat,
+        reward: _reward.text.trim(),
+      ),
+    );
     if (!mounted) return;
     setState(() => _saving = false);
     if (!ok) return;
@@ -112,33 +102,18 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
 
   Future<void> _delete() async {
     final goal = _existing!;
-    final den = context.den;
+    final actions = context.actions;
     final keep = Navigator.of(context, rootNavigator: true).context;
-    final ok = await attempt(context, () => den.deleteGoal(goal.id));
-    if (!ok || !mounted) return;
+    final result = await perform(context, () => RewardActions(actions).deleteGoal(goal));
+    if (result == null || !mounted) return;
     if (context.canPop()) {
       context.pop();
     } else {
       context.go('/points');
     }
     if (!keep.mounted) return;
-    showUndo(
-      keep,
-      '${goal.title} deleted',
-      () => attempt(
-        keep,
-        () => den.addGoal(
-          title: goal.title,
-          target: goal.target,
-          mode: goal.mode,
-          members: goal.members,
-          start: goal.start,
-          end: goal.end,
-          repeat: goal.repeat,
-          reward: goal.reward,
-        ),
-      ),
-    );
+    // The same goal comes back, not a copy.
+    offerUndo(keep, actions, '${goal.title} deleted', result);
   }
 
   Future<void> _pickDate(String? initial, ValueChanged<String> onPicked) async {
@@ -296,10 +271,10 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
                       Text('until', style: context.type.body(c.ink2)),
                       PickerButton.outlined(
                         icon: PhosphorIconsRegular.calendarBlank,
-                        label: _end == null ? 'No end' : f.relative(f.addDays(_end!, -1), app.today),
+                        label: _end == null ? 'No end' : f.relative(_end!, app.today),
                         onTap: () => _pickDate(
-                          _end == null ? null : f.addDays(_end!, -1),
-                          (d) => setState(() => _end = f.addDays(d, 1)),
+                          _end,
+                          (d) => setState(() => _end = d),
                         ),
                         onClear: _end == null ? null : () => setState(() => _end = null),
                       ),

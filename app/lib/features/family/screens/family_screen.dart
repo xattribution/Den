@@ -10,6 +10,7 @@ import '../../../app/app_state.dart';
 import '../widgets/device_parts.dart';
 import '../../../design/forms/forms.dart';
 import '../../../design/pickers/time_zone_picker.dart';
+import '../state/family_actions.dart';
 
 /// The family: devices waiting for approval first, then people in order, then devices by person,
 /// then the family's own settings. Parents manage; everyone else sees who's in the family.
@@ -131,7 +132,7 @@ class _FamilySettingsState extends State<_FamilySettings> {
     final den = DenScope.read(context).den;
     final name = _name.text.trim();
     if (name.isEmpty || name == den.family?.name) return;
-    attempt(context, () => den.updateFamily({'name': name}));
+    attempt(context, () => context.familyActions.rename(name));
   }
 
   @override
@@ -165,7 +166,7 @@ class _FamilySettingsState extends State<_FamilySettings> {
           padding: const EdgeInsets.symmetric(horizontal: Sp.l),
           child: TimeZoneField(
             value: family.timezone,
-            onChanged: (z) => attempt(context, () => den.updateFamily({'timezone': z})),
+            onChanged: (z) => attempt(context, () => context.familyActions.setTimeZone(z)),
           ),
         ),
         const Padding(padding: EdgeInsets.fromLTRB(Sp.l, Sp.l, Sp.l, 0), child: FieldLabel.quiet('Weeks start on')),
@@ -176,7 +177,7 @@ class _FamilySettingsState extends State<_FamilySettings> {
             child: Segmented<int>(
               options: const {0: 'Sunday', 1: 'Monday'},
               value: family.weekStart,
-              onChanged: (v) => attempt(context, () => den.updateFamily({'weekStart': v})),
+              onChanged: (v) => attempt(context, () => context.familyActions.setWeekStart(v)),
             ),
           ),
         ),
@@ -184,7 +185,7 @@ class _FamilySettingsState extends State<_FamilySettings> {
         SwitchListTile(
           title: const Text('Points and rewards'),
           value: family.pointsEnabled,
-          onChanged: (v) => attempt(context, () => den.updateFamily({'pointsEnabled': v})),
+          onChanged: (v) => attempt(context, () => context.familyActions.setPointsOn(v)),
         ),
       ],
     );

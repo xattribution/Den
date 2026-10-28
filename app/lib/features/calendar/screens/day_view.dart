@@ -9,13 +9,13 @@ import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../widgets/event_line.dart';
-import '../../../design/feedback.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../app/format.dart';
 import '../words/calendar_time.dart';
 import '../state/day_layout.dart';
+import '../state/event_actions.dart';
 
 /// One day as a time grid with a column per person who has something that day (the family
 /// columns, turned on their side), plus an Everyone column for family events. All-day events
@@ -389,7 +389,6 @@ class _DayViewState extends State<DayView> {
     }
     drag.committing = true;
     final app = DenScope.read(context);
-    final den = app.den;
     final f = app.formats;
     final occ = drag.occ;
     final shift = drag.delta * 60000;
@@ -405,42 +404,23 @@ class _DayViewState extends State<DayView> {
       }
       scope = chosen;
     }
-    final messenger = ScaffoldMessenger.of(context);
+    final actions = context.actions;
+    final keep = Navigator.of(context, rootNavigator: true).context;
     // One and following address the occurrence by its place in the series; all events move by
     // however far this occurrence moved.
-    int? anchor(int allStart) => !occ.isRepeating ? null : (scope == EditScope.all ? allStart : occ.seriesStart);
-    final error = await tryWrite(
-      () => den.updateEvent(
-        occ.event.id,
-        {'start': newStart, 'end': newEnd},
-        scope: scope,
-        occurrence: anchor(occ.start),
-      ),
+    final anchor = !occ.isRepeating ? null : (scope == EditScope.all ? occ.start : occ.seriesStart);
+    final result = await perform(
+      context,
+      () => EventActions(actions).update(occ.event, {'start': newStart, 'end': newEnd}, scope: scope, occurrence: anchor),
     );
     if (!mounted) return;
     setState(() => _drag = null);
-    if (error != null) {
-      showNote(context, error);
-      return;
-    }
+    if (result == null) return;
     final message = drag.resize
         ? '${occ.title} now ends at ${f.time(newEnd)}.'
         : '${occ.title} moved to ${f.time(newStart)}.';
-    if (scope == EditScope.following) {
-      // The series was split in two; there's no single change to take back.
-      messenger.hideCurrentSnackBar();
-      return;
-    }
-    showUndoOn(messenger, message, () {
-      tryWrite(
-        () => den.updateEvent(
-          occ.event.id,
-          {'start': occ.start, 'end': occ.end},
-          scope: scope,
-          occurrence: anchor(newStart),
-        ),
-      );
-    });
+    // Undo takes back exactly what moved, a series split in two included.
+    if (keep.mounted) offerUndo(keep, actions, message, result);
   }
 }
 

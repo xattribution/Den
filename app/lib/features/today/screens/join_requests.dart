@@ -52,11 +52,11 @@ class _Request extends StatelessWidget {
               FilledButton(
                 onPressed: () => who == null
                     ? approveDevice(context, device.id, device.name)
-                    : attempt(context, () => den.approveDevice(device.id, member: who.id, mode: DeviceMode.personal)),
+                    : attempt(context, () => context.trustActions.approveDevice(device.id, member: who.id, mode: DeviceMode.personal)),
                 child: Text('Approve ${device.name}'),
               ),
               OutlinedButton(
-                onPressed: () => attempt(context, () => den.revokeDevice(device.id)),
+                onPressed: () => attempt(context, () => context.trustActions.revokeDevice(device.id)),
                 child: const Text('Decline'),
               ),
             ],

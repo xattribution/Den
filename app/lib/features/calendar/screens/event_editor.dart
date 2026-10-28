@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/side_panel.dart';
-import '../../../design/feedback.dart';
 import '../widgets/calendar_category.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
@@ -19,6 +18,7 @@ import '../words/recurrence.dart';
 import 'recurrence_editor.dart';
 import '../../../design/forms/forms.dart';
 import '../../../app/navigation.dart';
+import '../state/event_actions.dart';
 
 /// Adds an event, or edits one occurrence's event. New events take their day, time and person
 /// from where the person tapped (`?date=`, `?time=`, `?who=`). Repeating events ask how far a
@@ -293,6 +293,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
   Future<void> _save() async {
     final app = DenScope.read(context);
     final den = app.den;
+    final events = EventActions(app.actions);
     final f = app.formats;
     setState(() => _triedSave = true);
     if (_titleError != null || _timeError(f) != null || _repeatError() != null || _saving) return;
@@ -305,22 +306,22 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
     if (_isNew) {
       setState(() => _saving = true);
       final error = await tryWrite(
-        () => den.addEvent(
-          title: title,
-          start: start,
-          end: end,
-          allDay: _allDay,
-          tz: den.family?.timezone,
-          rrule: rrule,
-          assignees: _assignees,
-          category: _category,
-          location: _location.text.trim(),
-          notes: _notes.text.trim(),
-          reminders: _reminders,
-          rides: _rides,
-          countdown: _countdown,
-          audience: _audience,
-        ),
+        () => events.create({
+          'title': title,
+          'start': start,
+          'end': end,
+          'allDay': _allDay,
+          'tz': den.family?.timezone,
+          'rrule': rrule,
+          'assignees': _assignees,
+          'category': _category,
+          'location': _location.text.trim(),
+          'notes': _notes.text.trim(),
+          'reminders': _reminders,
+          'rides': _rides,
+          'countdown': _countdown,
+          'audience': _audience,
+        }),
       );
       if (!mounted) return;
       setState(() => _saving = false);
@@ -346,13 +347,15 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
       if (!_sameList(_assignees, occ.assignees)) 'assignees': _assignees,
       if (_category != event.category) 'category': _category,
       if (!_sameList(_reminders, [...occ.reminders]..sort())) 'reminders': _reminders,
-      if (!_sameRides(_rides, occ.rides))
-        'rides': [
-          for (final r in _rides) {'leg': r.leg, 'driver': r.driver},
-        ],
+      if (!_sameRides(_rides, occ.rides)) 'rides': _rides,
       if (_countdown != event.countdown) 'countdown': _countdown,
-      if (_audience != event.audience) 'audience': _audience.name,
+      if (_audience != event.audience) 'audience': _audience,
     };
+    // Switching to or from all day says the times again, in the new terms.
+    if (patch.containsKey('allDay')) {
+      patch['start'] = start;
+      patch['end'] = end;
+    }
     if (patch.isEmpty) {
       closePage(context, result: EditOutcome.saved);
       return;
@@ -371,8 +374,8 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
     }
     setState(() => _saving = true);
     final error = await tryWrite(
-      () => den.updateEvent(
-        event.id,
+      () => events.update(
+        event,
         patch,
         scope: scope,
         // One and following address the occurrence by its place in the series; a change to all

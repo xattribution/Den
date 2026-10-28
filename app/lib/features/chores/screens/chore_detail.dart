@@ -11,6 +11,7 @@ import 'swap_sheet.dart';
 import '../../../design/chore_pictograms.dart';
 import '../../../design/forms/forms.dart';
 import '../../../app/words.dart';
+import '../state/chore_actions.dart';
 
 /// One chore on one day: who has it and why, its steps to check, how it repeats, and what
 /// happened on recent days. `/chore/:id?date=`.
@@ -128,10 +129,10 @@ class ChoreDetailScreen extends StatelessWidget {
   }
 
   Future<void> _delete(BuildContext context, Chore chore) async {
-    final den = context.den;
+    final actions = context.actions;
     final keep = Navigator.of(context, rootNavigator: true).context;
-    final ok = await attempt(context, () => den.deleteChore(chore.id));
-    if (!ok || !context.mounted) return;
+    final result = await perform(context, () => context.choreActions.delete(chore));
+    if (result == null || !context.mounted) return;
     if (context.canPop()) {
       context.pop();
     } else {
@@ -139,7 +140,7 @@ class ChoreDetailScreen extends StatelessWidget {
     }
     if (!keep.mounted) return;
     // The same chore comes back, with the days it was done and the points they earned.
-    showUndo(keep, '${chore.title} deleted', () => attempt(keep, () => den.restore(RecordType.chore, chore.id)));
+    offerUndo(keep, actions, '${chore.title} deleted', result);
   }
 }
 
@@ -245,7 +246,7 @@ class _MainCheck extends StatelessWidget {
     final c = context.colors;
     final can = _canCheckFor(app, day.owner);
     final by = app.memberById(day.doneBy);
-    void toggle() => attempt(context, () => app.den.setChoreDone(day.chore.id, day.date, !day.done));
+    void toggle() => attempt(context, () => context.choreActions.setDone(day, !day.done));
     return Padding(
       padding: const EdgeInsets.only(top: Sp.m),
       child: Hang(
@@ -300,7 +301,7 @@ class _Steps extends StatelessWidget {
               final checked = checkedBy != null;
               final owner = app.memberById(step.owner);
               final can = _canCheckFor(app, step.owner ?? day.owner);
-              void toggle() => attempt(context, () => app.den.setStep(day.chore.id, day.date, step.id, !checked));
+              void toggle() => attempt(context, () => context.choreActions.setStep(day, step.id, !checked));
               return Hang(
                 by: (Targets.adult - 26) / 2,
                 child: InkWell(

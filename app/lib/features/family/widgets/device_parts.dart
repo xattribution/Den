@@ -18,6 +18,7 @@ import '../../../platform/web/web_app.dart';
 import '../screens/member_editor.dart';
 import '../../../platform/capabilities.dart';
 import '../../../design/pictograms.dart';
+import '../state/trust_actions.dart';
 
 /// Devices waiting for approval: the synced join requests, with the matching words from the
 /// pairing session when this device holds it.
@@ -97,7 +98,7 @@ class PendingApproval extends StatelessWidget {
             children: [
               FilledButton(onPressed: () => approveDevice(context, deviceId, name), child: Text('Approve $name')),
               OutlinedButton(
-                onPressed: () => attempt(context, () => context.den.revokeDevice(deviceId)),
+                onPressed: () => attempt(context, () => context.trustActions.revokeDevice(deviceId)),
                 child: const Text('Decline'),
               ),
             ],
@@ -166,10 +167,10 @@ Future<DeviceOwner?> showWhoseDeviceSheet(BuildContext context, String deviceNam
 Future<void> approveDevice(BuildContext context, String deviceId, String name) async {
   final owner = await showWhoseDeviceSheet(context, name);
   if (owner == null || !context.mounted) return;
-  final den = DenScope.read(context).den;
+  final trust = context.trustActions;
   // The request leaves the list once approved, so ask from somewhere that stays.
   final keep = Navigator.of(context, rootNavigator: true).context;
-  final ok = await attempt(context, () => den.approveDevice(deviceId, member: owner.member, mode: owner.mode));
+  final ok = await attempt(context, () => trust.approveDevice(deviceId, member: owner.member, mode: owner.mode));
   if (!ok || owner.mode != DeviceMode.shared || !keep.mounted) return;
   await askParentForSignIn(keep, name);
 }
@@ -193,7 +194,7 @@ Future<bool> confirmRevoke(BuildContext context, Device device) async {
     ),
   );
   if (yes != true || !context.mounted) return false;
-  return attempt(context, () => context.den.revokeDevice(device.id));
+  return attempt(context, () => context.trustActions.revokeDevice(device.id));
 }
 
 /// A device in a list: kind icon, name, and what it is in words.

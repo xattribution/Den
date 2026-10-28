@@ -11,6 +11,7 @@ import '../../../app/app_state.dart';
 import '../words/chore_words.dart';
 import '../../../design/chore_pictograms.dart';
 import '../../../design/forms/forms.dart';
+import '../state/chore_actions.dart';
 
 enum _OwnerKind { person, anyone, turns }
 
@@ -199,7 +200,6 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
 
   Future<void> _save() async {
     final app = context.app;
-    final den = app.den;
     final spec = _spec!;
     setState(() {
       _titleError = _title.text.trim().isEmpty ? 'Give the chore a name.' : null;
@@ -226,35 +226,22 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
     ];
     final reminders = due == null ? <int>[] : (_reminders.toList()..sort());
     setState(() => _saving = true);
-    final ok = await attempt(context, () async {
-      if (_isNew) {
-        await den.addChore(
-          title: _title.text.trim(),
-          owner: owner,
-          schedule: schedule,
-          icon: _icon,
-          notes: _notes.text.trim(),
-          dueTime: due,
-          points: _points,
-          steps: steps,
-          reminders: reminders,
-          audience: _audience,
-        );
-      } else {
-        await den.updateChore(widget.id!, {
-          'title': _title.text.trim(),
-          'icon': _icon,
-          'owner': owner.toJson(),
-          'schedule': schedule.toJson(),
-          'dueTime': due,
-          'points': _points,
-          'steps': [for (final s in steps) s.toJson()],
-          'reminders': reminders,
-          'notes': _notes.text.trim(),
-          if (_audienceChanged) 'audience': _audience.name,
-        });
-      }
-    });
+    final ok = await attempt(
+      context,
+      () => context.choreActions.save(
+        _existing,
+        title: _title.text.trim(),
+        owner: owner,
+        schedule: schedule,
+        icon: _icon,
+        notes: _notes.text.trim(),
+        dueTime: due,
+        points: _points,
+        steps: steps,
+        reminders: reminders,
+        audience: _isNew || _audienceChanged ? _audience : null,
+      ),
+    );
     if (!mounted) return;
     setState(() => _saving = false);
     if (!ok) return;

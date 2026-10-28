@@ -6,7 +6,6 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/side_panel.dart';
-import '../../../design/feedback.dart';
 import '../widgets/calendar_category.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
@@ -17,6 +16,7 @@ import '../words/event_words.dart';
 import '../words/recurrence.dart';
 import '../../../platform/capabilities.dart';
 import '../../../app/navigation.dart';
+import '../state/event_actions.dart';
 
 /// What the editor tells the detail when it closes: whether the occurrence the detail shows
 /// still exists as it was addressed.
@@ -371,7 +371,7 @@ class _RideValue extends StatelessWidget {
 
     Future<void> claim(String? who) => attempt(
       context,
-      () => app.den.claimRide(occ.event.id, occurrence: occ.seriesStart, leg: ride.leg, driver: who),
+      () => context.eventActions.setRide(occ, ride.leg, who),
     );
 
     Widget line(Widget child) => ConstrainedBox(
@@ -430,7 +430,7 @@ class _Provenance extends StatelessWidget {
 /// back exactly what was removed.
 Future<void> deleteOccurrence(BuildContext context, Occurrence occ) async {
   final app = DenScope.read(context);
-  final den = app.den;
+  final actions = app.actions;
   final f = app.formats;
   final event = occ.event;
   var scope = EditScope.all;
@@ -439,24 +439,15 @@ Future<void> deleteOccurrence(BuildContext context, Occurrence occ) async {
     if (chosen == null || !context.mounted) return;
     scope = chosen;
   }
-  final messenger = ScaffoldMessenger.of(context);
+  final keep = Navigator.of(context, rootNavigator: true).context;
   final occurrence = occ.isRepeating ? occ.seriesStart : null;
-  final error = await tryWrite(() => den.deleteEvent(event.id, scope: scope, occurrence: occurrence));
-  if (!context.mounted) return;
-  if (error != null) {
-    showNote(context, error);
-    return;
-  }
+  final result = await perform(context, () => EventActions(actions).delete(event, scope: scope, occurrence: occurrence));
+  if (result == null || !context.mounted) return;
   closePage(context);
   final message = switch (scope) {
     EditScope.one => 'Deleted ${occ.title} on ${f.short(f.localDate(occ.start))}.',
     EditScope.following => 'Deleted ${occ.title} from ${f.short(f.localDate(occ.start))} on.',
     EditScope.all => 'Deleted ${occ.title}.',
   };
-  showUndoOn(messenger, message, () async {
-    final failed = await tryWrite(
-      () => den.restoreEvent(event.id, scope: scope, occurrence: occurrence, rrule: event.rrule),
-    );
-    if (failed != null) messenger.showSnackBar(SnackBar(content: Text(failed)));
-  });
+  if (keep.mounted) offerUndo(keep, actions, message, result);
 }

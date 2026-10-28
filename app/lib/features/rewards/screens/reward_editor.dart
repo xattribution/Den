@@ -8,6 +8,7 @@ import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../design/chore_pictograms.dart';
 import '../../../design/forms/forms.dart';
+import '../state/reward_actions.dart';
 
 /// A reward in the store: picture, name, cost, and whether a parent approves each request.
 /// Removing one takes it out of the store, with Undo. `/points/reward/new`, `/points/reward/:id`.
@@ -53,22 +54,14 @@ class _RewardEditorScreenState extends State<RewardEditorScreen> {
   }
 
   Future<void> _save() async {
-    final den = context.den;
+    final rewards = context.rewardActions;
     setState(() => _titleError = _title.text.trim().isEmpty ? 'Give the reward a name.' : null);
     if (_titleError != null) return;
     setState(() => _saving = true);
-    final ok = await attempt(context, () async {
-      if (_isNew) {
-        await den.addReward(title: _title.text.trim(), cost: _cost, icon: _icon, needsApproval: _needsApproval);
-      } else {
-        await den.updateReward(widget.id!, {
-          'title': _title.text.trim(),
-          'cost': _cost,
-          'icon': _icon,
-          'needsApproval': _needsApproval,
-        });
-      }
-    });
+    final ok = await attempt(
+      context,
+      () => rewards.saveReward(_existing, title: _title.text.trim(), cost: _cost, icon: _icon, needsApproval: _needsApproval),
+    );
     if (!mounted) return;
     setState(() => _saving = false);
     if (!ok) return;
@@ -81,17 +74,17 @@ class _RewardEditorScreenState extends State<RewardEditorScreen> {
 
   Future<void> _remove() async {
     final reward = _existing!;
-    final den = context.den;
+    final actions = context.actions;
     final keep = Navigator.of(context, rootNavigator: true).context;
-    final ok = await attempt(context, () => den.updateReward(reward.id, {'active': false}));
-    if (!ok || !mounted) return;
+    final result = await perform(context, () => RewardActions(actions).setRewardActive(reward, false));
+    if (result == null || !mounted) return;
     if (context.canPop()) {
       context.pop();
     } else {
       context.go('/points');
     }
     if (!keep.mounted) return;
-    showUndo(keep, '${reward.title} removed', () => attempt(keep, () => den.updateReward(reward.id, {'active': true})));
+    offerUndo(keep, actions, '${reward.title} removed', result);
   }
 
   @override

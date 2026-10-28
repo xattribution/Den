@@ -28,6 +28,9 @@ class _DenAppState extends State<DenApp> {
   StreamSubscription<String>? _taps;
   StreamSubscription<Object>? _shares;
 
+  /// The theme and the wall setting: all that rebuilds the app itself.
+  late final ChangeNotifier _prefs = widget.state.watching(const {Changes.prefs});
+
   @override
   void initState() {
     super.initState();
@@ -65,6 +68,7 @@ class _DenAppState extends State<DenApp> {
   void dispose() {
     _taps?.cancel();
     _shares?.cancel();
+    _prefs.dispose();
     super.dispose();
   }
 
@@ -73,7 +77,7 @@ class _DenAppState extends State<DenApp> {
     return DenScope(
       state: widget.state,
       child: ListenableBuilder(
-        listenable: widget.state,
+        listenable: _prefs,
         builder: (context, _) {
           final scale = widget.state.wall ? DenType.wallScale : 1.0;
           return MaterialApp.router(

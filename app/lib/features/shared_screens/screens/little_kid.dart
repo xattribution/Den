@@ -8,6 +8,8 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../widgets/kid_parts.dart';
+import '../../chores/chores.dart';
+import '../../rewards/rewards.dart';
 
 /// The little kid's app: three big tabs, "My jobs", "My days" and "My stars". Title, heading and
 /// display type only; 72-dp targets; 16-radius cards for the things they act on.
@@ -109,7 +111,6 @@ class _JobCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final den = context.den;
     final c = context.colors;
     final day = job.day;
     final chore = day.chore;
@@ -144,7 +145,7 @@ class _JobCard extends StatelessWidget {
                   done: day.done,
                   size: 80,
                   label: chore.title,
-                  onChanged: (v) => attempt(context, () => den.setChoreDone(chore.id, day.date, v)),
+                  onChanged: (v) => attempt(context, () => context.choreActions.setDone(day, v)),
                 ),
             ],
           ),
@@ -165,7 +166,6 @@ class _StepRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final den = context.den;
     final c = context.colors;
     final checked = day.steps[step.id] != null;
     return Semantics(
@@ -175,7 +175,7 @@ class _StepRow extends StatelessWidget {
       excludeSemantics: true,
       child: InkWell(
         borderRadius: BorderRadius.circular(Radii.card),
-        onTap: () => attempt(context, () => den.setStep(day.chore.id, day.date, step.id, !checked)),
+        onTap: () => attempt(context, () => context.choreActions.setStep(day, step.id, !checked)),
         child: SizedBox(
           height: Targets.kid,
           child: Row(
@@ -352,7 +352,7 @@ class _Stars extends StatelessWidget {
                       SizedBox(
                         height: Targets.kid,
                         child: FilledButton(
-                          onPressed: () => attempt(context, () => den.requestReward(r.id, member: kid.id)),
+                          onPressed: () => attempt(context, () => context.rewardActions.request(r, member: kid.id)),
                           child: Text('Ask for it', style: context.type.title(c.onInk)),
                         ),
                       )

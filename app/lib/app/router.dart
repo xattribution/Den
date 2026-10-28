@@ -16,10 +16,11 @@ import 'redirect.dart';
 import 'shell.dart';
 
 /// The app's routes, composed from each feature's `routes.dart`: the four tabs in the shell,
-/// and every other page over it.
+/// and every other page over it. The redirect runs again only when who's who, this device or the
+/// wall setting changes, never for an event or a chore.
 GoRouter buildRouter(AppState state) => GoRouter(
       initialLocation: '/today',
-      refreshListenable: state,
+      refreshListenable: state.watching({...Changes.people, Changes.prefs}),
       redirect: (context, route) => familyRedirect(state, route),
       routes: [
         GoRoute(path: '/', redirect: (_, _) => '/today'),

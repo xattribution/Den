@@ -10,6 +10,7 @@ import 'motion.dart';
 import 'tokens.dart';
 
 export 'avatar.dart';
+export 'feedback.dart';
 
 /// The vertical marker bar beside an event or chore: one segment per person it belongs to.
 /// Items for everyone show every member's segment.
@@ -458,44 +459,4 @@ class FactRow extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Shows a message with Undo, the way reversible actions confirm themselves.
-void showUndo(BuildContext context, String message, VoidCallback onUndo) {
-  final messenger = ScaffoldMessenger.of(context);
-  messenger.hideCurrentSnackBar();
-  messenger.showSnackBar(
-    SnackBar(
-      content: Text(message),
-      action: SnackBarAction(label: 'Undo', onPressed: onUndo),
-      duration: const Duration(seconds: 6),
-    ),
-  );
-}
-
-/// Shows a plain message (errors name the cause and the way out).
-void showNote(BuildContext context, String message) {
-  final messenger = ScaffoldMessenger.of(context);
-  messenger.hideCurrentSnackBar();
-  messenger.showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 5)));
-}
-
-/// What a failed write says when the reason isn't one written for people (storage, say).
-const String writeFailedMessage = 'Den couldn’t save that. Try again in a moment.';
-
-/// Runs a write and turns any failure into a note instead of a crash: permission and input
-/// errors say why, anything else that it didn't save.
-Future<bool> attempt(BuildContext context, Future<void> Function() write) async {
-  try {
-    await write();
-    return true;
-  } on PermissionDenied catch (e) {
-    if (context.mounted) showNote(context, e.message);
-  } on InvalidInput catch (e) {
-    if (context.mounted) showNote(context, e.message);
-  } on Object catch (e, stack) {
-    debugPrint('A write failed: $e\n$stack');
-    if (context.mounted) showNote(context, writeFailedMessage);
-  }
-  return false;
 }

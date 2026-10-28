@@ -10,6 +10,7 @@ import '../../../app/app_state.dart';
 import '../widgets/device_parts.dart';
 import '../../../design/forms/forms.dart';
 import '../../../design/pictograms.dart';
+import '../state/trust_actions.dart';
 
 /// One device: its name, whose it is, a shared display's layout and open check-off, and Revoke.
 /// Whose it is doesn't change; giving it to someone else means revoking it and adding it again.
@@ -44,7 +45,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
     final den = DenScope.read(context).den;
     final name = _name.text.trim();
     if (name.isEmpty || name == den.device(widget.deviceId)?.name) return;
-    attempt(context, () => den.updateDevice(widget.deviceId, {'name': name}));
+    attempt(context, () => context.trustActions.renameDevice(widget.deviceId, name));
   }
 
   @override
@@ -56,7 +57,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
 
   void _display(Device device, Map<String, Object?> change) {
     final display = {...device.rec.map('display'), ...change};
-    attempt(context, () => context.den.updateDevice(device.id, {'display': display}));
+    attempt(context, () => context.trustActions.setDisplay(device.id, display));
   }
 
   @override

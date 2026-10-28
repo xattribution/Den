@@ -6,6 +6,7 @@ import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import 'list_detail.dart';
 import '../words/list_words.dart';
+import '../state/list_actions.dart';
 
 /// The Add sheet's "Grocery item": the first pinned shopping list with its add row focused.
 /// `/lists/groceries/add`.
@@ -27,10 +28,17 @@ class GroceryAddScreen extends StatelessWidget {
             : 'There\'s no shopping list yet. Ask a parent to add one.',
         actionLabel: canCreate ? 'Add groceries list' : null,
         onAction: () async {
-          final den = app.den;
           final ok = await attempt(
             context,
-            () => den.addList(title: 'Groceries', kind: ListKind.shopping, icon: 'shopping', pinned: true),
+            () => context.listActions.save(
+              null,
+              title: 'Groceries',
+              kind: ListKind.shopping,
+              lifecycle: ListLifecycle.running,
+              needBy: null,
+              event: null,
+              pinned: true,
+            ),
           );
           if (ok && context.mounted) context.pushReplacement('/lists/groceries/add');
         },

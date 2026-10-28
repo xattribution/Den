@@ -12,6 +12,7 @@ import '../state/kids.dart';
 import '../../../app/app_state.dart';
 import 'little_kid.dart';
 import 'pre_reader.dart';
+import '../state/sign_in_actions.dart';
 
 /// The kids' app for pre-readers and little kids. On a kid's own device it's simply theirs; on a
 /// shared screen it starts with "Who's using Den?" and ends when they tap Done or the sign-in
@@ -47,7 +48,7 @@ class _KidScreenState extends State<KidScreen> {
   }
 
   void _done() {
-    context.den.actAs(null);
+    context.signInActions.signOut();
     context.go('/today');
   }
 

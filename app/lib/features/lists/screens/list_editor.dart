@@ -68,7 +68,8 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
   }
 
   Future<void> _save() async {
-    final den = context.den;
+    final lists = context.listActions;
+    final existing = _isNew ? null : DenScope.read(context).den.list(widget.id!);
     setState(() {
       _titleError = _title.text.trim().isEmpty ? 'Give the list a name.' : null;
       _whenError = switch (_lifecycle) {
@@ -79,35 +80,23 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
     });
     if (_titleError != null || _whenError != null) return;
     setState(() => _saving = true);
-    String? newId;
-    final ok = await attempt(context, () async {
-      if (_isNew) {
-        newId = await den.addList(
-          title: _title.text.trim(),
-          kind: _kind,
-          lifecycle: _lifecycle,
-          needBy: _lifecycle == ListLifecycle.dated ? _needBy : null,
-          event: _lifecycle == ListLifecycle.event ? _event : null,
-          icon: _kind.name,
-          pinned: _pinned,
-          audience: _audience,
-        );
-      } else {
-        await den.updateList(widget.id!, {
-          'title': _title.text.trim(),
-          'kind': _kind.name,
-          'icon': _kind.name,
-          'lifecycle': _lifecycle.name,
-          'needBy': _lifecycle == ListLifecycle.dated ? _needBy : null,
-          'event': _lifecycle == ListLifecycle.event ? _event : null,
-          'pinned': _pinned,
-          if (_audienceChanged) 'audience': _audience.name,
-        });
-      }
-    });
+    final result = await perform(
+      context,
+      () => lists.save(
+        existing,
+        title: _title.text.trim(),
+        kind: _kind,
+        lifecycle: _lifecycle,
+        needBy: _needBy,
+        event: _event,
+        pinned: _pinned,
+        audience: _isNew || _audienceChanged ? _audience : null,
+      ),
+    );
     if (!mounted) return;
     setState(() => _saving = false);
-    if (!ok) return;
+    if (result == null) return;
+    final newId = _isNew ? ((result.data['list'] as Map?)?['id'] as String?) : null;
     if (newId != null) {
       context.pushReplacement('/lists/$newId');
     } else if (context.canPop()) {

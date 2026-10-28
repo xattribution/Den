@@ -9,6 +9,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../design/chore_pictograms.dart';
 import '../../../app/words.dart';
+import '../state/chore_actions.dart';
 
 /// A chore on a day: the check (or, for a chore with steps, the ring of steps it completes
 /// through), its pictogram, title, due time and stars. Tapping opens the chore; [onSwap] adds
@@ -74,7 +75,7 @@ class ChoreRow extends StatelessWidget {
                   size: 26 * scale,
                   label: chore.title,
                   onChanged: canCheck
-                      ? (v) => attempt(context, () => app.den.setChoreDone(chore.id, day.date, v))
+                      ? (v) => attempt(context, () => context.choreActions.setDone(day, v))
                       : null,
                 )
               else

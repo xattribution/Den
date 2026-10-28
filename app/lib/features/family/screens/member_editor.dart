@@ -11,6 +11,8 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../design/forms/forms.dart';
+import '../state/family_actions.dart';
+import '../state/trust_actions.dart';
 
 /// One person: name, role, age group, look, permissions, shared-screen sign-in and privacy.
 /// A new person is added with one button; an existing person's changes save as they're made.
@@ -79,17 +81,17 @@ class _MemberEditorState extends State<MemberEditor> {
   /// Saves a field of an existing person at once; a new person keeps it until "Add". The name
   /// saves when its field loses focus, which can happen as the page closes: this reads the engine
   /// without depending on it, and only while the page is still here.
-  void _patch(Map<String, Object?> patch) {
+  void _save(Future<Object?> Function(String member) write) {
     if (_isNew || !mounted) return;
-    final den = DenScope.read(context).den;
-    attempt(context, () => den.updateMember(widget.memberId!, patch));
+    attempt(context, () => write(widget.memberId!));
   }
 
   void _saveName() {
     if (!mounted) return;
     final name = _name.text.trim();
     if (_isNew || name.isEmpty || name == _member?.name) return;
-    _patch({'name': name});
+    final family = context.familyActions;
+    _save((m) => family.saveDetails(m, name: name));
   }
 
   Tier? get _suggested {
@@ -120,7 +122,8 @@ class _MemberEditorState extends State<MemberEditor> {
       if (yes != true || !mounted) return;
     }
     setState(() => _role = r);
-    _patch({'role': r.name, 'tier': r == Role.kid ? _tier.name : null});
+    final trust = context.trustActions;
+    _save((m) => trust.setRole(m, r, tier: _tier));
   }
 
   void _setTier(Tier t) {
@@ -128,7 +131,8 @@ class _MemberEditorState extends State<MemberEditor> {
       _tier = t;
       _tierChosen = true;
     });
-    _patch({'tier': t.name});
+    final family = context.familyActions;
+    _save((m) => family.saveDetails(m, tier: t));
   }
 
   Future<void> _pickBirthday() async {
@@ -144,43 +148,35 @@ class _MemberEditorState extends State<MemberEditor> {
     if (picked == null || !mounted) return;
     final date = DateFormat('yyyy-MM-dd').format(picked);
     setState(() => _birthday = date);
-    final patch = <String, Object?>{'birthday': date};
     final suggested = _suggested;
-    if (_role == Role.kid && !_tierChosen && suggested != null) {
-      setState(() => _tier = suggested);
-      patch['tier'] = suggested.name;
-    }
-    _patch(patch);
+    final retier = _role == Role.kid && !_tierChosen && suggested != null;
+    if (retier) setState(() => _tier = suggested);
+    final family = context.familyActions;
+    _save((m) => family.saveDetails(m, birthday: date, tier: retier ? suggested : null));
   }
 
   void _setGrant(Grant g, bool on) {
     setState(() => on ? _grants.add(g) : _grants.remove(g));
-    _patch({
-      'grants': [
-        for (final x in Grant.values)
-          if (_grants.contains(x)) x.name,
-      ],
-    });
+    final trust = context.trustActions;
+    final grants = {..._grants};
+    _save((m) => trust.setGrants(m, grants));
   }
 
   Future<void> _add() async {
     setState(() => _tried = true);
     final name = _name.text.trim();
     if (name.isEmpty) return;
-    final den = context.den;
-    String? id;
-    final ok = await attempt(context, () async {
-      id = await den.addMember(
-        name: name,
-        role: _role,
-        tier: _role == Role.kid ? _tier : null,
-        marker: _marker,
-        picture: _picture,
-        birthday: _birthday,
-        grants: _role == Role.kid ? _grants : const {},
-      );
-    });
-    if (ok && mounted && id != null) context.pushReplacement('/family/member/$id');
+    final family = context.familyActions;
+    final trust = context.trustActions;
+    final result = await perform(
+      context,
+      () => family.addPerson(name: name, role: _role, tier: _tier, marker: _marker, picture: _picture, birthday: _birthday),
+    );
+    final id = (result?.data['member'] as Map?)?['id'] as String?;
+    if (id == null || !mounted) return;
+    // What a kid may add is a trust decision of its own, made right after.
+    if (_role == Role.kid && _grants.isNotEmpty) await attempt(context, () => trust.setGrants(id, _grants));
+    if (mounted) context.pushReplacement('/family/member/$id');
   }
 
   Future<void> _remove() async {
@@ -202,7 +198,7 @@ class _MemberEditorState extends State<MemberEditor> {
       ),
     );
     if (yes != true || !mounted) return;
-    final ok = await attempt(context, () => context.den.removeMember(m.id));
+    final ok = await attempt(context, () => context.trustActions.removePerson(m.id));
     if (ok && mounted) context.pop();
   }
 
@@ -309,11 +305,11 @@ class _MemberEditorState extends State<MemberEditor> {
             takenBy: colorsTaken(den.members, except: widget.memberId),
             onPicture: (p) {
               setState(() => _picture = p);
-              _patch({'picture': p});
+              _save((id) => context.familyActions.saveDetails(id, picture: p));
             },
             onColor: (m) {
               setState(() => _marker = m);
-              _patch({'marker': m.name});
+              _save((id) => context.familyActions.saveDetails(id, marker: m));
             },
           ),
         ),
@@ -367,9 +363,9 @@ class _Scroll extends StatelessWidget {
 
 /// Sets how [member] signs in on shared screens: `none`, or a PIN or picture pattern chosen twice.
 Future<void> chooseSignIn(BuildContext context, Member member, String kind) async {
-  final den = DenScope.read(context).den;
+  final trust = context.trustActions;
   if (kind == 'none') {
-    await attempt(context, () => den.setSignIn(member.id, kind: 'none'));
+    await attempt(context, () => trust.setSignIn(member.id, 'none'));
     return;
   }
   final secret = await showModalBottomSheet<String>(
@@ -380,7 +376,7 @@ Future<void> chooseSignIn(BuildContext context, Member member, String kind) asyn
     ),
   );
   if (secret == null || !context.mounted) return;
-  await attempt(context, () => den.setSignIn(member.id, kind: kind, secret: secret));
+  await attempt(context, () => trust.setSignIn(member.id, kind, secret: secret));
 }
 
 /// After a parent makes a device a shared display: a parent with no PIN or pattern can't act on
@@ -554,12 +550,7 @@ class _OversightRow extends StatelessWidget {
           ),
           value: on,
           // Just this person's entry, so two parents changing different people at once both count.
-          onChanged: (v) => attempt(
-            context,
-            () => den.updateFamily({
-              'oversight.${member.id}': {'parentsSeePrivate': v},
-            }),
-          ),
+          onChanged: (v) => attempt(context, () => context.trustActions.setParentsSeePrivate(member.id, v)),
         ),
       ],
     );

@@ -9,6 +9,7 @@ import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../widgets/scope_picker.dart';
 import '../../../design/forms/forms.dart';
+import '../state/connection_actions.dart';
 
 /// Creating an API token for an AI client or an automation: a label, what it may do and whose
 /// permissions it uses. The token is shown once, with Copy.
@@ -49,10 +50,10 @@ class _CreateTokenScreenState extends State<CreateTokenScreen> {
     final label = _label.text.trim();
     if (label.isEmpty || _scopes.isEmpty) return;
     setState(() => _busy = true);
-    final den = context.den;
+    final connections = context.connectionActions;
     String? token;
     await attempt(context, () async {
-      token = await den.addTokenConnection(label: label, scopes: _scopes, member: _member);
+      token = await connections.addToken(label: label, scopes: _scopes, member: _member);
     });
     if (!mounted) return;
     setState(() {
