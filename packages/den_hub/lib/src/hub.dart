@@ -11,6 +11,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import 'access.dart';
 import 'api.dart';
+import 'assistant.dart';
 import 'capture.dart';
 import 'config.dart';
 import 'context.dart';
@@ -57,6 +58,7 @@ class DenHub {
   late final EventStream _stream;
   late final RestApi _api;
   late final HubCapture _capture;
+  late final HubAssistant _assistant;
   late final McpServer _mcp;
   late final McpHttp _mcpHttp;
   late final OAuthServer _oauth;
@@ -119,6 +121,9 @@ class DenHub {
 
   /// Reading what devices share, with the reader a parent set up on the hub.
   HubCapture get capture => _capture;
+
+  /// The in-app assistant's model requests, sent on with the key a parent gave the hub.
+  HubAssistant get assistant => _assistant;
 
   /// OAuth for remote MCP clients; [OAuthServer.sweep] expires sign-in requests now.
   OAuthServer get oauth => _oauth;
@@ -202,6 +207,7 @@ class DenHub {
       ..add('GET', '/ics/<token>/<file>', (r, p) => _ics.feed(r, p['token']!, p['file']!));
     _api.register(_routes);
     _capture.register(_routes);
+    _assistant = HubAssistant(_ctx, _auth)..register(_routes);
     HubInvites(_ctx).register(_routes);
     _push.register(_routes);
     _changes = den.onChange.listen((_) {
@@ -371,7 +377,11 @@ class DenHub {
         return inner(request);
       };
 
-  int _bodyLimit(Request request) => request.url.path == 'api/v1/capture/read' ? HubCapture.maxBody : maxBodyBytes;
+  int _bodyLimit(Request request) => switch (request.url.path) {
+        'api/v1/capture/read' => HubCapture.maxBody,
+        'api/v1/assistant/model' => HubAssistant.maxBody,
+        _ => maxBodyBytes,
+      };
 
   void _warnUntrustedProxy(Request request) {
     final peer = peerAddress(request)?.address;

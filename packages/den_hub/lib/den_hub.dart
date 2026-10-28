@@ -8,6 +8,7 @@ library;
 export 'package:den_actions/den_actions.dart' show readableSpacesFor;
 export 'package:den_actions/times.dart' show parseInstant, isoIn;
 export 'src/access.dart' show Access, accessForToken;
+export 'src/assistant.dart' show HubAssistant;
 export 'src/capture.dart' show HubCapture;
 export 'src/config.dart';
 export 'src/edge.dart' show IpNetwork;
