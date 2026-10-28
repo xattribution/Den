@@ -28,7 +28,8 @@ RUN cd packages/den_hub_cli && dart pub get
 COPY packages packages
 # den_sett_import links SQLite through a build hook, which `dart compile exe` doesn't run;
 # `dart build cli` does, and bundles the library next to the binary (bundle/lib).
-RUN cd packages/den_hub \
+# The entry point lives in den_hub_cli (bin/den_hub.dart); den_hub is the library it serves.
+RUN cd packages/den_hub_cli \
  && dart pub get --offline \
  && dart build cli -t bin/den_hub.dart -o /out \
  && mkdir -p /out/data
