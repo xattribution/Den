@@ -11,6 +11,14 @@ import 'tokens.dart';
 
 export 'avatar.dart';
 export 'feedback.dart';
+export 'pickers/people_picker.dart';
+export 'widgets/buttons.dart';
+export 'widgets/chips.dart';
+export 'widgets/inputs.dart';
+export 'widgets/navigation.dart';
+export 'widgets/rows.dart';
+export 'widgets/section.dart';
+export 'widgets/states.dart';
 
 /// The vertical marker bar beside an event or chore: one segment per person it belongs to.
 /// Items for everyone show every member's segment.

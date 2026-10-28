@@ -372,6 +372,39 @@ From the canvas; phase 2 builds them in `app/lib/design/` on the pieces above.
   way out.
 - **Focus** is a 2 pt ink ring with a gap on everything focusable.
 
+### Using the shared pieces
+
+Every screen builds from these (`import 'design/widgets.dart'`, which exports them all). They
+take plain values and den_core model types, never the app's state, so any feature can use them.
+
+| Piece | Use it for | Notes |
+| --- | --- | --- |
+| `DenSection` (+ `SectionCount`, `SectionLink`) | A heading over one grouped card | `carded: false` for a row of fields or chips. Sections sit `DenLayout.sectionGap` apart. A `SectionLink` keeps the heading's height (its tap area reaches 16 pt before the words) so the card stays 10 pt under the heading. |
+| `GroupCard`, `RowRule`, `ruled()` | The card itself; hairlines between rows | `RowRule(indent: RowRule.afterFace)` after 40 pt faces. Never a card in a card. |
+| `ActionRow` | A row that asks for one thing (Needs you, requests) | Face, bold sentence, detail, one action. The action sits under the words below 360 pt (a phone's card) and past 135 % text, at the end otherwise (an iPad column). |
+| `DoneRow`, `DoneSwap` | What a row did, with Undo in place | `DoneSwap(done: …, child: row)` crossfades on the UI spring; pass a receipt's undo as `onUndo`. Never a toast. |
+| `NavRow` | A row that goes somewhere (menus, "Or add one thing") | Optional glyph or face, label, detail, chevron; 56 tall. |
+| `FaceStack` | Who something is for | `DenAvatar`s 26 across, each ringed in the card color. |
+| `CheckPill` | A chore (or anything checked off) as a pill | Ring in the person's color. Ring tap checks; label tap opens details (steps, Give to…). `stars: null` when points are off. |
+| `CheckRow`, `CheckRing` | The same as a full-width row (PadToday's chores); the ring alone (a step) | 32 pt ring in a 48 target, whose it is at the end; 60 tall. |
+| `TagChip` | One of a few choices (a category, a kind) | Ink when chosen. |
+| `PersonPill` | A person to filter by or pick | 32 pt face; ink edge when chosen. |
+| `ValueChip` | One thing Den understood, to adjust (When, Who, Repeats) | `missing: true` asks for it. |
+| `DenSegmented` | Views of the same thing ("Week", "Day") | Not for settings; use a switch or a picker. |
+| `RoundButton`, `UndoButton` | Add (52 ink), More (44 card); Undo | Buttons otherwise come from the theme: `FilledButton` is the ink pill, `OutlinedButton` the secondary. |
+| `InlineAdd` | Adding where the list is (Groceries on Today) | Return adds and keeps the keyboard up. |
+| `EmptyState` | Nothing here yet | One line and the one action; `compact` inside a card. |
+| `ErrorState` | Something failed | What happened and the way out; red text and icon only. |
+| `NoticeLine` | How things stand (offline) | Ink glyph and a plain line, no colored box. |
+| `DisabledReason` | A control that can't be used now | Keeps the control and says why under it. |
+| `PageHeader` | A screen's title, the date above it, the person's face | 30/800 (`large` on iPad). |
+| `DenTabBar`, `DenSidebar`, `NavPlace` | The app's navigation | The shell owns them; screens never draw their own. |
+| `showPeoplePicker` | Choosing a person (Give to…, Who?, Who's driving?) | A sheet of faces; `anyoneLabel` adds "Anyone". |
+| `showDenSheet` | Every sheet | Springs, drag to close, centered form sheet on iPad. |
+
+Writes from these pieces go through the feature's actions (ARCHITECTURE.md, "The app"); an
+action's `ActionResult.receipt` is what Undo takes back.
+
 ## Screens (phone)
 
 - **Today**: the date and "Good morning", the person's avatar at the right; Needs you; Today's
