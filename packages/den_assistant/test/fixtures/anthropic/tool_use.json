@@ -1,0 +1,42 @@
+{
+  "id": "msg_01DenFixtureToolUse",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-haiku-5-5",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "EqQBCkYIBxgCKkDenFixtureSignatureForThinking"
+    },
+    {
+      "type": "text",
+      "text": "I'll add those to Groceries."
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_01A09q90qw90lq917835lq9",
+      "name": "add_items",
+      "input": {
+        "list": "Groceries",
+        "items": [
+          {"text": "Eggs"},
+          {"text": "Milk", "qty": "2"}
+        ]
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 412,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 3880,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 0
+    },
+    "output_tokens": 96
+  }
+}

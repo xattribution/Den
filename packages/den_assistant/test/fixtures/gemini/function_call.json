@@ -1,0 +1,40 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "id": "fc-7a1b",
+              "name": "add_items",
+              "args": {
+                "list": "Groceries",
+                "items": [{"text": "Eggs"}]
+              }
+            },
+            "thoughtSignature": "CiQBVKhcDenFixtureSignatureA"
+          },
+          {
+            "functionCall": {
+              "id": "fc-7a1c",
+              "name": "check_item",
+              "args": {"item": "Milk"}
+            }
+          }
+        ]
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 4100,
+    "cachedContentTokenCount": 3000,
+    "candidatesTokenCount": 40,
+    "thoughtsTokenCount": 12,
+    "totalTokenCount": 4152
+  },
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "denFixtureGemini1"
+}
