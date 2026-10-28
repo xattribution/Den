@@ -53,9 +53,9 @@ void main() {
       expect(wrong.status, 403);
       expect((wrong.error['details'] as Map)['tries_left'], setupTries - i);
     }
-    final waiting = await call('POST', '/api/v1/hub/setup', body: {'code': codes.single, 'invite': invite.toUrl()}, from: stranger);
-    expect(waiting.status, 429, reason: 'that address waits now, even with the right code');
-    expect(int.parse(waiting.headers['retry-after']!), inInclusiveRange(1, 60));
+    final locked = await call('POST', '/api/v1/hub/setup', body: {'code': codes.single, 'invite': invite.toUrl()}, from: stranger);
+    expect(locked.status, 429, reason: 'that address waits now, even with the right code');
+    expect(int.parse(locked.headers['retry-after']!), inInclusiveRange(1, 60));
     expect(codes, hasLength(1), reason: 'wrong codes from someone else never change the code under its owner');
     expect(logged.where((l) => l.contains('wrong setup codes from one address')), hasLength(1));
 
