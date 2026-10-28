@@ -15,13 +15,58 @@ env:
   FLUTTER_VERSION: '3.38.5'
 
 jobs:
+  # Decide which jobs a change needs, so a fix to one package doesn't rebuild everything.
+  # Tags, manual runs and changes to this file run every job.
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      packages: ${{ steps.pick.outputs.packages }}
+      app: ${{ steps.pick.outputs.app }}
+      homeassistant: ${{ steps.pick.outputs.homeassistant }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            ci: ['.github/workflows/**']
+            den_core: ['packages/den_core/**']
+            den_net: ['packages/den_core/**', 'packages/den_net/**']
+            den_capture: ['packages/den_core/**', 'packages/den_capture/**']
+            den_relay: ['packages/den_core/**', 'packages/den_net/**', 'packages/den_relay/**']
+            den_sett_import: ['packages/den_core/**', 'packages/den_sett_import/**']
+            den_hub: ['packages/**', 'deploy/hub/**']
+            den_hub_cli: ['packages/**', 'deploy/hub/**']
+            app: ['packages/den_core/**', 'packages/den_net/**', 'packages/den_capture/**', 'packages/den_hub/**', 'packages/den_relay/**', 'app/**']
+            homeassistant: ['integrations/**']
+      - id: pick
+        env:
+          CHANGES: ${{ steps.f.outputs.changes }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          all='["den_core","den_net","den_capture","den_relay","den_hub","den_hub_cli","den_sett_import"]'
+          if [ "$EVENT" = workflow_dispatch ] || [[ "$REF" == refs/tags/* ]] || echo "$CHANGES" | grep -q '"ci"'; then
+            echo "packages=$all" >> "$GITHUB_OUTPUT"; echo "app=true" >> "$GITHUB_OUTPUT"; echo "homeassistant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "packages=$(echo "$CHANGES" | jq -c '[.[] | select(startswith("den_"))]')" >> "$GITHUB_OUTPUT"
+          echo "app=$(echo "$CHANGES" | jq 'index("app") != null')" >> "$GITHUB_OUTPUT"
+          echo "homeassistant=$(echo "$CHANGES" | jq 'index("homeassistant") != null')" >> "$GITHUB_OUTPUT"
+
   packages:
     name: Dart packages
+    needs: [changes]
+    if: needs.changes.outputs.packages != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        package: [den_core, den_net, den_capture, den_relay, den_hub, den_hub_cli, den_sett_import]
+        package: ${{ fromJSON(needs.changes.outputs.packages) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
@@ -43,6 +88,8 @@ jobs:
 
   app:
     name: App analyze and test
+    needs: [changes]
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +110,8 @@ jobs:
 
   homeassistant:
     name: Home Assistant integration
+    needs: [changes]
+    if: needs.changes.outputs.homeassistant == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
