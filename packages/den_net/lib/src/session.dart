@@ -317,6 +317,8 @@ class Session {
     if (_closed) return null;
     final frame = _wire.decodeFrame(raw);
     if (frame == null || frame.length < 8 + _tagLength) throw SessionException('malformed frame');
+    // Refused before it is decrypted or decoded, so an oversized frame costs no more work.
+    if (frame.length > 8 + maxSessionMessageBytes + _tagLength) throw SessionException('frame too large');
     final counter = readU64be(frame, 0);
     if (counter != _receiveCounter + 1) throw SessionException('frame out of order or replayed');
     _receiveCounter = counter;

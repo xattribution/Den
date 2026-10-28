@@ -301,7 +301,17 @@ handshake inside the WebSocket:
    64-bit counter that must strictly increase; a repeated or older counter closes the session.
 
 Fresh ephemeral keys per session give forward secrecy. A device the other side doesn't know as
-approved gets only the pairing messages below.
+approved gets only the pairing messages below. A device serving sessions (the hub, a phone during
+pairing) gives devices it doesn't know as approved a few places of their own (8 by default,
+counting handshakes in progress), apart from the approved devices' places, and 30 seconds to
+prove an invite or code; a device that proved one may wait 15 minutes for a parent's approval.
+
+A session frame carries at most 1 MiB of plaintext; a larger frame closes the session before it
+is decrypted. Servers built on den_net's WebSocket helpers (the hub's `/ws`) and the relay read
+each WebSocket frame's header as it arrives and close the connection as soon as a frame, or the
+fragments of one message, announce more than their limit, so nothing oversized is buffered.
+Clients (dart:io and browser WebSockets) have no such hook and buffer each whole message they
+receive; the session's limit then applies.
 
 ### Sync messages (inside the session)
 
@@ -342,8 +352,19 @@ on, so a declined device can't keep asking.
 - **Mailbox**: for families with no hub online. `POST /mailbox/<id>` appends a sealed blob;
   `GET /mailbox/<id>?after=<cursor>` reads. The id is HMAC(space key, "mailbox:<epoch>"), the blob
   is XChaCha20-Poly1305 under the space key with the signed change inside. Persistent with a
-  30-day TTL, size caps, and rate limits per IP and per mailbox.
-- **Rendezvous** for pairing without a hub: a short-lived slot keyed by the invite secret's hash.
+  30-day TTL, size caps, and rate limits per client and per mailbox. A device that rotates a key
+  leaves it, sealed, in the inbox of each device that may hold the space, once per device; a
+  delivery the relay refuses (full, rate limited, unreachable) is retried for that device alone
+  after a minute, doubling to six hours, and never holds up the other deliveries or the posting.
+- **Rendezvous** for pairing without a hub: a short-lived slot keyed by the invite secret's hash,
+  or by the stretched spoken code.
+
+A client, for every limit and share, is an IPv4 address or the /64 an IPv6 address is in. Besides
+the relay-wide caps, each client has its own share, so no one client can deny service to the
+others: mailbox bytes it stored (256 MiB) and mailboxes it created (1,000) while they hold blobs,
+hub tunnels (16), streams through any one hub's tunnel (16 of its 64), and rendezvous hosts
+waiting (8). Requests over a share are refused (`507` with `cap: client`, `503` before a
+WebSocket upgrade).
 
 Relays keep no accounts and log no content. Families can run their own; the default is
 `relay.den.family` (hosted service, placeholder name).
