@@ -1,0 +1,33 @@
+{
+  "id": "4c1f9den-grok-fixture",
+  "object": "response",
+  "created_at": 1793200010,
+  "completed_at": 1793200011,
+  "status": "completed",
+  "error": null,
+  "incomplete_details": null,
+  "model": "grok-4.20-0309-non-reasoning",
+  "output": [
+    {
+      "type": "function_call",
+      "id": "call_grok_den_1",
+      "call_id": "call_grok_den_1",
+      "name": "check_item",
+      "arguments": "{\"item\":\"Milk\",\"list\":\"Groceries\"}",
+      "status": "completed"
+    }
+  ],
+  "store": false,
+  "usage": {
+    "input_tokens": 2100,
+    "input_tokens_details": {
+      "cached_tokens": 2048
+    },
+    "output_tokens": 30,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 2130,
+    "cost_in_usd_ticks": 9640000
+  }
+}

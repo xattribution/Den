@@ -1,0 +1,25 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Added eggs and checked off milk.",
+            "thoughtSignature": "CiQBVKhcDenFixtureSignatureB"
+          }
+        ]
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 4300,
+    "cachedContentTokenCount": 4096,
+    "candidatesTokenCount": 9,
+    "totalTokenCount": 4309
+  },
+  "modelVersion": "gemini-3.5-flash-lite",
+  "responseId": "denFixtureGemini2"
+}

@@ -1,0 +1,31 @@
+{
+  "id": "msg_01DenFixtureText",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-haiku-5-5",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "EqQBCkYIBxgCKkDenFixtureSignatureTwo"
+    },
+    {
+      "type": "text",
+      "text": "Added eggs and 2 milk to Groceries.",
+      "citations": null
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 57,
+    "cache_creation_input_tokens": 3880,
+    "cache_read_input_tokens": 0,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 3880,
+      "ephemeral_1h_input_tokens": 0
+    },
+    "output_tokens": 14
+  }
+}
