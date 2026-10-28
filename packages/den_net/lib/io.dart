@@ -149,9 +149,9 @@ Handler syncWebSocketHandler(
     );
 
 /// A shelf handler that upgrades to a WebSocket like `webSocketHandler`, but reads the header of
-/// every incoming frame as it arrives and closes the connection (protocol error) as soon as a
-/// frame, or the fragments of one message, announce more than [maxMessageBytes] of payload, so
-/// an oversized message is refused before any of it is buffered. (dart:io and browser
+/// every incoming frame as it arrives and ends the connection as soon as a frame, or the
+/// fragments of one message, announce more than [maxMessageBytes] of payload, so an oversized
+/// message is refused before any of it is buffered. (dart:io and browser
 /// WebSockets, on the client side, have no such hook: they buffer each whole message, and
 /// sessions refuse an oversized frame before decrypting it.)
 Handler boundedWebSocketHandler(
@@ -198,7 +198,7 @@ Handler boundedWebSocketHandler(
 }
 
 /// A server's socket whose incoming bytes pass through a [WebSocketFrameGuard]: unchanged up to
-/// the first frame over the limit, then an error, and nothing more is read. Everything else is
+/// the first frame over the limit, where they end, and nothing more is read. Everything else is
 /// the socket's own.
 class _BoundedSocket extends Stream<Uint8List> implements Socket {
   _BoundedSocket(this._socket, int maxMessageBytes) : _guard = WebSocketFrameGuard(maxMessageBytes);
@@ -224,8 +224,9 @@ class _BoundedSocket extends Stream<Uint8List> implements Socket {
               out.add(chunk);
               return;
             }
+            // Hand over what came before the oversized frame, then end the stream: the WebSocket
+            // answers that by closing the connection, and nothing more is read.
             if (fine > 0) out.add(Uint8List.sublistView(chunk, 0, fine));
-            out.addError(const _MessageTooLarge());
             unawaited(input?.cancel());
             unawaited(out.close());
           },
@@ -298,13 +299,6 @@ class _BoundedSocket extends Stream<Uint8List> implements Socket {
 
   @override
   InternetAddress get remoteAddress => _socket.remoteAddress;
-}
-
-class _MessageTooLarge implements Exception {
-  const _MessageTooLarge();
-
-  @override
-  String toString() => 'WebSocket message too large';
 }
 
 /// Follows the frame headers (RFC 6455) in a WebSocket's incoming bytes, chunk by chunk, and
