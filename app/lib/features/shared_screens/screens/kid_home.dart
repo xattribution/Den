@@ -11,6 +11,7 @@ import '../../../design/pictograms.dart';
 import '../../../design/sheet.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
+import '../../../design/words.dart';
 import '../../chores/chores.dart';
 import '../../rewards/rewards.dart';
 import '../widgets/kid_parts.dart';
@@ -211,15 +212,12 @@ class _StarCardState extends State<_StarCard> with SingleTickerProviderStateMixi
   Widget build(BuildContext context) {
     final c = context.colors;
     final t = context.text;
-    final points = context.watch(const {}).den.points();
+    final app = context.watch(const {});
+    final points = app.den.points();
     final stars = points.available(widget.kid.id);
     _landIfMore(stars);
-    final goal = kidGoal(points, widget.kid.id);
-    final label = goal == null
-        ? null
-        : goal.$1 >= goal.$2
-            ? '${goal.$3} is yours'
-            : '${goal.$2 - goal.$1} more ${goal.$2 - goal.$1 == 1 ? 'star' : 'stars'} for ${goal.$3}';
+    final goal = kidGoal(points, widget.kid.id, app.today, app.formats);
+    final label = goal?.$2;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(kidRadius)),
@@ -243,14 +241,9 @@ class _StarCardState extends State<_StarCard> with SingleTickerProviderStateMixi
                   Text('$stars', style: t.display(c.ink).withWeight(FontWeight.w800)),
                   if (goal != null) ...[
                     const SizedBox(height: Sp.s),
-                    ProgressBar(
-                      fraction: goal.$2 <= 0 ? 1 : goal.$1 / goal.$2,
-                      color: widget.color,
-                      label: label!,
-                      height: 12,
-                    ),
+                    ProgressBar(fraction: goal.$1, color: widget.color, label: goal.$2, height: 12),
                     const SizedBox(height: Sp.s),
-                    Text(label, style: t.rowTitle(c.ink)),
+                    Text(tidy(goal.$2), style: t.rowTitle(c.ink)),
                   ],
                 ],
               ),

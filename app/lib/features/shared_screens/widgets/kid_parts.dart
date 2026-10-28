@@ -2,7 +2,9 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
+import '../../../app/format.dart';
 import '../../../design/glyphs.dart';
+import '../../rewards/rewards.dart' show currentGoal, goalFraction, goalLine;
 
 /// A picture for a chore step, from its words (steps have no pictogram of their own), or null
 /// to show the step's number instead.
@@ -56,18 +58,17 @@ List<KidJob> kidJobs(Den den, String date, String kidId) => [
           ], owned: false),
     ];
 
-/// What a kid is saving toward: their first goal, or the cheapest reward they can't have yet.
-/// (earned, target, what) or null when there's nothing to aim for.
-(int, int, String)? kidGoal(PointsSummary points, String kidId) {
-  for (final g in points.goals) {
-    final members = g.goal.members;
-    if (members != null && !members.contains(kidId)) continue;
-    final standing = g.standings.where((s) => s.member == kidId).firstOrNull;
-    if (standing == null) continue;
-    return (standing.earned, g.goal.target, g.goal.title);
-  }
+/// What a kid is saving toward, as the bar's fill (0 to 1) and its words: the goal running now
+/// for them, in the same words as Chores ("13 more for First to 25 stars this week"), or else
+/// the cheapest reward they can't have yet ("3 more stars for Later bedtime"). Null when
+/// there's nothing to aim for.
+(double, String)? kidGoal(PointsSummary points, String kidId, String today, Formats f) {
+  final goal = currentGoal(points, kidId, today);
+  if (goal != null) return (goalFraction(goal.$1, goal.$2), goalLine(goal.$1, goal.$2, today, f));
   final have = points.available(kidId);
   final next = [for (final r in points.rewards) if (r.active && r.cost > have) r]..sort((a, b) => a.cost - b.cost);
   if (next.isEmpty) return null;
-  return (have, next.first.cost, next.first.title);
+  final reward = next.first;
+  final left = reward.cost - have;
+  return (have / reward.cost, '$left more ${left == 1 ? 'star' : 'stars'} for ${reward.title}');
 }
