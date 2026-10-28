@@ -270,6 +270,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'approved': flag(),
     'approvedBy': id(nullable: true),
     'revoked': flag(),
+    'revokedAfter': number(min: 0),
     'display': shape({'layout': names(DisplayLayout.values), 'openCheckoff': flag()}),
   }, required: {'name', 'kind', 'pubkey', 'mode'}, space: Space.family),
   RecordType.category: TypeSpec({

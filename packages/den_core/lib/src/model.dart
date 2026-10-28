@@ -243,6 +243,10 @@ class Device extends RecordView {
   bool get approved => rec.flag('approved');
   String? get approvedBy => rec.strOrNull('approvedBy');
   bool get revoked => rec.flag('revoked');
+
+  /// The last of this device's changes the device that revoked it held; see ARCHITECTURE.md,
+  /// "Genesis and trust".
+  int? get revokedAfter => rec.intOrNull('revokedAfter');
   DisplayLayout get layout =>
       _enum(DisplayLayout.values, rec.map('display')['layout']) ?? DisplayLayout.today;
   bool get openCheckoff => rec.map('display')['openCheckoff'] as bool? ?? false;

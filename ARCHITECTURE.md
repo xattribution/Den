@@ -48,7 +48,12 @@ Change {
 ```
 
 Canonical bytes: UTF-8 JSON of `[id, space, hlc, type, rid, fields, device, actor]` with object
-keys sorted recursively and no whitespace.
+keys sorted recursively and no whitespace. Bookkeeping fields (`_via`, `_from`) are fields, so
+they are signed too and can't be stripped on the way.
+
+A device numbers its changes from its own counter and never reuses one. A device that receives
+its own changes back from a peer (after a restore from an older backup, say) moves its counter
+past them before it writes again.
 
 **Merging.** Each field of a record takes the value from the valid change with the greatest HLC
 that set it (last-writer-wins per field). HLC order is `(millis, counter, deviceId)`, with the
@@ -115,6 +120,28 @@ a parent's tablet into the hub; nobody else may change a device's mode from the 
 and a personal device always needs an owner. Changes signed after a device's revocation (by HLC)
 are invalid.
 
+A device sets its own clock, so a revoked (stolen) device could sign new changes with clocks from
+before its revocation, and post them to an old epoch's mailbox the relay still keeps. So a
+revocation also records `revokedAfter`: the highest counter of that device's changes the revoking
+device held (in its log, or vouched for by a peer's `completeVector`). A change from the revoked
+device numbered past `revokedAfter` and clocked before the revocation is invalid, whatever clock
+it claims. The materializer replays in two passes, both determined by the log alone: the first
+finds the valid revocations, the second applies their cutoffs from the start, so a backdated
+change already applied is dropped when the revocation arrives. Changes of the revoked device that
+the revoker never held are lost with it; a device re-approved later writes normally after its
+re-approval.
+
+**Trust decisions are made only on a parent's own device.** Approving, revoking or changing
+another device; adding or removing a member or changing their `role`, `grants` or `signIn`
+(their own included); the family's `oversight`; and creating, activating, re-scoping or deleting
+an AI connection are valid only from a personal device, or from a hub-mode device whose actor is
+that device's own owner (a parent's phone running "Keep the family online") with no `_via`. A
+shared display never makes them, whoever verified on it, and neither does a hub nobody owns. A
+change carrying `_via` (the hub acting for an API token or MCP client) never touches a device
+record at all, its own included, so a connection can't switch the hub back to a personal device
+and act as its owner. The hub keeps its narrow part of connections: asking for OAuth access
+(`pending`), recording token hashes for active ones, and revoking.
+
 Each space has a key for sealing changes on the relay, with an epoch. The founder's device makes
 the first keys at genesis and a parent's device makes one for each member it adds. When a parent's
 device revokes another device (directly or by removing its member), it rotates the key of every
@@ -158,12 +185,12 @@ while it's gone and back with it.
 | --- | --- | --- |
 | `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map memberId -> `{parentsSeePrivate: bool}`) |
 | `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (blue, green, orange, pink, teal, plum, brown, olive, sky, slate), `animal` (cat, dog, rabbit, bird, butterfly, fish, horse, cow, bug), `birthday` (local date or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order` |
-| `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`) |
+| `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`) |
 | `category` | `f` | `name`, `icon` |
 | `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `rides` (list of `{leg: to\|from, driver: memberId\|null}`), `countdown` (bool) |
 | `eventException` | same as event | id `"<eventId>@<occurrence>"`: `event`, `occurrence` (original start), `cancelled`, `patch` (map of event fields: `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `assignees`, `reminders`, `rides`) |
 | `chore` | any | `title`, `notes`, `icon`, `owner` (`{kind: member, id}`\|`{kind: anyone}`\|`{kind: rotation, ids, every: day\|week, anchor: local date}`), `schedule` (`{rrule, start: local date}` or `{once: local date}`), `dueTime` (`HH:mm` or null), `points`, `steps` (list of `{id, text, owner, points, icon}`, `icon` a chore pictogram key or absent), `reminders`, `active` |
-| `completion` | same as chore | id `"<choreId>@<date>"`: `chore`, `date`, `done`, `doneBy`, `owner` (one-day swap; present and null means swapped to anyone) , `steps` (map stepId -> memberId who checked, `""` when checked by open check-off with no owner to credit, or null when unchecked). Done when `done`, or when every step is checked |
+| `completion` | same as chore | id `"<choreId>@<date>"`: `chore`, `date`, `done`, `doneBy`, `owner` (one-day swap; present and null means swapped to anyone) , `steps` (map stepId -> memberId who checked, `""` when checked by open check-off with no owner to credit, or null when unchecked), `points` (what the chore was worth when it was done), `stepPoints` (map stepId -> what the step was worth when checked). Done when `done`, or when every step is checked. The chore must exist and not be removed in the same space, except to remove the completion |
 | `adjustment` | `f` | Append-only. `member`, `delta`, `reason`, `by` |
 | `goal` | `f` | `title`, `mode` (`target`\|`race`), `target`, `members` (ids, or null for every kid), `start` (local date), `end` (local date or null), `repeat` (`none`\|`weekly`\|`monthly`), `reward` (text) |
 | `reward` | `f` | `title`, `cost`, `icon`, `needsApproval`, `active` |
@@ -228,7 +255,12 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
   it, or for nobody (then only open check-off, when its `display.openCheckoff` is on), and never
   administers the family. A hub acts for a token's member, or for nobody: then it has parent-level
   permissions except family administration and activating or re-scoping connections, and it
-  records the caller's label in `_via` (only hubs may write `_via`).
+  records the caller's label in `_via` (only hubs may write `_via`). Whoever it acts for, a change
+  with `_via` never makes a trust decision (see "Genesis and trust"); the hub must record `_via` on
+  every write it makes for an API or MCP caller.
+- Setting what a chore or step is worth (a new chore or step with points, or a new price) needs
+  the points permission as well as the chores one; recording a completion's worth above the
+  price at the time does too.
 - Writes into `p` need a parent or a hub; writes into `m:X` need X, a parent the oversight policy
   allows, or a hub.
 - Kids complete only chores they own that day, "anyone" chores, and steps they own (checking the

@@ -2,6 +2,7 @@ import 'package:collection/collection.dart';
 
 import 'change.dart';
 import 'chores.dart';
+import 'hlc.dart';
 import 'model.dart';
 import 'permissions.dart';
 import 'schema.dart';
@@ -32,6 +33,28 @@ class Rejection {
   String toString() => '${kind.name}: $message';
 }
 
+/// A revocation that names the last change the revoking device held from the revoked one: a
+/// change from that device numbered past [after] and clocked before [at] was signed after the
+/// revocation, whatever clock it claims.
+class Cutoff {
+  const Cutoff(this.after, this.at);
+
+  /// The `revokedAfter` counter.
+  final int after;
+
+  /// The revocation's clock.
+  final Hlc at;
+
+  bool excludes(int counter, Hlc hlc) => counter > after && hlc < at;
+
+  /// The cutoff a valid change sets, or null when it isn't a revocation naming one.
+  static Cutoff? of(Change c) {
+    if (c.type != RecordType.device || c.fields['revoked'] != true) return null;
+    final after = c.fields['revokedAfter'];
+    return after is int ? Cutoff(after, c.hlc) : null;
+  }
+}
+
 /// What every replica of a family learned out of band: the family id and the founder's key.
 class TrustRoot {
   TrustRoot({this.familyId, this.founderPubkey})
@@ -44,6 +67,9 @@ class TrustRoot {
 Rejection _trust(String m) => Rejection(RejectionKind.trust, m);
 Rejection _deny(String m) => Rejection(RejectionKind.permission, m);
 Rejection _schema(String m) => Rejection(RejectionKind.schema, m);
+
+const String _ownDeviceOnly =
+    'Only a parent on their own device can do that, not a shared screen or an app acting through the hub';
 
 final RegExp _ridRe = RegExp(r'^[A-Za-z0-9_\-:@.]{1,120}$');
 
@@ -58,6 +84,12 @@ class Validator {
   final RecordStore store;
   TrustRoot Function() root;
 
+  /// Device id -> the revocations of it that name the last change the revoking device held
+  /// (`revokedAfter`), with the revocation's clock. The materializer fills this from the whole
+  /// log, so a change the revoked device signed later counts for nothing even when it claims an
+  /// earlier clock.
+  final Map<String, List<Cutoff>> cutoffs = {};
+
   Rejection? check(Change c) {
     final colon = c.id.lastIndexOf(':');
     final counter = colon > 0 ? int.tryParse(c.id.substring(colon + 1)) : null;
@@ -65,6 +97,9 @@ class Validator {
       return _trust('The change id doesn\'t name its device');
     }
     if (c.hlc.device != c.device) return _trust('The change\'s clock belongs to another device');
+    for (final cut in cutoffs[c.device] ?? const <Cutoff>[]) {
+      if (cut.excludes(counter, c.hlc)) return _trust('This device was removed from the family');
+    }
     final spec = typeSpecs[c.type];
     if (spec == null) return _schema('Den doesn\'t know records of type "${c.type}"');
     if (!_validSpace(c.space)) return _schema('Unknown space "${c.space}"');
@@ -195,7 +230,7 @@ class Validator {
     }
     if (existing != null &&
         !c.isDelete &&
-        f.keys.any((k) => !const {'name', 'kind', 'xpub', 'revoked', 'approved'}.contains(k))) {
+        f.keys.any((k) => !const {'name', 'kind', 'xpub', 'revoked', 'revokedAfter', 'approved'}.contains(k))) {
       return _trust('A device can\'t change what it asked for while it waits for approval');
     }
     final pubkey = f['pubkey'];
@@ -220,6 +255,10 @@ class Validator {
       if (c.type == RecordType.adjustment) return 'Points adjustments can\'t be changed';
     }
     switch (c.type) {
+      case RecordType.device:
+        if (c.fields.containsKey('revokedAfter') && c.fields['revoked'] != true) {
+          return 'Only a removal says which of a device\'s changes came before it';
+        }
       case RecordType.event:
         final start = merged('start'), end = merged('end');
         if (start is int && end is int && end < start) return 'The end is before the start';
@@ -255,8 +294,18 @@ class Validator {
     switch (c.type) {
       case RecordType.family:
         if (x.creating || c.rid != trust.familyId) return _trust('The family already exists');
-        return x.has(DenAction.manageFamily) ? null : _deny('Only parents can change family settings');
+        if (!x.has(DenAction.manageFamily)) return _deny('Only parents can change family settings');
+        if (c.fields.keys.any((k) => k == 'oversight' || k.startsWith('oversight.')) && !x.ownDevice) {
+          return _deny(_ownDeviceOnly);
+        }
+        return null;
       case RecordType.member:
+        // Who is in the family, their role and permissions, and how they sign in are trust
+        // decisions: never made by the hub (whoever it acts for) or on a shared screen.
+        final trusted = x.creating ||
+            c.fields.containsKey('_deleted') ||
+            c.fields.keys.any(const {'role', 'grants', 'signIn'}.contains);
+        if (trusted && !x.ownDevice) return _deny(_ownDeviceOnly);
         if (!x.creating && x.only({'signIn'}) && c.actor == c.rid) return null;
         if (!x.has(DenAction.manageFamily)) return _deny('Only parents can add or change people');
         if (_leavesNoParent(c, x.existing)) return _deny('The family needs at least one parent');
@@ -326,6 +375,9 @@ class Validator {
   Rejection? _device(_Ctx x) {
     final c = x.c;
     if (x.creating) return _trust('A device joins by sending its own request');
+    // A hub acting for an API or MCP connection never touches device records, its own included:
+    // a connection could otherwise turn the hub into a personal device and act as its owner.
+    if (c.fields.containsKey('_via')) return _deny(_ownDeviceOnly);
     final target = Device(x.existing!.rec);
     final mode = c.fields.containsKey('mode') ? c.fields['mode'] : target.mode.name;
     final owner = c.fields.containsKey('member') ? c.fields['member'] : target.member;
@@ -340,15 +392,16 @@ class Validator {
           (f.containsKey('revoked') && f['revoked'] != true)) {
         return _trust('A device can never approve itself or change who owns it');
       }
-      if (x.only({'revoked'}) || c.isDelete) return null;
+      if (x.only({'revoked', 'revokedAfter'}) || c.isDelete) return null;
       final parent = x.actor?.isParent ?? false;
       if (f.containsKey('mode') && !parent) return _deny('Only a parent can change what this device is for');
-      if (parent && x.only({'mode', 'name', 'display', 'kind', 'xpub', 'revoked'})) return null;
+      if (parent && x.only({'mode', 'name', 'display', 'kind', 'xpub', 'revoked', 'revokedAfter'})) return null;
     }
     if (!x.has(DenAction.manageFamily)) return _deny('Only parents can approve or change devices');
     if (c.fields['approved'] == true && !(x.actor?.isParent ?? false)) {
       return _deny('Only a parent can approve a device');
     }
+    if (!x.ownDevice) return _deny(_ownDeviceOnly);
     return null;
   }
 
@@ -452,7 +505,9 @@ class Validator {
 
   Rejection? _connection(_Ctx x) {
     final c = x.c;
-    final parent = x.actor?.isParent ?? false;
+    // Only a parent on their own device grants access; the hub keeps its own narrow part (asking
+    // for OAuth access, issuing tokens for granted access, revoking).
+    final parent = (x.actor?.isParent ?? false) && x.ownDevice;
     const denied = 'Only a parent can create or approve AI and automation access';
     if (x.creating) {
       final status = c.fields['status'];
@@ -516,6 +571,17 @@ class _Ctx {
   }
 
   String get who => actor?.name ?? device.name;
+
+  /// Whether the change comes from someone's own device: trust decisions (approving and removing
+  /// devices, people's roles, permissions and sign-in, privacy, AI access) are made only there.
+  /// That is a personal device, or a parent's own device running as the family's hub with its
+  /// owner using it; never a shared screen, a hub nobody owns, or an app or assistant acting
+  /// through the hub (whose changes carry `_via`), whoever it acts for.
+  bool get ownDevice {
+    if (c.fields.containsKey('_via')) return false;
+    if (device.mode == DeviceMode.personal) return true;
+    return device.mode == DeviceMode.hub && actor != null && actor!.id == device.member;
+  }
 
   bool only(Set<String> names) => c.fields.keys.every((k) => k == '_via' || k == '_from' || names.contains(k));
 }

@@ -499,19 +499,19 @@ class Den {
 
   /// Removes a member and revokes the devices they own, rotating the keys of the spaces those
   /// devices held.
-  Future<void> removeMember(String id) async {
-    if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
-    final owned = [
-      for (final d in devices)
-        if (d.member == id && d.id != deviceId && !d.revoked) d.id,
-    ];
-    final held = {for (final d in owned) ...spacesForDevice(d)};
-    await _commit([
-      for (final d in owned) _Draft(RecordType.device, d, Space.family, {'revoked': true}),
-      _Draft(RecordType.member, id, Space.family, {'_deleted': true}),
-    ]);
-    await _locked(() => _rotateNow(held));
-  }
+  Future<void> removeMember(String id) => _locked(() async {
+        if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
+        final owned = [
+          for (final d in devices)
+            if (d.member == id && d.id != deviceId && !d.revoked) d.id,
+        ];
+        final held = {for (final d in owned) ...spacesForDevice(d)};
+        await _commitNow([
+          for (final d in owned) _revocation(d),
+          _Draft(RecordType.member, id, Space.family, {'_deleted': true}),
+        ]);
+        await _rotateNow(held);
+      });
 
   /// Sets how a member signs in on shared screens: `pin` (4 digits), `pattern` (4 animals as
   /// digits 0-8), or `none`. Secrets are salted and hashed before they're written.
@@ -554,11 +554,25 @@ class Den {
 
   /// Revokes a device. Revoking another device also rotates the keys of every space it held
   /// (a new random key, one epoch on), so it can't read what the family writes next.
-  Future<void> revokeDevice(String deviceId) async {
-    if (device(deviceId) == null) throw const InvalidInput('That device isn\'t in the family');
-    final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
-    await _commit([_Draft(RecordType.device, deviceId, Space.family, {'revoked': true})]);
-    await _locked(() => _rotateNow(held));
+  ///
+  /// The revocation records the last of the device's changes this one holds (`revokedAfter`):
+  /// anything it signs after that counts for nothing, whatever clock it claims.
+  Future<void> revokeDevice(String deviceId) => _locked(() async {
+        if (device(deviceId) == null) throw const InvalidInput('That device isn\'t in the family');
+        final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
+        await _commitNow([_revocation(deviceId)]);
+        await _rotateNow(held);
+      });
+
+  /// Revokes [device], naming the last of its changes this device holds: its counters held here,
+  /// and those a peer vouched for in spaces this device doesn't receive. Runs inside the lock,
+  /// so nothing arrives between counting and signing.
+  _Draft _revocation(String device) {
+    var last = device == deviceId ? _counter : _floor[device] ?? 0;
+    for (final n in _mat.counters[device] ?? const <int>{}) {
+      if (n > last) last = n;
+    }
+    return _Draft(RecordType.device, device, Space.family, {'revoked': true, 'revokedAfter': last});
   }
 
   /// Changes another device's settings (parents), or this device's own name, display settings or
