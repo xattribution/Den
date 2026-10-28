@@ -2064,21 +2064,31 @@ class Den {
           _pending.remove(_pending.keys.first);
         }
         var invalid = const <String, String>{};
+        var metaMoved = false;
         if (accepted.isNotEmpty) {
           await _storage.appendChanges(accepted);
           invalid = _mat.add(accepted);
           _observeApplied();
+          // This device's own changes coming back from a peer (after a restore from an older
+          // backup, say): never number a new change with an id the family already holds.
+          for (final c in accepted) {
+            if (c.device != deviceId) continue;
+            _clock.observe(c.hlc);
+            if (c.counter > _counter) {
+              _counter = c.counter;
+              metaMoved = true;
+            }
+          }
         }
-        var floorMoved = false;
         if (through != null && rejected.isEmpty && _pending.isEmpty) {
           for (final e in through.entries) {
             if (e.value > (_floor[e.key] ?? 0)) {
               _floor[e.key] = e.value;
-              floorMoved = true;
+              metaMoved = true;
             }
           }
         }
-        if (floorMoved) await _saveMeta();
+        if (metaMoved) await _saveMeta();
         if (accepted.isNotEmpty) _emit({for (final c in accepted) c.type});
         if (accepted.isNotEmpty) await _afterKeyFacts();
         return IngestResult(
@@ -2465,6 +2475,9 @@ class Den {
     try {
       for (final d in drafts) {
         counter++;
+        while (_mat.contains('$deviceId:$counter')) {
+          counter++;
+        }
         final unsigned = Change(
           id: '$deviceId:$counter',
           space: d.space,
