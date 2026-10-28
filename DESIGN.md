@@ -402,7 +402,9 @@ take plain values and den_core model types, never the app's state, so any featur
 | `showDenSheet` | Every sheet | Springs, drag to close, centered form sheet on iPad. |
 
 Writes from these pieces go through the feature's actions (ARCHITECTURE.md, "The app"); an
-action's `ActionResult.receipt` is what Undo takes back.
+action's `ActionResult.receipt` is what Undo takes back. A screen keeps what a tap did as a
+`Done` (`app/actions.dart`: the words, "Gave Maya 5 stars", and that receipt) in the place the
+tap happened, and shows it in a `DoneRow`.
 
 ## Screens (phone)
 
