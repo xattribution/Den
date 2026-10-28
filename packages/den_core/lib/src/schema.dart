@@ -233,6 +233,9 @@ final FieldCheck _signIn = shape({
   'hash': text(max: 200, nullable: true),
 }, required: {'kind'});
 
+/// Stars a chore or step is worth.
+final FieldCheck _points = number(min: 0, max: 1000);
+
 String? _checker(String label, Object? v) => v == null || (v is String && (v.isEmpty || _idRe.hasMatch(v)))
     ? null
     : '$label is not a member';
@@ -298,7 +301,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'owner': _choreOwner,
     'schedule': _schedule,
     'dueTime': localTime(nullable: true),
-    'points': number(min: 0, max: 1000),
+    'points': _points,
     'steps': _steps,
     'reminders': _reminders,
     'active': flag(),
@@ -310,7 +313,12 @@ final Map<String, TypeSpec> typeSpecs = {
     'doneBy': id(nullable: true),
     'owner': id(nullable: true),
     'steps': dict(_checker, maxKeys: maxSteps),
-  }, required: {'chore', 'date'}, entries: {'steps': (key, v) => _checker('Steps', v)}),
+    'points': _points,
+    'stepPoints': dict(_points, maxKeys: maxSteps),
+  }, required: {'chore', 'date'}, entries: {
+    'steps': (key, v) => _checker('Steps', v),
+    'stepPoints': (key, v) => _points('Step points', v),
+  }),
   RecordType.adjustment: TypeSpec({
     'member': id(),
     'delta': (label, v) => v == 0 ? '$label can\'t be zero' : number(min: -10000, max: 10000)(label, v),

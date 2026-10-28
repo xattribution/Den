@@ -119,6 +119,152 @@ void main() {
     expect(standing.standings.first.member, maya, reason: 'standings sort by points earned');
   });
 
+  group('what a chore is worth', () {
+    test('a kid who may edit chores still can\'t set what they\'re worth', () async {
+      await den.updateMember(leo, {
+        'grants': [Grant.chores],
+      });
+      final tablet = await joinDevice(den, clock, member: leo);
+      await expectLater(
+        tablet.addChore(title: 'Free money', owner: OwnerMember(leo), schedule: const ChoreSchedule.once('2026-10-01'), points: 50),
+        throwsA(isA<PermissionDenied>()),
+      );
+      final room = await tablet.addChore(title: 'Tidy my room', owner: OwnerMember(leo), schedule: const ChoreSchedule.once('2026-10-01'));
+      await expectLater(tablet.updateChore(room, {'points': 50}), throwsA(isA<PermissionDenied>()));
+      await expectLater(
+        tablet.updateChore(room, {
+          'steps': [const ChoreStep(id: 'bed', text: 'Make the bed', points: 5)],
+        }),
+        throwsA(isA<PermissionDenied>()),
+      );
+      await tablet.updateChore(room, {
+        'title': 'Tidy my room!',
+        'steps': [const ChoreStep(id: 'bed', text: 'Make the bed')],
+      });
+      await sync(tablet, den);
+      await den.updateChore(room, {'points': 2});
+      await sync(den, tablet);
+      await tablet.updateChore(room, {'title': 'Tidy my room, please'});
+      expect(tablet.chore(room)!.points, 2, reason: 'editing the rest keeps the price');
+
+      // Nor can a kid record more than the price on a completion.
+      final greedy = await forge(
+        tablet.keys,
+        counter: 500,
+        millis: clock.now + 1000,
+        type: RecordType.completion,
+        rid: '$room@2026-10-01',
+        space: Space.family,
+        fields: {'chore': room, 'date': '2026-10-01', 'done': true, 'doneBy': leo, 'points': 99},
+        actor: leo,
+      );
+      final result = await den.ingest([greedy]);
+      expect(result.invalid[greedy.id], contains('worth'));
+      expect(den.points().totals[leo], 0);
+    });
+
+    test('a new price doesn\'t change what was already earned', () async {
+      final dishes = await den.addChore(
+        title: 'Dishes',
+        owner: OwnerMember(maya),
+        schedule: const ChoreSchedule.repeating('FREQ=DAILY', '2026-10-01'),
+        points: 2,
+        steps: [ChoreStep(id: 'dry', text: 'Dry', owner: leo, points: 1)],
+      );
+      await den.setChoreDone(dishes, '2026-10-01', true);
+      expect(den.points().totals, containsPair(maya, 2));
+      expect(den.points().totals, containsPair(leo, 1));
+      await den.updateChore(dishes, {
+        'points': 10,
+        'steps': [ChoreStep(id: 'dry', text: 'Dry', owner: leo, points: 5)],
+      });
+      expect(den.points().totals[maya], 2, reason: 'done when it was worth 2');
+      expect(den.points().totals[leo], 1);
+      await den.setChoreDone(dishes, '2026-10-02', true);
+      expect(den.points().totals[maya], 12);
+      expect(den.points().totals[leo], 6);
+      await den.updateChore(dishes, {'points': 0});
+      expect(den.points().totals[maya], 12, reason: 'a lower price takes nothing back either');
+    });
+
+    test('a completion from before Den kept prices is worth what the chore is worth now', () async {
+      final cat = await den.addChore(
+        title: 'Feed the cat',
+        owner: OwnerMember(leo),
+        schedule: const ChoreSchedule.repeating('FREQ=DAILY', '2026-10-01'),
+        points: 1,
+      );
+      final tablet = await joinDevice(den, clock, member: leo);
+      final legacy = await forge(
+        tablet.keys,
+        counter: 400,
+        millis: clock.now + 1000,
+        type: RecordType.completion,
+        rid: '$cat@2026-10-01',
+        fields: {'chore': cat, 'date': '2026-10-01', 'done': true, 'doneBy': leo},
+        actor: leo,
+      );
+      expect((await den.ingest([legacy])).invalid, isEmpty);
+      expect(den.points().totals[leo], 1);
+      await den.updateChore(cat, {'points': 3});
+      expect(den.points().totals[leo], 3);
+    });
+  });
+
+  group('moving a chore to another space', () {
+    test('keeps when its completions were done, so this week\'s goals don\'t fill up', () async {
+      final goal = await den.addGoal(title: 'Three a week', target: 3, repeat: GoalRepeat.weekly, start: '2026-01-01');
+      final bed = await den.addChore(
+        title: 'Make the bed',
+        owner: OwnerMember(leo),
+        schedule: const ChoreSchedule.repeating('FREQ=DAILY', '2026-10-01'),
+        points: 1,
+      );
+      at(2026, 10, 8, 18);
+      for (final d in ['2026-10-06', '2026-10-07', '2026-10-08']) {
+        await den.setChoreDone(bed, d, true);
+      }
+      int thisWeek() => den.points().goals.firstWhere((g) => g.goal.id == goal).standings.firstWhere((s) => s.member == leo).earned;
+      expect(thisWeek(), 3);
+      at(2026, 10, 12, 9);
+      expect(thisWeek(), 0, reason: 'a new week');
+      await den.updateChore(bed, {'audience': Audience.parents});
+      expect(den.chore(bed)!.space, Space.parents);
+      expect(den.points().totals[leo], 3);
+      expect(thisWeek(), 0, reason: 'last week\'s beds still count for last week');
+
+      // Finishing an old day late counts for that day too.
+      await den.setChoreDone(bed, '2026-10-09', true);
+      expect(thisWeek(), 0);
+      await den.setChoreDone(bed, '2026-10-12', true);
+      expect(thisWeek(), 1);
+    });
+
+    test('a device that hadn\'t heard of the move is paid once', () async {
+      final cat = await den.addChore(
+        title: 'Feed the cat',
+        owner: OwnerMember(leo),
+        schedule: const ChoreSchedule.repeating('FREQ=DAILY', '2026-10-01'),
+        points: 2,
+      );
+      final tablet = await joinDevice(den, clock, member: leo);
+      // Offline, the tablet checks off the 5th, before a parent moves the chore and checks off
+      // the 5th again; then it checks off the 6th on the copy that's gone.
+      at(2026, 10, 5, 7);
+      await tablet.setChoreDone(cat, '2026-10-05', true);
+      at(2026, 10, 5, 8);
+      await den.updateChore(cat, {'audience': Audience.parents});
+      await den.setChoreDone(cat, '2026-10-05', true);
+      at(2026, 10, 6, 7);
+      await tablet.setChoreDone(cat, '2026-10-06', true);
+      final late = tablet.changesSince(const {}).last;
+      final result = await sync(tablet, den);
+      expect(result.invalid[late.id], contains('removed'));
+      expect(den.points().totals[leo], 2);
+      expect(den.points().recent.where((l) => l.source == PointsSource.chore), hasLength(1));
+    });
+  });
+
   group('rewards', () {
     late Den tablet;
     late String bedtime;

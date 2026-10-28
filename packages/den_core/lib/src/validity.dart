@@ -323,7 +323,11 @@ class Validator {
         }
         return x.has(DenAction.editEvents) ? null : _deny('${x.who} can\'t add or change events');
       case RecordType.chore:
-        return x.has(DenAction.editChores) ? null : _deny('${x.who} can\'t add or change chores');
+        if (!x.has(DenAction.editChores)) return _deny('${x.who} can\'t add or change chores');
+        if (_setsPoints(c, x.existing) && !x.has(DenAction.managePoints)) {
+          return _deny('${x.who} can\'t set how many stars a chore is worth');
+        }
+        return null;
       case RecordType.completion:
         return _completion(x);
       case RecordType.adjustment:
@@ -358,6 +362,22 @@ class Validator {
         return _connection(x);
     }
     return _schema('Den doesn\'t know records of type "${c.type}"');
+  }
+
+  /// Whether a chore change sets what the chore or one of its steps is worth to anything but
+  /// what it was: a new chore or step worth stars, or a new price for one.
+  static bool _setsPoints(Change c, Entry? existing) {
+    if (c.isDelete) return false;
+    int worth(Object? v) => v is num ? v.toInt() : 0;
+    final f = c.fields;
+    if (f.containsKey('points') && worth(f['points']) != worth(existing?.fields['points'])) return true;
+    final steps = f['steps'];
+    if (steps is! List) return false;
+    final before = {
+      for (final s in (existing?.fields['steps'] as List?) ?? const <Object?>[])
+        if (s is Map) s['id']: worth(s['points']),
+    };
+    return steps.any((s) => s is Map && worth(s['points']) != (before[s['id']] ?? 0));
   }
 
   bool _leavesNoParent(Change c, Entry? existing) {
@@ -411,6 +431,9 @@ class Validator {
     final date = (c.fields['date'] ?? x.existing?.fields['date']) as String?;
     final choreEntry = choreId == null ? null : store.at(c.space, RecordType.chore, choreId);
     if (choreEntry == null || date == null) return _schema('That chore doesn\'t exist');
+    // A removed chore takes no more check-offs: one moved to another space lives on there, and
+    // a device that hadn't heard of the move would otherwise be paid twice.
+    if (choreEntry.deleted && !c.isDelete) return _schema('That chore was removed');
     final chore = Chore(choreEntry.rec);
     final completion = x.existing == null ? null : Completion(x.existing!.rec);
     final ownerBefore = dayOwner(chore, date, completion, x.family?.weekStart ?? 0);
@@ -439,6 +462,25 @@ class Validator {
     }
     for (final e in c.fields.entries) {
       if (e.key.startsWith('steps.')) stepWrites[e.key.substring(6)] = e.value;
+    }
+    // What the chore and its steps were worth when done is kept with the completion, so a new
+    // price later doesn't change what was earned. Only someone who sets prices may record more
+    // than the price at the time.
+    final pricer = x.has(DenAction.managePoints);
+    final worth = c.fields['points'];
+    if (worth is int && worth > chore.points && !pricer) {
+      return _deny('${x.who} can\'t set how many stars a chore is worth');
+    }
+    final stepWorth = <String, Object?>{
+      ...?(c.fields['stepPoints'] as Map?)?.cast<String, Object?>(),
+      for (final e in c.fields.entries)
+        if (e.key.startsWith('stepPoints.')) e.key.substring(11): e.value,
+    };
+    for (final e in stepWorth.entries) {
+      final step = chore.steps.firstWhereOrNull((s) => s.id == e.key);
+      if (step == null) return _schema('That chore has no such step');
+      final v = e.value;
+      if (v is int && v > step.points && !pricer) return _deny('${x.who} can\'t set how many stars a chore is worth');
     }
     for (final e in stepWrites.entries) {
       final step = chore.steps.firstWhereOrNull((s) => s.id == e.key);

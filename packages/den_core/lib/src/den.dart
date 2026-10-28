@@ -1024,12 +1024,62 @@ class Den {
     if (audience != null) {
       final target = _spaceFor(_audienceOf(audience));
       if (target != entry.space) {
-        await _commit(_moveDrafts(entry, target, fields, RecordType.completion, 'chore'));
+        final after = {...entry.fields, ...fields};
+        final prices = {
+          for (final s in (after['steps'] as List?) ?? const <Object?>[])
+            if (s is Map) '${s['id']}': (s['points'] as num?)?.toInt() ?? 0,
+        };
+        final price = (after['points'] as num?)?.toInt() ?? 0;
+        final pricer = _mayPrice;
+        await _commit([
+          for (final d in _moveDrafts(entry, target, fields, RecordType.completion, 'chore'))
+            d.type == RecordType.completion && d.space == target
+                ? _Draft(d.type, d.rid, d.space, _movedCompletion(d.fields, price, prices, pricer: pricer))
+                : d,
+        ]);
         return;
       }
     }
     if (fields.isEmpty) return;
     await _commit([_Draft(RecordType.chore, id, entry.space, fields)]);
+  }
+
+  /// Whether the actor may set what chores are worth: a points manager, or a hub acting for a
+  /// connection with no member.
+  bool get _mayPrice {
+    final a = actor;
+    if (a == null) return thisDevice?.mode == DeviceMode.hub;
+    return can(a, DenAction.managePoints);
+  }
+
+  /// A completion's fields as copied with its chore into another space: checks of steps the
+  /// chore no longer has are left behind, and someone who doesn't set prices carries over what
+  /// it was worth only up to what the chore is worth now.
+  static Map<String, Object?> _movedCompletion(
+    Map<String, Object?> fields,
+    int price,
+    Map<String, int> prices, {
+    required bool pricer,
+  }) {
+    int capped(int v, int max) => pricer || v <= max ? v : max;
+    final out = Map<String, Object?>.of(fields);
+    final steps = out['steps'];
+    if (steps is Map) {
+      out['steps'] = {
+        for (final e in steps.entries)
+          if (prices.containsKey(e.key)) '${e.key}': e.value,
+      };
+    }
+    final worth = out['stepPoints'];
+    if (worth is Map) {
+      out['stepPoints'] = {
+        for (final e in worth.entries)
+          if (prices.containsKey(e.key) && e.value is int) '${e.key}': capped(e.value as int, prices[e.key]!),
+      };
+    }
+    final points = out['points'];
+    if (points is int) out['points'] = capped(points, price);
+    return out;
   }
 
   Future<void> deleteChore(String id) async {
@@ -1062,10 +1112,12 @@ class Den {
         'date': date,
         'done': done,
         'doneBy': done ? me : null,
+        if (done) 'points': chore.points,
         for (final s in chore.steps)
-          if (done && checked[s.id] == null)
-            'steps.${s.id}': me ?? _anonymousChecker(s, owner)
-          else if (!done && checked[s.id] != null)
+          if (done && checked[s.id] == null) ...{
+            'steps.${s.id}': me ?? _anonymousChecker(s, owner),
+            'stepPoints.${s.id}': s.points,
+          } else if (!done && checked[s.id] != null)
             'steps.${s.id}': null,
       }),
     ]);
@@ -1096,6 +1148,7 @@ class Den {
         'chore': chore.id,
         'date': date,
         'steps.$stepId': value,
+        if (checked) ...{'stepPoints.$stepId': step.points, 'points': chore.points},
         if (checked && allChecked && !wasDone) ...{'done': true, 'doneBy': me},
         if (!checked && wasDone) ...{'done': false, 'doneBy': null},
       }),

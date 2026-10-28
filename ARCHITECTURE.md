@@ -202,10 +202,20 @@ while it's gone and back with it.
 
 **Points are derived, not stored.** A done completion awards the chore's points to the day's owner
 (`completion.owner`, else the rotation's owner that day, else the chore owner, else `doneBy`) and
-each checked step's points to the step's owner, else whoever checked it. Totals add
+each checked step's points to the step's owner, else whoever checked it. A chore or step is worth
+what the completion recorded when it was done (`points`, `stepPoints.<id>`, written by the change
+that marks it done or checks the step), so a new price never changes what was already earned; a
+completion with no recorded worth (from before Den kept it) is worth the current price, and a
+recorded worth older than the completion's `done` never pays more than the current price. Only
+someone who may manage points records more than the price at the time. Totals add
 `adjustment.delta` and subtract approved redemptions' `cost`. Concurrent devices can't double
 award, and undoing a chore undoes its points with no compensating rows. Each line is dated by the
-change behind it (when `done` or the step was set, the adjustment made, the redemption approved).
+change behind it (when `done` or the step was set, the adjustment made, the redemption approved),
+but a chore or step line never later than the end of the completion's own day (in the family's
+time zone): finishing an old day's chore late, or moving a chore to another space (which writes
+its completions again), doesn't count toward this week's goals. When a chore moved while an
+offline device checked off the old copy, the same chore and day can have a completion in both
+spaces; it is paid once, from the space where the chore still lives.
 A goal counts chore, step and adjustment lines whose time falls, in the family's time zone, in its
 window: `start` to `end` inclusive, or the current week (by `weekStart`) or month for repeating
 goals. A member reaches a goal when their running total crosses the target and stays there;
@@ -244,9 +254,9 @@ another space drops it.
 | Complete someone else's chore | yes | yes | no | no | as the verified member |
 | Swap a chore for a day | yes | yes | yes (their own) | no | as the verified member |
 | Check list items | yes | yes | yes | yes | yes |
-| Points: adjust, goals, rewards, decide redemptions | yes | no | grant `points` | no | as a verified parent |
+| Points: adjust, goals, rewards, decide redemptions, set what a chore or step is worth | yes | no | grant `points` | no | as a verified parent |
 | Request a redemption | yes | yes | yes (for themselves) | no | as the verified member |
-| Members, devices, family settings, approve or revoke devices | yes | no | no | no | no |
+| Members, devices, family settings, approve or revoke devices | yes (trust decisions on their own device only, see "Genesis and trust") | no | no | no | no |
 
 The same `can()` function runs in the UI (to hide what you can't do), on every replica when
 validating, and in the hub for API and MCP calls. Validation adds the context `can()` can't see:

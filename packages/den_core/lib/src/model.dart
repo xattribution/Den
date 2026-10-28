@@ -408,6 +408,17 @@ class Completion extends RecordView {
   Map<String, String?> get steps =>
       rec.map('steps').map((k, v) => MapEntry(k, v as String?));
 
+  /// What the chore was worth when it was done, or null for a completion from before Den kept
+  /// that (it is worth what the chore is worth now).
+  int? get points => rec.intOrNull('points');
+
+  /// stepId -> what the step was worth when it was checked; steps absent here are worth what
+  /// they are worth now.
+  Map<String, int> get stepPoints => {
+        for (final e in rec.map('stepPoints').entries)
+          if (e.value is num) e.key: (e.value as num).toInt(),
+      };
+
   static String idFor(String choreId, String date) => '$choreId@$date';
 }
 
