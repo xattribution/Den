@@ -12,7 +12,7 @@ import 'gallery.dart';
 /// Screenshots of the design foundation, for checking against the approved canvas. Rendered at
 /// 2x with the real bundled fonts into test/design/goldens/. On CI (Linux) they render without
 /// comparing pixels; the Screenshots workflow runs them with --update-goldens and pushes the
-/// images to the screenshots/<branch> branch. See DESIGN.md, "Screenshots".
+/// images to the `screenshots/<branch>` branch. See DESIGN.md, "Screenshots".
 const Size galleryPhone = Size(390, 844);
 const Size galleryPad = Size(1180, 820);
 
