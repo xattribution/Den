@@ -377,7 +377,7 @@ take plain values and den_core model types, never the app's state, so any featur
 | `GroupCard`, `RowRule`, `ruled()` | The card itself; hairlines between rows | `RowRule(indent: RowRule.afterFace)` after 40 pt faces. Never a card in a card. |
 | `ActionRow` | A row that asks for one thing (Needs you, requests) | Face, bold sentence, detail, one action. The action sits under the words below 360 pt (a phone's card) and past 135 % text, at the end otherwise (an iPad column). |
 | `DoneRow`, `DoneSwap` | What a row did, with Undo in place | `DoneSwap(done: …, child: row)` crossfades on the UI spring; pass a receipt's undo as `onUndo`. Never a toast. |
-| `NavRow` | A row that goes somewhere (menus, "Or add one thing") | Optional glyph or face, label, detail, chevron; 56 tall. |
+| `NavRow` | A row that goes somewhere (menus, "Or add one thing", settings) | Optional glyph or face, label, detail, what it's set to (`value`: "Off"), chevron; 56 tall. |
 | `FaceStack` | Who something is for | `DenAvatar`s 26 across, each ringed in the card color. |
 | `CheckPill` | A chore (or anything checked off) as a pill | Ring in the person's color. Ring tap checks; label tap opens details (steps, Give to…). `stars: null` when points are off. |
 | `CheckRow`, `CheckRing` | The same as a full-width row (PadToday's chores); the ring alone (a step) | 32 pt ring in a 48 target, whose it is at the end; 60 tall. |
@@ -392,6 +392,12 @@ take plain values and den_core model types, never the app's state, so any featur
 | `NoticeLine` | How things stand (offline) | Ink glyph and a plain line, no colored box. |
 | `DisabledReason` | A control that can't be used now | Keeps the control and says why under it. |
 | `PageHeader` | A screen's title, the date above it, the person's face | 30/800 (`large` on iPad). |
+| `DenPage`, `Ungapped`, `PageBackButton` | A page pushed over the app (Family, Settings, a setup step) | Round back button and the 30/800 title, sections `sectionGap` apart at a readable width, `bottom` for the one primary button within reach of the thumb. Wrap a child that may draw nothing in `Ungapped` and give it its own bottom gap. |
+| `SheetHeader` | A sheet's title and the pill that closes it | "Close" on the card color; `primary` ("Done" on a picture) in ink. |
+| `SwitchLine` | A setting said as a sentence ("Can add to lists") | Detail line under it, the switch at the end, the whole row flips it, 64 tall. `onChanged: null` with a `reason` keeps it visible and says why it can't change. |
+| `ChoiceRows`, `Choice` | A setting with a few answers (Day, Night, Auto) | Rows in a section's card, an ink check before the chosen one. Not for views (`DenSegmented`), not for on and off (`SwitchLine`). |
+| `LabeledField` | A text field with its label | The label above in meta ink2, never floating inside; an error under it in red text with its icon. |
+| `NumberedSteps` | Steps to follow in another app (a connector, a Shortcut) | Bold numbers in their own column, reading text beside them; a step may be a widget (an address to copy). |
 | `DenTabBar`, `DenSidebar`, `NavPlace` | The app's navigation | The shell owns them; screens never draw their own. |
 | `showPeoplePicker` | Choosing a person (Give to…, Who?, Who's driving?) | A sheet of faces; `anyoneLabel` adds "Anyone". |
 | `showDenSheet` | Every sheet | Springs, drag to close, centered form sheet on iPad. |

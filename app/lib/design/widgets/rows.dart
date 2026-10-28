@@ -117,10 +117,20 @@ class DoneSwap extends StatelessWidget {
       );
 }
 
-/// A row that goes somewhere: an optional ink glyph, a label (and a detail), and a chevron.
-/// 56 tall at least. For "Or add one thing", settings and menus.
+/// A row that goes somewhere: an optional ink glyph, a label (and a detail), its current
+/// [value] at the end ("Off", "Kid mode"), and a chevron. 56 tall at least. For "Or add one
+/// thing", settings and menus.
 class NavRow extends StatelessWidget {
-  const NavRow({super.key, required this.label, required this.onTap, this.icon, this.detail, this.leading, this.chevron = true});
+  const NavRow({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.detail,
+    this.leading,
+    this.chevron = true,
+    this.value,
+  });
 
   final String label;
   final VoidCallback? onTap;
@@ -130,6 +140,9 @@ class NavRow extends StatelessWidget {
   final Widget? leading;
   final String? detail;
   final bool chevron;
+
+  /// What it's set to now, in meta ink2 before the chevron. It wraps rather than being cut off.
+  final String? value;
 
   @override
   Widget build(BuildContext context) {
@@ -160,6 +173,10 @@ class NavRow extends StatelessWidget {
                   ],
                 ),
               ),
+              if (value != null) ...[
+                const SizedBox(width: Sp.s),
+                Flexible(child: Text(value!, style: t.meta(c.ink2), textAlign: TextAlign.end)),
+              ],
               if (chevron) ...[
                 const SizedBox(width: Sp.s),
                 Icon(PhosphorIconsBold.caretRight, size: 18, color: c.ink3),
