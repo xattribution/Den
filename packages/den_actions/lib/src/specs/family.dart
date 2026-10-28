@@ -99,7 +99,8 @@ List<ActionSpec> familyActions() => [
         effect: Effect.destructive,
         confirm: Confirm.client,
         engine: const {'addMember', 'updateMember'},
-        example: const {'name': 'Grandpa Joe', 'role': 'adult', 'color': 'olive', 'animal': 'cow'},
+        // Colors and animals by name from their enums, whatever the palette holds.
+        example: {'name': 'Grandpa Joe', 'role': 'adult', 'color': Marker.values.last.name, 'animal': Animal.values.last.name},
         run: _saveMember,
       ),
       ActionSpec(
@@ -252,7 +253,7 @@ Future<ActionResult> _saveMember(ActionContext c, ActionInput a) async {
       name: a.str('name', required: true)!.trim(),
       role: _named(Role.values, a.str('role')) ?? Role.kid,
       tier: tier,
-      marker: _named(Marker.values, a.str('color')) ?? Marker.blue,
+      marker: _named(Marker.values, a.str('color')) ?? Marker.values.first,
       animal: _named(Animal.values, a.str('animal')) ?? Animal.cat,
       birthday: birthday == null || birthday.isEmpty ? null : toolDate(birthday, c.zone, 'birthday'),
     );

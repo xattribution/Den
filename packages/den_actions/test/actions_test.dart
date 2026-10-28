@@ -147,8 +147,8 @@ void main() {
     final app = on(Surface.app);
     final role = await runner.run(app, 'save_member', {'member': 'Leo', 'role': 'parent'});
     expect(role.code, 'permission_denied');
-    final color = await runner.run(app, 'save_member', {'member': 'Leo', 'color': 'olive'});
-    expect((color.data['member'] as Map)['marker'], 'olive');
+    final color = await runner.run(app, 'save_member', {'member': 'Leo', 'color': Marker.values.last.name});
+    expect((color.data['member'] as Map)['marker'], Marker.values.last.name);
     for (final url in ['http://school.example.org/cal.ics', 'https://192.168.1.10/cal.ics', 'https://nas.local/cal.ics', 'https://intranet/cal.ics']) {
       final feed = await runner.run(app, 'save_calendar_feed', {'url': url}, mode: RunMode.confirmed);
       expect(feed.isError, isTrue, reason: url);
