@@ -1,4 +1,4 @@
-import 'package:den_app/screens/calendar/day_layout.dart';
+import 'package:den_app/features/calendar/state/day_layout.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

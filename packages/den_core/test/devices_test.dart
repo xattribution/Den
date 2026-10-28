@@ -208,7 +208,7 @@ void main() {
         familyName: 'Fresh start',
         timezone: 'UTC',
         yourName: 'Sam',
-        marker: Marker.olive,
+        marker: Marker.sunshine,
         animal: Animal.cow,
         deviceName: 'Phone',
         deviceKind: DeviceKind.phone,

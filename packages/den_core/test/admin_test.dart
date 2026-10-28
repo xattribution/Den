@@ -18,7 +18,7 @@ void main() {
 
   group('members and devices', () {
     test('add, change and remove people; removing one revokes their devices', () async {
-      final leo = await den.addMember(name: 'Leo', role: Role.kid, tier: Tier.little, marker: Marker.teal, animal: Animal.fish);
+      final leo = await den.addMember(name: 'Leo', role: Role.kid, tier: Tier.little, marker: Marker.aqua, animal: Animal.fish);
       final maya = await den.addMember(name: 'Maya', role: Role.kid, tier: Tier.teen, grants: {Grant.events});
       expect(den.members.map((m) => m.name), ['Dana', 'Leo', 'Maya']);
       expect(den.member(maya)!.grants, {Grant.events});
@@ -228,7 +228,7 @@ void main() {
         familyName: 'Lee family',
         timezone: 'America/Chicago',
         yourName: 'Sam',
-        marker: Marker.olive,
+        marker: Marker.sunshine,
         animal: Animal.cow,
         deviceName: 'Sam\'s laptop',
         deviceKind: DeviceKind.desktop,

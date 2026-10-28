@@ -1,4 +1,4 @@
-import 'package:den_app/net/hub_keep_alive.dart';
+import 'package:den_app/platform/sync/hub_keep_alive.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -5,6 +5,7 @@ import 'package:den_app/design/avatar.dart';
 import 'package:den_app/design/pictures.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
+import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -56,6 +57,8 @@ void main() {
     expect(DenPictures.find('watermelon')!.label, 'Melon');
     expect(DenPictures.find('watermelon')!.name, 'Watermelon');
     expect(DenPictures.find('unicorn'), isNull);
+    // MCP and the assistant offer the pack by name from den_core's list.
+    expect(DenPictures.all.map((p) => p.id), Picture.pack);
   });
 
   test('every picture is a 64 x 64 SVG asset that uses only what flutter_svg draws', () {

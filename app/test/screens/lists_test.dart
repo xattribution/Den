@@ -1,9 +1,9 @@
-import 'package:den_app/screens/lists/grocery_add.dart';
-import 'package:den_app/screens/lists/list_detail.dart';
-import 'package:den_app/screens/lists/list_editor.dart';
-import 'package:den_app/screens/lists/list_words.dart';
-import 'package:den_app/screens/lists/lists_index.dart';
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/features/lists/screens/grocery_add.dart';
+import 'package:den_app/features/lists/screens/list_detail.dart';
+import 'package:den_app/features/lists/screens/list_editor.dart';
+import 'package:den_app/features/lists/words/list_words.dart';
+import 'package:den_app/features/lists/screens/lists_index.dart';
+import 'package:den_app/app/app_state.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 

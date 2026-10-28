@@ -113,8 +113,6 @@ class DenColors extends ThemeExtension<DenColors> {
   bool get isDark => brightness == Brightness.dark;
 
   /// A person's color. The same hex in light and dark, always with [onMarker] on it.
-  // TODO(design phase 2): den_core's Marker still has the old ten values; migrate the enum to
-  // the eight PersonColor names (reading the old names as aliases) and drop this mapping.
   Color marker(Marker m) => PersonColor.forMarker(m).color;
 
   @Deprecated('Use bg: the page behind sections (sheets sit on bg too).')
@@ -249,34 +247,15 @@ enum PersonColor {
   static const List<PersonColor> assignmentOrder = values;
 
   /// The color the next person gets: the first in assignment order nobody has yet, or, once all
-  /// eight are taken, the one the fewest people share.
-  static PersonColor next(Iterable<PersonColor> taken) {
-    final counts = {for (final c in values) c: 0};
-    for (final c in taken) {
-      counts[c] = counts[c]! + 1;
-    }
-    var best = values.first;
-    for (final c in values) {
-      if (counts[c]! < counts[best]!) best = c;
-    }
-    return best;
-  }
+  /// eight are taken, the one the fewest people share ([Marker.next]).
+  static PersonColor next(Iterable<PersonColor> taken) =>
+      forMarker(Marker.next(taken.map((p) => p.marker)));
 
-  /// The family color for one of den_core's ten old markers.
-  // TODO(design phase 2): migrate Marker in den_core to these eight names, reading the old ten
-  // as aliases (sky and slate collapse into Sky and Lavender), then remove this.
-  static PersonColor forMarker(Marker m) => switch (m) {
-        Marker.blue => sky,
-        Marker.green => grass,
-        Marker.plum => lavender,
-        Marker.orange => tangerine,
-        Marker.teal => aqua,
-        Marker.brown => coral,
-        Marker.olive => sunshine,
-        Marker.pink => bubblegum,
-        Marker.sky => sky,
-        Marker.slate => lavender,
-      };
+  /// The engine's name for this color.
+  Marker get marker => Marker.values.byName(name);
+
+  /// The color for a person's [Marker]; the engine names the same eight colors in the same order.
+  static PersonColor forMarker(Marker m) => values.byName(m.name);
 }
 
 /// Spacing on a 4 px scale (`Sp.l` = 16). Page-level spacing lives in DenLayout.

@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:den_app/background/background_refresh.dart';
-import 'package:den_app/calendars/phone_calendars.dart';
-import 'package:den_app/reminders/reminder_plan.dart';
-import 'package:den_app/reminders/reminder_scheduler.dart';
+import 'package:den_app/platform/background/background_refresh.dart';
+import 'package:den_app/platform/calendars/phone_calendars.dart';
+import 'package:den_app/platform/notifications/reminder_plan.dart';
+import 'package:den_app/platform/notifications/reminder_scheduler.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,7 +25,7 @@ Future<Den> _phone({bool family = true}) async {
     familyName: 'Carter family',
     timezone: 'America/Chicago',
     yourName: 'Alex',
-    marker: Marker.blue,
+    marker: Marker.sky,
     animal: Animal.dog,
     deviceName: "Alex's phone",
     deviceKind: DeviceKind.phone,

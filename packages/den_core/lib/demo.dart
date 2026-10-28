@@ -55,20 +55,28 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
     familyName: 'Carter family',
     timezone: zone,
     yourName: 'Alex',
-    marker: Marker.blue,
+    marker: Marker.sky,
     animal: Animal.dog,
+    picture: 'dog',
     deviceName: 'Alex\'s phone',
     deviceKind: DeviceKind.phone,
   );
   final alex = phone.actor!.id;
   final year = int.parse(today.substring(0, 4));
-  final priya = await phone.addMember(name: 'Priya', role: Role.parent, marker: Marker.green, animal: Animal.bird);
+  final priya = await phone.addMember(
+    name: 'Priya',
+    role: Role.parent,
+    marker: Marker.grass,
+    animal: Animal.bird,
+    picture: 'sunflower',
+  );
   final maya = await phone.addMember(
     name: 'Maya',
     role: Role.kid,
     tier: Tier.teen,
-    marker: Marker.orange,
+    marker: Marker.tangerine,
     animal: Animal.horse,
+    picture: 'guitar',
     birthday: '${year - 14}-03-09',
     grants: {Grant.events, Grant.lists},
   );
@@ -76,19 +84,27 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
     name: 'Leo',
     role: Role.kid,
     tier: Tier.little,
-    marker: Marker.teal,
+    marker: Marker.aqua,
     animal: Animal.fish,
+    picture: 'dinosaur',
     birthday: '${year - 8}-07-22',
   );
   final zoe = await phone.addMember(
     name: 'Zoe',
     role: Role.kid,
     tier: Tier.preReader,
-    marker: Marker.pink,
+    marker: Marker.bubblegum,
     animal: Animal.butterfly,
+    picture: 'butterfly',
     birthday: '${year - 4}-11-30',
   );
-  await phone.addMember(name: 'Grandma Rosa', role: Role.adult, marker: Marker.plum, animal: Animal.rabbit);
+  await phone.addMember(
+    name: 'Grandma Rosa',
+    role: Role.adult,
+    marker: Marker.lavender,
+    animal: Animal.rabbit,
+    picture: 'teacup',
+  );
   final names = {alex: 'Alex', priya: 'Priya', maya: 'Maya', leo: 'Leo', zoe: 'Zoe'};
   for (final e in names.entries) {
     await phone.setSignIn(e.key, kind: e.key == zoe ? 'pattern' : 'pin', secret: demoSignIns[e.value]);

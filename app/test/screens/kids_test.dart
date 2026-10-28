@@ -1,10 +1,10 @@
-import 'package:den_app/app.dart';
+import 'package:den_app/app/den_app.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
-import 'package:den_app/screens/kids/kid_screen.dart';
-import 'package:den_app/screens/kids/little_kid.dart';
-import 'package:den_app/screens/kids/pre_reader.dart';
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/features/shared_screens/screens/kid_screen.dart';
+import 'package:den_app/features/shared_screens/screens/little_kid.dart';
+import 'package:den_app/features/shared_screens/screens/pre_reader.dart';
+import 'package:den_app/app/app_state.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

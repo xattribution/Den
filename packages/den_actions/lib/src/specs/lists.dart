@@ -263,7 +263,7 @@ Future<ActionResult> _updateList(ActionContext c, ActionInput a) async {
   final event = a.str('event')?.trim();
   final patch = <String, Object?>{
     if (a.has('title')) 'title': a.str('title')!.trim(),
-    if (a.has('kind')) 'kind': a.str('kind'),
+    if (a.has('kind')) ...{'kind': a.str('kind'), 'icon': a.str('kind')},
     if (a.has('pinned')) 'pinned': a.flag('pinned'),
     if (needBy != null) ...{
       'needBy': needBy.isEmpty ? null : toolDate(needBy, c.zone, 'need_by'),
@@ -272,6 +272,7 @@ Future<ActionResult> _updateList(ActionContext c, ActionInput a) async {
     if (event != null) ...{
       'event': _eventId(c, event),
       if (needBy == null) 'lifecycle': event.isEmpty ? ListLifecycle.running.name : ListLifecycle.event.name,
+      if (needBy == null && event.isNotEmpty) 'needBy': null,
     },
     if (a.has('who_can_see')) 'audience': audienceFor(c, a.raw['who_can_see']),
   };

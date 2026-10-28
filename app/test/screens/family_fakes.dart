@@ -1,10 +1,10 @@
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
-import 'package:den_app/net/den_network.dart';
-import 'package:den_app/net/local_hub.dart';
-import 'package:den_app/net/pairing.dart';
+import 'package:den_app/platform/sync/den_network.dart';
+import 'package:den_app/platform/sync/local_hub.dart';
+import 'package:den_app/platform/sync/pairing.dart';
 import 'package:den_net/den_net.dart' show SyncNode;
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/app/app_state.dart';
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';

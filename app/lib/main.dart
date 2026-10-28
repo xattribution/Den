@@ -1,27 +1,25 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 
-import 'app.dart';
-import 'background/background.dart';
-import 'boot/boot.dart';
-import 'boot/boot_screen.dart';
-import 'boot/other_tab_screen.dart';
-import 'calendars/device_calendar_source.dart';
-import 'calendars/phone_calendars.dart';
-import 'capture/capture_service.dart';
-import 'capture/capture_settings.dart';
-import 'capture/hub_link.dart';
-import 'capture/platform_capture.dart';
-import 'net/den_network.dart';
-import 'net/net_pairing.dart';
-import 'net/pairing.dart';
-import 'reminders/os_notifications.dart';
-import 'reminders/reminder_scheduler.dart';
-import 'state/app_state.dart';
-import 'web/web_app.dart';
+import 'app/den_app.dart';
+import 'platform/background/background.dart';
+import 'platform/storage/boot.dart';
+import 'app/boot_screen.dart';
+import 'app/other_tab_screen.dart';
+import 'platform/calendars/device_calendar_source.dart';
+import 'platform/calendars/phone_calendars.dart';
+import 'platform/capture/platform_capture.dart';
+import 'platform/sync/den_network.dart';
+import 'platform/sync/net_pairing.dart';
+import 'platform/sync/pairing.dart';
+import 'platform/notifications/os_notifications.dart';
+import 'platform/notifications/reminder_scheduler.dart';
+import 'app/app_state.dart';
+import 'platform/web/web_app.dart';
+import 'platform/capabilities.dart';
+import 'features/add/add.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,7 +27,7 @@ Future<void> main() async {
   tzdata.initializeTimeZones();
   // A background refresh may have this device's engine open; wait for it to finish.
   final lock = await EngineLock.acquire();
-  if (kIsWeb) {
+  if (Capabilities.web) {
     // Tabs of one browser share the family's log; one at a time writes it.
     if (!await WebApp.holdEngine()) {
       runApp(const OtherTabScreen());

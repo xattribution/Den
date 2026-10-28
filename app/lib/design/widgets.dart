@@ -10,6 +10,7 @@ import 'motion.dart';
 import 'tokens.dart';
 
 export 'avatar.dart';
+export 'feedback.dart';
 
 /// The vertical marker bar beside an event or chore: one segment per person it belongs to.
 /// Items for everyone show every member's segment.
@@ -399,42 +400,63 @@ class EmptyLine extends StatelessWidget {
   }
 }
 
-/// Shows a message with Undo, the way reversible actions confirm themselves.
-void showUndo(BuildContext context, String message, VoidCallback onUndo) {
-  final messenger = ScaffoldMessenger.of(context);
-  messenger.hideCurrentSnackBar();
-  messenger.showSnackBar(
-    SnackBar(
-      content: Text(message),
-      action: SnackBarAction(label: 'Undo', onPressed: onUndo),
-      duration: const Duration(seconds: 6),
-    ),
-  );
-}
+/// A fact on a detail page: its label in a column on the left, the value beside it.
+///
+/// [FactRow] is the event page's: inside the page gutters, with a label column that grows with
+/// the text. [center] is for a value that holds a button: the label centers on it, and the
+/// button's own 48 px height stands in for the row's padding. [FactRow.compact] is the chore
+/// page's: inside the page's own padding, read by screen readers as one phrase.
+class FactRow extends StatelessWidget {
+  const FactRow({super.key, required this.label, required this.child, this.center = false}) : _compact = false;
 
-/// Shows a plain message (errors name the cause and the way out).
-void showNote(BuildContext context, String message) {
-  final messenger = ScaffoldMessenger.of(context);
-  messenger.hideCurrentSnackBar();
-  messenger.showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 5)));
-}
+  const FactRow.compact({super.key, required this.label, required this.child})
+      : center = false,
+        _compact = true;
 
-/// What a failed write says when the reason isn't one written for people (storage, say).
-const String writeFailedMessage = 'Den couldn’t save that. Try again in a moment.';
+  final String label;
+  final Widget child;
+  final bool center;
+  final bool _compact;
 
-/// Runs a write and turns any failure into a note instead of a crash: permission and input
-/// errors say why, anything else that it didn't save.
-Future<bool> attempt(BuildContext context, Future<void> Function() write) async {
-  try {
-    await write();
-    return true;
-  } on PermissionDenied catch (e) {
-    if (context.mounted) showNote(context, e.message);
-  } on InvalidInput catch (e) {
-    if (context.mounted) showNote(context, e.message);
-  } on Object catch (e, stack) {
-    debugPrint('A write failed: $e\n$stack');
-    if (context.mounted) showNote(context, writeFailedMessage);
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    if (_compact) {
+      return MergeSemantics(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: Sp.s - 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 108,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(label, style: context.type.meta(c.ink2)),
+                ),
+              ),
+              Expanded(child: child),
+            ],
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: EdgeInsets.fromLTRB(Sp.l, center ? 0 : Sp.s, Sp.l, center ? 0 : Sp.s),
+      child: Row(
+        crossAxisAlignment: center ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96 * context.type.scale,
+            child: Padding(
+              padding: EdgeInsets.only(top: center ? 0 : 2),
+              child: Text(label, style: context.type.meta(c.ink2)),
+            ),
+          ),
+          const SizedBox(width: Sp.s),
+          Expanded(child: child),
+        ],
+      ),
+    );
   }
-  return false;
 }

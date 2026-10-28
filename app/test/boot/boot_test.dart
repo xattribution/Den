@@ -1,4 +1,4 @@
-import 'package:den_app/boot/boot.dart';
+import 'package:den_app/platform/storage/boot.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
@@ -19,7 +19,7 @@ Future<Den> founded(DenStorage storage, MemoryKeys keys) async {
     familyName: 'The Testers',
     timezone: 'America/Chicago',
     yourName: 'Sam',
-    marker: Marker.blue,
+    marker: Marker.sky,
     animal: Animal.cat,
     deviceName: "Sam's iPhone",
     deviceKind: DeviceKind.phone,

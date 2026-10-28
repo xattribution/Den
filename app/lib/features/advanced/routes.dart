@@ -1,0 +1,29 @@
+import 'package:go_router/go_router.dart';
+
+import 'screens/add_hub_screen.dart';
+import 'screens/connections_screen.dart';
+import 'screens/create_token_screen.dart';
+import 'screens/history_screen.dart';
+import 'screens/home_assistant_screen.dart';
+import 'screens/search_screen.dart';
+
+/// What changed and finding things: `/history?q=`, `/search?q=`.
+final List<RouteBase> advancedRoutes = [
+  GoRoute(path: '/history', builder: (_, s) => HistoryScreen(query: s.uri.queryParameters['q'])),
+  GoRoute(path: '/search', builder: (_, s) => SearchScreen(query: s.uri.queryParameters['q'])),
+];
+
+/// Under `/settings`: `connections`, `connections/new?label=`, `home-assistant`.
+final List<RouteBase> advancedSettingsRoutes = [
+  GoRoute(
+    path: 'connections',
+    builder: (_, _) => const ConnectionsScreen(),
+    routes: [GoRoute(path: 'new', builder: (_, s) => CreateTokenScreen(label: s.uri.queryParameters['label']))],
+  ),
+  GoRoute(path: 'home-assistant', builder: (_, _) => const HomeAssistantScreen()),
+];
+
+/// Under `/family/devices/add`: `hub`.
+final List<RouteBase> advancedAddDeviceRoutes = [
+  GoRoute(path: 'hub', builder: (_, _) => const AddHubScreen()),
+];

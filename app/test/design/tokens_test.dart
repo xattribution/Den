@@ -118,19 +118,12 @@ void main() {
     }
   });
 
-  test('the old ten markers map onto the eight family colors', () {
-    expect({for (final m in Marker.values) m: PersonColor.forMarker(m)}, {
-      Marker.blue: PersonColor.sky,
-      Marker.green: PersonColor.grass,
-      Marker.plum: PersonColor.lavender,
-      Marker.orange: PersonColor.tangerine,
-      Marker.teal: PersonColor.aqua,
-      Marker.brown: PersonColor.coral,
-      Marker.olive: PersonColor.sunshine,
-      Marker.pink: PersonColor.bubblegum,
-      Marker.sky: PersonColor.sky,
-      Marker.slate: PersonColor.lavender,
-    });
+  test('the engine names the same eight colors in the same order', () {
+    expect(Marker.values.map((m) => m.name), PersonColor.values.map((p) => p.name));
+    for (final m in Marker.values) {
+      expect(PersonColor.forMarker(m).marker, m);
+    }
+    expect(PersonColor.forMarker(Marker.parse('teal')!), PersonColor.aqua, reason: 'older names read as the nearest');
   });
 
   test('the next person gets the first color nobody has, then the least shared', () {

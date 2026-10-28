@@ -50,6 +50,7 @@ class Wire {
         'role': m.role.name,
         'tier': m.tier?.name,
         'marker': m.marker.name,
+        'picture': m.picture,
         'animal': m.animal.name,
         'birthday': m.birthday,
         'grants': [for (final g in Grant.values) if (m.grants.contains(g)) g.name],

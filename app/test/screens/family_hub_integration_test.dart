@@ -3,12 +3,12 @@
 // Plain `test`s (no widget binding), so sockets and timers are real.
 import 'dart:io';
 
-import 'package:den_app/net/den_network.dart';
-import 'package:den_app/net/hub_client.dart';
-import 'package:den_app/net/hub_keep_alive.dart';
-import 'package:den_app/net/local_hub.dart';
-import 'package:den_app/net/net_pairing.dart';
-import 'package:den_app/net/pairing.dart';
+import 'package:den_app/platform/sync/den_network.dart';
+import 'package:den_app/platform/sync/hub_client.dart';
+import 'package:den_app/platform/sync/hub_keep_alive.dart';
+import 'package:den_app/platform/sync/local_hub.dart';
+import 'package:den_app/platform/sync/net_pairing.dart';
+import 'package:den_app/platform/sync/pairing.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,7 +29,7 @@ Future<Den> parentPhone() async {
     familyName: 'The Testers',
     timezone: 'America/Chicago',
     yourName: 'Sam',
-    marker: Marker.blue,
+    marker: Marker.sky,
     animal: Animal.cat,
     deviceName: "Sam's phone",
     deviceKind: DeviceKind.phone,
@@ -159,7 +159,7 @@ void main() {
     await until(() => momNet.status.state.name == 'live', what: 'Mom to sync with the hub');
 
     // An invite for Grandma, sent as a message.
-    final grandmaId = await mom.addMember(name: 'Grandma', role: Role.adult, marker: Marker.green, animal: Animal.bird);
+    final grandmaId = await mom.addMember(name: 'Grandma', role: Role.adult, marker: Marker.grass, animal: Animal.bird);
     final grandma = mom.member(grandmaId)!;
     final message = await momPairing.createInvite(memberId: grandma.id);
     expect(message.words, hasLength(4));

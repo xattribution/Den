@@ -227,6 +227,12 @@ String? _steps(String label, Object? v) {
   return ids.toSet().length == ids.length ? null : '$label has two steps with the same id';
 }
 
+/// A member's picture: a pack id or `initial` (see [Picture]).
+String? _picture(String label, Object? v) {
+  if (v == null) return null;
+  return Picture.valid(v) ? null : '$label is not a picture Den knows';
+}
+
 final FieldCheck _signIn = shape({
   'kind': oneOf(['pin', 'pattern', 'none']),
   'salt': text(max: 100, nullable: true),
@@ -256,8 +262,9 @@ final Map<String, TypeSpec> typeSpecs = {
     'name': text(min: 1, max: maxName),
     'role': names(Role.values),
     'tier': names(Tier.values, nullable: true),
-    'marker': names(Marker.values),
+    'marker': oneOf(Marker.allNames),
     'animal': names(Animal.values),
+    'picture': _picture,
     'birthday': localDate(nullable: true),
     'grants': listOf(names(Grant.values), max: 4, unique: true),
     'signIn': _signIn,

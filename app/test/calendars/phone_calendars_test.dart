@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:den_app/calendars/phone_calendars.dart';
+import 'package:den_app/platform/calendars/phone_calendars.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,7 +18,7 @@ Future<Den> _family() async {
     familyName: 'Carter family',
     timezone: 'America/Chicago',
     yourName: 'Alex',
-    marker: Marker.blue,
+    marker: Marker.sky,
     animal: Animal.dog,
     deviceName: "Alex's phone",
     deviceKind: DeviceKind.phone,

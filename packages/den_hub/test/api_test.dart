@@ -98,7 +98,7 @@ void main() {
       expect(body['token'], {'label': 'Home Assistant', 'member': null, 'scopes': ['admin'], 'expires': null, 'expires_ms': null});
       final members = (body['members'] as List).cast<Map<String, Object?>>();
       expect(members.map((m) => m['name']), ['Alex', 'Priya', 'Maya', 'Leo', 'Zoe', 'Grandma Rosa']);
-      expect(members.first.keys.toSet(), {'id', 'name', 'role', 'tier', 'marker', 'animal', 'birthday', 'grants', 'order'});
+      expect(members.first.keys.toSet(), {'id', 'name', 'role', 'tier', 'marker', 'picture', 'animal', 'birthday', 'grants', 'order'});
       expect(r.text, isNot(contains('salt')));
       expect(r.text, isNot(contains('hash')));
       expect((body['categories'] as List).length, 6);

@@ -1,6 +1,6 @@
-import 'package:den_app/app.dart';
-import 'package:den_app/screens/calendar/family_week.dart';
-import 'package:den_app/screens/today/today_screen.dart';
+import 'package:den_app/app/den_app.dart';
+import 'package:den_app/features/calendar/widgets/family_week.dart';
+import 'package:den_app/features/today/screens/today_screen.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/shots.dart';

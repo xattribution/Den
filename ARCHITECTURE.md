@@ -192,7 +192,7 @@ commit too (`Den.restoreAll`).
 | Type | Space | Fields |
 | --- | --- | --- |
 | `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map memberId -> `{parentsSeePrivate: bool}`) |
-| `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (blue, green, orange, pink, teal, plum, brown, olive, sky, slate), `animal` (cat, dog, rabbit, bird, butterfly, fish, horse, cow, bug), `birthday` (local date or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order` |
+| `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, or `initial`; room for `photo:<id>` later), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order` |
 | `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`) |
 | `category` | `f` | `name`, `icon` |
 | `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `rides` (list of `{leg: to\|from, driver: memberId\|null}`), `countdown` (bool) |
@@ -600,6 +600,54 @@ nudges: a device asking to join (parents), a reward asked for (whoever decides r
 given to someone for today or tomorrow (them). Pushes go only to known push services' hosts. The
 service worker shows each push and a tap opens its route (`/event/<id>?at=`, `/chore/<id>?date=`,
 `/today`, `/points`).
+
+## The app
+
+`app/lib` is cut by what changes together:
+
+```
+main.dart          boot only
+app/               den_app.dart, router.dart (composes the features' routes), redirect.dart,
+                   shell.dart, app_state.dart, den_scope.dart, actions.dart, format.dart,
+                   words.dart, family_reads.dart, side_panel.dart, navigation.dart
+design/            tokens, theme, type, motion, layout, pictures, pictograms; widgets.dart,
+                   feedback.dart, forms/ (forms.dart), pickers/
+platform/          capabilities.dart, storage/, sync/, notifications/, background/, calendars/,
+                   capture/, web/, time_zone.dart
+features/<bucket>/ screens/, widgets/, state/, words/, routes.dart, <bucket>.dart
+                   today, calendar, chores, rewards, lists, add, family, onboarding,
+                   shared_screens, settings, advanced
+```
+
+- `design/` imports Flutter, Phosphor and den_core's model types, never `Den`, `AppState`,
+  go_router, `platform/` or a feature.
+- `platform/` never imports a feature. Every "is this a browser" or "which operating system"
+  question is a named getter in `platform/capabilities.dart`.
+- A feature reaches another only through its barrel, `<bucket>.dart` (and the calendar's words
+  through `calendar_words.dart`), and its pages by their paths. Each feature has `routes.dart`;
+  `app/router.dart` only composes them.
+- `words/` is plain Dart (no Flutter, no `BuildContext`): words take `FamilyReads`, the reads
+  `AppState` mixes in, so the hub and an assistant can say things the way the screens do.
+
+**Writes.** Every change the app makes is a den_actions action (see "Actions"), run by
+`AppActions` (`app/actions.dart`) with `Surface.app` as the person using the device; screens ask
+their own questions first, so it runs confirmed. Screens call their feature's actions in
+`state/` (`ChoreActions`, `ListActions`, `RewardActions`, `EventActions`, `FamilyActions`), never
+the engine. The writes no action offers on purpose go to the engine from `state/` only: trust
+decisions (`TrustActions`, `ConnectionActions`), who is acting on a shared screen
+(`SignInActions`) and founding a family (`OnboardingActions`); what Add read is written by
+den_capture inside `AppActions.record`. Undo takes back a write's receipt with `Den.undo`.
+`app/test/actions_only_test.dart` fails on any other direct write, so every app action is also a
+REST, MCP and assistant action by construction.
+
+**Rebuilds.** `AppState` reports what each change touched (record types from `Den.onChange`,
+who is acting, the theme and wall settings). `DenScope` is an `InheritedModel` on those:
+`context.watch(types)` rebuilds a widget only when one of them (or who's who: family, members,
+devices, acting) changes, and `context.view(model)` also keeps a computed view (`TodayModel`,
+`ChoresModel`, `ListsModel`, `PointsModel`, `WeekModel`, `OccurrencesModel`) until what it reads
+changes or the day turns. `context.app` still rebuilds on everything; the wall and the kids'
+screens use it, since they show everything. The router's redirect runs again only when who's who
+or the wall setting changes, and the app itself rebuilds only for the theme and the wall setting.
 
 ## The web app
 

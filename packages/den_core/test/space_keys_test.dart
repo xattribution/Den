@@ -151,7 +151,7 @@ void main() {
         familyName: 'Lee family',
         timezone: 'America/Chicago',
         yourName: 'Sam',
-        marker: Marker.olive,
+        marker: Marker.sunshine,
         animal: Animal.cow,
         deviceName: 'Sam\'s laptop',
         deviceKind: DeviceKind.desktop,

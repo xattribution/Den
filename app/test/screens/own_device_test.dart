@@ -1,6 +1,6 @@
-import 'package:den_app/screens/chores/chore_editor.dart';
-import 'package:den_app/screens/today/today_screen.dart';
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/features/chores/screens/chore_editor.dart';
+import 'package:den_app/features/today/screens/today_screen.dart';
+import 'package:den_app/app/app_state.dart';
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';

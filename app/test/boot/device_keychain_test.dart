@@ -1,4 +1,4 @@
-import 'package:den_app/boot/device_keychain.dart';
+import 'package:den_app/platform/storage/device_keychain.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 

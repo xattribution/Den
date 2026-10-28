@@ -1,8 +1,8 @@
-import 'package:den_app/net/den_network.dart';
-import 'package:den_app/net/hub_api.dart';
-import 'package:den_app/net/hub_client.dart';
-import 'package:den_app/net/hub_connections.dart';
-import 'package:den_app/screens/settings/connections_screen.dart';
+import 'package:den_app/platform/sync/den_network.dart';
+import 'package:den_app/platform/sync/hub_api.dart';
+import 'package:den_app/platform/sync/hub_client.dart';
+import 'package:den_app/platform/sync/hub_connections.dart';
+import 'package:den_app/features/advanced/screens/connections_screen.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';

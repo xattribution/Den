@@ -259,7 +259,8 @@ From den_core's `Member`; sign-in salts and hashes are never sent.
   "name": "Leo",
   "role": "kid",
   "tier": "big",
-  "marker": "orange",
+  "marker": "tangerine",
+  "picture": "owl",
   "animal": "bird",
   "birthday": "2017-04-02",
   "grants": ["lists"],
@@ -271,8 +272,9 @@ From den_core's `Member`; sign-in salts and hashes are never sent.
 | --- | --- | --- |
 | `role` | string | `parent` \| `adult` \| `kid` \| `guest` |
 | `tier` | string? | `preReader` \| `little` \| `big` \| `teen` |
-| `marker` | string | `blue` `green` `orange` `pink` `teal` `plum` `brown` `olive` `sky` `slate` |
-| `animal` | string | `cat` `dog` `rabbit` `bird` `butterfly` `fish` `horse` `cow` `bug` |
+| `marker` | string | `sky` `grass` `lavender` `tangerine` `aqua` `coral` `sunshine` `bubblegum`, the order new people get them in. Older names are read as one of these (`blue` as `sky`, `orange` as `tangerine`, and so on). |
+| `picture` | string | A picture from the app's pack by id (`fox`, `whale`, `rocket`, ...; den_core's `Picture.pack`), or `initial` for the first letter of their name |
+| `animal` | string | What older versions showed (`cat` `dog` `rabbit` `bird` `butterfly` `fish` `horse` `cow` `bug`); a member without a picture shows the matching one |
 | `birthday` | date? | |
 | `grants` | string[] | Subset of `events`, `chores`, `lists`, `points` |
 | `order` | int | Display order; members arrays are sorted by it |
@@ -510,8 +512,8 @@ names to ids.
     "expires_ms": null
   },
   "members": [
-    {"id": "M3MOMQ7K2XN4B5TA", "name": "Mom", "role": "parent", "tier": null, "marker": "teal", "animal": "butterfly", "birthday": null, "grants": [], "order": 0},
-    {"id": "M5LEOW3H7ZQ2D4VC", "name": "Leo", "role": "kid", "tier": "big", "marker": "orange", "animal": "bird", "birthday": "2017-04-02", "grants": ["lists"], "order": 2}
+    {"id": "M3MOMQ7K2XN4B5TA", "name": "Mom", "role": "parent", "tier": null, "marker": "aqua", "picture": "butterfly", "animal": "butterfly", "birthday": null, "grants": [], "order": 0},
+    {"id": "M5LEOW3H7ZQ2D4VC", "name": "Leo", "role": "kid", "tier": "big", "marker": "tangerine", "picture": "owl", "animal": "bird", "birthday": "2017-04-02", "grants": ["lists"], "order": 2}
   ],
   "categories": [{"id": "CAT2SPORT5QK4MXN", "name": "Sports", "icon": "ball"}]
 }

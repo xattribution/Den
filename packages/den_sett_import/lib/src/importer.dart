@@ -402,26 +402,25 @@ class _Importer {
     return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
   }
 
-  /// Sett colors were hex strings; pick the Den marker with the nearest hue.
+  /// Sett colors were hex strings; pick the family color with the nearest hue.
   static Marker _marker(String? hex, int index) {
     if (hex == null || !RegExp(r'^#?[0-9a-fA-F]{6}$').hasMatch(hex)) {
       return Marker.values[index % Marker.values.length];
     }
     final v = int.parse(hex.replaceFirst('#', ''), radix: 16);
     final hue = _hue((v >> 16) & 255, (v >> 8) & 255, v & 255);
+    // The family colors' own hues.
     const hues = {
-      Marker.orange: 22.0,
-      Marker.brown: 30.0,
-      Marker.olive: 70.0,
-      Marker.green: 140.0,
-      Marker.teal: 180.0,
-      Marker.sky: 197.0,
-      Marker.blue: 210.0,
-      Marker.slate: 220.0,
-      Marker.plum: 295.0,
-      Marker.pink: 330.0,
+      Marker.coral: 1.0,
+      Marker.tangerine: 30.0,
+      Marker.sunshine: 49.0,
+      Marker.grass: 126.0,
+      Marker.aqua: 180.0,
+      Marker.sky: 205.0,
+      Marker.lavender: 262.0,
+      Marker.bubblegum: 334.0,
     };
-    Marker best = Marker.blue;
+    Marker best = Marker.sky;
     var bestDistance = 999.0;
     hues.forEach((marker, h) {
       final d = (hue - h).abs();

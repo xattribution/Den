@@ -1,9 +1,9 @@
-import 'package:den_app/design/parts/family_pattern_pad.dart';
-import 'package:den_app/design/parts/family_pin_pad.dart';
-import 'package:den_app/net/pairing.dart';
-import 'package:den_app/screens/family/device_screen.dart';
-import 'package:den_app/screens/family/family_screen.dart';
-import 'package:den_app/screens/family/member_editor.dart';
+import 'package:den_app/design/pickers/pattern_pad.dart';
+import 'package:den_app/design/pickers/pin_pad.dart';
+import 'package:den_app/platform/sync/pairing.dart';
+import 'package:den_app/features/family/screens/device_screen.dart';
+import 'package:den_app/features/family/screens/family_screen.dart';
+import 'package:den_app/features/family/screens/member_editor.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

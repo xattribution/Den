@@ -1,5 +1,5 @@
-import 'package:den_app/reminders/reminder_plan.dart';
-import 'package:den_app/reminders/reminder_scheduler.dart';
+import 'package:den_app/platform/notifications/reminder_plan.dart';
+import 'package:den_app/platform/notifications/reminder_scheduler.dart';
 
 /// The OS as a map: what it holds, and every call made to it.
 class FakeOutlet implements ReminderOutlet {

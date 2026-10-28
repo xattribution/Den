@@ -2,7 +2,7 @@
 @TestOn('browser')
 library;
 
-import 'package:den_app/boot/storage_web.dart';
+import 'package:den_app/platform/storage/storage_web.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
@@ -20,7 +20,7 @@ void main() {
       familyName: 'The Testers',
       timezone: 'America/Chicago',
       yourName: 'Sam',
-      marker: Marker.blue,
+      marker: Marker.sky,
       animal: Animal.cat,
       deviceName: "Sam's iPhone",
       deviceKind: DeviceKind.phone,
@@ -56,7 +56,7 @@ void main() {
       familyName: 'The Testers',
       timezone: 'America/Chicago',
       yourName: 'Sam',
-      marker: Marker.blue,
+      marker: Marker.sky,
       animal: Animal.cat,
       deviceName: "Sam's laptop",
       deviceKind: DeviceKind.browser,

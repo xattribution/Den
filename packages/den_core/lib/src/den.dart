@@ -262,8 +262,9 @@ class Den {
     required String familyName,
     required String timezone,
     required String yourName,
-    required Marker marker,
-    required Animal animal,
+    Marker marker = Marker.sky,
+    Animal animal = Animal.cat,
+    String picture = Picture.initial,
     required String deviceName,
     required DeviceKind deviceKind,
     DeviceMode mode = DeviceMode.personal,
@@ -295,6 +296,7 @@ class Den {
               'tier': null,
               'marker': marker.name,
               'animal': animal.name,
+              'picture': picture,
               'birthday': null,
               'grants': <String>[],
               'signIn': {'kind': 'none', 'salt': null, 'hash': null},
@@ -477,20 +479,23 @@ class Den {
     required String name,
     required Role role,
     Tier? tier,
-    Marker marker = Marker.blue,
+    Marker? marker,
     Animal animal = Animal.cat,
+    String picture = Picture.initial,
     String? birthday,
     Set<Grant> grants = const {},
   }) async {
     final id = newId();
+    final color = marker ?? Marker.next(members.map((m) => m.marker));
     final order = members.isEmpty ? 0 : members.map((m) => m.order).reduce(math.max) + 1;
     await _commit([
       _Draft(RecordType.member, id, Space.family, {
         'name': name,
         'role': role.name,
         'tier': tier?.name,
-        'marker': marker.name,
+        'marker': color.name,
         'animal': animal.name,
+        'picture': picture,
         'birthday': birthday,
         'grants': [for (final g in Grant.values) if (grants.contains(g)) g.name],
         'signIn': {'kind': 'none', 'salt': null, 'hash': null},
@@ -503,7 +508,7 @@ class Den {
 
   Future<void> updateMember(String id, Map<String, Object?> patch) async {
     if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
-    final fields = _cleanPatch(patch, {'name', 'role', 'tier', 'marker', 'animal', 'birthday', 'grants', 'order'});
+    final fields = _cleanPatch(patch, {'name', 'role', 'tier', 'marker', 'animal', 'picture', 'birthday', 'grants', 'order'});
     final grants = fields['grants'];
     if (grants is Iterable) fields['grants'] = [for (final g in grants) g is Enum ? g.name : g];
     await _commit([_Draft(RecordType.member, id, Space.family, fields)]);
