@@ -406,5 +406,5 @@ class _GuardedUpgrade extends Request {
   bool get canHijack => _inner.canHijack;
 
   @override
-  void hijack(void Function(StreamChannel<List<int>>) callback) => _inner.hijack((raw) => callback(_guard(raw)));
+  Never hijack(void Function(StreamChannel<List<int>>) callback) => _inner.hijack((raw) => callback(_guard(raw)));
 }
