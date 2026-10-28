@@ -769,15 +769,19 @@ class Den {
     final out = Map<String, Object?>.of(fields);
     final zoneName = eventZone(event, _zone);
     final repeating = event.rrule != null;
-    final duration = event.end - event.start;
     if (fields['start'] is int) {
       final newStart = fields['start'] as int;
       final anchor = occurrence ?? event.start;
       final delta = wallDelta(zoneName, anchor, newStart);
-      final length = fields['end'] is int ? (fields['end'] as int) - newStart : duration;
       final seriesStart = repeating ? shiftWall(zoneName, event.start, delta) : newStart;
+      final newEnd = fields['end'] is int ? fields['end'] as int : null;
       out['start'] = seriesStart;
-      out['end'] = seriesStart + length;
+      // The length people see, on the wall clock (or in days), carries over to the series start.
+      out['end'] = newEnd == null
+          ? occurrenceEnd(event, seriesStart, _zone)
+          : seriesStart == newStart
+              ? newEnd
+              : shiftWall(zoneName, seriesStart, wallDelta(zoneName, newStart, newEnd));
       if (repeating && delta != Duration.zero) {
         for (final x in _exceptionsFor(event).values) {
           final moved = shiftWall(zoneName, x.occurrence, delta);
@@ -793,7 +797,7 @@ class Den {
         }
       }
     } else if (fields['end'] is int && repeating && occurrence != null) {
-      out['end'] = event.start + (fields['end'] as int) - occurrence;
+      out['end'] = shiftWall(zoneName, event.start, wallDelta(zoneName, occurrence, fields['end'] as int));
     }
     return [_Draft(RecordType.event, event.id, entry.space, out), ...drafts];
   }
@@ -804,10 +808,9 @@ class Den {
     final before = countBefore(event, _zone, occurrence);
     final oldRule = rule.count != null ? rule.copyWith(count: () => before) : rule.endingBefore(occurrence);
     final newRule = rule.count != null ? rule.copyWith(count: () => rule.count! - before) : rule;
-    final duration = event.end - event.start;
     final nextId = newId();
     final newStart = fields['start'] is int ? fields['start'] as int : occurrence;
-    final newEnd = fields['end'] is int ? fields['end'] as int : newStart + duration;
+    final newEnd = fields['end'] is int ? fields['end'] as int : occurrenceEnd(event, newStart, _zone);
     final next = <String, Object?>{
       for (final k in eventFields.keys)
         if (entry.fields.containsKey(k)) k: entry.fields[k],
@@ -887,7 +890,7 @@ class Den {
     final xid = '$eventId@$occurrence';
     final existing = _mat.store.liveAt(entry.space, RecordType.eventException, xid);
     final x = existing == null ? null : EventException(existing.rec);
-    final rides = buildOccurrence(event, occurrence, x).rides;
+    final rides = buildOccurrence(event, occurrence, x, familyZone: _zone).rides;
     await _commit([
       _Draft(RecordType.eventException, xid, entry.space, {
         'event': eventId,

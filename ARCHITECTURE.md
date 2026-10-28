@@ -223,7 +223,10 @@ deductions can un-cross it, and a race goes to the earliest such crossing.
 
 Recurrence is expanded in the event's own `tz` (the family's when unset) as wall-clock time, then
 each occurrence is converted to UTC, so a 7:00 AM series stays at 7:00 AM across DST. All-day
-events start and end at local midnight in that zone. Supported RRULE parts: `FREQ`
+events start and end at local midnight in that zone. An occurrence lasts what the event does on
+the wall clock: an all-day occurrence spans as many local days as the event (so the 23-hour day
+the clocks spring forward doesn't spill into the next), and a timed one ends at the same
+wall-clock length after its start in the event's zone. Supported RRULE parts: `FREQ`
 (`DAILY`\|`WEEKLY`\|`MONTHLY`\|`YEARLY`), `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY` (with ordinals such
 as `2TU`), `BYMONTHDAY`, `BYMONTH`, `BYSETPOS`, `WKST`; others are refused by the schema. Editing
 "this and following" ends the original series just before the occurrence (`UNTIL`, or a shortened

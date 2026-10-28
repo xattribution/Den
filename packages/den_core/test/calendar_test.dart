@@ -72,6 +72,48 @@ void main() {
     });
   });
 
+  group('repeating across DST changes', () {
+    test('a weekly all-day event stays on its own day when the clocks change', () async {
+      final first = dayStartIn(ny, '2026-03-01');
+      await den.addEvent(title: 'Family day', start: first, end: dayStartIn(ny, '2026-03-02'), allDay: true, rrule: 'FREQ=WEEKLY');
+      for (final d in ['2026-03-01', '2026-03-08', '2026-03-15', '2026-11-01', '2026-11-08']) {
+        expect(den.today(date: d).events.map((o) => o.title), ['Family day'], reason: d);
+        expect(den.today(date: addDays(d, 1)).events, isEmpty, reason: 'the day after $d');
+        expect(den.today(date: addDays(d, -1)).events, isEmpty, reason: 'the day before $d');
+      }
+      final occ = den.occurrences(first, dayStartIn(ny, '2026-11-30'));
+      for (final o in occ) {
+        expect(o.end, dayStartIn(ny, addDays(dateIn(ny, o.start), 1)), reason: wall(ny, o.start));
+      }
+      final march8 = occ.firstWhere((o) => dateIn(ny, o.start) == '2026-03-08');
+      expect(march8.end - march8.start, 23 * hour, reason: 'the day the clocks spring forward is short');
+      final nov1 = occ.firstWhere((o) => dateIn(ny, o.start) == '2026-11-01');
+      expect(nov1.end - nov1.start, 25 * hour);
+    });
+
+    test('a timed event keeps its wall-clock end across the night the clocks change', () async {
+      final start = wallToUtc(ny, DateTime.utc(2026, 3, 6, 1));
+      await den.addEvent(title: 'Night shift', start: start, end: wallToUtc(ny, DateTime.utc(2026, 3, 6, 3, 30)), rrule: 'FREQ=DAILY;COUNT=5');
+      final occ = den.occurrences(start, start + 6 * day);
+      expect(occ, hasLength(5));
+      for (final o in occ) {
+        expect(wall(ny, o.start).substring(11), '01:00');
+        expect(wall(ny, o.end).substring(11), '03:30', reason: wall(ny, o.start));
+      }
+    });
+
+    test('splitting a series after the change keeps each day whole', () async {
+      final first = dayStartIn(ny, '2026-03-01');
+      final id = await den.addEvent(title: 'Garden', start: first, end: dayStartIn(ny, '2026-03-02'), allDay: true, rrule: 'FREQ=WEEKLY');
+      final march8 = dayStartIn(ny, '2026-03-08');
+      await den.updateEvent(id, {'title': 'Garden (spring)'}, scope: EditScope.following, occurrence: march8);
+      expect(den.today(date: '2026-03-08').events.map((o) => o.title), ['Garden (spring)']);
+      expect(den.today(date: '2026-03-09').events, isEmpty);
+      final split = den.events.firstWhere((e) => e.title == 'Garden (spring)');
+      expect(split.end, dayStartIn(ny, '2026-03-09'));
+    });
+  });
+
   group('exceptions and edit scopes', () {
     late String id;
     late int first;
