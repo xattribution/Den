@@ -132,15 +132,17 @@ the revoker never held are lost with it; a device re-approved later writes norma
 re-approval.
 
 **Trust decisions are made only on a parent's own device.** Approving, revoking or changing
-another device; adding or removing a member or changing their `role`, `grants` or `signIn`
-(their own included); the family's `oversight`; and creating, activating, re-scoping or deleting
-an AI connection are valid only from a personal device, or from a hub-mode device whose actor is
-that device's own owner (a parent's phone running "Keep the family online") with no `_via`. A
-shared display never makes them, whoever verified on it, and neither does a hub nobody owns. A
-change carrying `_via` (the hub acting for an API token or MCP client) never touches a device
-record at all, its own included, so a connection can't switch the hub back to a personal device
-and act as its owner. The hub keeps its narrow part of connections: asking for OAuth access
-(`pending`), recording token hashes for active ones, and revoking.
+another device; removing or restoring a member, or changing an existing member's `role`,
+`grants` or `signIn` (their own included); the family's `oversight`; and creating, activating,
+re-scoping or deleting an AI connection are valid only from a personal device, or from a
+hub-mode device whose actor is that device's own owner (a parent's phone running "Keep the
+family online") with no `_via`. A shared display never makes them, whoever verified on it, and
+neither does a hub nobody owns. A change carrying `_via` (the hub acting for an API token or MCP
+client) never touches a device record at all, its own included, so a connection can't switch the
+hub back to a personal device and act as its owner. The hub keeps its narrow part of connections: asking for OAuth access
+(`pending`), recording token hashes for active ones, and revoking. Adding a member isn't a trust
+decision (a parent's import through the hub does it): nothing can act for a new member until a
+parent approves a device or an AI connection for them on their own device.
 
 Each space has a key for sealing changes on the relay, with an epoch. The founder's device makes
 the first keys at genesis and a parent's device makes one for each member it adds. When a parent's

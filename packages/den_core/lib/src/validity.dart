@@ -300,11 +300,12 @@ class Validator {
         }
         return null;
       case RecordType.member:
-        // Who is in the family, their role and permissions, and how they sign in are trust
-        // decisions: never made by the hub (whoever it acts for) or on a shared screen.
-        final trusted = x.creating ||
-            c.fields.containsKey('_deleted') ||
-            c.fields.keys.any(const {'role', 'grants', 'signIn'}.contains);
+        // A person's role, permissions and sign-in, and whether they are in the family at all,
+        // are trust decisions: never made by the hub (whoever it acts for) or on a shared screen.
+        // Adding someone isn't: nothing can act for them until a parent approves a device or an
+        // assistant for them, on their own device.
+        final trusted = c.fields.containsKey('_deleted') ||
+            (!x.creating && c.fields.keys.any(const {'role', 'grants', 'signIn'}.contains));
         if (trusted && !x.ownDevice) return _deny(_ownDeviceOnly);
         if (!x.creating && x.only({'signIn'}) && c.actor == c.rid) return null;
         if (!x.has(DenAction.manageFamily)) return _deny('Only parents can add or change people');

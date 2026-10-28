@@ -143,7 +143,6 @@ void main() {
         'revoke a device': () => ownHub.revokeDevice(kidTablet.deviceId),
         'rename another device': () => ownHub.updateDevice(kidTablet.deviceId, {'name': 'Mine now'}),
         'switch the hub to a personal device': () => ownHub.setThisDeviceMode(DeviceMode.personal),
-        'add a person': () => ownHub.addMember(name: 'Mallory', role: Role.parent),
         'change a role': () => ownHub.updateMember(leo, {'role': Role.parent}),
         'change grants': () => ownHub.updateMember(leo, {'grants': [Grant.points]}),
         'remove a person': () => ownHub.removeMember(leo),
@@ -157,8 +156,11 @@ void main() {
       for (final e in refused.entries) {
         await expectLater(e.value(), throwsA(isA<PermissionDenied>()), reason: e.key);
       }
-      // Everyday writes through the hub still work.
+      // Everyday writes through the hub still work, adding someone included: nothing acts for
+      // them until a parent approves a device or an assistant for them.
       await ownHub.updateMember(leo, {'name': 'Leonardo'});
+      final grandpa = await ownHub.addMember(name: 'Grandpa Joe', role: Role.adult);
+      await expectLater(ownHub.updateMember(grandpa, {'role': Role.parent}), throwsA(isA<PermissionDenied>()));
       await ownHub.updateFamily({'name': 'The Riveras'});
       ownHub.actAs(null);
       await sync(ownHub, phone);
