@@ -36,6 +36,9 @@ covers `/health`, everything under `/api/v1`, and the mDNS advertisement.
   [`GET /api/v1/search`](#get-apiv1search) ·
   [`GET /api/v1/stream`](#get-apiv1stream-server-sent-events) ·
   [`GET /api/v1/hub/status`](#get-apiv1hubstatus)
+- [Actions: everything MCP and the app can do](#actions-everything-mcp-and-the-app-can-do):
+  [`GET /api/v1/actions`](#get-apiv1actions) ·
+  [`POST /api/v1/actions/{name}`](#post-apiv1actionsname)
 - [Capture: reading for every device](#capture-reading-for-every-device)
 
 ## Conventions
@@ -57,7 +60,10 @@ the hub as SHA-256 hashes (the `connection` record). The hub resolves the bearer
 | `chores` | `POST /api/v1/chores/...` |
 | `lists` | `POST /api/v1/lists/{id}/items`, `PATCH` and `DELETE /api/v1/items/{id}` |
 | `points` | `POST /api/v1/points/adjust` |
-| `admin` | Implies every other scope |
+| `admin` | Implies every other scope; also the actions for the family's settings, people and calendar subscriptions |
+
+`GET /api/v1/actions` takes any valid token, and each `POST /api/v1/actions/{name}` needs one of
+that action's scopes ([Actions](#actions-everything-mcp-and-the-app-can-do)).
 
 Scopes gate what a token may *attempt*. Every write is then checked with den_core's `can()` for the
 token's member (`connection.member`); a token with no member acts with parent-level permissions
@@ -132,8 +138,10 @@ Every error, at every status, has this body:
 | 403 | `insufficient_scope` | The token lacks the scope the endpoint needs | `scope` (string) |
 | 403 | `permission_denied` | den_core's `can()` refused the token's member (`PermissionDenied`) | |
 | 404 | `not_found` | No such route, or no such record the token can read | `type` and `id` when a record was asked for |
+| 404 | `unknown_action` | `POST /api/v1/actions/{name}` names no action | |
 | 405 | `method_not_allowed` | Known path, wrong method. Also sends `Allow` | |
 | 409 | `read_only` | Editing or deleting an event imported from a subscribed calendar (`source.kind` is not `manual`) | |
+| 409 | `idempotency_conflict` | An `Idempotency-Key` used again for a different action or input | |
 | 408 | `timeout` | The body took more than 60 seconds to arrive | |
 | 413 | `too_large` | Body over 256 KiB (refused by its `Content-Length` before it is read) | |
 | 429 | `rate_limited` | Too many requests from this client (below). Also sends `Retry-After` | `retry_after` (seconds) |
@@ -1150,6 +1158,139 @@ Suggested refetch by type, for clients that cache:
 | `list`, `item` | `/api/v1/lists` |
 | `member`, `family` | `/api/v1/members`, then everything (names, time zone, points switch) |
 
+
+## Actions: everything MCP and the app can do
+
+`/api/v1/actions` runs den_actions (`packages/den_actions`): the same actions the MCP server offers
+as tools, by the same names, with the same JSON Schemas, permissions, confirmations and receipts.
+They take people, events, chores, lists, items and rewards by name or by id. The write routes
+above are older adapters over a few of them and answer as they always have.
+
+Who may run what: a token needs one of the action's scopes, and its member must be allowed what
+the action needs (`can()`); a token with no member acts at a parent's level except for the
+family's people and settings. den_core still decides every change. What only a parent decides on
+their own device (roles, permissions and sign-in, removing people, devices, AI access, who sees
+whose private things) is never an action; `packages/den_actions/lib/src/not_exposed.dart` lists
+each engine operation no action offers, with the reason.
+
+| Action | Effect | Scopes | Needs | Confirmation |
+| --- | --- | --- | --- | --- |
+| `get_overview` (today, or `start` + `days`; also what waits for a parent) | read | `read` | | |
+| `get_family` (people, categories, settings, what this token may do) | read | `read` | | |
+| `list_events` | read | `read` | | |
+| `list_chores` (one day, or `definitions`) | read | `read` | | |
+| `get_lists` | read | `read` | | |
+| `get_points` | read | `read` | | |
+| `search` | read | `read` | | |
+| `get_history` | read | `read` | | |
+| `create_event` | write | `calendar` | `editEvents` | |
+| `update_event` (also `who_can_see`) | destructive | `calendar` | `editEvents` | server, for a whole series |
+| `delete_event` | destructive | `calendar` | `editEvents` | server, for a whole series |
+| `set_ride` | write | `calendar` | `editEvents` | |
+| `create_chore` | write | `chores` | `editChores` (a price needs `managePoints`) | |
+| `update_chore` | destructive | `chores` | `editChores` | client |
+| `delete_chore` | destructive | `chores` | `editChores` | server |
+| `complete_chore` (or one `step`) | write | `chores` | `completeOwnChore` | |
+| `swap_chore` | write | `chores` | `swapChore` | |
+| `create_list` | write | `lists` | `editLists` | |
+| `update_list` | destructive | `lists` | `editLists` | client |
+| `delete_list` | destructive | `lists` | `editLists` | server |
+| `add_items` | write | `lists` | `editLists` | |
+| `update_items` (check, text, qty, store, move) | write | `lists` | `checkItems` (more than checking needs `editLists`) | |
+| `remove_items` (or every checked one) | destructive | `lists` | `editLists` | server, over 5 items |
+| `adjust_points` | destructive | `points` | `managePoints` | client |
+| `save_goal` | destructive | `points` | `managePoints` | client |
+| `delete_goal` | destructive | `points` | `managePoints` | server |
+| `save_reward` | destructive | `points` | `managePoints` | client |
+| `request_reward` | write | `points` | `requestReward` | |
+| `decide_reward_request` | destructive | `points` | `managePoints` | client |
+| `add_from_text` | write | `calendar`, `chores` or `lists` | any of `editEvents`, `editChores`, `editLists` | client |
+| `undo` | destructive | `calendar`, `chores`, `lists` or `points` | what the change it takes back needed | |
+| `save_category` | destructive | `calendar` | `editEvents` | client |
+| `delete_category` | destructive | `calendar` | `editEvents` | server |
+| `update_family_settings` | destructive | `admin` | `manageFamily` | client |
+| `save_member` (not roles, permissions or sign-in) | destructive | `admin` | `manageFamily` | client |
+| `save_calendar_feed` (https on the public web) | destructive | `admin` | `manageFamily` | server |
+| `remove_calendar_feed` | destructive | `admin` | `manageFamily` | server |
+
+"Client" confirmation is the caller's to ask (MCP clients do from the tool's hints, the in-app
+assistant asks for a tap when the call touches someone else's things or a whole series).
+"Server" confirmation is the two-step below. Older MCP names still run, unlisted, for one
+release: `get_today` and `get_week` (`get_overview`), `list_members` (`get_family`), `list_lists`
+(`get_lists`), `list_rewards` (`get_points`), `check_step` (`complete_chore` with `step`),
+`check_item` (`update_items`), `remove_item` and `clear_checked` (`remove_items`), `create_goal`
+(`save_goal`), `decide_redemption` (`decide_reward_request`).
+
+### `GET /api/v1/actions`
+
+Any valid token. The actions it may run:
+
+```json
+{
+  "actions": [
+    {
+      "name": "add_items",
+      "id": "lists.add_items",
+      "title": "Add items to a list",
+      "description": "Adds items to the end of a list.",
+      "scopes": ["lists"],
+      "effect": "write",
+      "idempotent": false,
+      "confirm": "none",
+      "input_schema": {"type": "object", "properties": {"list": {"type": "string"}, "items": {"type": "array"}}},
+      "output_schema": {"type": "object", "properties": {"items": {"type": "array"}, "receipt": {"type": "object"}}}
+    }
+  ]
+}
+```
+
+`input_schema` stays in the subset every function-calling API takes (one type per value, string
+enums, no `anyOf`, `additionalProperties: false` only at the top). Times are ISO 8601 with an
+offset, without one (read in the family's zone), or dates.
+
+### `POST /api/v1/actions/{name}`
+
+Runs an action. The body is its input as a JSON object; keys it doesn't name are refused.
+
+| Query or header | |
+| --- | --- |
+| `?preview=1` | Changes nothing: runs the action on an in-memory copy of the family and answers with what would change (`result.preview`), with warnings such as a new overlap, a ride with no driver, or something already on the list |
+| `Idempotency-Key: <text>` | A retry with the same key and input within 24 hours answers as the first try did, with `Idempotent-Replayed: true`, and changes nothing more. The same key with another input is `409 idempotency_conflict` |
+
+`200`:
+
+```json
+{
+  "status": "done",
+  "text": "Added Oat milk, Coffee filters to Groceries.",
+  "result": {"added": [{"type": "item", "id": "01J...", "title": "Oat milk"}], "left": [], "unclear": [], "reader": "Den"},
+  "receipt": {"id": "r_mT3...", "summary": "Added Oat milk, Coffee filters to Groceries.", "undoable": true, "tool": "add_from_text", "changes": ["4K2...:118", "4K2...:119"]}
+}
+```
+
+| `status` | |
+| --- | --- |
+| `done` | It ran. `text` is one or two sentences to show or say; `result` matches the action's `output_schema`; writes carry a `receipt` (also in `result.receipt`) |
+| `preview` | Nothing changed; `result.preview` is `{summary, question, changes: [{type, id, title, verb, fields}], warnings}` |
+| `needs_confirmation` | Nothing changed: the action needs a yes first. `result.confirm` is `{token, question, expires_ms}` and `result.preview` what would change. Ask the person `question`, then send the same input again with `"confirm": "<token>"` within 10 minutes |
+
+Errors use the usual body: `400 invalid_input` (with `details.field`), `403 insufficient_scope`,
+`403 permission_denied`, `404 not_found` (a name that matches nothing; the message lists the
+choices) or `unknown_action`, `409 read_only`.
+
+**Undo.** `POST /api/v1/actions/undo` with `{"receipt": "<id>"}` takes back what that write did,
+field by field: what it made is removed, what it removed comes back, fields get their old values,
+and points given get an adjustment the other way. Fields someone changed since stay as they are
+and are listed in `result.skipped`. `{}` takes back the token's last change. A token can undo only
+its own receipts, which last while the hub runs (the latest 500); `{"type": "chore", "id":
+"<id>"}` puts back any removed record the token may edit (`"occurrence"` with an event puts back
+one removed occurrence). Undo answers with a receipt too, which takes the undo back.
+
+**From Siri and other voice assistants.** `add_from_text` reads what someone said or wrote, the
+way the app's Add does (`{"text": "soccer every Wednesday at 5 for Leo"}`), with the reader a
+parent chose for the hub (Claude or a model at home), else Den's own rules. It adds what it's
+sure of and lists the rest in `result.left` (`"include_unsure": true` adds that too); `"list"`
+puts the items on one list. See `packages/den_hub/README.md`, "Siri Shortcuts".
 
 ## Hub setup and browser linking
 

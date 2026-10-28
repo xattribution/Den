@@ -11,7 +11,20 @@ import 'package:test/test.dart' as base;
 
 export 'package:test/test.dart' hide test;
 
-/// [base.test], with a failing body also printed as an `::error` workflow command.
+final List<String> _failures = [];
+
+/// Prints every failure of this file as one `::error` workflow command once its tests are done:
+/// GitHub shows at most ten annotations a step, so one per test would hide the rest. Call first
+/// in `main`.
+void annotateFailures() {
+  base.tearDownAll(() {
+    if (_failures.isEmpty) return;
+    final text = _failures.join('\n\n').replaceAll('%', '%25').replaceAll('\r', '').replaceAll('\n', '%0A');
+    print('::error title=den_actions: ${_failures.length} failed::$text');
+  });
+}
+
+/// [base.test], noting a failure for [annotateFailures].
 void test(Object? description, FutureOr<void> Function() body, {base.Timeout? timeout, Object? skip}) {
   base.test(
     description,
@@ -19,9 +32,9 @@ void test(Object? description, FutureOr<void> Function() body, {base.Timeout? ti
       try {
         await body();
       } catch (e, stack) {
-        final frames = stack.toString().split('\n').where((l) => l.contains('den_') || l.contains('test/')).take(6).join('\n');
-        final text = '$description: $e\n$frames'.replaceAll('%', '%25').replaceAll('\r', '').replaceAll('\n', '%0A');
-        print('::error title=den_actions test failed::$text');
+        final frames = stack.toString().split('\n').where((l) => l.contains('den_') || l.contains('test/')).take(4).join('\n');
+        final what = '$e';
+        _failures.add('$description: ${what.length > 1500 ? '${what.substring(0, 1500)}...' : what}\n$frames');
         rethrow;
       }
     },

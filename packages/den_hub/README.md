@@ -93,8 +93,11 @@ first (or the owner runs `den_hub open-linking` on the server), and the browser 
 ## MCP and OAuth
 
 `/mcp` is Streamable HTTP with JSON responses: `initialize` (2025-11-25, 2025-06-18,
-2025-03-26, 2024-11-05), `ping`, `tools/list` (filtered to the token's scopes), `tools/call`,
-sessions by `Mcp-Session-Id`, `GET` answers 405. Browser `Origin`s must be listed, or be the
+2025-03-26, 2024-11-05), `ping`, `tools/list` (den_actions' specs the token may use: its scopes,
+and what its member is allowed), `tools/call`, sessions by `Mcp-Session-Id`, `GET` answers 405.
+The tools, their confirmations and receipts are in
+[docs/hub-api.md, "Actions"](../../docs/hub-api.md#actions-everything-mcp-and-the-app-can-do);
+REST's `/api/v1/actions` runs the same ones with the same runner. Browser `Origin`s must be listed, or be the
 hub itself on an IP, `localhost`, `.local` name or the public URL (DNS-rebinding protection).
 A missing token gets `401` with `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource"`.
 
@@ -109,6 +112,32 @@ or 15 minutes without an answer redirects with `access_denied`), `/oauth/token` 
 code with PKCE, refresh-token rotation with reuse detection). Access tokens last an hour and are
 stored only as hashes in the connection record; refresh tokens (90 days) only as hashes in
 `hub/oauth.json`.
+
+## Siri Shortcuts
+
+A Shortcut on an iPhone can add to Den by voice ("Hey Siri, add to Den: milk and eggs") with
+`POST /api/v1/actions/add_from_text`. It runs on the phone, so it works through the private
+proxy too; the hub needn't be on the public internet.
+
+1. A parent makes a token in the Den app under Settings → AI and automations: label it "Siri",
+   choose whose it is (so History says who added things, and the person's own permissions apply),
+   and give it the `lists`, `calendar` and `chores` scopes (or only `lists` for a shopping-only
+   Shortcut). Copy the token; it's shown once.
+2. In Shortcuts, make a new Shortcut named "Add to Den" with these actions:
+   - **Dictate Text** (or **Ask for Input**, for typing).
+   - **Get Contents of URL**: URL `https://<your hub>/api/v1/actions/add_from_text`, Method `POST`,
+     Headers `Authorization: Bearer <token>`, Request Body **JSON** with `text` set to the
+     Dictated Text (add `list` set to `Groceries` to send every item there).
+   - **Get Dictionary Value** `text` from the Contents of URL.
+   - **Speak Text** (or **Show Result**) with that value.
+3. Say "Hey Siri, Add to Den", then "soccer every Wednesday at 5 for Leo" or "milk, eggs and
+   bread". Siri reads back what Den added, and what it left for a person to look at in the app
+   (something already on the list, a name nobody has).
+
+The answer's `receipt.id` takes it back: a second Shortcut, "Undo Den", POSTs `{}` to
+`/api/v1/actions/undo` with the same token, which undoes that token's last change. Any other
+action works the same way, such as `{"list": "Groceries"}` to `get_lists` for a "What's on the
+grocery list?" Shortcut that speaks `text`.
 
 ## Calendar feeds
 

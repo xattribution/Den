@@ -8,6 +8,7 @@ import 'package:den_assistant/den_assistant.dart' as assistant;
 import 'support.dart';
 
 void main() {
+  annotateFailures();
   test('every action is a tool every provider takes', () {
     for (final s in allActions()) {
       final tool = assistantTool(s);

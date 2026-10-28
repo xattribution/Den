@@ -7,6 +7,7 @@ import 'package:den_core/den_core.dart';
 import 'support.dart';
 
 void main() {
+  annotateFailures();
   late Den den;
   late ActionRunner runner;
   late String alex;

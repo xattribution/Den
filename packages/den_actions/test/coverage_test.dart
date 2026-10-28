@@ -3,6 +3,7 @@
 @Timeout(Duration(minutes: 10))
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:mirrors';
 
@@ -30,6 +31,13 @@ class RecordingDen implements Den {
   final List<String> calls = [];
   bool active = false;
 
+  // Mirrors drop a generic method's type argument, so the one generic write is forwarded here.
+  @override
+  Future<Recorded<T>> recording<T>(FutureOr<T> Function() body, {bool undoOnError = false}) {
+    if (active) calls.add('recording');
+    return real.recording<T>(body, undoOnError: undoOnError);
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) {
     final name = MirrorSystem.getName(invocation.memberName);
@@ -39,6 +47,7 @@ class RecordingDen implements Den {
 }
 
 void main() {
+  annotateFailures();
   final writes = engineWrites();
   final specs = allActions();
 

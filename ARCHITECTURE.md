@@ -10,6 +10,7 @@ the same change.
 | `packages/den_core` | Dart (pure, no `dart:io` in `lib/den_core.dart`) | Data model, hybrid logical clock, signed change log, materializer, permissions, recurrence, chores, points, history, queries, the `Den` engine facade, storage interface |
 | `packages/den_net` | Dart | Device handshake and encrypted sessions, sync protocol, pairing (QR invites, spoken codes, matching words), relay client, encrypted backups |
 | `packages/den_capture` | Dart (pure) | Capture: reads a photo, a shared email, link or PDF, or a sentence into proposed events, chores, list items and reminders (see "Capture" below) |
+| `packages/den_actions` | Dart (pure) | Actions: every verb the app, the hub's REST API, MCP and the assistant offer, defined once (`ActionSpec`: names, portable schemas, scopes, permissions, effect, confirmation, the engine methods it calls) and run by one `ActionRunner` (checks, previews on a fork, confirmations, undo receipts); the API's JSON (`Wire`), time parsing and name resolution (see "Actions" below) |
 | `packages/den_hub` | Dart (server, `dart:io`) | The hub: HTTP API, WebSocket sync endpoint, MCP server, OAuth for MCP, scoped tokens, ICS import and export, reminders and notifiers, Home Assistant bridge, mDNS advertising, static web app. `bin/den_hub.dart` compiles to one binary |
 | `packages/den_relay` | Dart (server) | Rendezvous, tunnel and mailbox for devices that can't reach each other or the hub directly. Sees only ciphertext |
 | `app` | Flutter | The designed app for iOS, Android, macOS, Windows, Linux and web. Embeds `den_core`; runs `den_hub` in-process in hub mode on desktop and Android |
@@ -419,6 +420,7 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `GET /api/v1/history?q=&limit=` | read | |
 | `GET /api/v1/search?q=` | read | |
 | `GET /api/v1/stream` | read | Server-sent events: `changed {types}` after every applied change |
+| `GET /api/v1/actions`, `POST /api/v1/actions/{name}` | any token; each action's scopes | Every action MCP offers, by the same name and schema (see "Actions"); `?preview=1`, `Idempotency-Key`, two-step `confirm`, receipts and `undo`. The write routes above are adapters over these |
 | `GET`/`PUT /api/v1/capture/reader` | signed by a device (`PUT`: a parent's own device) | The family's capture reader, never with its key |
 | `POST /api/v1/capture/read` | signed by a device whose member may add things | Reads what was shared with the family's reader; returns den_capture's JSON |
 | `GET /ics/<token>/family.ics` | read token in path | Read-only ICS feed for other calendar apps |
@@ -435,16 +437,65 @@ oversight policy like a parent's device: nothing from a member's space whose `pa
 is false reaches it, not even in derived views (points lines, Today's gaps, store names), which
 the hub filters because it computes them over every space it holds.
 
+## Actions
+
+`den_actions` defines every verb once, for the app, the hub's REST API (`/api/v1/actions`), MCP and
+the in-app assistant. An `ActionSpec` has a dotted name (`events.update`) and the MCP and REST name
+(`update_event`), a description for models, an input schema in the portable subset every
+function-calling API takes (an object at the top, one type per value, string enums, `items` on
+every array, no `anyOf`, `additionalProperties: false` only at the top) and an output schema,
+the token scopes that may call it, what the person must be allowed (`can()`; it hides the action,
+and the engine still decides each change), its effect (read, write, destructive), whether it is
+idempotent, who confirms it, the `Den` methods it calls, and an example that works on the demo
+family.
+
+`ActionRunner.run(context, name, args, mode)` checks the surface, the scopes and `can()`, checks
+and reshapes the input against the schema, then:
+
+- `RunMode.preview` (or `preview: true`) runs it on `Den.fork()` and answers with the history
+  entries it would make and warnings (new overlaps or missing drivers, duplicates);
+- `RunMode.run` asks first when the spec says so: `Confirm.server` actions (removals, a whole
+  series, more than 5 items) answer with a preview and a token, and only a second call with
+  `confirm: <token>` from the same caller and the same input runs; `Confirm.client` actions are
+  the client's to ask about (MCP clients from the hints; the assistant asks for a tap when the
+  call touches someone else's things or a whole series);
+- `RunMode.confirmed` runs it (the person tapped yes; the older REST routes).
+
+Every write runs inside `Den.recording(undoOnError: true)`, so a write that fails half way leaves
+nothing behind, and answers with a `Receipt {id, summary, undoable, tool, changes}`. `undo` takes
+a receipt back with `Den.undo`, which writes the field-level inverse of each change from what it
+replaced: what it made is removed, what it removed comes back, map entries one at a time,
+adjustments get one the other way; fields someone changed since are left and reported, and
+adding or removing people, device and AI-access changes and reward requests can't be undone.
+Receipts belong to their caller and last while the runner does.
+
+Coverage is enforced by tests: `den_actions/test/coverage_test.dart` reads every public write
+method of `Den` from its source and fails unless each is called by some action or listed in
+`not_exposed.dart` with a reason (never both), then runs every example through a `Den` that
+records its calls and checks they stay within the spec's `engine` and that the answer fits its
+output schema; `den_hub/test/mcp_parity_test.dart` checks MCP against the specs.
+Not exposed, by design: trust decisions (devices, AI access, roles, permissions, sign-in,
+removing people, oversight), founding, joining or leaving a family, sync and keys, and the hub's
+own bookkeeping.
+
 ## MCP
 
-The hub serves MCP over Streamable HTTP at `/mcp` and over stdio with `den_hub mcp`. Tools carry
-annotations (`readOnlyHint`, `destructiveHint`) and resolve names to ids, listing valid choices on
-a miss. Tool set: `get_today`, `get_week`, `search`, `get_history`, `list_members`, `list_events`,
-`create_event`, `update_event`, `delete_event`, `list_chores`, `create_chore`, `update_chore`,
-`complete_chore`, `check_step`, `swap_chore`, `list_lists`, `create_list`, `add_items`,
-`check_item`, `remove_item`, `clear_checked`, `get_points`, `adjust_points`, `create_goal`,
-`list_rewards`, `request_reward`, `decide_redemption`. Every call is checked with `can()` under
-the token's scopes and member.
+The hub serves MCP over Streamable HTTP at `/mcp` and over stdio with `den_hub mcp`, as an adapter
+over den_actions: `tools/list` is the specs a token may use (its scopes, and `can()` for its
+member, so a kid's assistant sees about a dozen tools), each with `inputSchema`, `outputSchema` and
+annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint: false`);
+`tools/call` runs them with the token's member acting, answering with one speakable text and
+`structuredContent`. Names resolve to ids, listing valid choices on a miss. Tool set:
+`get_overview`, `get_family`, `list_events`, `list_chores`, `get_lists`, `get_points`, `search`,
+`get_history`, `create_event`, `update_event`, `delete_event`, `set_ride`, `create_chore`,
+`update_chore`, `delete_chore`, `complete_chore`, `swap_chore`, `create_list`, `update_list`,
+`delete_list`, `add_items`, `update_items`, `remove_items`, `adjust_points`, `save_goal`,
+`delete_goal`, `save_reward`, `request_reward`, `decide_reward_request`, `add_from_text`, `undo`,
+`save_category`, `delete_category`, `update_family_settings`, `save_member`,
+`save_calendar_feed`, `remove_calendar_feed`. The 2025 names (`get_today`, `get_week`,
+`list_members`, `list_lists`, `list_rewards`, `check_step`, `check_item`, `remove_item`,
+`clear_checked`, `create_goal`, `decide_redemption`) still run for one release, unlisted. REST
+and MCP share one runner, so a connection's receipts and confirmations work on either.
 
 ## Home Assistant
 
