@@ -52,9 +52,7 @@ class _CreateTokenScreenState extends State<CreateTokenScreen> {
     setState(() => _busy = true);
     final connections = context.connectionActions;
     String? token;
-    await attempt(context, () async {
-      token = await connections.addToken(label: label, scopes: _scopes, member: _member);
-    });
+    await attempt(context, () async => token = await connections.addToken(label: label, scopes: _scopes, member: _member));
     if (!mounted) return;
     setState(() {
       _busy = false;

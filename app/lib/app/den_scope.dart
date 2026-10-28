@@ -36,6 +36,9 @@ class DenScope extends StatefulWidget {
 class _DenScopeState extends State<DenScope> {
   int _version = 0;
 
+  /// Everything changes touched since the last build: several can land before a frame.
+  Set<String> _touched = {};
+
   @override
   void initState() {
     super.initState();
@@ -57,11 +60,17 @@ class _DenScopeState extends State<DenScope> {
     super.dispose();
   }
 
-  void _changed() => setState(() => _version++);
+  void _changed() => setState(() {
+        _version++;
+        _touched.addAll(widget.state.lastChange);
+      });
 
   @override
-  Widget build(BuildContext context) =>
-      _DenModel(state: widget.state, version: _version, changed: widget.state.lastChange, child: widget.child);
+  Widget build(BuildContext context) {
+    final touched = _touched;
+    _touched = {};
+    return _DenModel(state: widget.state, version: _version, changed: touched, child: widget.child);
+  }
 }
 
 class _DenModel extends InheritedModel<String> {
