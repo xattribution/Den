@@ -78,9 +78,10 @@ class AppShell extends StatelessWidget {
           bottom: false,
           child: Column(
             children: [
-              // Today carries the person in its own header; the other places keep a slim bar
-              // with it until their screens are redone.
-              if (index != 0) const DenTopBar(),
+              // Today carries the person in its own header and Calendar has its own title (the
+              // canvas has no bar there); the other places keep a slim bar with it until their
+              // screens are redone.
+              if (index > 1) const DenTopBar(),
               Expanded(child: navigationShell),
             ],
           ),

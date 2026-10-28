@@ -6,26 +6,32 @@ import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../widgets/event_line.dart';
-import '../../../design/tokens.dart';
-import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../app/format.dart';
-import '../words/calendar_time.dart';
+import '../../../design/layout.dart';
+import '../../../design/motion.dart';
+import '../../../design/tokens.dart';
+import '../../../design/widgets.dart';
+import '../state/calendar_models.dart';
 import '../state/day_layout.dart';
 import '../state/event_actions.dart';
-import '../state/calendar_models.dart';
+import '../words/calendar_time.dart';
+import '../widgets/day_list.dart';
+import '../widgets/event_block.dart';
+import '../widgets/event_look.dart';
+import '../widgets/scope_card.dart';
 
-/// One day as a time grid with a column per person who has something that day (the family
-/// columns, turned on their side), plus an Everyone column for family events. All-day events
-/// sit above the grid. Today shows a graphite now line.
+/// One day as a time grid. On a phone it's one column, events side by side where they overlap;
+/// with room ([perPerson]) it's a column per person who has something that day, plus Everyone.
+/// Events are solid blocks in their person's color with the kind's pictogram; all-day events sit
+/// above the grid. Today shows an ink now line.
 ///
-/// Tap an empty slot to add an event there; press and hold an event to move it, or drag its
-/// bottom edge to change when it ends. Repeating events ask how far the change reaches.
+/// Tap an empty time to add an event there; press and hold an event to move it, or drag its
+/// bottom edge to change when it ends. The change says itself in place, with Undo. Repeating
+/// events ask how far a change reaches.
 class DayView extends StatefulWidget {
-  const DayView({super.key, required this.date, this.now});
+  const DayView({super.key, required this.date, this.now, this.perPerson = false, this.person});
 
   /// Local date, `YYYY-MM-DD`.
   final String date;
@@ -33,14 +39,21 @@ class DayView extends StatefulWidget {
   /// UTC milliseconds to treat as now (tests); defaults to the clock.
   final int? now;
 
+  /// A column per person (the iPad); otherwise one column.
+  final bool perPerson;
+
+  /// Only this person's events (and everyone's); null for all.
+  final String? person;
+
   @override
   State<DayView> createState() => _DayViewState();
 }
 
-/// A column of the day: a person, or everyone (null member).
+/// A column of the day: a person, everyone (null member), or on a phone the whole family.
 class _Column {
-  _Column(this.member);
+  _Column(this.member, {this.everyone = false});
   final Member? member;
+  final bool everyone;
   final List<Occurrence> allDay = [];
   final List<Occurrence> timed = [];
 }
@@ -64,11 +77,24 @@ class _DayViewState extends State<DayView> {
   _Drag? _drag;
   double _dragOrigin = 0;
 
+  /// The last change, shown above the grid with Undo, or why it didn't go through.
+  (String, ActionResult?)? _done;
+
+  /// A move of a repeating event waiting for "just this one, or every one?".
+  _Drag? _asking;
+
+  /// Does again what just failed.
+  VoidCallback? _retry;
+  String? _error;
+
   static const int _snap = 15;
 
   int get _now => widget.now ?? DateTime.now().millisecondsSinceEpoch;
 
-  double _hourHeight(BuildContext context) => (56 * context.type.scale).roundToDouble();
+  double _hourHeight(BuildContext context) {
+    final text = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.6);
+    return (64 * context.text.scale * text).roundToDouble();
+  }
 
   @override
   void initState() {
@@ -89,13 +115,17 @@ class _DayViewState extends State<DayView> {
   @override
   void didUpdateWidget(DayView old) {
     super.didUpdateWidget(old);
-    if (old.date != widget.date && (_scroll?.hasClients ?? false)) {
-      final target = _initialOffset();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scroll?.hasClients ?? false) {
-          _scroll!.jumpTo(target.clamp(0, _scroll!.position.maxScrollExtent));
-        }
-      });
+    if (old.date != widget.date) {
+      _done = null;
+      _error = null;
+      if (_scroll?.hasClients ?? false) {
+        final target = _initialOffset();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scroll?.hasClients ?? false) {
+            _scroll!.jumpTo(target.clamp(0, _scroll!.position.maxScrollExtent));
+          }
+        });
+      }
     }
   }
 
@@ -124,7 +154,7 @@ class _DayViewState extends State<DayView> {
           .fold<int?>(null, (a, b) => a == null || b < a ? b : a);
       if (firstTimed != null) minute = math.min(minute, math.max(0, firstTimed - 30));
     }
-    // A little above the hour, so its label isn't cut off under the header.
+    // A little above the hour, so its label isn't cut off at the top.
     return math.max(0, minute / 60 * _hourHeight(context) - Sp.m);
   }
 
@@ -134,7 +164,14 @@ class _DayViewState extends State<DayView> {
         o.forEveryone || (members.isNotEmpty && members.every((m) => o.assignees.contains(m.id)));
     bool spansDay(Occurrence o) => o.allDay || (o.start <= dayStart && o.end >= dayEnd);
 
-    final everyone = _Column(null);
+    if (!widget.perPerson) {
+      final all = _Column(null);
+      for (final occ in occurrences) {
+        (spansDay(occ) ? all.allDay : all.timed).add(occ);
+      }
+      return [all];
+    }
+    final everyone = _Column(null, everyone: true);
     final byMember = {for (final m in members) m.id: _Column(m)};
     for (final occ in occurrences) {
       final targets = forEveryone(occ) ? [everyone] : occ.assignees.map((id) => byMember[id]).whereType<_Column>();
@@ -157,22 +194,45 @@ class _DayViewState extends State<DayView> {
     final date = widget.date;
     final dayStart = f.startOf(date);
     final dayEnd = f.startOf(f.addDays(date, 1));
-    final occurrences = context.view(OccurrencesModel(dayStart, dayEnd));
+    final occurrences = context
+        .view(OccurrencesModel(dayStart, dayEnd))
+        .where((o) => showsFor(o, widget.person))
+        .toList();
     final columns = _columns(app, occurrences, dayStart, dayEnd);
-    final empty = columns.isEmpty;
+    final empty = occurrences.isEmpty;
     final canAdd = app.allows(DenAction.editEvents);
-    final scale = context.type.scale;
     final hourHeight = _hourHeight(context);
-    final gutter = (56 * scale).roundToDouble();
-    final minColumn = (76 * scale).roundToDouble();
-    final shown = empty ? [_Column(null)] : columns;
+    final scaler = MediaQuery.textScalerOf(context);
+    final gutter = (scaler.scale(52 * context.text.scale)).roundToDouble();
+    final minColumn = widget.perPerson ? 140.0 : 0.0;
+    final shown = columns.isEmpty ? [_Column(null)] : columns;
+
+    final done = _done;
+    final asking = _asking;
+    final note = asking != null
+        ? ScopeCard(
+            occ: asking.occ,
+            verb: asking.resize ? 'Change' : 'Move',
+            onPick: (scope) => _commit(asking, scope),
+            onCancel: _keep,
+          )
+        : _error != null
+        ? ErrorState(
+            message: _error!,
+            actionLabel: _retry == null ? 'OK' : 'Try again',
+            onAction: _retry ?? () => setState(() => _error = null),
+          )
+        : done != null
+        ? DoneRow(message: done.$1, onUndo: done.$2 == null ? null : () => _undo(done.$2!))
+        : empty
+        ? _EmptyNote(date: date, canAdd: canAdd)
+        : null;
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final natural = gutter + shown.length * minColumn;
         final width = math.max(natural, constraints.maxWidth);
         final columnWidth = (width - gutter) / shown.length;
-        final lineHeight = CalendarEventLine.lineHeight(context);
         final allDayLines = shown.fold<int>(0, (n, col) => math.max(n, col.allDay.length));
 
         final body = SizedBox(
@@ -180,21 +240,20 @@ class _DayViewState extends State<DayView> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (!empty) ...[
-                _Header(columns: shown, gutter: gutter, columnWidth: columnWidth),
-                Divider(height: 1, color: c.rule),
-              ],
-              if (empty)
-                _EmptyDay(date: date, canAdd: canAdd)
-              else if (allDayLines > 0) ...[
-                _AllDayRow(
-                  columns: shown,
-                  gutter: gutter,
-                  columnWidth: columnWidth,
-                  lines: allDayLines,
-                  lineHeight: lineHeight,
+              DenReveal(
+                visible: note != null,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(Sp.l, 0, Sp.l, Sp.s),
+                  child: note ?? const SizedBox.shrink(),
                 ),
-                Divider(height: 1, color: c.rule),
+              ),
+              if (widget.perPerson && columns.isNotEmpty) ...[
+                _Header(columns: shown, gutter: gutter, columnWidth: columnWidth),
+                Container(height: 1, color: c.line),
+              ],
+              if (allDayLines > 0) ...[
+                _AllDayRow(columns: shown, gutter: gutter, columnWidth: columnWidth, date: date),
+                Container(height: 1, color: c.line),
               ],
               Expanded(
                 child: SingleChildScrollView(
@@ -229,8 +288,8 @@ class _DayViewState extends State<DayView> {
   ) {
     final c = context.colors;
     final date = widget.date;
-    final labelStyle = context.type.meta(c.ink2);
-    final labelHeight = (labelStyle.fontSize! * 1.3).ceilToDouble();
+    final labelStyle = context.text.caption(c.ink2);
+    final labelHeight = (MediaQuery.textScalerOf(context).scale(labelStyle.fontSize!) * 1.3).ceilToDouble();
     final now = _now;
     final isToday = f.localDate(now) == date;
     double y(int minute) => minute / 60 * hourHeight;
@@ -241,24 +300,25 @@ class _DayViewState extends State<DayView> {
           top: y(h * 60),
           left: gutter,
           right: 0,
-          child: Container(height: 1, color: c.rule),
+          child: Container(height: 1, color: c.line),
         ),
         Positioned(
           top: y(h * 60) - labelHeight / 2,
           left: 0,
           width: gutter - Sp.s,
           child: ExcludeSemantics(
-            child: Text(f.hourLabel(h), style: labelStyle, textAlign: TextAlign.right),
+            child: Text(f.hourLabel(h), style: labelStyle, textAlign: TextAlign.right, maxLines: 1, softWrap: false),
           ),
         ),
       ],
-      for (var i = 0; i < columns.length; i++)
-        Positioned(
-          top: 0,
-          bottom: 0,
-          left: gutter + i * columnWidth,
-          child: Container(width: 1, color: c.rule),
-        ),
+      if (widget.perPerson)
+        for (var i = 0; i < columns.length; i++)
+          Positioned(
+            top: 0,
+            bottom: 0,
+            left: gutter + i * columnWidth,
+            child: Container(width: 1, color: c.line),
+          ),
     ];
 
     for (var i = 0; i < columns.length; i++) {
@@ -271,13 +331,17 @@ class _DayViewState extends State<DayView> {
             bottom: 0,
             left: left + 1,
             width: columnWidth - 1,
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTapUp: (details) {
-                final minute = ((details.localPosition.dy / hourHeight * 60) ~/ 30 * 30).clamp(0, 23 * 60 + 30);
-                final who = column.member == null ? '' : '&who=${column.member!.id}';
-                context.push('/event/new?date=$date&time=${f.hhmm(minute)}$who');
-              },
+            child: Semantics(
+              onTapHint: 'Add an event',
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTapUp: (details) {
+                  final minute = ((details.localPosition.dy / hourHeight * 60) ~/ 30 * 30).clamp(0, 23 * 60 + 30);
+                  final member = column.member ?? (widget.person == null ? null : app.memberById(widget.person));
+                  final who = member == null ? '' : '&who=${member.id}';
+                  context.push('/event/new?date=$date&time=${f.hhmm(minute)}$who');
+                },
+              ),
             ),
           ),
         );
@@ -293,7 +357,8 @@ class _DayViewState extends State<DayView> {
                 : math.max(f.minuteOfDay(occ.end), (occ.start <= dayStart ? 0 : f.minuteOfDay(occ.start))),
           ),
       ]);
-      final laneWidthBase = columnWidth - 1;
+      // On a phone the blocks stop a gutter short of the edge, like everything else on the page.
+      final laneWidthBase = columnWidth - (widget.perPerson ? 1 + Sp.xs : Sp.xs + DenLayout.gutter);
       for (final slot in slots) {
         final occ = slot.item;
         final drag = _drag;
@@ -309,15 +374,16 @@ class _DayViewState extends State<DayView> {
         children.add(
           Positioned(
             top: y(startMin) + 1,
-            height: math.max(y(endMin) - y(startMin) - 2, (22 * context.type.scale).roundToDouble()),
-            left: left + 1 + slot.lane * laneWidth + 1,
+            height: math.max(y(endMin) - y(startMin) - 2, (24 * context.text.scale).roundToDouble()),
+            left: left + (widget.perPerson ? 2 : Sp.xs) + slot.lane * laneWidth,
             width: laneWidth * slot.span - 2,
             child: _Block(
+              column: column.member,
               occ: occ,
               startMin: startMin,
               endMin: endMin,
               dragging: dragging,
-              onTap: () => context.push('/event/${occ.event.id}?at=${occ.start}'),
+              onTap: () => openEvent(context, occ),
               onMoveStart: editable ? (dy) => _startDrag(occ, slot, resize: false, dy: dy) : null,
               onResizeStart: editable ? (dy) => _startDrag(occ, slot, resize: true, dy: dy) : null,
               onDragUpdate: editable ? (dy) => _updateDrag(dy, hourHeight) : null,
@@ -389,39 +455,88 @@ class _DayViewState extends State<DayView> {
       return;
     }
     drag.committing = true;
+    if (drag.occ.isRepeating) {
+      // The block stays where it was dropped while the question waits above the grid.
+      setState(() => _asking = drag);
+      return;
+    }
+    await _commit(drag, EditScope.all);
+  }
+
+  /// Writes [drag]'s move for [scope], then says what it did with Undo.
+  Future<void> _commit(_Drag drag, EditScope scope) async {
     final app = DenScope.read(context);
     final f = app.formats;
     final occ = drag.occ;
     final shift = drag.delta * 60000;
     final newStart = drag.resize ? occ.start : occ.start + shift;
     final newEnd = occ.end + shift;
-    var scope = EditScope.all;
-    if (occ.isRepeating) {
-      final chosen = await askEditScope(context, title: '${drag.resize ? 'Change' : 'Move'} ${occ.title}');
-      if (!mounted) return;
-      if (chosen == null) {
-        setState(() => _drag = null);
-        return;
-      }
-      scope = chosen;
-    }
     final actions = context.actions;
-    final keep = Navigator.of(context, rootNavigator: true).context;
+    setState(() => _asking = null);
     // One and following address the occurrence by its place in the series; all events move by
     // however far this occurrence moved.
     final anchor = !occ.isRepeating ? null : (scope == EditScope.all ? occ.start : occ.seriesStart);
-    final result = await perform(
-      context,
-      () => EventActions(actions).update(occ.event, {'start': newStart, 'end': newEnd}, scope: scope, occurrence: anchor),
+    ActionResult? result;
+    final error = await tryWrite(
+      () async => result = await EventActions(
+        actions,
+      ).update(occ.event, {'start': newStart, 'end': newEnd}, scope: scope, occurrence: anchor),
     );
     if (!mounted) return;
-    setState(() => _drag = null);
-    if (result == null) return;
-    final message = drag.resize
-        ? '${occ.title} now ends at ${f.time(newEnd)}.'
-        : '${occ.title} moved to ${f.time(newStart)}.';
-    // Undo takes back exactly what moved, a series split in two included.
-    if (keep.mounted) offerUndo(keep, actions, message, result);
+    setState(() {
+      _drag = null;
+      _error = error;
+      _retry = error == null ? null : () => _commit(drag, scope);
+      final done = result;
+      if (error != null || done == null) {
+        _done = null;
+        return;
+      }
+      final message = drag.resize
+          ? '${occ.title} now ends at ${f.time(newEnd)}'
+          : '${occ.title} moved to ${f.time(newStart)}';
+      _done = (message, done.receipt?.undoable ?? false ? done : null);
+    });
+  }
+
+  void _keep() => setState(() {
+    _asking = null;
+    _drag = null;
+  });
+
+  Future<void> _undo(ActionResult result) async {
+    final receipt = result.receipt;
+    if (receipt == null) return;
+    final actions = context.actions;
+    final error = await tryWrite(() => actions.undo(receipt));
+    if (!mounted) return;
+    setState(() {
+      _error = error;
+      _retry = error == null ? null : () => _undo(result);
+      _done = null;
+    });
+  }
+}
+
+class _EmptyNote extends StatelessWidget {
+  const _EmptyNote({required this.date, required this.canAdd});
+  final String date;
+  final bool canAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Wrap(
+      spacing: Sp.m,
+      runSpacing: Sp.s,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          canAdd ? 'Nothing on the calendar. Tap a time to add something.' : 'Nothing on the calendar.',
+          style: context.text.control(c.ink2),
+        ),
+      ],
+    );
   }
 }
 
@@ -435,160 +550,106 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.watch(calendarReads);
     final c = context.colors;
-    final narrow = columnWidth < 112;
     final members = app.den.members;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         SizedBox(width: gutter),
         for (final column in columns)
-          Container(
+          SizedBox(
             width: columnWidth,
-            decoration: BoxDecoration(
-              border: Border(left: BorderSide(color: c.rule)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(Sp.s, Sp.s, Sp.xs, Sp.s),
-                  child: _who(context, column.member, narrow),
-                ),
-                SizedBox(
-                  height: 3,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      for (final marker
-                          in column.member == null ? members.map((m) => m.marker) : [column.member!.marker])
-                        Expanded(child: ColoredBox(color: c.marker(marker))),
-                    ],
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(Sp.s, Sp.s, Sp.xs, Sp.s),
+              child: Row(
+                children: [
+                  if (column.member == null)
+                    SizedBox(
+                      width: 26,
+                      height: 26,
+                      child: Center(child: _Dots(members: members)),
+                    )
+                  else
+                    DenAvatar(column.member!, size: 26),
+                  const SizedBox(width: Sp.s),
+                  Expanded(
+                    child: Text(column.member?.name ?? 'Everyone', style: context.text.label(c.ink), maxLines: 2),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
       ],
     );
   }
+}
 
-  Widget _who(BuildContext context, Member? member, bool narrow) {
+class _Dots extends StatelessWidget {
+  const _Dots({required this.members});
+  final List<Member> members;
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.colors;
-    final size = 26 * context.type.scale;
-    final avatar = member == null
-        ? Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(color: c.well, shape: BoxShape.circle),
-            alignment: Alignment.center,
-            child: Icon(PhosphorIconsFill.usersThree, size: size * 0.6, color: c.ink2),
-          )
-        : DenAvatar(member, size: size);
-    final name = member?.name ?? 'Everyone';
-    if (narrow) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          avatar,
-          const SizedBox(height: Sp.xs),
-          Text(
-            name,
-            style: context.type.meta(c.ink).copyWith(fontWeight: FontWeight.w700),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      );
-    }
-    return Row(
+    return Wrap(
+      spacing: 2,
+      runSpacing: 2,
       children: [
-        avatar,
-        const SizedBox(width: Sp.s),
-        Flexible(
-          child: Text(name, style: context.type.bodyStrong(c.ink), overflow: TextOverflow.ellipsis),
-        ),
+        for (final m in members.take(4))
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: c.marker(m.marker), shape: BoxShape.circle),
+          ),
       ],
     );
   }
 }
 
 class _AllDayRow extends StatelessWidget {
-  const _AllDayRow({
-    required this.columns,
-    required this.gutter,
-    required this.columnWidth,
-    required this.lines,
-    required this.lineHeight,
-  });
+  const _AllDayRow({required this.columns, required this.gutter, required this.columnWidth, required this.date});
   final List<_Column> columns;
   final double gutter;
   final double columnWidth;
-  final int lines;
-  final double lineHeight;
+  final String date;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return SizedBox(
-      height: lines * lineHeight + Sp.s * 2,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(
-            width: gutter,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(Sp.xs, Sp.s, Sp.s, 0),
-              child: Text('All day', style: context.type.meta(c.ink2), textAlign: TextAlign.right),
-            ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: gutter,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(0, Sp.s + 2, Sp.s, 0),
+            child: Text('All day', style: context.text.caption(c.ink2), textAlign: TextAlign.right),
           ),
-          for (final column in columns)
-            Container(
-              width: columnWidth,
-              padding: const EdgeInsets.symmetric(horizontal: Sp.xs, vertical: Sp.s),
-              decoration: BoxDecoration(
-                border: Border(left: BorderSide(color: c.rule)),
-              ),
+        ),
+        for (final column in columns)
+          SizedBox(
+            width: columnWidth,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Sp.xs, vertical: Sp.xs),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   for (final occ in column.allDay)
-                    CalendarEventLine(
-                      occ: occ,
-                      height: lineHeight,
-                      onTap: () => context.push('/event/${occ.event.id}?at=${occ.start}'),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: Sp.xs),
+                      child: EventCell(occ: occ, date: date, onTap: () => openEvent(context, occ)),
                     ),
                 ],
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 }
 
-class _EmptyDay extends StatelessWidget {
-  const _EmptyDay({required this.date, required this.canAdd});
-  final String date;
-  final bool canAdd;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: c.rule)),
-      ),
-      child: EmptyLine(
-        message: 'Nothing on the calendar.',
-        actionLabel: canAdd ? 'Add event' : null,
-        onAction: () => context.push('/event/new?date=$date'),
-      ),
-    );
-  }
-}
-
-/// An event in the grid: the person bar on the left, the title, and the time when it fits.
-/// Press and hold to move it; drag the bottom edge to change when it ends.
+/// An event in the grid: a solid block in its person's color, the pictogram, the title and,
+/// when it fits, the time. Press and hold to move it; drag the bottom edge to change when it
+/// ends. While it moves it shows its new time and an ink edge.
 class _Block extends StatelessWidget {
   const _Block({
     required this.occ,
@@ -600,6 +661,7 @@ class _Block extends StatelessWidget {
     required this.onResizeStart,
     required this.onDragUpdate,
     required this.onDragEnd,
+    this.column,
   });
 
   final Occurrence occ;
@@ -612,85 +674,102 @@ class _Block extends StatelessWidget {
   final ValueChanged<double>? onDragUpdate;
   final VoidCallback? onDragEnd;
 
+  /// The person whose column it sits in, on iPad: it takes their color.
+  final Member? column;
+
   @override
   Widget build(BuildContext context) {
     final app = context.watch(calendarReads);
     final f = app.formats;
     final c = context.colors;
-    final titleStyle = context.type.meta(c.ink).copyWith(fontWeight: FontWeight.w700);
-    final timeStyle = context.type.meta(c.ink2);
-    final lineHeight = (titleStyle.fontSize! * 1.3).ceilToDouble();
+    final look = EventLook.of(app, occ, c, column: column);
+    // Measured as Text draws them: over the inherited style (its letter spacing counts).
+    final base = DefaultTextStyle.of(context).style;
+    final titleStyle = base.merge(context.text.meta(look.ink).bold);
+    final timeStyle = base.merge(context.text.caption(look.ink));
+    final scaler = MediaQuery.textScalerOf(context);
+    final lineHeight = (scaler.scale(titleStyle.fontSize!) * 1.35).ceilToDouble();
     final span = '${f.clock(startMin)} to ${f.clock(endMin % (24 * 60))}';
     final canMove = onMoveStart != null;
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final h = constraints.maxHeight;
-        final lines = math.max(1, ((h - 6) / lineHeight).floor());
+        final lines = math.max(1, ((h - 8) / lineHeight).floor());
         final showTime = lines >= 2;
         final oneLine = lines == 1;
         final titleLines = math.min(2, showTime ? lines - 1 : lines);
-        // Narrow columns show when it starts; the block's height already shows how long.
-        final timeText = constraints.maxWidth >= 150 ? span : f.clock(startMin);
+        // The room inside the block's padding (8 and 4, as below).
+        final inside = constraints.maxWidth - Sp.s - Sp.xs;
+        TextPainter measure(String text) =>
+            TextPainter(text: TextSpan(text: text, style: timeStyle), textDirection: TextDirection.ltr, textScaler: scaler)
+              ..layout();
+        // On one line the start time sits after the title while there's room; it goes before
+        // the pictogram does, and the title is cut only between words, last.
+        final after = '  ${f.clock(startMin)}';
+        final afterPainter = measure(after);
+        final fit = CellFit.of(
+          occ.title,
+          style: titleStyle,
+          scaler: scaler,
+          width: inside,
+          iconGap: 6,
+          iconSize: 16,
+          timeWidth: oneLine ? afterPainter.width : null,
+          icon: constraints.maxWidth >= 96,
+          lines: titleLines,
+        );
+        afterPainter.dispose();
+        // Times never truncate: the whole span where it fits, otherwise when it starts (the
+        // block's height already shows how long).
+        final spanPainter = measure(span);
+        final timeText = spanPainter.width <= inside - (fit.icon ? 22 : 0) ? span : f.clock(startMin);
+        spanPainter.dispose();
         final content = Container(
           decoration: BoxDecoration(
-            color: c.well,
-            borderRadius: BorderRadius.circular(Radii.control),
-            border: Border.all(color: dragging ? c.ink : c.rule, width: dragging ? 2 : 1),
-            boxShadow: dragging
-                ? [BoxShadow(color: c.ink.withValues(alpha: 0.18), blurRadius: 24, offset: const Offset(0, 8))]
-                : null,
+            color: look.fill,
+            borderRadius: BorderRadius.circular(10),
+            border: dragging ? Border.all(color: c.ink, width: 2) : null,
           ),
           clipBehavior: Clip.antiAlias,
+          padding: const EdgeInsets.fromLTRB(Sp.s, 3, Sp.xs, 3),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: oneLine ? CrossAxisAlignment.center : CrossAxisAlignment.start,
             children: [
-              PersonBar(markers: app.markersFor(occ.assignees), width: 3, minHeight: 0),
+              if (fit.icon) ...[
+                Padding(
+                  padding: EdgeInsets.only(top: oneLine ? 0 : 2),
+                  child: Icon(look.icon, size: 16, color: look.ink),
+                ),
+                const SizedBox(width: 6),
+              ],
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(Sp.xs + 2, 2, Sp.xs, 2),
-                  child: oneLine
-                      ? Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text.rich(
-                            TextSpan(
-                              children: [
-                                TextSpan(text: occ.title, style: titleStyle),
-                                TextSpan(text: '  ${f.clock(startMin)}', style: timeStyle),
-                              ],
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                child: oneLine
+                    ? Text.rich(
+                        TextSpan(
                           children: [
-                            Text(occ.title, style: titleStyle, maxLines: titleLines, overflow: TextOverflow.ellipsis),
-                            if (showTime)
-                              Text(timeText, style: timeStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                            TextSpan(text: fit.text, style: titleStyle),
+                            if (fit.time) TextSpan(text: after, style: timeStyle),
                           ],
                         ),
-                ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(fit.text, style: titleStyle, maxLines: fit.maxLines, overflow: TextOverflow.ellipsis),
+                          if (showTime) Text(timeText, style: timeStyle, maxLines: 1, softWrap: false),
+                        ],
+                      ),
               ),
             ],
           ),
         );
 
-        final grip = canMove && lines > titleLines + (showTime ? 1 : 0)
-            ? Positioned(
-                left: 0,
-                right: 0,
-                bottom: 3,
-                child: IgnorePointer(
-                  child: Center(child: Container(width: 16, height: 2, color: dragging ? c.ink : c.rule)),
-                ),
-              )
-            : null;
-
         return Semantics(
           button: true,
-          label: '${occ.title}, $span',
+          label: '${occ.title}, $span, ${look.who}',
           hint: canMove ? 'Press and hold to move' : null,
           excludeSemantics: true,
           child: MouseRegion(
@@ -704,7 +783,21 @@ class _Block extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   content,
-                  ?grip,
+                  if (canMove && lines > 2)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 4,
+                      child: IgnorePointer(
+                        child: Center(
+                          child: Container(
+                            width: 18,
+                            height: 3,
+                            decoration: BoxDecoration(color: look.ink, borderRadius: BorderRadius.circular(2)),
+                          ),
+                        ),
+                      ),
+                    ),
                   if (onResizeStart != null)
                     Positioned(
                       left: 0,

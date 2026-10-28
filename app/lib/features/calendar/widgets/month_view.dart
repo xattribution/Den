@@ -4,18 +4,19 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import 'event_line.dart';
-import '../../../design/tokens.dart';
 import '../../../app/app_state.dart';
-import '../words/calendar_time.dart';
+import '../../../design/motion.dart';
+import '../../../design/tokens.dart';
 import '../state/calendar_models.dart';
+import '../words/calendar_time.dart';
+import 'event_look.dart';
 
-/// The month as a grid of day squares that fills the height it's given (the wall uses it whole).
-/// Weeks start on the family's week start; today is a solid well square with a bold date.
-/// Events are ink text behind the person's 3 px marker; multi-day events appear on every day
-/// they cover. Tap a square for that day; tap an event (on wider screens) for its detail.
+/// The month as a board of day squares in one card, filling the height it's given (the iPad and
+/// the wall use it whole). Weeks start on the family's week start; today's number sits in an
+/// ink circle. Each day lists its events as small solid blocks, one line each, with the kind's
+/// pictogram, as many as fit and then "+2 more". Tap a day for that day; tap an event for it.
 class MonthView extends StatelessWidget {
-  const MonthView({super.key, required this.anchor, this.maxEvents});
+  const MonthView({super.key, required this.anchor, this.maxEvents, this.onDay});
 
   /// Any date in the month to show.
   final String anchor;
@@ -23,7 +24,10 @@ class MonthView extends StatelessWidget {
   /// Caps the events listed per square; by default as many as fit.
   final int? maxEvents;
 
-  static const double _minRow = 64;
+  /// What tapping a day does; by default the calendar's day view.
+  final ValueChanged<String>? onDay;
+
+  static const double _minRow = 72;
 
   @override
   Widget build(BuildContext context) {
@@ -43,8 +47,9 @@ class MonthView extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final headerHeight = (context.type.meta(c.ink2).fontSize! * 1.3).ceilToDouble() + Sp.s * 2;
-        final available = constraints.hasBoundedHeight ? constraints.maxHeight - headerHeight - weeks : weeks * 110.0;
+        final headerHeight =
+            (MediaQuery.textScalerOf(context).scale(context.text.caption(c.ink2).fontSize!) * 1.3).ceilToDouble() + 20;
+        final available = constraints.hasBoundedHeight ? constraints.maxHeight - headerHeight - weeks : weeks * 120.0;
         final rowHeight = math.max(_minRow, (available / weeks).floorToDouble());
         final columnWidth = constraints.maxWidth / 7;
         final scrolls =
@@ -62,12 +67,12 @@ class MonthView extends StatelessWidget {
                     SizedBox(
                       width: columnWidth,
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: Sp.s),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: Align(
                           alignment: Alignment.centerLeft,
                           child: Text(
                             f.weekdayName((weekStart + i) % 7, long: columnWidth >= 160),
-                            style: context.type.meta(c.ink2),
+                            style: context.text.caption(c.ink2).bold,
                             overflow: TextOverflow.clip,
                             softWrap: false,
                           ),
@@ -78,7 +83,7 @@ class MonthView extends StatelessWidget {
               ),
             ),
             for (var w = 0; w < weeks; w++) ...[
-              Divider(height: 1, thickness: 1, color: c.rule),
+              Container(height: 1, color: c.line),
               SizedBox(
                 height: rowHeight,
                 child: Row(
@@ -96,6 +101,11 @@ class MonthView extends StatelessWidget {
                           height: rowHeight,
                           maxEvents: maxEvents,
                           leftRule: d > 0,
+                          onDay:
+                              onDay ??
+                              (date) => context.go(
+                                Uri(path: '/calendar', queryParameters: {'view': 'day', 'date': date}).toString(),
+                              ),
                         );
                       }(),
                   ],
@@ -104,7 +114,13 @@ class MonthView extends StatelessWidget {
             ],
           ],
         );
-        return scrolls ? SingleChildScrollView(child: grid) : grid;
+        return DecoratedBox(
+          decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(Radii.section)),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(Radii.section),
+            child: scrolls ? SingleChildScrollView(child: grid) : grid,
+          ),
+        );
       },
     );
   }
@@ -120,6 +136,7 @@ class _DaySquare extends StatelessWidget {
     required this.height,
     required this.maxEvents,
     required this.leftRule,
+    required this.onDay,
   });
 
   final String date;
@@ -130,6 +147,7 @@ class _DaySquare extends StatelessWidget {
   final double height;
   final int? maxEvents;
   final bool leftRule;
+  final ValueChanged<String> onDay;
 
   @override
   Widget build(BuildContext context) {
@@ -137,95 +155,141 @@ class _DaySquare extends StatelessWidget {
     final f = app.formats;
     final c = context.colors;
     final day = f.dateTime(date).day;
-    final dateStyle = isToday ? context.type.bodyStrong(c.ink) : context.type.body(inMonth ? c.ink : c.ink2);
-    final dateText = day == 1 ? f.monthDay(date) : '$day';
+    final numberStyle = isToday ? context.text.rowTitle(c.onPrimary) : context.text.body(inMonth ? c.ink : c.ink3);
+    final scaler = MediaQuery.textScalerOf(context);
+    final numberSize = (scaler.scale(numberStyle.fontSize!) * 1.25).ceilToDouble() + 6;
 
-    const pad = Sp.xs;
-    final dateRow = (dateStyle.fontSize! * 1.3).ceilToDouble() + 2;
-    final lineHeight = CalendarEventLine.lineHeight(context);
-    var fit = ((height - pad * 2 - dateRow) / lineHeight).floor();
+    const pad = 6.0;
+    final chipHeight = _MonthChip.heightFor(context);
+    var fit = ((height - pad * 2 - numberSize - 4) / (chipHeight + 3)).floor();
     if (maxEvents != null) fit = math.min(fit, maxEvents!);
     fit = math.max(fit, 0);
     final overflow = occurrences.length > fit;
     final shown = overflow ? math.max(fit - 1, 0) : occurrences.length;
     final more = occurrences.length - shown;
-
-    final wideEnough = width >= 100;
-    // Times only where the title still fits beside them (the wall); titles matter more.
-    final showTimes = width >= 200;
-
-    void openDay() => context.go('/calendar/day/$date');
-
+    final roomy = width >= 96;
     final count = occurrences.length;
+
     return SizedBox(
       width: width,
       child: Semantics(
         button: true,
         label:
             '${f.long(date)}${isToday ? ', today' : ''}, ${count == 0 ? 'nothing planned' : '$count ${count == 1 ? 'event' : 'events'}'}',
-        child: Material(
-          color: isToday ? c.well : Colors.transparent,
-          child: InkWell(
-            onTap: openDay,
-            child: Container(
-              decoration: leftRule
-                  ? BoxDecoration(
-                      border: Border(left: BorderSide(color: c.rule)),
-                    )
-                  : null,
-              padding: const EdgeInsets.all(pad),
-              child: ClipRect(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    SizedBox(
-                      height: dateRow,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: Sp.xs),
-                        child: Text(
-                          dateText,
-                          style: dateStyle,
-                          maxLines: 1,
-                          overflow: TextOverflow.clip,
-                          softWrap: false,
-                        ),
-                      ),
-                    ),
-                    for (final occ in occurrences.take(shown))
-                      ExcludeSemantics(
-                        excluding: !wideEnough,
-                        child: CalendarEventLine(
-                          occ: occ,
-                          height: lineHeight,
-                          fade: !wideEnough,
-                          time: showTimes && !occ.allDay && f.localDate(occ.start) == date ? f.time(occ.start) : null,
-                          onTap: wideEnough ? () => context.push('/event/${occ.event.id}?at=${occ.start}') : null,
-                        ),
-                      ),
-                    if (overflow && more > 0)
-                      SizedBox(
-                        height: lineHeight,
+        child: DenPressable(
+          onTap: () => onDay(date),
+          scale: false,
+          shape: const RoundedRectangleBorder(),
+          child: Container(
+            decoration: leftRule
+                ? BoxDecoration(
+                    border: Border(left: BorderSide(color: c.line)),
+                  )
+                : null,
+            padding: const EdgeInsets.all(pad),
+            child: ClipRect(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: DecoratedBox(
+                      decoration: isToday
+                          ? ShapeDecoration(color: c.primary, shape: const StadiumBorder())
+                          : const BoxDecoration(),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(minWidth: numberSize, minHeight: numberSize, maxHeight: numberSize),
                         child: Padding(
-                          padding: const EdgeInsets.only(left: Sp.xs + 3),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              width < 72 ? '+$more' : '+$more more',
-                              style: context.type.meta(c.ink2),
-                              maxLines: 1,
-                              softWrap: false,
-                              overflow: TextOverflow.clip,
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: Center(
+                            widthFactor: 1,
+                            child: ExcludeSemantics(
+                              child: Text(
+                                day == 1 && !isToday && roomy ? f.monthDay(date) : '$day',
+                                style: numberStyle,
+                                maxLines: 1,
+                                softWrap: false,
+                              ),
                             ),
                           ),
                         ),
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  for (final occ in occurrences.take(shown)) ...[
+                    ExcludeSemantics(
+                      excluding: !roomy,
+                      child: _MonthChip(
+                        occ: occ,
+                        onTap: roomy
+                            ? () => context.push('/event/${occ.event.id}?at=${occ.start}&from=calendar')
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
                   ],
-                ),
+                  if (overflow && more > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: Text(
+                        width < 72 ? '+$more' : '+$more more',
+                        style: context.text.caption(c.ink2).bold,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.clip,
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// An event in a month square: a small solid block, one line, the pictogram and the title.
+class _MonthChip extends StatelessWidget {
+  const _MonthChip({required this.occ, this.onTap});
+
+  final Occurrence occ;
+  final VoidCallback? onTap;
+
+  static double heightFor(BuildContext context) =>
+      (MediaQuery.textScalerOf(context).scale(13 * context.text.scale) * 1.3).ceilToDouble() + 6;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch(calendarReads);
+    final look = EventLook.of(app, occ, context.colors);
+    final chip = Container(
+      height: heightFor(context),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(color: look.fill, borderRadius: BorderRadius.circular(6)),
+      child: Row(
+        children: [
+          Icon(look.icon, size: 13 * context.text.scale, color: look.ink),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              occ.title,
+              style: context.text.caption(look.ink).bold,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+    if (onTap == null) return chip;
+    return Semantics(
+      button: true,
+      label: occ.title,
+      excludeSemantics: true,
+      child: GestureDetector(onTap: onTap, child: chip),
     );
   }
 }
