@@ -377,6 +377,7 @@ take plain values and den_core model types, never the app's state, so any featur
 | `GroupCard`, `RowRule`, `ruled()` | The card itself; hairlines between rows | `RowRule(indent: RowRule.afterFace)` after 40 pt faces. Never a card in a card. |
 | `ActionRow` | A row that asks for one thing (Needs you, requests) | Face, bold sentence, detail, one action. The action sits under the words below 360 pt (a phone's card) and past 135 % text, at the end otherwise (an iPad column). |
 | `DoneRow`, `DoneSwap` | What a row did, with Undo in place | `DoneSwap(done: …, child: row)` crossfades on the UI spring; pass a receipt's undo as `onUndo`. Never a toast. |
+| `InfoRow` | One fact on a detail page (Repeats, Due, Who sees it) | Label in meta beside the value, or over it on a narrow card and at large text. |
 | `NavRow` | A row that goes somewhere (menus, "Or add one thing") | Optional glyph or face, label, detail, chevron; 56 tall. |
 | `FaceStack` | Who something is for | `DenAvatar`s 26 across, each ringed in the card color. |
 | `CheckPill` | A chore (or anything checked off) as a pill | Ring in the person's color. Ring tap checks; label tap opens details (steps, Give to…). `stars: null` when points are off. With steps, the ring fills as an arc and "1 of 4" follows the name once a step is done. |
