@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 
@@ -22,6 +21,7 @@ import 'platform/notifications/os_notifications.dart';
 import 'platform/notifications/reminder_scheduler.dart';
 import 'app/app_state.dart';
 import 'platform/web/web_app.dart';
+import 'platform/capabilities.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,7 +29,7 @@ Future<void> main() async {
   tzdata.initializeTimeZones();
   // A background refresh may have this device's engine open; wait for it to finish.
   final lock = await EngineLock.acquire();
-  if (kIsWeb) {
+  if (Capabilities.web) {
     // Tabs of one browser share the family's log; one at a time writes it.
     if (!await WebApp.holdEngine()) {
       runApp(const OtherTabScreen());

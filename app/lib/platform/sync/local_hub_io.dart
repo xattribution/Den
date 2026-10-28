@@ -9,12 +9,13 @@ import 'package:path_provider/path_provider.dart';
 
 import 'hub_keep_alive.dart';
 import 'local_hub.dart';
+import '../capabilities.dart';
 
 /// Desktops and Android can keep a hub running; iPhones and iPads stop apps in the background.
-bool get localHubSupported => Platform.isAndroid || Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+bool get localHubSupported => Capabilities.runsHub;
 
 LocalHub createLocalHub({int port = defaultHubPort, bool mdns = true, String? dataDir, HubKeepAlive? keepAlive}) =>
-    _IoHub(port: port, mdns: mdns, dataDir: dataDir, keepAlive: keepAlive ?? HubKeepAlive.platform(android: Platform.isAndroid, mac: Platform.isMacOS));
+    _IoHub(port: port, mdns: mdns, dataDir: dataDir, keepAlive: keepAlive ?? HubKeepAlive.platform(android: Capabilities.android, mac: Capabilities.macOS));
 
 class _IoHub extends LocalHub {
   _IoHub({required this.port, required this.mdns, required this.keepAlive, this.dataDir});

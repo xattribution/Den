@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart' show DenAction, DeviceMode;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -13,6 +12,7 @@ import '../../../design/forms/frame.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
+import '../../../platform/capabilities.dart';
 
 /// Settings, AI and automations: who reads what this device shares, and whether what Den finds
 /// is added right away or shown first. The reader and its key belong to this device; the
@@ -126,11 +126,11 @@ class _CaptureSectionState extends State<CaptureSection> {
             ),
             // A browser reaches readers only through the family's hub (below): the page may
             // talk to the hub and nothing else.
-            if (!kIsWeb) ...[
+            if (!Capabilities.web) ...[
               choice(ReaderChoice.home, 'A model at home', 'Through Ollama on the hub\'s computer or another one at home'),
               choice(ReaderChoice.claude, 'Claude', 'Anthropic reads what you share and your family\'s first names and lists'),
             ],
-            if (!kIsWeb && s.reader == ReaderChoice.home) ...[
+            if (!Capabilities.web && s.reader == ReaderChoice.home) ...[
               FormBlock(
                 child: TextField(
                   controller: _address,
@@ -146,7 +146,7 @@ class _CaptureSectionState extends State<CaptureSection> {
                 ),
               ),
             ],
-            if (!kIsWeb && s.reader == ReaderChoice.claude) ...[
+            if (!Capabilities.web && s.reader == ReaderChoice.claude) ...[
               if (s.hasClaudeKey && !_showKey)
                 ListTile(
                   leading: Icon(PhosphorIconsRegular.key, color: c.ink2),
@@ -192,7 +192,7 @@ class _CaptureSectionState extends State<CaptureSection> {
                 ),
               ),
             ],
-            if (!kIsWeb && s.reader != ReaderChoice.device)
+            if (!Capabilities.web && s.reader != ReaderChoice.device)
               SwitchListTile(
                 title: const Row(
                   children: [

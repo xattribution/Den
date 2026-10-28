@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'local_hub.dart';
 import 'local_stub.dart' if (dart.library.io) 'local_io.dart' as local;
+import '../capabilities.dart';
 
 /// This device's link to the rest of the family: one [SyncNode] for the engine, and a
 /// [SyncClient] that keeps it live with the hub over the home network or, away from home,
@@ -254,7 +255,7 @@ class DenNetwork extends ChangeNotifier {
 
   /// In a browser served by the hub, the hub is wherever the page came from.
   List<Uri>? _servingHub() {
-    if (!kIsWeb) return null;
+    if (!Capabilities.web) return null;
     final base = Uri.base;
     if (base.host.isEmpty) return null;
     return [base.replace(scheme: base.scheme == 'https' ? 'wss' : 'ws', path: '/ws', query: null, fragment: null)];

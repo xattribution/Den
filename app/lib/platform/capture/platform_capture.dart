@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:den_capture/den_capture.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import '../capabilities.dart';
 
 /// Whether this device's own model can run now.
 enum ModelState { available, downloadable, downloading, unavailable }
@@ -78,7 +79,7 @@ class PlatformCapture {
   static const _shares = EventChannel('family.den/capture/shares');
 
   Future<T?> _call<T>(String method, [Object? args]) async {
-    if (kIsWeb) return null;
+    if (Capabilities.web) return null;
     try {
       return await _channel.invokeMethod<T>(method, args);
     } on MissingPluginException {
@@ -119,7 +120,7 @@ class PlatformCapture {
 
   /// Fires when something is shared while Den is open.
   Stream<void> get sharesArrived {
-    if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows || defaultTargetPlatform == TargetPlatform.linux) {
+    if (!Capabilities.deviceModel) {
       return const Stream.empty();
     }
     return _shares.receiveBroadcastStream().handleError((Object _) {}).map((_) {});

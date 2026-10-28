@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
@@ -9,6 +8,7 @@ import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
 import '../../../platform/web/web_app.dart';
+import '../../../platform/capabilities.dart';
 
 /// After a join request: the matching words to compare with the parent's screen, and where the
 /// request stands. Approval arrives by sync, also after Den was closed and opened again; the
@@ -122,6 +122,6 @@ class WaitingScreen extends StatelessWidget {
     final den = context.den;
     await attempt(context, den.leaveFamily);
     // A browser opens again as a fresh device, with new keys (see Boot).
-    if (kIsWeb) WebApp.reload();
+    if (Capabilities.web) WebApp.reload();
   }
 }

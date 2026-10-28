@@ -2,11 +2,11 @@ import 'dart:async';
 
 import 'package:den_capture/den_capture.dart';
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import '../capabilities.dart';
 
 /// Where the Add sheet gets what to read: the camera, a file, the microphone. Each returns null
 /// when the person backs out.
@@ -30,7 +30,7 @@ class DeviceCaptureSources implements CaptureSources {
   Completer<String?>? _listening;
   String _heard = '';
 
-  static bool get _mobile => !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
+  static bool get _mobile => Capabilities.snapPhotos;
 
   @override
   bool get canSnap => _mobile;
@@ -38,7 +38,7 @@ class DeviceCaptureSources implements CaptureSources {
   /// Speech stays on the device: the browser's speech recognition sends audio away, and Windows
   /// and Linux have none Den can use.
   @override
-  bool get canSpeak => _mobile || (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS);
+  bool get canSpeak => Capabilities.speech;
 
   @override
   Future<CaptureFile?> snap() async {

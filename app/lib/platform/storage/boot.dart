@@ -2,13 +2,13 @@ import 'dart:convert';
 
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'device_keychain.dart';
 import 'storage_stub.dart'
     if (dart.library.io) 'storage_native.dart'
     if (dart.library.js_interop) 'storage_web.dart';
+import '../capabilities.dart';
 
 /// Where this device's keys are kept.
 abstract interface class KeyStore {
@@ -64,7 +64,7 @@ class Boot {
   /// keychain needs, so there the keys stay in the page's own storage.
   static Future<KeyStore> _keyStore() async {
     const keychain = _Keychain();
-    if (!kIsWeb) return keychain;
+    if (!Capabilities.web) return keychain;
     try {
       await keychain.read(keysName);
       return keychain;

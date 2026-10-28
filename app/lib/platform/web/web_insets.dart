@@ -1,9 +1,9 @@
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import 'web_app.dart';
+import '../capabilities.dart';
 
 /// Adds the screen's safe areas (the home indicator, the notch in landscape) to the padding
 /// every SafeArea below reads. Den draws to the screen's edges as a Home Screen app
@@ -20,7 +20,7 @@ class WebSafeArea extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final child = this.child ?? const SizedBox.shrink();
-    if (!kIsWeb && insets == null) return child;
+    if (!Capabilities.web && insets == null) return child;
     final media = MediaQuery.of(context);
     final i = insets ?? WebApp.insets();
     if (i.length != 4 || i.every((v) => v <= 0)) return child;

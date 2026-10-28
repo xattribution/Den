@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:den_core/den_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -17,6 +16,7 @@ import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
 import '../../../platform/web/web_app.dart';
 import 'member_editor.dart';
+import '../../../platform/capabilities.dart';
 
 /// Devices waiting for approval: the synced join requests, with the matching words from the
 /// pairing session when this device holds it.
@@ -334,7 +334,7 @@ class _InvitePanelState extends State<InvitePanel> {
     } on PairingException catch (e) {
       // Without a hub (or one too old for invites), fall back to a live code below. A browser
       // can't host one, so there it says why.
-      if (kIsWeb) {
+      if (Capabilities.web) {
         if (mounted) {
           setState(() {
             _error = e.message;
@@ -368,7 +368,7 @@ class _InvitePanelState extends State<InvitePanel> {
   /// Hands the message to the share sheet, or copies it where there's none. Called straight
   /// from the tap: browsers open the share sheet only for a user gesture.
   Future<void> _send(InviteMessage message, Rect? origin) async {
-    if (kIsWeb) {
+    if (Capabilities.web) {
       final outcome = await WebApp.share(message.text);
       if (!mounted) return;
       setState(() => _sent = switch (outcome) {

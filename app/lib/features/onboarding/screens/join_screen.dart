@@ -1,5 +1,4 @@
 import 'package:den_core/den_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -12,6 +11,7 @@ import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../platform/web/web_app.dart';
 import 'home_screen_steps.dart';
+import '../../../platform/capabilities.dart';
 
 /// Joining a family from a parent's invite: the four words from an invite message (filled in
 /// when the invite's link opened Den), or a QR code on a phone or tablet with a camera. The
@@ -49,7 +49,7 @@ class _JoinScreenState extends State<JoinScreen> {
   bool _inSafari = false;
   String? _error;
 
-  bool get _browser => widget.browser ?? kIsWeb;
+  bool get _browser => widget.browser ?? Capabilities.web;
 
   @override
   void didChangeDependencies() {

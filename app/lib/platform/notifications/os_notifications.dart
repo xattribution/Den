@@ -1,11 +1,11 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import 'reminder_plan.dart';
 import 'reminder_scheduler.dart';
+import '../capabilities.dart';
 
 /// Reminders through the platform's own notifications (flutter_local_notifications). Android,
 /// iOS, macOS and Windows hold scheduled notifications themselves, so they fire with the app
@@ -18,10 +18,7 @@ class OsNotifications implements ReminderOutlet {
   final Map<int, Timer> _timers = {};
   AndroidScheduleMode _androidMode = AndroidScheduleMode.inexactAllowWhileIdle;
 
-  static bool get _osSchedules => switch (defaultTargetPlatform) {
-        TargetPlatform.android || TargetPlatform.iOS || TargetPlatform.macOS || TargetPlatform.windows => true,
-        _ => false,
-      };
+  static bool get _osSchedules => Capabilities.schedulesNotifications;
 
   static const _android = AndroidNotificationDetails(
     'reminders',
@@ -42,7 +39,7 @@ class OsNotifications implements ReminderOutlet {
 
   @override
   Future<String?> start(void Function(String route) onTap) async {
-    if (kIsWeb) throw UnsupportedError('Browsers can\'t schedule notifications');
+    if (Capabilities.web) throw UnsupportedError('Browsers can\'t schedule notifications');
     const darwin = DarwinInitializationSettings(
       requestAlertPermission: false,
       requestBadgePermission: false,

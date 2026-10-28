@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import 'export_save_stub.dart' if (dart.library.io) 'export_save_io.dart';
+import '../../../platform/capabilities.dart';
 
 /// Exports every record this device holds as JSON: saved to Downloads on a computer, handed to
 /// the share sheet on phones, tablets and browsers.
@@ -17,7 +18,7 @@ Future<void> exportFamilyJson(BuildContext context) async {
   final bytes = utf8.encode(json);
   final name = 'den-${app.today}.json';
   try {
-    final folder = kIsWeb ? null : await saveExportToDisk(name, bytes);
+    final folder = Capabilities.web ? null : await saveExportToDisk(name, bytes);
     if (folder != null) {
       if (context.mounted) showNote(context, 'Saved $name in $folder.');
       return;

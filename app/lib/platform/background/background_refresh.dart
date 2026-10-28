@@ -13,6 +13,7 @@ import '../sync/den_network.dart';
 import '../notifications/os_notifications.dart';
 import '../notifications/reminder_scheduler.dart';
 import 'engine_lock.dart';
+import '../capabilities.dart';
 
 export 'engine_lock.dart' show EngineLock;
 
@@ -27,7 +28,7 @@ const backgroundRefreshEvery = Duration(hours: 1);
 /// The phones that run it: Android (WorkManager) and iOS (BGAppRefreshTask). Desktops and
 /// displays keep Den open, which refreshes on its own timers.
 bool get backgroundRefreshSupported =>
-    !kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS);
+    Capabilities.backgroundRefresh;
 
 /// Asks the OS to run [refreshInBackground] every [backgroundRefreshEvery], keeping one task.
 Future<void> scheduleBackgroundRefresh() async {

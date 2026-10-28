@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart' as net;
-import 'package:flutter/foundation.dart';
 
 import 'den_network.dart';
 import 'hub_api.dart';
@@ -10,6 +9,7 @@ import 'hub_client.dart';
 import 'hub_flows.dart';
 import 'local_stub.dart' if (dart.library.io) 'local_io.dart' as local;
 import 'pairing.dart';
+import '../capabilities.dart';
 
 /// [PairingService] on den_net: QR invites and spoken codes over the hub, the relay's
 /// rendezvous, or (with neither) a direct connection on the same Wi-Fi.
@@ -146,7 +146,7 @@ class NetPairing extends PairingService {
 
   @override
   Future<BrowserLinkSession> linkThisBrowser({required String Function() deviceName}) async {
-    final base = servedBy ?? (kIsWeb ? Uri.base : null);
+    final base = servedBy ?? (Capabilities.web ? Uri.base : null);
     if (base == null || base.host.isEmpty) {
       throw const PairingException('Only a browser opened from the hub can link this way. Scan a code instead.');
     }
@@ -212,7 +212,7 @@ class NetPairing extends PairingService {
 
   /// The hub that served this page: [servedBy], or the page's own origin on the web.
   Uri? get _servedBase {
-    final base = servedBy ?? (kIsWeb ? Uri.base : null);
+    final base = servedBy ?? (Capabilities.web ? Uri.base : null);
     if (base == null || base.host.isEmpty) return null;
     return Uri(scheme: base.scheme, host: base.host, port: base.port);
   }

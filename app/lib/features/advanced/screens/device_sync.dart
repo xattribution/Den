@@ -1,6 +1,5 @@
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart' show SyncState;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -9,6 +8,7 @@ import '../../../design/widgets.dart';
 import '../../../platform/sync/den_network.dart';
 import '../../../platform/sync/local_hub.dart';
 import '../../../app/app_state.dart';
+import '../../../platform/capabilities.dart';
 
 /// Settings, This device: how it syncs right now, "Keep the family online" on computers and
 /// Android, and for parents the hub address and relay to use.
@@ -131,7 +131,7 @@ class _LiveState extends State<_Live> {
             ),
         ],
         // A browser syncs with the hub that served it, wherever it is: no addresses to manage.
-        if (widget.parent && !hubHere && !kIsWeb) ...[
+        if (widget.parent && !hubHere && !Capabilities.web) ...[
           block(
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,

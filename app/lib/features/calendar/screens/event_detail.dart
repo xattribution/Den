@@ -1,5 +1,4 @@
 import 'package:den_core/den_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -16,6 +15,7 @@ import '../words/calendar_time.dart';
 import '../state/event_lookup.dart';
 import '../words/event_words.dart';
 import '../words/recurrence.dart';
+import '../../../platform/capabilities.dart';
 
 /// What the editor tells the detail when it closes: whether the occurrence the detail shows
 /// still exists as it was addressed.
@@ -380,7 +380,7 @@ class _Location extends StatelessWidget {
   }
 
   Future<void> _open(BuildContext context) async {
-    final apple = defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.macOS;
+    final apple = Capabilities.apple;
     final uri = apple
         ? Uri.https('maps.apple.com', '/', {'q': location})
         : Uri.https('www.google.com', '/maps/search/', {'api': '1', 'query': location});

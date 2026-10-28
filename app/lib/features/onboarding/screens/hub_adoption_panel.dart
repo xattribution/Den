@@ -1,5 +1,4 @@
 import 'package:den_core/den_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -8,6 +7,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
+import '../../../platform/capabilities.dart';
 
 /// In a browser that just started the family: how taking in the hub that served the page goes,
 /// and, when the setup code was wrong or the page reloaded before it finished, a field to enter
@@ -33,7 +33,7 @@ class _HubAdoptionPanelState extends State<HubAdoptionPanel> {
     if (_asked) return;
     _asked = true;
     _hub = widget.hub ?? Pairing.adoption.value?.hub;
-    if (_hub == null && kIsWeb) {
+    if (_hub == null && Capabilities.web) {
       Pairing.of(context).servingHub().then((hub) {
         if (mounted) setState(() => _hub = hub);
       });

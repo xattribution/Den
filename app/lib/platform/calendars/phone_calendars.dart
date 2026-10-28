@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/timezone.dart' as tz;
+import '../capabilities.dart';
 
 /// A calendar on this phone, as the OS lists it.
 class PhoneCalendar {
@@ -113,7 +114,7 @@ class PhoneCalendars extends ChangeNotifier {
 
   /// Whether this platform has calendars to bring in. Tests turn it on to draw the screen.
   static bool supported =
-      !kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS);
+      Capabilities.phoneCalendars;
 
   final Den _den;
   final PhoneCalendarSource _source;

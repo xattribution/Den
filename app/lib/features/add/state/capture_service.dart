@@ -2,13 +2,13 @@ import 'dart:async';
 
 import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 
 import 'capture_settings.dart';
 import '../../../platform/capture/capture_sources.dart';
 import '../../../platform/capture/platform_capture.dart';
+import '../../../platform/capabilities.dart';
 
 /// Reads what someone shared with the readers a parent allowed, in their order: this device
 /// first (its model, then Den's own reader) unless a parent chose otherwise; then the home model
@@ -54,7 +54,7 @@ class CaptureService {
     CaptureReader? remote;
     // In a browser the hub serves, the page may talk to the hub and nothing else (its
     // Content-Security-Policy), so a model at home or Claude is reached through the hub's reader.
-    switch (kIsWeb ? ReaderChoice.device : settings.reader) {
+    switch (Capabilities.web ? ReaderChoice.device : settings.reader) {
       case ReaderChoice.device:
         break;
       case ReaderChoice.home:
@@ -63,7 +63,7 @@ class CaptureService {
       case ReaderChoice.claude:
         final key = await settings.claudeKey();
         if (key != null && key.isNotEmpty) {
-          remote = ClaudeReader(apiKey: key, model: settings.claudeModel, client: _http, browser: kIsWeb);
+          remote = ClaudeReader(apiKey: key, model: settings.claudeModel, client: _http, browser: Capabilities.web);
         }
     }
     final hubReader = hub;
@@ -87,7 +87,7 @@ class CaptureService {
     final capturer = Capturer(
       readers: await readers(),
       textFinder: DeviceTextFinder(device, platform: platform),
-      pageText: kIsWeb ? null : _pageText,
+      pageText: Capabilities.web ? null : _pageText,
     );
     return capturer.read(prepared, den);
   }

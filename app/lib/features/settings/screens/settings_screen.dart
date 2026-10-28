@@ -1,5 +1,4 @@
 import 'package:den_core/den_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -18,6 +17,7 @@ import '../../onboarding/state/demo_session.dart';
 import '../../advanced/screens/device_sync.dart';
 import '../../advanced/state/export.dart';
 import 'web_reminders.dart';
+import '../../../platform/capabilities.dart';
 
 
 /// Settings: this device's look and role, notifications, AI and automations, Home Assistant,
@@ -191,7 +191,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
                 const SectionHeader('Notifications'),
                 // A browser can't schedule notifications itself; the hub sends them (Web Push).
-                if (widget.web ?? kIsWeb)
+                if (widget.web ?? Capabilities.web)
                   const WebReminders()
                 else
                   SwitchListTile(

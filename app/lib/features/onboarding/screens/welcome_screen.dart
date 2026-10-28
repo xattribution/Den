@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
@@ -10,6 +9,7 @@ import '../../../platform/sync/pairing.dart';
 import '../../../platform/web/web_app.dart';
 import '../state/demo_session.dart';
 import 'home_screen_steps.dart';
+import '../../../platform/capabilities.dart';
 
 /// The first screen on a device with no family: the task, as plain rows.
 ///
@@ -39,7 +39,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   HubInfo? _hub;
   bool _asked = false;
 
-  bool get _browser => widget.browser ?? kIsWeb;
+  bool get _browser => widget.browser ?? Capabilities.web;
 
   @override
   void didChangeDependencies() {

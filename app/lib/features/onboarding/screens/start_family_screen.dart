@@ -1,5 +1,4 @@
 import 'package:den_core/den_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../design/forms/frame.dart';
@@ -9,6 +8,7 @@ import '../../../design/pickers/picture_picker.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
+import '../../../platform/capabilities.dart';
 
 /// Starting a family: its name and time zone, you (the first parent), and this device. Creating
 /// it writes the genesis changes; the router then moves on to "Add people".
@@ -67,7 +67,7 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
     if (!_askedHub) {
       _askedHub = true;
       _hub = widget.hub;
-      if (_hub == null && kIsWeb) {
+      if (_hub == null && Capabilities.web) {
         Pairing.of(context).servingHub().then((hub) {
           if (mounted) setState(() => _hub = hub);
         });
