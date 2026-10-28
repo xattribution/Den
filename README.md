@@ -7,15 +7,17 @@ The family's calendar, chores, lists and points, on the family's own devices.
 ## Quick start
 
 **Just phones.** Install Den on one parent's phone, tap "Start a family", add the kids, and
-invite your partner from Family → Devices → Add a device (a QR code, or four words to read out).
+invite your partner from their page in Family: Invite sends a link and four words, and you let them in
+with one tap on Today. (A phone in the same room can scan a code instead: Settings → Advanced → Hub
+and sync → A device in the same room.)
 Every phone keeps the whole family, encrypted, and phones sync with each other when they meet on
 the same Wi-Fi. Nothing to host.
 
 **With a hub (recommended).** An always-on device keeps the family online while phones sleep and
 runs the extras: Home Assistant, AI access over MCP, calendar feeds, reminders.
 
-- An old Android tablet or a computer: install Den and turn on Settings → This device →
-  "Keep the family online". The hub runs inside the app; on Android it keeps running in the
+- An old Android tablet or a computer: install Den and turn on Settings → Advanced → Hub and
+  sync → "Keep the family online". The hub runs inside the app; on Android it keeps running in the
   background, with the notification "Den is keeping the family online", until you turn it off.
 - A NAS, mini PC or Raspberry Pi with Docker:
 
@@ -25,7 +27,7 @@ runs the extras: Home Assistant, AI access over MCP, calendar feeds, reminders.
   ```
 
   The hub prints a setup code in its log (`docker logs den-hub`). On a parent's phone, go to
-  Family → Devices → Add a device → A hub, pick it from the list or type its address, and enter
+  Settings → Advanced → Hub and sync → A hub, pick it from the list or type its address, and enter
   the code. The phone then shows three words and checks that the hub reports the same three
   (they're in its log too); approve it if they match. Any browser can then open
   `http://<hub-address>:47733` and link itself by showing a QR code for a parent's phone to scan.
@@ -41,10 +43,10 @@ Safari:
    steps first; the Home Screen app keeps its own storage, and only it gets reminders.)
 2. Start a family, with the hub's setup code from its log. That iPhone is the first parent's
    device and the hub joins the family.
-3. Invite people from Add people, or Family → Devices → Add a device: Send invite shares a link
-   and four words. They open the link, add Den to their Home Screen the same way, type the words
+3. Invite people from Add people, or from their page in Family: Send invite shares a link and four
+   words. They open the link, add Den to their Home Screen the same way, type the words
    if Den asks, and a parent taps Approve on Today.
-4. Settings → Notifications → Turn on reminders on this iPhone (iOS 16.4 or later).
+4. Settings → Reminders on this device → Turn on reminders on this iPhone (iOS 16.4 or later).
 
 The web app opens from local data at once, works with no connection, and updates itself the next
 time it opens.
@@ -52,16 +54,15 @@ time it opens.
 **Add anything by sharing it.** Tap Add and type, snap or say it ("soccer every Wednesday at 5
 for Leo"), or share a flyer photo, a screenshot, an email, a link or a PDF to Den from any app.
 Den proposes the events, chores, list items and reminders it found; what needs no look is added
-right away with Undo, or everything waits for you under Settings → AI and automations → "Show me
-first". Den reads on the phone first (Apple Intelligence or Gemini Nano where the phone has it,
+right away with Undo, or everything waits for you under Settings → Family → "Show me first". Den reads on the phone first (Apple Intelligence or Gemini Nano where the phone has it,
 and its own reader everywhere), and nothing leaves the phone unless a parent connects a reader
 there: a model at home (`docker compose -f deploy/compose.yaml --profile model up -d model`,
 then `ollama pull llama3.2`) or Claude with their own API key, kept in that phone's keychain; or
-once on the hub for every device (Settings → AI and automations → The family's hub), where the
+once on the hub for every device (Settings → Advanced → AI and automations → Reading photos and messages), where the
 key stays on the hub and each device asks with a request signed by its own key.
 
 **Away from home.** Phones reach the hub through a relay that only ever carries encrypted data.
-Run your own with `deploy/relay`, then enter its address under Settings → This device → Relay.
+Run your own with `deploy/relay`, then enter its address under Settings → Advanced → Hub and sync → Relay.
 
 **Moving from Sett.** `den_hub import-sett coord.db --as <your name>` brings members, events with
 their exceptions, chores with steps and check-offs, lists, goals and point adjustments into the

@@ -3,28 +3,58 @@ import 'package:den_net/den_net.dart' show SyncState;
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../../../app/app_state.dart';
+import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
+import '../../../platform/capabilities.dart';
 import '../../../platform/sync/den_network.dart';
 import '../../../platform/sync/local_hub.dart';
-import '../../../app/app_state.dart';
-import '../../../platform/capabilities.dart';
 
-/// Settings, This device: how it syncs right now, "Keep the family online" on computers and
+/// How this device syncs, in one line with an ink glyph: "Up to date", or what's wrong and what
+/// to do. The demo family says it stays here.
+class SyncLine extends StatelessWidget {
+  const SyncLine({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final network = context.watch(const {}).network;
+    if (network == null) {
+      return const NoticeLine(icon: PhosphorIconsRegular.arrowsClockwise, message: 'The demo family stays on this device.');
+    }
+    return ListenableBuilder(
+      listenable: network,
+      builder: (context, _) {
+        final status = network.status;
+        final trouble = !network.isHub &&
+            (status.state == SyncState.offline || status.state == SyncState.stopped) &&
+            status.lastError != 'no hub';
+        final failed = network.localHub.state == LocalHubState.failed;
+        return NoticeLine(
+          icon: trouble || failed ? PhosphorIconsBold.cloudSlash : PhosphorIconsRegular.arrowsClockwise,
+          message: network.describe(),
+        );
+      },
+    );
+  }
+}
+
+/// Advanced → Hub and sync: how this device syncs, "Keep the family online" on computers and
 /// Android, and for parents the hub address and relay to use.
 class DeviceSyncSection extends StatelessWidget {
   const DeviceSyncSection({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(const {});
     final network = app.network;
-    final c = context.colors;
     if (network == null) {
-      return ListTile(
-        leading: Icon(PhosphorIconsRegular.arrowsClockwise, color: c.ink2),
-        title: const Text('Sync'),
-        subtitle: const Text('The demo family stays on this device.'),
+      return const DenSection(
+        title: 'Sync',
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: Sp.s),
+          child: NoticeLine(icon: PhosphorIconsRegular.arrowsClockwise, message: 'The demo family stays on this device.'),
+        ),
       );
     }
     return ListenableBuilder(
@@ -48,6 +78,7 @@ class _LiveState extends State<_Live> {
   late final _relay = TextEditingController(text: widget.network.relay?.toString() ?? '');
   bool _switching = false;
   String? _hubError;
+  String? _startError;
 
   DenNetwork get _net => widget.network;
 
@@ -59,13 +90,17 @@ class _LiveState extends State<_Live> {
   }
 
   Future<void> _keepOnline(bool on) async {
-    setState(() => _switching = true);
-    final ok = await attempt(context, () => _net.keepOnline(on));
+    setState(() {
+      _switching = true;
+      _startError = null;
+    });
+    final problem = await tryWrite(() => _net.keepOnline(on));
     if (!mounted) return;
-    setState(() => _switching = false);
-    if (ok && on && _net.localHub.state == LocalHubState.failed) {
-      showNote(context, _net.localHub.error ?? "The hub couldn't start on this device.");
-    }
+    setState(() {
+      _switching = false;
+      _startError = problem ??
+          (on && _net.localHub.state == LocalHubState.failed ? _net.localHub.error ?? "The hub couldn't start on this device." : null);
+    });
   }
 
   Future<void> _addHub() async {
@@ -82,121 +117,135 @@ class _LiveState extends State<_Live> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final t = context.text;
     final hubHere = _net.isHub;
     final local = _net.localHub;
-    final offline = _net.status.state == SyncState.offline || _net.status.state == SyncState.stopped;
-    final unreachable = !hubHere && offline && _net.status.lastError != 'no hub';
-    Widget block(Widget child, {double top = Sp.m}) =>
-        Padding(padding: EdgeInsets.fromLTRB(Sp.l, top, Sp.l, 0), child: child);
-
+    final sections = <Widget>[
+      const DenSection(
+        title: 'Sync',
+        child: Padding(padding: EdgeInsets.symmetric(vertical: Sp.s), child: SyncLine()),
+      ),
+    ];
+    if (LocalHub.supported && (widget.parent || hubHere)) {
+      sections.add(DenSection(
+        title: 'This device',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SwitchLine(
+              label: 'Keep the family online',
+              detail: 'This device becomes the hub. Keep it plugged in, awake and on the home Wi-Fi.',
+              value: hubHere,
+              onChanged: _switching || !widget.parent ? null : _keepOnline,
+              reason: widget.parent ? null : 'Only a parent can change this',
+            ),
+            if (_startError != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: Sp.m),
+                child: Text(_startError!, style: t.meta(c.destructive)),
+              ),
+            if (hubHere && local.addresses.isNotEmpty) ...[
+              const RowRule(),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: Sp.m),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Hub address', style: t.meta(c.ink2)),
+                    for (final a in local.addresses) SelectableText('${a.host}:${a.port}', style: t.rowTitle(c.ink)),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ));
+    }
+    // A browser syncs with the hub that served it, wherever it is: no addresses to manage.
+    if (widget.parent && !hubHere && !Capabilities.web) {
+      sections.add(DenSection(
+        title: 'Where the hub is',
+        carded: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_net.hubs.isNotEmpty) ...[
+              GroupCard(
+                child: Column(
+                  children: ruled([
+                    for (final h in _net.hubs)
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 56),
+                        child: Row(
+                          children: [
+                            Icon(PhosphorIconsRegular.hardDrives, size: 22, color: c.ink),
+                            const SizedBox(width: 14),
+                            Expanded(child: Text('${h.host}:${h.port}', style: t.body(c.ink))),
+                            TextButton(
+                              onPressed: () => _net.removeHub(h),
+                              style: TextButton.styleFrom(foregroundColor: c.destructive),
+                              child: const Text('Forget'),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ], indent: 36),
+                ),
+              ),
+              const SizedBox(height: Sp.l),
+            ],
+            LabeledField(
+              label: 'Hub address',
+              error: _hubError,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _hub,
+                      autocorrect: false,
+                      keyboardType: TextInputType.url,
+                      style: t.body(c.ink),
+                      decoration: const InputDecoration(hintText: '192.168.1.20'),
+                      onSubmitted: (_) => _addHub(),
+                    ),
+                  ),
+                  const SizedBox(width: Sp.s),
+                  OutlinedButton(onPressed: _addHub, child: const Text('Add')),
+                ],
+              ),
+            ),
+            const SizedBox(height: Sp.l),
+            LabeledField(
+              label: 'Relay, for when this device is away from home',
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _relay,
+                      autocorrect: false,
+                      keyboardType: TextInputType.url,
+                      style: t.body(c.ink),
+                      decoration: const InputDecoration(hintText: 'https://relay.den.family'),
+                      onSubmitted: (v) => _net.setRelay(v),
+                    ),
+                  ),
+                  const SizedBox(width: Sp.s),
+                  OutlinedButton(onPressed: () => _net.setRelay(_relay.text), child: const Text('Save')),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, Sp.s, DenLayout.headingInset, 0),
+              child: Text('A relay only ever sees encrypted data.', style: t.meta(c.ink2)),
+            ),
+          ],
+        ),
+      ));
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ListTile(
-          leading: Icon(
-            hubHere ? PhosphorIconsRegular.hardDrives : PhosphorIconsRegular.arrowsClockwise,
-            color: unreachable || local.state == LocalHubState.failed ? c.caution : c.ink2,
-          ),
-          title: const Text('Sync'),
-          subtitle: Text(
-            _net.describe(),
-            style: unreachable || local.state == LocalHubState.failed ? context.type.meta(c.caution) : null,
-          ),
-        ),
-        if (LocalHub.supported && (widget.parent || hubHere)) ...[
-          SwitchListTile(
-            title: const Row(
-              children: [
-                Flexible(child: Text('Keep the family online')),
-                InfoTip(
-                  "This device becomes the family's hub: other devices sync through it, and Home Assistant "
-                  'and AI connections reach it. Keep it plugged in, awake and on the home Wi-Fi.',
-                ),
-              ],
-            ),
-            value: hubHere,
-            onChanged: _switching || !widget.parent ? null : _keepOnline,
-          ),
-          if (hubHere && local.addresses.isNotEmpty)
-            block(
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Hub address', style: context.type.meta(c.ink2)),
-                  for (final a in local.addresses)
-                    SelectableText('${a.host}:${a.port}', style: context.type.title(c.ink)),
-                ],
-              ),
-              top: 0,
-            ),
-        ],
-        // A browser syncs with the hub that served it, wherever it is: no addresses to manage.
-        if (widget.parent && !hubHere && !Capabilities.web) ...[
-          block(
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _hub,
-                    autocorrect: false,
-                    keyboardType: TextInputType.url,
-                    decoration: InputDecoration(
-                      labelText: 'Hub address',
-                      hintText: '192.168.1.20',
-                      errorText: _hubError,
-                    ),
-                    onSubmitted: (_) => _addHub(),
-                  ),
-                ),
-                const SizedBox(width: Sp.s),
-                SizedBox(height: Targets.adult, child: OutlinedButton(onPressed: _addHub, child: const Text('Add hub'))),
-              ],
-            ),
-          ),
-          for (final h in _net.hubs)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(Sp.l, Sp.xs, Sp.xs, 0),
-              child: Row(
-                children: [
-                  Icon(PhosphorIconsRegular.hardDrives, size: 18, color: c.ink2),
-                  const SizedBox(width: Sp.s),
-                  Expanded(child: Text('${h.host}:${h.port}', style: context.type.body(c.ink))),
-                  IconButton(
-                    tooltip: 'Forget ${h.host}',
-                    onPressed: () => _net.removeHub(h),
-                    icon: Icon(PhosphorIconsRegular.x, size: 18, color: c.ink2),
-                  ),
-                ],
-              ),
-            ),
-          block(
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _relay,
-                    autocorrect: false,
-                    keyboardType: TextInputType.url,
-                    decoration: const InputDecoration(
-                      labelText: 'Relay',
-                      hintText: 'https://relay.den.family',
-                      suffixIcon: InfoTip('Reaches the hub when this device is away from home. It only ever sees encrypted data.'),
-                      suffixIconConstraints: BoxConstraints(minWidth: 40, minHeight: 40),
-                    ),
-                    onSubmitted: (v) => _net.setRelay(v),
-                  ),
-                ),
-                const SizedBox(width: Sp.s),
-                SizedBox(
-                  height: Targets.adult,
-                  child: OutlinedButton(onPressed: () => _net.setRelay(_relay.text), child: const Text('Save relay')),
-                ),
-              ],
-            ),
-          ),
-        ],
+        for (final (i, s) in sections.indexed) ...[if (i > 0) const SizedBox(height: DenLayout.sectionGap), s],
       ],
     );
   }

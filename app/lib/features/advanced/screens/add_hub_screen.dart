@@ -7,7 +7,6 @@ import '../../../design/widgets.dart';
 import '../../../platform/sync/hub_client.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
-import '../../../design/forms/forms.dart';
 
 /// Adding a hub (a NAS, a Raspberry Pi, an always-on computer): find it on the network or type
 /// its address, enter the setup code it printed, then compare the words and approve it.
@@ -120,75 +119,72 @@ class _AddHubScreenState extends State<AddHubScreen> {
     final c = context.colors;
     final found = _found;
 
-    return FormFrame(
+    final t = context.text;
+    return DenPage(
       title: 'Add a hub',
-      bottom: SizedBox(
-        width: double.infinity,
-        child: FilledButton(onPressed: _busy ? null : _add, child: Text(_busy ? 'Checking the hub' : 'Add this hub')),
+      bottom: FilledButton(
+        onPressed: _busy ? null : _add,
+        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+        child: Text(_busy ? 'Checking the hub' : 'Add this hub'),
       ),
       children: [
-        SectionHeader(
-          'On this network',
-          action: TextButton(onPressed: found == null ? null : _look, child: const Text('Look again')),
+        DenSection(
+          title: 'On this network',
+          trailing: found == null ? null : SectionLink('Look again', onTap: _look),
+          child: found == null
+              ? Padding(padding: const EdgeInsets.symmetric(vertical: Sp.l), child: Text('Looking for hubs', style: t.body(c.ink2)))
+              : found.isEmpty
+                  ? const EmptyState(compact: true, message: 'No hubs answered on this network.')
+                  : Column(
+                      children: ruled([
+                        for (final hub in found)
+                          NavRow(
+                            leading: _address.text == hub.address
+                                ? Icon(PhosphorIconsBold.check, size: 22, color: c.ink)
+                                : Icon(PhosphorIconsRegular.hardDrives, size: 22, color: c.ink),
+                            label: hub.name,
+                            detail: [
+                              hub.address,
+                              if (hub.familyId != null && hub.familyId == context.den.familyId) 'In your family',
+                              if (hub.familyId != null && hub.familyId != context.den.familyId) 'In another family',
+                              if (hub.familyId == null) 'Waiting for setup',
+                            ].join(' · '),
+                            chevron: false,
+                            onTap: () => setState(() => _address.text = hub.address),
+                          ),
+                      ], indent: 36),
+                    ),
         ),
-        if (found == null)
-          FormBlock(top: 0, child: Text('Looking for hubs', style: context.type.body(c.ink2)))
-        else if (found.isEmpty)
-          FormBlock(top: 0, child: Text('No hubs answered on this network.', style: context.type.body(c.ink2)))
-        else
-          for (final hub in found)
-            ListTile(
-              leading: Icon(PhosphorIconsRegular.hardDrives, color: c.ink2),
-              title: Text(hub.name),
-              subtitle: Text([
-                hub.address,
-                if (hub.familyId != null && hub.familyId == context.den.familyId) 'In your family',
-                if (hub.familyId != null && hub.familyId != context.den.familyId) 'In another family',
-                if (hub.familyId == null) 'Waiting for setup',
-              ].join(' · ')),
-              trailing: _address.text == hub.address ? Icon(PhosphorIconsBold.check, color: c.ink) : null,
-              onTap: () => setState(() => _address.text = hub.address),
-            ),
-        FormBlock(
-          top: Sp.xl,
+        LabeledField(
+          label: 'Hub address',
           child: TextField(
             controller: _address,
             autocorrect: false,
             keyboardType: TextInputType.url,
-            decoration: const InputDecoration(labelText: 'Hub address', hintText: '192.168.1.20'),
+            style: t.body(c.ink),
+            decoration: const InputDecoration(hintText: '192.168.1.20'),
             onChanged: (_) => setState(() {}),
           ),
         ),
-        const FormBlock(
-          child: FieldLabel.quiet(
-            'Setup code',
-            info: "A new hub prints an 8-character code like ABCD-EFGH. Find it in the hub's log, by running "
-                '"den_hub setup-code" on it, or on the hub\'s web page.',
-          ),
-        ),
-        FormBlock(
-          top: 0,
+        LabeledField(
+          label: "Setup code, from the hub's log or its web page",
+          error: _error,
           child: TextField(
             controller: _code,
             autocorrect: false,
             enableSuggestions: false,
             textCapitalization: TextCapitalization.characters,
             maxLength: 9,
-            style: context.type.title(c.ink).copyWith(letterSpacing: 2),
+            style: t.rowTitle(c.ink).copyWith(letterSpacing: 2),
             decoration: const InputDecoration(hintText: 'ABCD-EFGH', counterText: ''),
             onSubmitted: (_) => _add(),
           ),
         ),
-        if (_error != null) FormBlock(child: AttentionLine(message: _error!, bad: true)),
         if (_ours != null)
-          FormBlock(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AttentionLine(message: '${_ours!.name} is already in your family.'),
-                const SizedBox(height: Sp.s),
-                OutlinedButton(onPressed: _useOurs, child: Text('Sync with ${_ours!.name}')),
-              ],
+          GroupCard(
+            child: ActionRow(
+              title: '${_ours!.name} is already in your family',
+              action: OutlinedButton(onPressed: _useOurs, child: Text('Sync with ${_ours!.name}')),
             ),
           ),
       ],
@@ -212,7 +208,7 @@ class _WordsCheck extends StatelessWidget {
           children: [
             Icon(PhosphorIconsBold.check, size: 18, color: c.ink),
             const SizedBox(width: Sp.s),
-            Expanded(child: Text('$name shows the same three words.', style: context.type.body(c.ink))),
+            Expanded(child: Text('$name shows the same three words.', style: context.text.body(c.ink))),
           ],
         ),
       false => AttentionLine(
@@ -222,7 +218,7 @@ class _WordsCheck extends StatelessWidget {
         ),
       null => Text(
           "$name didn't report its words. Compare them with the ones in its log before you approve.",
-          style: context.type.body(c.ink2),
+          style: context.text.body(c.ink2),
         ),
     };
   }
@@ -242,30 +238,23 @@ class _Progress extends StatelessWidget {
           children: [
             Icon(icon, size: 20, color: c.ink2),
             const SizedBox(width: Sp.m),
-            Expanded(child: Text(text, style: context.type.body(c.ink2))),
+            Expanded(child: Text(text, style: context.text.body(c.ink2))),
           ],
         );
 
-    return FormFrame(
+    return DenPage(
       title: 'Add a hub',
       bottom: switch (session.stage) {
-        HubSetupStage.done => SizedBox(
-            width: double.infinity,
-            child: FilledButton(onPressed: () => context.pop(), child: const Text('Done')),
-          ),
-        HubSetupStage.failed => SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(onPressed: onStartOver, child: const Text('Try again')),
-          ),
+        HubSetupStage.done => FilledButton(onPressed: () => context.pop(), child: const Text('Done')),
+        HubSetupStage.failed => OutlinedButton(onPressed: onStartOver, child: const Text('Try again')),
         _ => null,
       },
       children: [
-        ListTile(
-          leading: Icon(PhosphorIconsRegular.hardDrives, color: c.ink2),
-          title: Text(name),
-          subtitle: Text(session.hub.address),
+        GroupCard(
+          child: NavRow(icon: PhosphorIconsRegular.hardDrives, label: name, detail: session.hub.address, chevron: false, onTap: null),
         ),
-        FormBlock(
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
           child: switch (session.stage) {
             HubSetupStage.sending => line(PhosphorIconsRegular.hourglass, 'Sending the setup code to $name'),
             HubSetupStage.waiting => line(PhosphorIconsRegular.hourglass, 'Waiting for $name to ask to join'),
@@ -274,18 +263,9 @@ class _Progress extends StatelessWidget {
                 children: [
                   AttentionLine(message: '$name wants to join'),
                   const SizedBox(height: Sp.s),
-                  Row(
-                    children: [
-                      Text('Words', style: context.type.meta(c.ink2)),
-                      InfoTip(
-                        'Three words from the connection to $name. The hub works out the same three on its '
-                        'side, reports them here, and prints them in its log ("den_hub status" shows them too). '
-                        'Approve only if they match.',
-                      ),
-                    ],
-                  ),
+                  Text("The same three words show in the hub's log", style: context.text.meta(c.ink2)),
                   const SizedBox(height: Sp.xs),
-                  Text(session.words.join('  '), style: context.type.heading(c.ink)),
+                  Text(session.words.join('  '), style: context.text.sheetTitle(c.ink)),
                   const SizedBox(height: Sp.s),
                   _WordsCheck(name: name, matches: session.wordsMatch, hubWords: session.hubWords),
                   const SizedBox(height: Sp.l),
@@ -313,7 +293,7 @@ class _Progress extends StatelessWidget {
                 children: [
                   Icon(PhosphorIconsBold.check, size: 20, color: c.ink),
                   const SizedBox(width: Sp.m),
-                  Expanded(child: Text('$name is in the family. Devices sync through it now.', style: context.type.body(c.ink))),
+                  Expanded(child: Text('$name is in the family. Devices sync through it now.', style: context.text.body(c.ink))),
                 ],
               ),
             HubSetupStage.failed => AttentionLine(message: session.error ?? "Adding $name didn't finish. Try again.", bad: true),

@@ -3,191 +3,170 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../words/family_words.dart';
+import '../../../app/app_state.dart';
+import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
-import '../../../app/app_state.dart';
-import '../widgets/device_parts.dart';
-import '../../../design/forms/forms.dart';
-import '../../../design/pickers/time_zone_picker.dart';
-import '../state/family_actions.dart';
+import '../widgets/family_needs_card.dart';
+import '../widgets/family_parts.dart';
+import '../widgets/invite_sheet.dart';
+import '../widgets/person_page.dart';
+import '../widgets/person_sheets.dart';
+import '../widgets/quick_add_sheet.dart';
 
-/// The family: devices waiting for approval first, then people in order, then devices by person,
-/// then the family's own settings. Parents manage; everyone else sees who's in the family.
-class FamilyScreen extends StatelessWidget {
-  const FamilyScreen({super.key});
+/// Family (Family.dc.html): what needs a parent first, then the family's faces with the chosen
+/// person's page under them, then the few things a parent does from here (invite someone, the
+/// AI helper, settings). On iPad the people are a list on the left and the person's page on the
+/// right.
+class FamilyScreen extends StatefulWidget {
+  const FamilyScreen({super.key, this.selected});
+
+  /// Whose page shows first; the person using the device by default.
+  final String? selected;
+
+  /// The content width from which people and their page sit side by side.
+  static const double twoColumns = 760;
+
+  @override
+  State<FamilyScreen> createState() => _FamilyScreenState();
+}
+
+class _FamilyScreenState extends State<FamilyScreen> {
+  late String? _selected = widget.selected;
+
+  @override
+  void didUpdateWidget(FamilyScreen old) {
+    super.didUpdateWidget(old);
+    if (old.selected != widget.selected && widget.selected != null) _selected = widget.selected;
+  }
+
+  Future<void> _add() async {
+    final id = await showQuickAddSheet(context);
+    if (id != null && mounted) setState(() => _selected = id);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch(const {});
+    final app = context.watch(const {RecordType.connection});
+    final den = app.den;
+    final people = den.members;
     final manage = app.allows(DenAction.manageFamily);
-    final wide = MediaQuery.sizeOf(context).width >= 900;
+    final trust = app.allowsTrust(DenAction.manageFamily);
+    final selected = den.member(_selected ?? '') ?? app.me ?? people.firstOrNull;
+    final width = MediaQuery.sizeOf(context).width;
+    final two = width - 2 * DenPage.gutterFor(width) >= FamilyScreen.twoColumns;
 
-    final people = [
-      SectionHeader(
-        'People',
-        action: manage
-            ? TextButton.icon(
-                onPressed: () => context.push('/family/member/new'),
-                icon: const Icon(PhosphorIconsBold.plus, size: 16),
-                label: const Text('Add person'),
-              )
-            : null,
-      ),
-      for (final m in app.den.members) _MemberRow(m, manage: manage),
-    ];
-    final devices = manage ? _devicesSection(context) : const <Widget>[];
-    final settings = manage ? const [_FamilySettings()] : const <Widget>[];
+    final more = _More(manage: manage, trust: trust, onAdd: two ? null : _add);
+    final person = selected == null
+        ? const EmptyState(message: 'Nobody is in the family yet.')
+        : PersonPage(key: ValueKey(selected.id), member: selected.id);
+    void pick(String id) => setState(() => _selected = id);
 
-    return Scaffold(
-      appBar: AppBar(title: Semantics(header: true, child: Text(manage ? 'Family and devices' : 'Family'))),
-      body: SafeArea(
-        top: false,
-        child: wide
-            ? ListView(
-                padding: const EdgeInsets.only(bottom: Sp.xxxl),
-                children: [
-                  const PendingApprovals(),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [...people, ...settings],
-                        ),
-                      ),
-                      Expanded(
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: devices),
-                      ),
-                    ],
-                  ),
-                ],
-              )
-            : ListView(
-                padding: const EdgeInsets.only(bottom: Sp.xxxl),
-                children: [const PendingApprovals(), ...people, ...devices, ...settings],
+    if (!two) {
+      return DenPage(
+        title: 'Family',
+        children: [
+          if (trust) const Ungapped(FamilyNeedsCard()),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              PeopleStrip(
+                people: people,
+                selected: selected?.id,
+                me: app.me?.id,
+                onSelect: pick,
+                onAdd: manage ? _add : null,
               ),
-      ),
-    );
-  }
-}
-
-List<Widget> _devicesSection(BuildContext context) => [
-  SectionHeader(
-    'Devices',
-    action: TextButton.icon(
-      onPressed: () => context.push('/family/devices/add'),
-      icon: const Icon(PhosphorIconsBold.plus, size: 16),
-      label: const Text('Add a device'),
-    ),
-  ),
-  ...deviceGroups(context),
-];
-
-class _MemberRow extends StatelessWidget {
-  const _MemberRow(this.member, {required this.manage});
-  final Member member;
-  final bool manage;
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.watch(const {});
-    final c = context.colors;
-    final isMe = app.me?.id == member.id;
-    return ListTile(
-      leading: DenAvatar(member, size: 40),
-      title: Text(isMe ? '${member.name} (you)' : member.name),
-      subtitle: Text(FamilyWords.memberLine(member, app.today)),
-      trailing: manage ? Icon(PhosphorIconsRegular.caretRight, size: 18, color: c.ink3) : null,
-      onTap: manage ? () => context.push('/family/member/${member.id}') : null,
-    );
-  }
-}
-
-/// The family's name, time zone, first day of the week, and whether it uses points.
-class _FamilySettings extends StatefulWidget {
-  const _FamilySettings();
-
-  @override
-  State<_FamilySettings> createState() => _FamilySettingsState();
-}
-
-class _FamilySettingsState extends State<_FamilySettings> {
-  late final TextEditingController _name = TextEditingController(text: DenScope.read(context).den.family?.name ?? '');
-  final _focus = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    _focus.addListener(() {
-      if (!_focus.hasFocus) _saveName();
-    });
-  }
-
-  /// Also runs when the field loses focus, which can happen as the page closes: it reads the
-  /// engine without depending on it, and only while this page is still here.
-  void _saveName() {
-    if (!mounted) return;
-    final den = DenScope.read(context).den;
-    final name = _name.text.trim();
-    if (name.isEmpty || name == den.family?.name) return;
-    attempt(context, () => context.familyActions.rename(name));
-  }
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _focus.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final den = context.watch(const {}).den;
-    final family = den.family;
-    if (family == null) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+              const SizedBox(height: Sp.m),
+              person,
+            ],
+          ),
+          more,
+        ],
+      );
+    }
+    return DenPage(
+      title: 'Family',
+      maxWidth: 1100,
       children: [
-        const SectionHeader('Family settings'),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: Sp.l),
-          child: TextField(
-            controller: _name,
-            focusNode: _focus,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'Family name'),
-            onSubmitted: (_) => _saveName(),
-          ),
-        ),
-        const Padding(padding: EdgeInsets.fromLTRB(Sp.l, Sp.l, Sp.l, 0), child: FieldLabel.quiet('Time zone')),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: Sp.l),
-          child: TimeZoneField(
-            value: family.timezone,
-            onChanged: (z) => attempt(context, () => context.familyActions.setTimeZone(z)),
-          ),
-        ),
-        const Padding(padding: EdgeInsets.fromLTRB(Sp.l, Sp.l, Sp.l, 0), child: FieldLabel.quiet('Weeks start on')),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: Sp.l),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Segmented<int>(
-              options: const {0: 'Sunday', 1: 'Monday'},
-              value: family.weekStart,
-              onChanged: (v) => attempt(context, () => context.familyActions.setWeekStart(v)),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 340,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (trust) const FamilyNeedsCard(),
+                  PeopleList(
+                    people: people,
+                    selected: selected?.id,
+                    me: app.me?.id,
+                    today: app.today,
+                    onSelect: pick,
+                    onAdd: manage ? _add : null,
+                  ),
+                  const SizedBox(height: DenLayout.sectionGap),
+                  more,
+                ],
+              ),
             ),
-          ),
-        ),
-        const SizedBox(height: Sp.s),
-        SwitchListTile(
-          title: const Text('Points and rewards'),
-          value: family.pointsEnabled,
-          onChanged: (v) => attempt(context, () => context.familyActions.setPointsOn(v)),
+            const SizedBox(width: Sp.xl),
+            Expanded(child: person),
+          ],
         ),
       ],
     );
+  }
+}
+
+/// What a parent does from Family besides people: invite someone, the AI helper, settings.
+class _More extends StatelessWidget {
+  const _More({required this.manage, required this.trust, this.onAdd});
+
+  final bool manage;
+  final bool trust;
+  final VoidCallback? onAdd;
+
+  /// Hands this phone to a kid: their screen until the parent's PIN takes it back. A parent
+  /// with no PIN sets one first.
+  Future<void> _handToKid(BuildContext context, List<Member> kids) async {
+    final router = GoRouter.of(context);
+    final pick = await showPeoplePicker(context, title: 'Who gets the phone?', people: kids);
+    final kid = pick?.member;
+    if (kid == null || !context.mounted) return;
+    final me = DenScope.read(context).me;
+    if (me != null && me.signIn.kind == 'none') {
+      await showSignInSheet(context, me);
+      if (!context.mounted || DenScope.read(context).me?.signIn.kind == 'none') return;
+    }
+    router.go('/kid/$kid');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch(const {});
+    final helper = app.den.family?.assistant.enabled ?? false;
+    final kids = [for (final m in app.den.members) if (m.isKid) m];
+    final rows = <Widget>[
+      if (manage && onAdd != null) NavRow(icon: PhosphorIconsRegular.plusCircle, label: 'Add someone', onTap: onAdd),
+      if (trust) NavRow(icon: PhosphorIconsRegular.userPlus, label: 'Invite someone', onTap: () => showInviteSheet(context)),
+      if (trust && kids.isNotEmpty)
+        NavRow(
+          icon: PhosphorIconsRegular.smiley,
+          label: 'Hand to a kid',
+          value: 'Kid mode',
+          onTap: () => _handToKid(context, kids),
+        ),
+      if (manage)
+        NavRow(
+          icon: PhosphorIconsRegular.chatCircle,
+          label: 'AI helper',
+          value: helper ? 'On' : 'Off',
+          onTap: () => context.push('/settings/assistant'),
+        ),
+      NavRow(icon: PhosphorIconsRegular.gearSix, label: 'Settings', onTap: () => context.push('/settings')),
+    ];
+    return GroupCard(child: Column(children: ruled(rows, indent: 36)));
   }
 }

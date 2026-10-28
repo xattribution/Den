@@ -5,9 +5,9 @@ import 'package:den_app/design/widgets.dart';
 import 'package:den_app/features/chores/screens/chores_board.dart';
 import 'package:den_app/features/chores/widgets/chore_row.dart';
 import 'package:den_app/features/calendar/screens/event_detail.dart';
-import 'package:den_app/features/family/screens/device_screen.dart';
+import 'package:den_app/features/advanced/screens/displays_screen.dart';
 import 'package:den_app/features/family/screens/family_screen.dart';
-import 'package:den_app/features/family/screens/member_editor.dart';
+import 'package:den_app/features/settings/screens/family_settings_screen.dart';
 import 'package:den_app/features/lists/screens/list_detail.dart';
 import 'package:den_app/features/lists/words/list_words.dart';
 import 'package:den_app/features/rewards/screens/points_screen.dart';
@@ -266,8 +266,8 @@ void main() {
 
     testWidgets('a parent turns points off and on in the family settings', (tester) async {
       final state = await _family(tester);
-      await pumpScreen(tester, const FamilyScreen(), state: state, size: const Size(390, 3200));
-      final toggle = find.widgetWithText(SwitchListTile, 'Points and rewards');
+      await pumpScreen(tester, const FamilySettingsScreen(), state: state, size: _tall);
+      final toggle = findWords('Points and rewards');
       expect(toggle, findsOneWidget);
       await _tapAndWait(tester, toggle);
       expect(state.den.family!.pointsEnabled, isFalse);
@@ -279,22 +279,25 @@ void main() {
   group('Family', () {
     testWidgets('a kid\'s permissions don\'t offer "Manage points"', (tester) async {
       final state = await _family(tester);
-      await pumpScreen(tester, MemberEditor(memberId: _id(state.den, 'Maya')), state: state, size: _tall);
-      expect(find.text('Add lists'), findsOneWidget);
+      await pumpScreen(tester, FamilyScreen(selected: _id(state.den, 'Maya')), state: state, size: _tall);
+      expect(findWords('Can add to lists'), findsOneWidget);
       expect(find.text('Manage points'), findsNothing);
     });
 
     testWidgets('a role change says what it does and waits for a yes', (tester) async {
       final state = await _family(tester);
       final maya = _id(state.den, 'Maya');
-      await pumpScreen(tester, MemberEditor(memberId: maya), state: state, size: _tall);
+      await pumpScreen(tester, FamilyScreen(selected: maya), state: state, size: _tall);
+      await tester.tap(find.text('Who Maya is'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Parent'));
       await tester.pumpAndSettle();
-      expect(find.text('Make Maya a parent?'), findsOneWidget);
-      expect(find.textContaining('Maya will manage the family'), findsOneWidget);
-      await tester.tap(find.text('Cancel'));
+      expect(find.textContaining('Maya will run the family'), findsOneWidget);
+      await tester.tap(find.text('Close'));
       await tester.pumpAndSettle();
       expect(state.den.member(maya)!.role, Role.kid);
+      await tester.tap(find.text('Who Maya is'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Parent'));
       await tester.pumpAndSettle();
       await _tapAndWait(tester, find.text('Make Maya a parent'));
@@ -304,22 +307,21 @@ void main() {
     testWidgets('the privacy switch changes just that person\'s entry (B8)', (tester) async {
       final state = await _family(tester);
       final maya = _id(state.den, 'Maya');
-      await pumpScreen(tester, MemberEditor(memberId: maya), state: state, size: const Size(390, 3200));
-      await _tapAndWait(
-        tester,
-        find.ancestor(of: find.textContaining('private items'), matching: find.byType(SwitchListTile)),
-      );
+      await pumpScreen(tester, FamilyScreen(selected: maya), state: state, size: _tall);
+      await tester.tap(findWords('Can keep things private from parents'));
+      await tester.pumpAndSettle();
+      await _tapAndWait(tester, find.text('Turn on'));
       expect(state.den.family!.parentsSeePrivate(maya), isFalse);
       expect(state.den.history().first.diffs.map((d) => d.field), ['oversight.$maya']);
     });
 
     testWidgets('a device\'s owner can\'t be changed, and Photos isn\'t a layout (B9)', (tester) async {
       final state = await _family(tester);
-      final display = state.den.devices.firstWhere((d) => d.mode == DeviceMode.shared);
-      await pumpScreen(tester, DeviceScreen(deviceId: display.id), state: state, size: _tall);
+      await pumpScreen(tester, const DisplaysScreen(), state: state, size: _tall);
       expect(find.text('Change'), findsNothing);
-      expect(find.text('Week'), findsOneWidget);
+      expect(find.text('The week'), findsWidgets);
       expect(find.text('Photos'), findsNothing);
+      expect(find.text('Month'), findsNothing);
     });
 
     testWidgets('making a shared display asks a parent with no PIN to set one (B10)', (tester) async {
@@ -340,28 +342,27 @@ void main() {
         await den.ingest(tablet.changesSince(den.versionVector));
       });
       await pumpScreen(tester, const FamilyScreen(), state: state, size: _tall, pairing: FakePairing(now: demoNow));
-      await tester.tap(find.text('Approve Hall tablet'));
+      await tester.tap(find.text('Let it in'));
       await tester.pumpAndSettle();
-      await tester.tap(find.descendant(of: find.byType(BottomSheet), matching: find.text('Shared display')));
+      await tester.tap(find.text('Shared display'));
       await tester.pumpAndSettle();
       await _settle(tester);
       await _settle(tester);
       expect(state.den.devices.firstWhere((d) => d.name == 'Hall tablet').approved, isTrue);
-      expect(find.text('Set your PIN for shared screens'), findsOneWidget);
+      expect(find.text('Set a PIN'), findsOneWidget);
     });
 
     testWidgets('leaving a page right after typing a name saves it and throws nothing (B16)', (tester) async {
       final state = await _family(tester);
-      final maya = _id(state.den, 'Maya');
-      final router = await _app(tester, state, '/family');
-      router.push('/family/member/$maya');
+      final router = await _app(tester, state, '/today');
+      router.push('/settings/family');
       await tester.pumpAndSettle();
-      await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Maya Rose');
+      await tester.enterText(find.byType(TextField), 'The Carter-Lins');
       router.pop();
       await tester.pumpAndSettle();
       await _settle(tester);
       expect(tester.takeException(), isNull);
-      expect(state.den.member(maya)!.name, 'Maya Rose');
+      expect(state.den.family!.name, 'The Carter-Lins');
     });
   });
 

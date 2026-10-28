@@ -2,11 +2,11 @@ import 'package:den_app/platform/sync/hub_client.dart';
 import 'package:den_app/platform/sync/local_hub.dart';
 import 'package:den_app/platform/sync/pairing.dart';
 import 'package:den_app/features/advanced/screens/add_hub_screen.dart';
-import 'package:den_app/features/family/screens/device_screen.dart';
-import 'package:den_app/features/family/screens/link_browser_screen.dart';
+import 'package:den_app/features/advanced/screens/hub_screen.dart';
+import 'package:den_app/features/advanced/screens/nearby_device_screen.dart';
+import 'package:den_app/features/advanced/screens/link_browser_screen.dart';
 import 'package:den_app/features/onboarding/screens/link_this_browser_screen.dart';
 import 'package:den_app/features/onboarding/screens/welcome_screen.dart';
-import 'package:den_app/features/settings/screens/settings_screen.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -27,11 +27,31 @@ void main() {
     final state = await demo(tester);
     await shootWith(
       tester,
-      'family_add_device_choices_phone',
-      AddDeviceScreen(now: () => demoNow),
+      'settings_hub_phone',
+      const HubScreen(),
       state: state,
       pairing: FakePairing(now: demoNow),
     );
+  });
+
+  testWidgets('A device in the same room: a code to scan, or four words', (tester) async {
+    final state = await demo(tester);
+    await shootWith(
+      tester,
+      'settings_nearby_device_phone',
+      NearbyDeviceScreen(now: () => demoNow),
+      state: state,
+      size: const Size(390, 1100),
+      pairing: FakePairing(now: demoNow),
+      pushed: true,
+    );
+    expect(find.text('maple river candle tiger'), findsOneWidget);
+  });
+
+  testWidgets('A device in the same room, without a hub or relay, says so', (tester) async {
+    final state = await demo(tester);
+    await pumpScreen(tester, const NearbyDeviceScreen(), state: state);
+    expect(findWords(LocalOnlyPairing.message), findsOneWidget);
   });
 
   testWidgets('Add a hub, phone', (tester) async {
@@ -180,7 +200,7 @@ void main() {
 
   testWidgets('Settings, This device with sync, hub address and relay', (tester) async {
     final state = await networked(tester, hubs: [Uri.parse('ws://192.168.1.20:47733/ws')]);
-    await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state);
+    await pumpScreen(tester, const HubScreen(), state: state);
     await tester.drag(find.byType(ListView).first, const Offset(0, -260));
     await tester.pumpAndSettle();
     await matchShot('settings_sync_phone');
@@ -193,7 +213,7 @@ void main() {
       localHub: FakeLocalHub(state: LocalHubState.running, connected: 3),
     );
     expect(state.den.actor?.name, 'Alex');
-    await shootWith(tester, 'settings_hub_running_tablet', const SettingsScreen(version: '1.0.0'), state: state, size: tablet);
+    await shootWith(tester, 'settings_hub_running_tablet', const HubScreen(), state: state, size: tablet);
   });
 
   testWidgets('Settings, the hub could not start, night', (tester) async {
@@ -205,7 +225,7 @@ void main() {
         error: 'Port 47733 is already in use, maybe by another Den hub on this computer. Stop that one, then turn this on again.',
       ),
     );
-    await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state, night: true);
+    await pumpScreen(tester, const HubScreen(), state: state, night: true);
     await tester.drag(find.byType(ListView).first, const Offset(0, -260));
     await tester.pumpAndSettle();
     await matchShot('settings_hub_failed_phone_night');

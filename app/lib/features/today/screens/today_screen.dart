@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/app_state.dart';
-import '../../../app/shell.dart' show PersonButton;
+import '../../../app/shell.dart' show PersonButton, SearchButton;
 import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
@@ -91,7 +91,9 @@ class _TodayScreenState extends State<TodayScreen> {
           overline: f.long(view.date),
           title: greeting(hour),
           large: !compact,
-          trailing: compact ? PersonButton(member: app.me) : null,
+          trailing: compact
+              ? Row(mainAxisSize: MainAxisSize.min, children: [const SearchButton(), PersonButton(member: app.me)])
+              : null,
         );
         final notice = _SyncNotice(network: app.network);
         if (!two) {

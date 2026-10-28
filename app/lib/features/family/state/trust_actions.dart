@@ -2,31 +2,60 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/widgets.dart';
 
 import '../../../app/den_scope.dart';
+import '../words/oversight.dart';
 
 /// The family's trust decisions: who is a parent, what a kid may do, how someone signs in on a
-/// shared screen, whether parents see a kid's private items, and which devices are in the
-/// family. No action offers these, on purpose: the engine takes them only from a parent on
-/// their own device, never from a shared screen, the hub, MCP or an assistant. They are the
-/// only family writes that go to the engine directly.
+/// shared screen, whether parents see a kid's private items, who may use the AI helper, and
+/// which devices are in the family. No action offers these, on purpose: the engine takes them
+/// only from a parent on their own device, never from a shared screen, the hub, MCP or an
+/// assistant. They are the only family writes that go to the engine directly.
 class TrustActions {
   const TrustActions(this._den);
 
   final Den _den;
 
-  Future<void> setRole(String member, Role role, {Tier? tier}) =>
-      _den.updateMember(member, {'role': role.name, 'tier': role == Role.kid ? tier?.name : null});
-
-  Future<void> setGrants(String member, Set<Grant> grants) => _den.updateMember(member, {
-        'grants': [
-          for (final g in Grant.values)
-            if (grants.contains(g)) g.name,
-        ],
+  /// Makes [member] a [role]; a kid also gets [tier], and [grants] when given (a role change to
+  /// kid starts from the age group's switches).
+  Future<void> setRole(String member, Role role, {Tier? tier, Set<Grant>? grants}) => _den.updateMember(member, {
+        'role': role.name,
+        'tier': role == Role.kid ? tier?.name : null,
+        if (grants != null) 'grants': _names(role == Role.kid ? grants : const {}),
       });
+
+  Future<void> setGrants(String member, Set<Grant> grants) => _den.updateMember(member, {'grants': _names(grants)});
+
+  static List<String> _names(Set<Grant> grants) => [
+        for (final g in Grant.values)
+          if (grants.contains(g)) g.name,
+      ];
+
+  /// One of a kid's switches ([KidSwitch]), whichever part of the family it lives in.
+  Future<void> setKidSwitch(Member kid, KidSwitch which, bool on) => switch (which) {
+        KidSwitch.lists || KidSwitch.plans || KidSwitch.rewardsOk => setGrants(kid.id, grantsWith(which, on, kid.grants)),
+        KidSwitch.private => setParentsSeePrivate(kid.id, !on),
+        KidSwitch.assistant => setAssistantFor(kid.id, on),
+      };
 
   /// Just this person's entry, so two parents changing different people at once both count.
   Future<void> setParentsSeePrivate(String member, bool on) => _den.updateFamily({
         'oversight.$member': {'parentsSeePrivate': on},
       });
+
+  /// The family's rules for the AI helper (`family.assistant`).
+  Future<void> setAssistant(AssistantPolicy policy) => _den.updateFamily({'assistant': policy.toJson()});
+
+  /// Lets [member] use the AI helper, or not.
+  Future<void> setAssistantFor(String member, bool on) {
+    final policy = _den.family?.assistant ?? const AssistantPolicy();
+    final members = {...policy.members};
+    on ? members.add(member) : members.remove(member);
+    return setAssistant(AssistantPolicy(
+      enabled: policy.enabled,
+      members: members,
+      kidDailyLimit: policy.kidDailyLimit,
+      budgetCents: policy.budgetCents,
+    ));
+  }
 
   Future<void> removePerson(String member) => _den.removeMember(member);
 

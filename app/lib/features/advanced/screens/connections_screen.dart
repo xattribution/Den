@@ -6,91 +6,109 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../../../app/app_state.dart';
+import '../../../design/layout.dart';
+import '../../../design/motion.dart';
+import '../../../design/sheet.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/hub_client.dart';
 import '../../../platform/sync/hub_connections.dart';
-import '../../../app/app_state.dart';
-import 'capture_section.dart';
-import '../widgets/scope_picker.dart';
-import '../../../design/forms/forms.dart';
 import '../../family/family.dart';
 import '../state/connection_actions.dart';
+import '../widgets/hub_apps_section.dart';
+import '../widgets/scope_picker.dart';
 
-/// AI and automations: apps signing in to the hub (let in or turned away), requests waiting for
-/// a parent's approval, then every connection with what it may do and whose permissions it uses.
-/// Tokens are created here and shown once.
+/// Advanced → AI and automations: assistants signing in to the hub, each let in by the code its
+/// screen shows and then approved with what it may do and as whom; everything connected, each
+/// with Remove; how to connect an assistant; tokens; the apps a parent set up for assistants
+/// that can't register themselves (Alexa+); and who reads photos and messages.
 class ConnectionsScreen extends StatelessWidget {
-  const ConnectionsScreen({super.key, this.signIns});
+  const ConnectionsScreen({super.key, this.signIns, this.apps});
 
   /// The hub's waiting sign-ins, for tests; by default asked of the family's hub.
   final HubConnections? signIns;
 
+  /// The hub's apps a parent set up, for tests.
+  final HubAppsSource? apps;
+
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(const {RecordType.connection});
     final parent = app.allows(DenAction.manageFamily);
     // Letting an app in and approving it are trust decisions: a parent's own device only.
     final trusted = app.allowsTrust(DenAction.manageFamily);
-    final all = parent ? app.den.connections : const <Connection>[];
+    if (!parent) {
+      return const DenPage(title: 'AI and automations', children: [EmptyState(message: 'Only parents can manage AI and automations.')]);
+    }
+    final all = app.den.connections;
     final pending = all.where((x) => x.status == ConnectionStatus.pending).toList();
     final active = all.where((x) => x.status == ConnectionStatus.active).toList();
-    final revoked = all.where((x) => x.status == ConnectionStatus.revoked).toList();
-
-    return Scaffold(
-      appBar: pageBar(context, 'AI and automations', maxWidth: 720),
-      body: SafeArea(
-        top: false,
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: ListView(
-              padding: const EdgeInsets.only(bottom: Sp.xxxl),
-              children: [
-                if (!parent) const EmptyLine(message: 'Only parents can manage AI and automations.'),
-                if (trusted) SignInRequests(client: signIns),
-                if (trusted) for (final x in pending) _Request(x),
-                if (parent) const CaptureSection(),
-                if (parent) ...[
-                  SectionHeader(
-                    'Connected',
-                    action: TextButton.icon(
-                      onPressed: () => context.push('/settings/connections/new'),
-                      icon: const Icon(PhosphorIconsBold.plus, size: 16),
-                      label: const Text('Create token'),
-                    ),
-                  ),
-                  if (active.isEmpty) const EmptyLine(message: 'Nothing is connected yet.'),
-                  for (final x in active) _ConnectionRow(x),
-                ],
-                if (revoked.isNotEmpty) ...[const SectionHeader('Revoked'), for (final x in revoked) _ConnectionRow(x)],
-              ],
-            ),
+    return DenPage(
+      title: 'AI and automations',
+      children: [
+        if (!trusted)
+          const NoticeLine(
+            icon: PhosphorIconsRegular.lockKey,
+            message: "Assistants are let in and removed only on a parent's own phone.",
+          ),
+        if (trusted) Ungapped(_Waiting(signIns: signIns, pending: pending)),
+        DenSection(
+          title: 'Connected',
+          trailing: active.isEmpty ? null : SectionCount('${active.length}'),
+          child: active.isEmpty
+              ? const EmptyState(compact: true, message: 'Nothing is connected yet.')
+              : Column(children: ruled([for (final x in active) _ConnectionRow(x, trusted: trusted)], indent: 36)),
+        ),
+        DenSection(
+          title: 'Connect',
+          child: Column(
+            children: ruled([
+              NavRow(
+                icon: PhosphorIconsRegular.chatCircleText,
+                label: 'Connect an assistant',
+                detail: 'Claude, ChatGPT, Gemini, Grok, Siri and Alexa+',
+                onTap: () => context.push('/settings/connections/guide'),
+              ),
+              NavRow(
+                icon: PhosphorIconsRegular.key,
+                label: 'Make a token',
+                detail: 'For Home Assistant, a script or a Shortcut',
+                onTap: trusted ? () => context.push('/settings/connections/new') : null,
+              ),
+              NavRow(
+                icon: PhosphorIconsRegular.image,
+                label: 'Reading photos and messages',
+                detail: 'Who reads what you add from a photo or a message',
+                onTap: () => context.push('/settings/connections/reader'),
+              ),
+            ], indent: 36),
           ),
         ),
-      ),
+        if (trusted) HubAppsSection(source: apps),
+      ],
     );
   }
 }
 
-/// Apps signing in to the hub (claude.ai, ChatGPT), each waiting for a parent to let it in: its
-/// name, where its sign-in returns, and the code the person signing in sees. Once let in, it
-/// waits below for approval like any other request.
-class SignInRequests extends StatefulWidget {
-  const SignInRequests({super.key, this.client});
+/// What waits for a parent: apps signing in to the hub (let in by the code their screen shows),
+/// then requests to approve. Nothing waiting, nothing drawn.
+class _Waiting extends StatefulWidget {
+  const _Waiting({required this.signIns, required this.pending});
 
-  /// The hub's sign-ins, for tests; by default the family's hub.
-  final HubConnections? client;
+  final HubConnections? signIns;
+  final List<Connection> pending;
 
   @override
-  State<SignInRequests> createState() => _SignInRequestsState();
+  State<_Waiting> createState() => _WaitingState();
 }
 
-class _SignInRequestsState extends State<SignInRequests> {
+class _WaitingState extends State<_Waiting> {
   HubConnections? _client;
   List<ConnectionRequest> _requests = const [];
   final Set<String> _busy = {};
+  final Map<String, String> _done = {};
+  final Map<String, String> _failed = {};
   Timer? _poll;
   bool _started = false;
 
@@ -99,9 +117,9 @@ class _SignInRequestsState extends State<SignInRequests> {
     super.didChangeDependencies();
     if (_started) return;
     _started = true;
-    final network = context.app.network;
+    final network = context.watch(const {}).network;
     final hasHub = network != null && (network.isHub || network.hubDevice != null);
-    _client = widget.client ?? (hasHub ? HubConnections(network) : null);
+    _client = widget.signIns ?? (hasHub ? HubConnections(network) : null);
     if (_client == null) return;
     unawaited(_load());
     // Someone signing in on another screen is waiting; look again every few seconds.
@@ -127,7 +145,10 @@ class _SignInRequestsState extends State<SignInRequests> {
   }
 
   Future<void> _decide(ConnectionRequest r, {required bool admit}) async {
-    setState(() => _busy.add(r.id));
+    setState(() {
+      _busy.add(r.id);
+      _failed.remove(r.id);
+    });
     try {
       if (admit) {
         await _client!.admit(r);
@@ -135,10 +156,11 @@ class _SignInRequestsState extends State<SignInRequests> {
         await _client!.decline(r);
       }
       if (!mounted) return;
-      setState(() => _requests = [for (final x in _requests) if (x.id != r.id) x]);
-      if (admit) showNote(context, 'Approve ${r.clientName} below once it shows up.');
+      setState(() => _done[r.id] = admit
+          ? '${r.clientName} is in. Approve it below once it shows up.'
+          : '${r.clientName} was turned away.');
     } on HubException catch (e) {
-      if (mounted) showNote(context, e.message);
+      if (mounted) setState(() => _failed[r.id] = e.message);
     } finally {
       if (mounted) setState(() => _busy.remove(r.id));
     }
@@ -147,109 +169,81 @@ class _SignInRequestsState extends State<SignInRequests> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    if (_requests.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final r in _requests)
-          Container(
-            decoration: BoxDecoration(border: Border(bottom: BorderSide(color: c.rule))),
-            padding: const EdgeInsets.fromLTRB(Sp.l, Sp.m, Sp.l, Sp.l),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AttentionLine(
-                  message: r.redirectHost.isEmpty
-                      ? '${r.clientName} wants to connect'
-                      : '${r.clientName} (${r.redirectHost}) wants to connect',
-                ),
-                const SizedBox(height: Sp.s),
-                Row(
-                  children: [
-                    Text('Code ${r.code}', style: context.type.title(c.ink)),
-                    const InfoTip('The same code shows where it is signing in. Let it in only if they match.'),
-                  ],
-                ),
-                const SizedBox(height: Sp.m),
-                Wrap(
-                  spacing: Sp.s,
-                  runSpacing: Sp.s,
-                  children: [
-                    FilledButton(
-                      onPressed: _busy.contains(r.id) ? null : () => _decide(r, admit: true),
-                      child: Text('Let ${r.clientName} in'),
-                    ),
-                    OutlinedButton(
-                      onPressed: _busy.contains(r.id) ? null : () => _decide(r, admit: false),
-                      child: const Text('Decline'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-      ],
+    final rows = <Widget>[
+      for (final r in _requests)
+        if (_done[r.id] != null)
+          DoneRow(message: _done[r.id]!)
+        else
+          _signIn(context, r),
+      for (final x in widget.pending) _request(context, x),
+    ];
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: DenLayout.sectionGap),
+      child: GroupCard(
+        padding: const EdgeInsets.fromLTRB(DenLayout.cardPadding, Sp.l, DenLayout.cardPadding, Sp.xs),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Semantics(header: true, child: Text('Needs you', style: context.text.section(c.ink).withWeight(FontWeight.w800))),
+            ...ruled(rows),
+          ],
+        ),
+      ),
     );
   }
-}
 
-/// "Acts as Mia", or "Parent-level" when the connection uses no one person's permissions.
-String actsAs(BuildContext context, String? memberId) {
-  if (memberId == null) return 'Parent-level';
-  return 'Acts as ${context.den.member(memberId)?.name ?? 'a removed person'}';
-}
-
-class _Request extends StatelessWidget {
-  const _Request(this.connection);
-  final Connection connection;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _signIn(BuildContext context, ConnectionRequest r) {
     final c = context.colors;
-    final x = connection;
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: c.rule)),
-      ),
-      padding: const EdgeInsets.fromLTRB(Sp.l, Sp.m, Sp.l, Sp.l),
+    final t = context.text;
+    final busy = _busy.contains(r.id);
+    final failed = _failed[r.id];
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: Sp.l),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          AttentionLine(
-            message:
-                '${x.label} wants: ${[for (final s in Scope.values)
-                  if (x.scopes.contains(s)) FamilyWords.scope(s)].join(', ')}',
+          Text(
+            r.redirectHost.isEmpty ? '${r.clientName} wants to connect' : '${r.clientName} (${r.redirectHost}) wants to connect',
+            style: t.rowTitle(c.ink),
           ),
-          if (x.client != null)
-            Padding(
-              padding: const EdgeInsets.only(left: 26),
-              child: Text(x.client!, style: context.type.meta(c.ink2)),
-            ),
+          const SizedBox(height: 2),
+          Text('Let it in only if its screen shows this code', style: t.meta(c.ink2)),
+          const SizedBox(height: Sp.s),
+          Text('Code ${r.code}', style: t.section(c.ink)),
           const SizedBox(height: Sp.m),
-          Wrap(
-            spacing: Sp.s,
-            runSpacing: Sp.s,
-            children: [
-              FilledButton(onPressed: () => _approve(context), child: Text('Approve ${x.label}')),
-              OutlinedButton(
-                onPressed: () => attempt(context, () => context.connectionActions.revoke(x.id)),
-                child: const Text('Decline'),
-              ),
-            ],
+          TwoButtons(
+            primary: 'Let ${r.clientName} in',
+            onPrimary: busy ? null : () => _decide(r, admit: true),
+            secondary: 'Turn away',
+            onSecondary: busy ? null : () => _decide(r, admit: false),
           ),
+          if (failed != null) ...[const SizedBox(height: Sp.s), Text(failed, style: t.meta(c.destructive))],
         ],
       ),
     );
   }
 
-  Future<void> _approve(BuildContext context) async {
-    final result = await showModalBottomSheet<(Set<Scope>, String?)>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => _ApproveSheet(connection),
+  Widget _request(BuildContext context, Connection x) {
+    final c = context.colors;
+    return ActionRow(
+      leading: SizedBox.square(dimension: 40, child: Icon(PhosphorIconsRegular.plugsConnected, size: 26, color: c.ink)),
+      title: '${x.label} wants to connect',
+      detail: [
+        'Asks for ${FamilyWords.scopes(x.scopes).toLowerCase()}',
+        ?x.client,
+      ].join('. '),
+      action: FilledButton(
+        onPressed: () => _approve(context, x),
+        child: Text('Approve ${x.label}', maxLines: 1, softWrap: false),
+      ),
     );
+  }
+
+  Future<void> _approve(BuildContext context, Connection x) async {
+    final result = await showDenSheet<(Set<Scope>, String?)>(context, builder: (_) => _ApproveSheet(x));
     if (result == null || !context.mounted) return;
-    await attempt(context, () => context.connectionActions.approve(connection.id, scopes: result.$1, member: result.$2));
+    await attempt(context, () => context.connectionActions.approve(x.id, scopes: result.$1, member: result.$2));
   }
 }
 
@@ -268,85 +262,115 @@ class _ApproveSheetState extends State<_ApproveSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
     final x = widget.connection;
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.only(bottom: Sp.l),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(Sp.l, 0, Sp.l, Sp.s),
-              child: Text('Approve ${x.label}', style: context.type.title(c.ink)),
-            ),
-            ScopePicker(value: _scopes, allowed: x.scopes, onChanged: (s) => setState(() => _scopes = s)),
-            ActsAsPicker(value: _member, onChanged: (m) => setState(() => _member = m)),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(Sp.l, Sp.xl, Sp.l, 0),
-              child: FilledButton(
-                onPressed: _scopes.isEmpty ? null : () => Navigator.of(context).pop((_scopes, _member)),
-                child: Text('Approve ${x.label}'),
-              ),
-            ),
-          ],
-        ),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SheetHeader(title: 'Approve ${x.label}'),
+          ScopePicker(value: _scopes, allowed: x.scopes, onChanged: (s) => setState(() => _scopes = s)),
+          const SizedBox(height: DenLayout.sectionGap),
+          ActsAsPicker(value: _member, onChanged: (m) => setState(() => _member = m)),
+          const SizedBox(height: DenLayout.sectionGap),
+          FilledButton(
+            onPressed: _scopes.isEmpty ? null : () => Navigator.of(context).pop((_scopes, _member)),
+            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+            child: Text('Approve ${x.label}'),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _ConnectionRow extends StatelessWidget {
-  const _ConnectionRow(this.connection);
+/// "Acts as Mia", or "As a parent" when the connection uses no one person's permissions.
+String actsAs(BuildContext context, String? memberId) {
+  if (memberId == null) return 'As a parent';
+  return 'As ${DenScope.read(context).den.member(memberId)?.name ?? 'a removed person'}';
+}
+
+/// One connection: what it is, what it may do and as whom, and Remove, said in place first.
+class _ConnectionRow extends StatefulWidget {
+  const _ConnectionRow(this.connection, {required this.trusted});
   final Connection connection;
+  final bool trusted;
+
+  @override
+  State<_ConnectionRow> createState() => _ConnectionRowState();
+}
+
+class _ConnectionRowState extends State<_ConnectionRow> {
+  bool _removing = false;
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _remove() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final problem = await tryWrite(() => context.connectionActions.revoke(widget.connection.id));
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _error = problem;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final x = connection;
-    final revoked = x.status == ConnectionStatus.revoked;
+    final t = context.text;
+    final x = widget.connection;
     final expires = x.expires;
-    final status = revoked
-        ? 'Revoked'
-        : expires == null
-        ? null
-        : 'Expires ${DateFormat.MMMd().format(context.app.formats.at(expires))}';
-    return ListTile(
-      leading: Icon(
-        x.kind == ConnectionKind.oauth ? PhosphorIconsRegular.robot : PhosphorIconsRegular.key,
-        color: revoked ? c.ink3 : c.ink2,
-      ),
-      title: Text(x.label, style: context.type.body(revoked ? c.ink2 : c.ink)),
-      subtitle: Text([FamilyWords.scopes(x.scopes), actsAs(context, x.member), ?status].join(' · ')),
-      trailing: revoked
-          ? null
-          : TextButton(
-              style: TextButton.styleFrom(foregroundColor: c.bad),
-              onPressed: () => _revoke(context),
-              child: const Text('Revoke'),
-            ),
-    );
-  }
-
-  Future<void> _revoke(BuildContext context) async {
-    final c = context.colors;
-    final x = connection;
-    final yes = await showDialog<bool>(
-      context: context,
-      builder: (dialog) => AlertDialog(
-        title: Text('Revoke ${x.label}?'),
-        content: const Text('It stops working right away. To connect again it needs a new token or approval.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(dialog).pop(false), child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: c.bad, foregroundColor: c.paper),
-            onPressed: () => Navigator.of(dialog).pop(true),
-            child: Text('Revoke ${x.label}'),
+    final detail = [
+      FamilyWords.scopes(x.scopes),
+      actsAs(context, x.member),
+      if (expires != null) 'Until ${DateFormat.MMMd().format(context.watch(const {}).formats.at(expires))}',
+    ].join(' · ');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 56),
+          child: Row(
+            children: [
+              Icon(x.kind == ConnectionKind.oauth ? PhosphorIconsRegular.chatCircleText : PhosphorIconsRegular.key, size: 22, color: c.ink),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: Sp.s),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [Text(x.label, style: t.body(c.ink)), Text(detail, style: t.meta(c.ink2))],
+                  ),
+                ),
+              ),
+              if (widget.trusted && !_removing)
+                TextButton(
+                  onPressed: () => setState(() => _removing = true),
+                  style: TextButton.styleFrom(foregroundColor: c.destructive),
+                  child: const Text('Remove'),
+                ),
+            ],
           ),
-        ],
-      ),
+        ),
+        DenReveal(
+          visible: _removing,
+          child: !_removing
+              ? const SizedBox(width: double.infinity)
+              : ConfirmPanel(
+                  message: '${x.label} stops working right away. To connect again it needs a new token or approval.',
+                  confirmLabel: 'Remove ${x.label}',
+                  destructive: true,
+                  busy: _busy,
+                  error: _error,
+                  onConfirm: _remove,
+                  onCancel: () => setState(() => _removing = false),
+                ),
+        ),
+      ],
     );
-    if (yes == true && context.mounted) await attempt(context, () => context.connectionActions.revoke(x.id));
   }
 }

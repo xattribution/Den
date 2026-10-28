@@ -86,12 +86,12 @@ void main() {
   testWidgets('Starting the family in a browser asks for the hub setup code', (tester) async {
     final state = await empty(tester);
     await pumpScreen(tester, StartFamilyScreen(initialTimeZone: 'America/Chicago', hub: freshHub), state: state);
-    await tester.enterText(find.widgetWithText(TextField, 'Family name'), 'The Riveras');
-    await tester.enterText(find.widgetWithText(TextField, 'Your name'), 'Sam');
+    await tester.enterText(find.widgetWithText(TextField, 'The Riveras'), 'The Riveras');
+    await tester.enterText(find.widgetWithText(TextField, 'Sam'), 'Sam');
     await tester.tap(find.text('Create family'));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text("Add the hub's setup code."), 200, scrollable: find.byType(Scrollable).first);
-    expect(find.text("Add the hub's setup code."), findsOneWidget);
+    await tester.scrollUntilVisible(findWords("Add the hub's setup code."), 200, scrollable: find.byType(Scrollable).first);
+    expect(findWords("Add the hub's setup code."), findsOneWidget);
     expect(state.den.hasFamily, isFalse, reason: 'nothing is created without the code');
     await matchShot('web_start_family_setup_code_phone');
   });
@@ -134,7 +134,7 @@ void main() {
     await tester.pumpAndSettle();
     router.go('/join/maple-river-candle-tiger');
     await tester.pumpAndSettle();
-    expect(find.text('Join your family'), findsWidgets);
+    expect(findWords('Join your family'), findsWidgets);
     expect(find.widgetWithText(TextField, 'maple river candle tiger'), findsOneWidget);
   });
 

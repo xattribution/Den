@@ -1,20 +1,22 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/pickers/picture_picker.dart';
-import '../../../design/widgets.dart';
-import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
-import '../../../platform/capabilities.dart';
-import '../../../design/forms/forms.dart';
+import '../../../design/pickers/picture_picker.dart';
 import '../../../design/pickers/time_zone_picker.dart';
+import '../../../design/sheet.dart';
+import '../../../design/tokens.dart';
+import '../../../design/widgets.dart';
+import '../../../platform/capabilities.dart';
+import '../../../platform/sync/pairing.dart';
 import '../../../platform/time_zone.dart';
-import '../state/this_device.dart';
-import '../../family/family.dart';
 import '../state/onboarding_actions.dart';
+import '../state/this_device.dart';
 
-/// Starting a family: its name and time zone, you (the first parent), and this device. Creating
-/// it writes the genesis changes; the router then moves on to "Add people".
+/// Starting a family: its name and time zone, and you (the first parent) with your picture.
+/// This device's name and kind come from what it is ("Sam's iPhone"). Creating it writes the
+/// genesis changes; the router then moves on to "Add people".
 ///
 /// In a browser served by a fresh hub, the hub's setup code goes here too: once the family
 /// exists, this browser takes the hub in (see [PairingService.adoptServingHub]) while "Add
@@ -35,7 +37,6 @@ class StartFamilyScreen extends StatefulWidget {
 class _StartFamilyScreenState extends State<StartFamilyScreen> {
   final _family = TextEditingController();
   final _name = TextEditingController();
-  final _device = TextEditingController();
   final _code = TextEditingController();
   HubInfo? _hub;
   bool _askedHub = false;
@@ -43,9 +44,9 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
   String _picture = Picture.initial;
   String _zone = 'UTC';
   DeviceKind? _kind;
-  bool _deviceNameEdited = false;
   bool _tried = false;
   bool _saving = false;
+  String? _error;
 
   @override
   void initState() {
@@ -57,16 +58,12 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
         if (mounted) setState(() => _zone = z);
       });
     }
-    _name.addListener(_suggestDevice);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_kind == null) {
-      _kind = guessDeviceKind(context);
-      _suggestDevice();
-    }
+    _kind ??= guessDeviceKind(context);
     if (!_askedHub) {
       _askedHub = true;
       _hub = widget.hub;
@@ -84,16 +81,10 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
     return hub != null && !hub.paired && hub.stage == 'waiting_for_code';
   }
 
-  void _suggestDevice() {
-    if (_deviceNameEdited) return;
-    _device.text = suggestDeviceName(_name.text, _kind ?? DeviceKind.phone);
-  }
-
   @override
   void dispose() {
     _family.dispose();
     _name.dispose();
-    _device.dispose();
     _code.dispose();
     super.dispose();
   }
@@ -104,22 +95,24 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
     final hub = _adopting ? _hub : null;
     final code = _code.text.trim();
     if (hub != null && code.isEmpty) return;
-    setState(() => _saving = true);
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
     final onboarding = context.onboardingActions;
     final pairing = Pairing.of(context);
-    final ok = await attempt(
-      context,
+    final problem = await tryWrite(
       () => onboarding.foundFamily(
         familyName: _family.text.trim(),
         timezone: _zone,
         yourName: _name.text.trim(),
         marker: _marker,
         picture: _picture,
-        deviceName: _device.text.trim().isEmpty ? suggestDeviceName(_name.text, _kind!) : _device.text.trim(),
+        deviceName: suggestDeviceName(_name.text, _kind!),
         deviceKind: _kind!,
       ),
     );
-    if (ok && hub != null) {
+    if (problem == null && hub != null) {
       // The router has already moved on to Add people, which follows this.
       try {
         Pairing.adoption.value = pairing.adoptServingHub(hub, code);
@@ -127,122 +120,127 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
         Pairing.adoption.value = null;
       }
     }
-    if (mounted && !ok) setState(() => _saving = false);
+    if (mounted && problem != null) {
+      setState(() {
+        _saving = false;
+        _error = problem;
+      });
+    }
   }
+
+  Future<void> _pickPicture() => showDenSheet<void>(
+        context,
+        builder: (sheet) => StatefulBuilder(
+          builder: (sheet, setSheet) => SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, Sp.l),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SheetHeader(title: 'Your picture', actionLabel: 'Done', primary: true),
+                PicturePicker(
+                  name: _name.text.trim().isEmpty ? 'You' : _name.text.trim(),
+                  picture: _picture,
+                  color: _marker,
+                  colorLabel: 'Your color',
+                  onPicture: (p) {
+                    setState(() => _picture = p);
+                    setSheet(() {});
+                  },
+                  onColor: (m) {
+                    setState(() => _marker = m);
+                    setSheet(() {});
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
-    final kind = _kind ?? DeviceKind.phone;
-    String? need(TextEditingController t, String message) => _tried && t.text.trim().isEmpty ? message : null;
+    final c = context.colors;
+    final t = context.text;
+    String? need(TextEditingController field, String message) => _tried && field.text.trim().isEmpty ? message : null;
+    final name = _name.text.trim();
+    final color = PersonColor.forMarker(_marker).color;
 
-    return FormFrame(
+    return DenPage(
       title: 'Start a family',
-      bottom: SizedBox(
-        width: double.infinity,
-        child: FilledButton(
-          onPressed: _saving ? null : _create,
-          child: Text(_saving ? 'Creating family' : 'Create family'),
-        ),
+      bottom: FilledButton(
+        onPressed: _saving ? null : _create,
+        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+        child: Text(_saving ? 'Creating the family' : 'Create family'),
       ),
       children: [
-        const SectionHeader('Family'),
-        FormBlock(
-          top: 0,
+        LabeledField(
+          label: 'Family name',
+          error: need(_family, 'Add a family name.'),
           child: TextField(
             controller: _family,
             textCapitalization: TextCapitalization.words,
-            decoration: InputDecoration(
-              labelText: 'Family name',
-              hintText: 'The Riveras',
-              errorText: need(_family, 'Add a family name.'),
-            ),
+            style: t.body(c.ink),
+            decoration: const InputDecoration(hintText: 'The Riveras'),
             onChanged: (_) {
               if (_tried) setState(() {});
             },
           ),
         ),
-        const FormBlock(child: FieldLabel.quiet('Time zone')),
-        FormBlock(
-          top: 0,
-          child: TimeZoneField(value: _zone, onChanged: (z) => setState(() => _zone = z)),
+        GroupCard(
+          child: NavRow(
+            icon: PhosphorIconsRegular.globeHemisphereWest,
+            label: 'Time zone',
+            value: zoneLabel(_zone),
+            onTap: () async {
+              final zone = await showTimeZoneSheet(context, _zone);
+              if (zone != null && mounted) setState(() => _zone = zone);
+            },
+          ),
         ),
-        const SectionHeader('You'),
-        FormBlock(
-          top: 0,
+        LabeledField(
+          label: 'Your name',
+          error: need(_name, 'Add your name.'),
           child: TextField(
             controller: _name,
             textCapitalization: TextCapitalization.words,
-            decoration: InputDecoration(
-              labelText: 'Your name',
-              hintText: 'Sam',
-              errorText: need(_name, 'Add your name.'),
-            ),
+            style: t.body(c.ink),
+            decoration: const InputDecoration(hintText: 'Sam'),
             onChanged: (_) => setState(() {}),
           ),
         ),
-        const FormBlock(child: FieldLabel.quiet('Your picture')),
-        FormBlock(
-          top: 0,
-          child: PicturePicker(
-            name: _name.text.trim().isEmpty ? 'You' : _name.text.trim(),
-            picture: _picture,
-            color: _marker,
-            colorLabel: 'Your color',
-            onPicture: (p) => setState(() => _picture = p),
-            onColor: (m) => setState(() => _marker = m),
+        GroupCard(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: Sp.m),
+            child: Row(
+              children: [
+                _picture == Picture.initial
+                    ? DenAvatar.initial(name.isEmpty ? '?' : name, color: color, size: 56, semanticLabel: 'Your picture')
+                    : DenAvatar.picture(_picture, color: color, size: 56, semanticLabel: 'Your picture'),
+                const SizedBox(width: Sp.m),
+                Expanded(child: Text('Your picture and color', style: t.body(c.ink))),
+                const SizedBox(width: Sp.s),
+                OutlinedButton(onPressed: _pickPicture, child: const Text('Change')),
+              ],
+            ),
           ),
         ),
-        if (_adopting) ...[
-          InfoHeader(
-            'Your hub',
-            info: 'The hub printed a setup code when it started, like ABCD-EFGH. '
-                "Whoever set up ${_hub!.name} can find it in the hub's log.",
-          ),
-          FormBlock(
-            top: 0,
+        if (_adopting)
+          LabeledField(
+            label: 'Setup code for ${_hub!.name}, from the hub\'s log',
+            error: need(_code, "Add the hub's setup code."),
             child: TextField(
               controller: _code,
               textCapitalization: TextCapitalization.characters,
               autocorrect: false,
               enableSuggestions: false,
-              decoration: InputDecoration(
-                labelText: 'Setup code',
-                hintText: 'ABCD-EFGH',
-                errorText: need(_code, "Add the hub's setup code."),
-              ),
+              style: t.body(c.ink),
+              decoration: const InputDecoration(hintText: 'ABCD-EFGH'),
               onChanged: (_) {
                 if (_tried) setState(() {});
               },
             ),
           ),
-        ],
-        const SectionHeader('This device'),
-        FormBlock(
-          top: 0,
-          child: TextField(
-            controller: _device,
-            decoration: const InputDecoration(labelText: 'Device name'),
-            onChanged: (_) => _deviceNameEdited = true,
-          ),
-        ),
-        const FormBlock(child: FieldLabel.quiet('Kind')),
-        FormBlock(
-          top: 0,
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Segmented<DeviceKind>(
-                options: {for (final k in personalKinds) k: FamilyWords.deviceKind(k)},
-                value: kind,
-                onChanged: (k) => setState(() {
-                  _kind = k;
-                  _suggestDevice();
-                }),
-              ),
-            ),
-          ),
-        ),
+        if (_error != null) ErrorState(message: _error!, actionLabel: 'Try again', onAction: _create),
       ],
     );
   }
