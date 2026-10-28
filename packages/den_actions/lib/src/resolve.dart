@@ -1,15 +1,43 @@
 import 'package:collection/collection.dart';
 import 'package:den_core/den_core.dart';
 
-import '../times.dart';
+import 'times.dart';
 
-/// A tool call went wrong in a way the model can fix; [message] says how.
-class ToolError implements Exception {
-  /// Creates the error.
-  ToolError(this.message);
+/// An action was called in a way the caller can fix; [message] says how. [code] is the REST
+/// API's error code (docs/hub-api.md, "Errors").
+class ActionError implements Exception {
+  /// Input the caller can fix: `invalid_input`, naming [field] when one field is at fault.
+  ActionError(this.message, {this.code = 'invalid_input', this.field, this.details});
+
+  /// Nothing by that id or name: `not_found`.
+  ActionError.notFound(this.message, {String? type, String? id})
+      : code = 'not_found',
+        field = null,
+        details = type == null ? null : {'type': type, 'id': ?id};
+
+  /// The person may not do this: `permission_denied`.
+  ActionError.denied(this.message)
+      : code = 'permission_denied',
+        field = null,
+        details = null;
+
+  /// The record comes from elsewhere and changes there: `read_only`.
+  ActionError.readOnly(this.message)
+      : code = 'read_only',
+        field = null,
+        details = null;
 
   /// Written for people (and models).
   final String message;
+
+  /// Stable and machine-readable.
+  final String code;
+
+  /// The input at fault, when it's one.
+  final String? field;
+
+  /// More, for the REST API's `error.details`.
+  final Map<String, Object?>? details;
 
   @override
   String toString() => message;
@@ -18,7 +46,7 @@ class ToolError implements Exception {
 String _norm(String s) => s.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 
 /// Finds one of [items] by id or name: an exact id, an exact name (ignoring case), then a
-/// unique name that starts with or contains the query. Throws [ToolError] listing the choices.
+/// unique name that starts with or contains the query. Throws [ActionError] listing the choices.
 T pick<T>(
   String query,
   List<T> items, {
@@ -39,12 +67,12 @@ T pick<T>(
     if (found.length == 1) return found.single;
     if (found.length > 1) {
       final label = describe ?? (T i) => '${name(i)} (id ${id(i)})';
-      throw ToolError('More than one $kind matches "$query": ${found.map(label).join('; ')}. Use the id.');
+      throw ActionError('More than one $kind matches "$query": ${found.map(label).join('; ')}. Use the id.');
     }
   }
-  if (items.isEmpty) throw ToolError('There are no ${kind}s to choose from.');
+  if (items.isEmpty) throw ActionError('There are no ${kind}s to choose from.');
   final shown = items.take(40).map((i) => '${name(i)} (id ${id(i)})').join('; ');
-  throw ToolError('There\'s no $kind called "$query". Choices: $shown${items.length > 40 ? '; ...' : ''}.');
+  throw ActionError('There\'s no $kind called "$query". Choices: $shown${items.length > 40 ? '; ...' : ''}.');
 }
 
 /// Reads person names or ids against the family.
@@ -62,7 +90,7 @@ class People {
   String one(String query) {
     final q = _norm(query);
     if (q == 'me' || q == 'myself' || q == 'i') {
-      if (me == null) throw ToolError('This connection doesn\'t belong to one person, so "me" means nobody. Name someone.');
+      if (me == null) throw ActionError('This connection doesn\'t belong to one person, so "me" means nobody. Name someone.');
       return me!;
     }
     return pick(query, den.members, id: (m) => m.id, name: (m) => m.name, kind: 'person').id;
@@ -72,7 +100,7 @@ class People {
   List<String> many(Object? value, String field) {
     if (value == null) return const [];
     if (value is String) return [one(value)];
-    if (value is! List) throw ToolError('"$field" must be a list of names.');
+    if (value is! List) throw ActionError('"$field" must be a list of names.');
     return {for (final v in value) one('$v')}.toList();
   }
 
@@ -83,17 +111,17 @@ class People {
   String names(Iterable<String> ids) => joinNames([for (final id in ids) name(id)]);
 }
 
-/// Reads a tool's time input: ISO 8601 with an offset, ISO without (in [zone]), or a local date
-/// (midnight starting it). Throws [ToolError].
+/// Reads an action's time input: ISO 8601 with an offset, ISO without (in [zone]), or a local date
+/// (midnight starting it). Throws [ActionError].
 int toolInstant(Object? value, String zone, String field) {
   try {
     return parseInstant(value, zone, allowDate: true);
   } on FormatException {
-    throw ToolError('"$field" must be a time like 2026-10-20T15:00 or a date like 2026-10-20.');
+    throw ActionError('"$field" must be a time like 2026-10-20T15:00 or a date like 2026-10-20.');
   }
 }
 
-/// Reads a tool's date input (a local date, or the date of a time). Throws [ToolError].
+/// Reads an action's date input (a local date, or the date of a time). Throws [ActionError].
 String toolDate(Object? value, String zone, String field) {
   if (value is String) {
     final t = value.trim().toLowerCase();
@@ -105,6 +133,6 @@ String toolDate(Object? value, String zone, String field) {
   try {
     return parseDateLike(value, zone);
   } on FormatException {
-    throw ToolError('"$field" must be a date like 2026-10-20.');
+    throw ActionError('"$field" must be a date like 2026-10-20.');
   }
 }

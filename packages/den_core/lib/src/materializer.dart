@@ -5,12 +5,16 @@ import 'validity.dart';
 
 /// A valid change as it was applied: what each field held before, and how people would say it.
 class Applied {
-  const Applied(this.change, this.before, this.created, this.verb, this.title);
+  const Applied(this.change, this.before, this.created, this.verb, this.title, {this.absent = const {}});
   final Change change;
   final Map<String, Object?> before;
   final bool created;
   final String verb;
   final String title;
+
+  /// Fields of [change] (or `"<field>.<key>"` entries) the record had never had: [before] holds
+  /// null for them, which an undo can't always write back.
+  final Set<String> absent;
 }
 
 /// HLC order with the change id as the last tiebreak, so the order is total.
@@ -151,8 +155,8 @@ class Materializer {
       rejected[c.id] = rejection.message;
       return;
     }
-    final (entry, before, created) = store.apply(c);
-    applied.add(Applied(c, before, created, verbFor(c, before, created), titleOf(entry, store)));
+    final (entry, before, created, absent) = store.apply(c);
+    applied.add(Applied(c, before, created, verbFor(c, before, created), titleOf(entry, store), absent: absent));
   }
 }
 

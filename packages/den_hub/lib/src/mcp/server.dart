@@ -1,17 +1,12 @@
 import 'dart:async';
 
-import 'package:den_core/den_core.dart';
+import 'package:den_actions/den_actions.dart';
+import 'package:den_capture/den_capture.dart' show CaptureReader;
 
 import '../access.dart';
 import '../config.dart';
 import '../context.dart';
 import '../log.dart';
-import 'resolve.dart';
-import 'tool.dart';
-import 'tools_chores.dart';
-import 'tools_events.dart';
-import 'tools_lists.dart';
-import 'tools_read.dart';
 
 /// MCP protocol versions this server speaks, newest first.
 const List<String> mcpProtocolVersions = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
@@ -52,27 +47,47 @@ class McpSession {
   int lastUsed = DateTime.now().millisecondsSinceEpoch;
 }
 
-/// Den's MCP server: the tools from ARCHITECTURE.md "MCP" over JSON-RPC 2.0, independent of
-/// transport. Every call runs with the token's member acting and is checked with the token's
-/// scopes and den_core's `can()`.
+/// Den's MCP server: den_actions' specs over JSON-RPC 2.0, independent of transport. Every call
+/// runs with the token's member acting, through one [ActionRunner]: a tool is listed and
+/// callable only with the token's scope and when its member may use it (`can`), and the engine
+/// still decides each change.
 class McpServer {
-  /// Creates the server over [hub].
-  McpServer(this.hub) : tools = {for (final t in [...readTools(), ...eventTools(), ...choreTools(), ...listAndPointsTools()]) t.name: t};
+  /// Creates the server over [hub]; [reader] supplies what reads text for `add_from_text`.
+  McpServer(this.hub, {ActionRunner? runner, this.reader}) : runner = runner ?? standardRunner();
 
   /// Shared hub context.
   final HubContext hub;
 
-  /// Every tool by name.
-  final Map<String, Tool> tools;
+  /// Runs the tools, and keeps their receipts and confirmation tokens.
+  final ActionRunner runner;
+
+  /// The family's capture reader, when the hub has one.
+  final CaptureReader? Function()? reader;
 
   static const String _instructions =
       'Den is a family\'s shared calendar, chores with stars, lists and rewards. Start with get_today or '
       'list_members. People, lists, chores and events can be named instead of given by id; when a name '
-      'is ambiguous the error lists the choices. Times without an offset are in the family\'s time zone.';
+      'is ambiguous the error lists the choices. Times without an offset are in the family\'s time zone. '
+      'Every change returns a receipt; undo takes it back.';
 
   /// The version to answer an `initialize` asking for [requested].
   static String negotiate(Object? requested) =>
       requested is String && mcpProtocolVersions.contains(requested) ? requested : mcpProtocolVersions.first;
+
+  /// The context one call from [access] runs in.
+  ActionContext context(Access access) => ActionContext(
+        hub.den,
+        member: access.member,
+        scopes: access.scopes,
+        surface: Surface.mcp,
+        caller: access.connection.id,
+        readable: access.readable(hub.den),
+        reader: reader?.call(),
+        via: access.label,
+      );
+
+  /// The tools [access] may use, as `tools/list` shows them.
+  List<ActionSpec> tools(Access access) => runner.available(context(access));
 
   /// Handles one JSON-RPC message from [access]; returns the response, or null for
   /// notifications and responses.
@@ -96,7 +111,7 @@ class McpServer {
           return _result(id, const {});
         case 'tools/list':
           return _result(id, {
-            'tools': [for (final t in tools.values) if (access.has(t.scope)) t.toJson()],
+            'tools': [for (final t in tools(access)) t.toolJson()],
           });
         case 'tools/call':
           return _result(id, await callTool(access, p['name'], p['arguments']));
@@ -125,37 +140,29 @@ class McpServer {
         'instructions': _instructions,
       };
 
-  /// Runs tool [name] with [arguments] for [access].
+  /// Runs tool [name] with [arguments] for [access]. Old tool names still work.
   Future<Map<String, Object?>> callTool(Access access, Object? name, Object? arguments) async {
-    final tool = name is String ? tools[name] : null;
-    if (tool == null) throw _RpcException(RpcError.invalidParams, 'Den has no tool called "$name"');
+    final spec = name is String ? runner.spec(name) : null;
+    if (name is! String || spec == null) throw _RpcException(RpcError.invalidParams, 'Den has no tool called "$name"');
     if (arguments != null && arguments is! Map) throw _RpcException(RpcError.invalidParams, 'arguments must be an object');
-    final args = Args((arguments as Map?)?.cast<String, Object?>() ?? {});
-    ToolResult result;
-    if (!access.has(tool.scope)) {
-      result = ToolResult.error('This connection doesn\'t have the "${tool.scope.name}" scope, which ${tool.name} needs. '
-          'A parent can change that in the Den app: Settings → AI and automations.');
-    } else if (!hub.ready) {
-      result = ToolResult.error('This hub isn\'t part of a family yet.');
+    final args = (arguments as Map?)?.cast<String, Object?>() ?? <String, Object?>{};
+    final ActionResult result;
+    if (!hub.ready) {
+      result = runner.refusal(context(access), spec) ?? ActionResult.failed('This hub isn\'t part of a family yet.');
     } else {
-      try {
-        result = await hub.gate.run(access.member, access.label, () => tool.run(ToolContext(hub, access), args));
-      } on ToolError catch (e) {
-        result = ToolResult.error(e.message);
-      } on PermissionDenied catch (e) {
-        result = ToolResult.error('Den didn\'t allow that: ${e.message}.');
-      } on InvalidInput catch (e) {
-        result = ToolResult.error(e.message);
-      }
+      result = await hub.gate.run(access.member, access.label, () => runner.run(context(access), name, args));
     }
-    return {
-      'content': [
-        {'type': 'text', 'text': result.text},
-      ],
-      'structuredContent': result.data,
-      'isError': result.isError,
-    };
+    return toolResult(result);
   }
+
+  /// The `tools/call` result for [result]: one speakable text, and the same facts as JSON.
+  static Map<String, Object?> toolResult(ActionResult result) => {
+        'content': [
+          {'type': 'text', 'text': result.text},
+        ],
+        'structuredContent': result.structured,
+        'isError': result.isError,
+      };
 
   static Map<String, Object?> _result(Object? id, Map<String, Object?> result) => {'jsonrpc': '2.0', 'id': id, 'result': result};
 

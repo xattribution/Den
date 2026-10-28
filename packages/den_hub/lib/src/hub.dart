@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:den_actions/den_actions.dart' show standardRunner;
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
 import 'package:den_net/io.dart';
@@ -148,9 +149,11 @@ class DenHub {
     _setup = HubSetup(_ctx, onReady: _onReady);
     _links = LinkSlots(_ctx, _auth);
     _stream = EventStream(_ctx, _feed);
-    _api = RestApi(_ctx);
     _capture = HubCapture(_ctx, _auth);
-    _mcp = McpServer(_ctx);
+    // One runner for REST and MCP: a connection's receipts and confirmations work on either.
+    final actions = standardRunner();
+    _api = RestApi(_ctx, runner: actions, reader: _capture.reader);
+    _mcp = McpServer(_ctx, runner: actions, reader: _capture.reader);
     _mcpHttp = McpHttp(_ctx, _mcp);
     _oauth = OAuthServer(_ctx, _auth);
     _ics = IcsExport(_ctx);

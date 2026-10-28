@@ -82,24 +82,29 @@ void main() {
     final session = await initialize(admin);
     final (r, _) = await rpc(admin, {'id': 2, 'method': 'tools/list'}, session: session);
     final tools = (result(r)['tools'] as List).cast<Map<String, Object?>>();
+    // A token with no member acts at a parent's level except for the family's people and settings.
     expect(tools.map((t) => t['name']).toSet(), {
-      'get_today', 'get_week', 'search', 'get_history', 'list_members', 'list_events', 'create_event', 'update_event',
-      'delete_event', 'list_chores', 'create_chore', 'update_chore', 'complete_chore', 'check_step', 'swap_chore',
-      'list_lists', 'create_list', 'add_items', 'check_item', 'remove_item', 'clear_checked', 'get_points',
-      'adjust_points', 'create_goal', 'list_rewards', 'request_reward', 'decide_redemption',
+      'get_overview', 'get_family', 'list_events', 'list_chores', 'get_lists', 'get_points', 'search', 'get_history',
+      'create_event', 'update_event', 'delete_event', 'set_ride',
+      'create_chore', 'update_chore', 'delete_chore', 'complete_chore', 'swap_chore',
+      'create_list', 'update_list', 'delete_list', 'add_items', 'update_items', 'remove_items',
+      'adjust_points', 'save_goal', 'delete_goal', 'save_reward', 'request_reward', 'decide_reward_request',
+      'add_from_text', 'undo', 'save_category', 'delete_category',
     });
     Map<String, Object?> tool(String name) => tools.firstWhere((t) => t['name'] == name);
     expect((tool('create_event')['inputSchema'] as Map)['required'], ['title', 'start']);
     expect(tool('create_event')['annotations'], containsPair('readOnlyHint', false));
     expect(tool('delete_event')['annotations'], containsPair('destructiveHint', true));
-    expect(tool('get_today')['annotations'], containsPair('readOnlyHint', true));
+    expect(tool('get_overview')['annotations'], containsPair('readOnlyHint', true));
     expect(tool('complete_chore')['annotations'], containsPair('idempotentHint', true));
+    expect((tool('get_lists')['outputSchema'] as Map)['type'], 'object');
     final reader = await f.token(scopes: {Scope.read}, label: 'Reader tools');
     final s2 = await initialize(reader);
     final (r2, _) = await rpc(reader, {'id': 2, 'method': 'tools/list'}, session: s2);
     final names = (result(r2)['tools'] as List).map((t) => (t as Map)['name']);
-    expect(names, contains('get_today'));
+    expect(names, contains('get_overview'));
     expect(names, isNot(contains('add_items')));
+    expect(names, isNot(contains('get_today')), reason: 'older names work but aren\'t listed');
   });
 
   test('tools/call reads and writes by name, refuses what the member may not do', () async {

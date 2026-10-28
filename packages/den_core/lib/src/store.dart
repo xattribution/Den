@@ -44,6 +44,17 @@ class Entry {
     }
     return fields[name];
   }
+
+  /// Whether a field (or `"<field>.<key>"` entry) has been set at all, even to null. A swap to
+  /// anyone stores a null owner, so a null value and no value can mean different things.
+  bool has(String name) {
+    final dot = name.indexOf('.');
+    if (dot > 0 && !name.startsWith('_')) {
+      final head = fields[name.substring(0, dot)];
+      return head is Map && head.containsKey(name.substring(dot + 1));
+    }
+    return fields.containsKey(name);
+  }
 }
 
 /// Deep copy of a JSON value so state never aliases a change's maps and lists.
@@ -97,8 +108,9 @@ class RecordStore {
 
   Iterable<Entry> liveOfType(String type) => ofType(type).where((e) => !e.deleted);
 
-  /// Applies a valid change; returns the entry and the previous values of the fields it set.
-  (Entry, Map<String, Object?>, bool) apply(Change c) {
+  /// Applies a valid change; returns the entry, the previous values of the fields it set, whether
+  /// it created the record, and which of those fields had never been set before.
+  (Entry, Map<String, Object?>, bool, Set<String>) apply(Change c) {
     final key = _key(c.space, c.type, c.rid);
     var entry = _byKey[key];
     final creating = entry == null;
@@ -108,8 +120,10 @@ class RecordStore {
       ((_byType[c.type] ??= {})[c.rid] ??= []).add(entry);
     }
     final before = <String, Object?>{};
+    final absent = <String>{};
     for (final f in c.fields.entries) {
       final name = f.key;
+      if (!entry.has(name)) absent.add(name);
       before[name] = entry.valueOf(name);
       final dot = name.indexOf('.');
       if (dot > 0 && !name.startsWith('_')) {
@@ -128,7 +142,7 @@ class RecordStore {
     entry.updatedBy = c.actor;
     entry._rec = null;
     version++;
-    return (entry, before, creating);
+    return (entry, before, creating, absent);
   }
 
   void clear() {

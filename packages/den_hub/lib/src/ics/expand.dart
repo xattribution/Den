@@ -1,6 +1,6 @@
+import 'package:den_actions/times.dart';
 import 'package:den_core/den_core.dart';
 
-import '../times.dart';
 import 'parse.dart';
 
 /// One occurrence of a parsed calendar.
