@@ -142,10 +142,12 @@ void main() {
     final f = await HubFixture.start();
     addTearDown(f.stop);
     final soccer = f.phone.events.firstWhere((e) => e.title == 'Soccer practice');
-    final next = f.phone.occurrences(f.phone.dayStart(f.phone.todayDate()), f.phone.dayStart(f.phone.todayDate()) + 14 * 86400000)
-        .firstWhere((o) => o.event.id == soccer.id);
+    final today = f.phone.dayStart(f.phone.todayDate());
+    final practices = f.phone.occurrences(today, today + 28 * 86400000).where((o) => o.event.id == soccer.id).toList();
+    final next = practices.first;
     await f.phone.updateEvent(soccer.id, {'location': 'Field 9', 'start': next.start + 3600000}, scope: EditScope.one, occurrence: next.seriesStart);
-    final later = next.seriesStart + 7 * 86400000;
+    // The one after, from the series itself: a week later is an hour off when the clocks change.
+    final later = practices[1].seriesStart;
     await f.phone.deleteEvent(soccer.id, scope: EditScope.one, occurrence: later);
     await f.toHub();
     final token = await f.token();

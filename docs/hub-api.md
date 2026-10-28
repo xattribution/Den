@@ -1234,9 +1234,9 @@ expires, in `<data>/hub/invites.json` (its user only), so a restart doesn't lose
 
 ```json
 {
-  "code": "maple river candle tiger",
-  "words": ["maple", "river", "candle", "tiger"],
-  "link": "https://den.example.com/#/join/maple-river-candle-tiger",
+  "code": "maple river canoe tiger",
+  "words": ["maple", "river", "canoe", "tiger"],
+  "link": "https://den.example.com/#/join/maple-river-canoe-tiger",
   "expires": "2026-10-31T17:00:00.000Z",
   "expires_ms": 1793466000000,
   "member": "M5ZOE7QK4MXN3TB2"
@@ -1250,7 +1250,7 @@ family, or not naming this hub), `429 rate_limited` (50 invites waiting), `503 n
 
 ### `POST /api/v1/invites/redeem`
 
-Body `{"code": "maple river candle tiger"}`, typed any way people type it (case, commas, hyphens;
+Body `{"code": "maple river canoe tiger"}`, typed any way people type it (case, commas, hyphens;
 each word may be its first four letters). Answer `200`:
 
 ```json

@@ -54,7 +54,7 @@ class _JoinScreenState extends State<JoinScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _kind ??= guessDeviceKind(context);
+    _kind ??= widget.web?.kind ?? guessDeviceKind(context);
   }
 
   @override
@@ -217,7 +217,7 @@ class _JoinScreenState extends State<JoinScreen> {
                 controller: _words,
                 autocorrect: false,
                 enableSuggestions: false,
-                decoration: const InputDecoration(labelText: 'The four words', hintText: 'maple river candle tiger'),
+                decoration: const InputDecoration(labelText: 'The four words', hintText: 'maple river canoe tiger'),
                 onSubmitted: (_) => _sendWords(),
               ),
             ),
@@ -289,7 +289,7 @@ class _JoinScreenState extends State<JoinScreen> {
 }
 
 /// An invite as someone typed or pasted it: the four words, and the hub's address when they
-/// pasted the whole link (`https://den.example.com/#/join/maple-river-candle-tiger`).
+/// pasted the whole link (`https://den.example.com/#/join/maple-river-canoe-tiger`).
 ({List<String> words, String? hub}) inviteFrom(String text) {
   var rest = text.trim();
   String? hub;

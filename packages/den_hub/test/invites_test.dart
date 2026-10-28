@@ -59,7 +59,7 @@ void main() {
 
   test('wrong words, too many of them, and a kid inviting are refused', () async {
     expect((await f.call('POST', '/api/v1/invites/redeem', body: {'code': 'not four words'})).status, 400);
-    final wrong = await f.call('POST', '/api/v1/invites/redeem', body: {'code': 'maple river candle tiger'});
+    final wrong = await f.call('POST', '/api/v1/invites/redeem', body: {'code': 'maple river canoe tiger'});
     expect(wrong.status, 404);
     expect(wrong.error['code'], 'not_found');
 
@@ -84,9 +84,9 @@ void main() {
     expect(tooLong.status, 400);
 
     for (var i = 0; i < 9; i++) {
-      await f.call('POST', '/api/v1/invites/redeem', body: {'code': 'maple river candle tiger'});
+      await f.call('POST', '/api/v1/invites/redeem', body: {'code': 'maple river canoe tiger'});
     }
-    final locked = await f.call('POST', '/api/v1/invites/redeem', body: {'code': 'maple river candle tiger'});
+    final locked = await f.call('POST', '/api/v1/invites/redeem', body: {'code': 'maple river canoe tiger'});
     expect(locked.status, 429);
   });
 

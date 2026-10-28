@@ -61,8 +61,22 @@ ECPrivateKey _newPrivateKey() {
 /// The uncompressed public point (65 bytes, `0x04 | x | y`) of [key].
 Uint8List _publicOf(ECPrivateKey key) => (_p256.G * key.d)!.getEncoded(false);
 
+/// P-256's field prime, 2^256 - 2^224 + 2^192 + 2^96 - 1.
+final BigInt _fieldPrime =
+    (BigInt.one << 256) - (BigInt.one << 224) + (BigInt.one << 192) + (BigInt.one << 96) - BigInt.one;
+
+/// The point [encoded] (uncompressed), checked to lie on P-256: pointycastle decodes any two
+/// numbers, and agreeing a secret with a point off the curve gives away bits of the key.
 ECPoint _point(List<int> encoded) {
   if (encoded.length != 65 || encoded[0] != 4) throw const FormatException('not an uncompressed P-256 point');
+  final x = _unsigned(encoded.sublist(1, 33));
+  final y = _unsigned(encoded.sublist(33));
+  final p = _fieldPrime;
+  final a = _p256.curve.a!.toBigInteger()!;
+  final b = _p256.curve.b!.toBigInteger()!;
+  if (x >= p || y >= p || (y * y - (x * x * x + a * x + b)) % p != BigInt.zero) {
+    throw const FormatException('not a P-256 point');
+  }
   final point = _p256.curve.decodePoint(encoded);
   if (point == null || point.isInfinity) throw const FormatException('not a P-256 point');
   return point;

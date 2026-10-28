@@ -47,7 +47,7 @@ const iPhoneHomeScreen = WebAppInfo(
 );
 
 void main() {
-  testWidgets('A fresh hub: the browser starts the family or joins one', (tester) async {
+  testWidgets('A fresh hub: the browser starts the family, since there is none to join yet', (tester) async {
     final state = await empty(tester);
     await shootWith(
       tester,
@@ -56,7 +56,7 @@ void main() {
       state: state,
     );
     expect(find.text('Start a family'), findsOneWidget);
-    expect(find.text('Join your family'), findsOneWidget);
+    expect(find.text('Join your family'), findsNothing, reason: 'a hub waiting for its setup code holds no family');
     expect(find.text("Link with a parent's phone"), findsNothing);
   });
 
@@ -117,7 +117,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('maple river candle tiger'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'maple river candle tiger'), findsOneWidget);
     expect(find.text('Hub address (optional)'), findsNothing, reason: 'a browser joins the hub that served it');
     await tester.tap(find.text('Join the family'));
     await tester.pumpAndSettle();
@@ -135,7 +135,7 @@ void main() {
     router.go('/join/maple-river-candle-tiger');
     await tester.pumpAndSettle();
     expect(find.text('Join your family'), findsWidgets);
-    expect(find.text('maple river candle tiger'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'maple river candle tiger'), findsOneWidget);
   });
 
   testWidgets('Safari on an iPhone keeps the invite words at hand while Den goes on the Home Screen', (tester) async {
