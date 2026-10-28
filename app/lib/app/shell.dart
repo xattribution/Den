@@ -1,87 +1,128 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../design/layout.dart';
+import '../design/motion.dart';
+import '../design/sheet.dart';
 import '../design/tokens.dart';
 import '../design/widgets.dart';
-import 'app_state.dart';
 import '../features/add/add.dart';
+import 'app_state.dart';
 
-class _Destination {
-  const _Destination(this.label, this.icon, this.selectedIcon);
-  final String label;
-  final IconData icon;
-  final IconData selectedIcon;
-}
-
-const _destinations = [
-  _Destination('Today', PhosphorIconsRegular.sun, PhosphorIconsFill.sun),
-  _Destination('Calendar', PhosphorIconsRegular.calendarBlank, PhosphorIconsFill.calendarBlank),
-  _Destination('Chores', PhosphorIconsRegular.checkSquare, PhosphorIconsFill.checkSquare),
-  _Destination('Lists', PhosphorIconsRegular.shoppingCart, PhosphorIconsFill.shoppingCart),
-];
-
-/// The adult app's frame: four daily tabs (bottom bar on phones, a rail on wider screens), a top
-/// bar with Add and the person menu. Points, Family, History and Settings live in the menu.
+/// The adult app's frame. On a phone: the screen over a tab bar with Today, Calendar, Add in the
+/// middle, Chores and Lists. From 700 pt: the 248 pt sidebar with the family's name, Add, the
+/// places and Family, and the person at the bottom. Family, points, history and settings open
+/// from the person: their face on Today (phone) or at the foot of the sidebar.
+///
+/// Keyboard: ⌘N adds, ⌘1 to ⌘4 go to the places, ⌘F searches.
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.navigationShell});
 
   final StatefulNavigationShell navigationShell;
 
+  /// A tap on the current place goes back to its first page.
   void _go(int index) => navigationShell.goBranch(index, initialLocation: index == navigationShell.currentIndex);
 
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
-    final wide = MediaQuery.sizeOf(context).width >= 840;
-    final body = Column(
-      children: [
-        const DenTopBar(),
-        Expanded(child: navigationShell),
-      ],
-    );
+    final app = context.watch(const {});
+    final index = navigationShell.currentIndex;
+    final places = [
+      NavPlace(
+        label: 'Today',
+        icon: PhosphorIconsRegular.house,
+        selectedIcon: PhosphorIconsBold.house,
+        selected: index == 0,
+        onTap: () => _go(0),
+      ),
+      NavPlace(
+        label: 'Calendar',
+        icon: PhosphorIconsRegular.calendarBlank,
+        selectedIcon: PhosphorIconsBold.calendarBlank,
+        selected: index == 1,
+        onTap: () => _go(1),
+      ),
+      NavPlace(
+        label: 'Chores',
+        icon: PhosphorIconsRegular.checkCircle,
+        selectedIcon: PhosphorIconsBold.checkCircle,
+        selected: index == 2,
+        onTap: () => _go(2),
+      ),
+      NavPlace(
+        label: 'Lists',
+        icon: PhosphorIconsRegular.listBullets,
+        selectedIcon: PhosphorIconsBold.listBullets,
+        selected: index == 3,
+        onTap: () => _go(3),
+      ),
+    ];
+    final shortcuts = <ShortcutActivator, VoidCallback>{
+      const SingleActivator(LogicalKeyboardKey.keyN, meta: true): () => showAddSheet(context),
+      const SingleActivator(LogicalKeyboardKey.keyN, control: true): () => showAddSheet(context),
+      const SingleActivator(LogicalKeyboardKey.keyF, meta: true): () => context.push('/search'),
+      const SingleActivator(LogicalKeyboardKey.keyF, control: true): () => context.push('/search'),
+      for (final (i, key) in [LogicalKeyboardKey.digit1, LogicalKeyboardKey.digit2, LogicalKeyboardKey.digit3, LogicalKeyboardKey.digit4].indexed) ...{
+        SingleActivator(key, meta: true): () => _go(i),
+        SingleActivator(key, control: true): () => _go(i),
+      },
+    };
 
-    if (!wide) {
-      return Scaffold(
-        body: SafeArea(bottom: false, child: body),
-        bottomNavigationBar: DecoratedBox(
-          decoration: BoxDecoration(border: Border(top: BorderSide(color: c.rule))),
-          child: NavigationBar(
-            selectedIndex: navigationShell.currentIndex,
-            onDestinationSelected: _go,
-            destinations: [
-              for (final d in _destinations)
-                NavigationDestination(icon: Icon(d.icon), selectedIcon: Icon(d.selectedIcon), label: d.label),
+    final Widget frame;
+    if (DenLayout.of(context).isCompact) {
+      frame = Scaffold(
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              // Today carries the person in its own header; the other places keep a slim bar
+              // with it until their screens are redone.
+              if (index != 0) const DenTopBar(),
+              Expanded(child: navigationShell),
             ],
           ),
         ),
+        bottomNavigationBar: DenTabBar(places: places, onAdd: () => showAddSheet(context)),
       );
-    }
-
-    return Scaffold(
-      body: SafeArea(
-        child: Row(
+    } else {
+      final me = app.me;
+      frame = Scaffold(
+        body: Row(
           children: [
-            NavigationRail(
-              selectedIndex: navigationShell.currentIndex,
-              onDestinationSelected: _go,
-              labelType: NavigationRailLabelType.all,
-              destinations: [
-                for (final d in _destinations)
-                  NavigationRailDestination(icon: Icon(d.icon), selectedIcon: Icon(d.selectedIcon), label: Text(d.label)),
+            DenSidebar(
+              title: app.den.family?.name ?? 'Den',
+              places: [
+                ...places,
+                NavPlace(
+                  label: 'Family',
+                  icon: PhosphorIconsRegular.usersThree,
+                  selectedIcon: PhosphorIconsBold.usersThree,
+                  onTap: () => context.push('/family'),
+                ),
               ],
+              onAdd: () => showAddSheet(context),
+              footer: me == null
+                  ? null
+                  : NavRow(
+                      leading: DenAvatar(me, size: 40),
+                      label: me.name,
+                      chevron: false,
+                      onTap: () => showPersonMenu(context),
+                    ),
             ),
-            VerticalDivider(width: 1, color: c.rule),
-            Expanded(child: body),
+            Expanded(child: SafeArea(left: false, child: navigationShell)),
           ],
         ),
-      ),
-    );
+      );
+    }
+    return CallbackShortcuts(bindings: shortcuts, child: Focus(autofocus: true, child: frame));
   }
 }
 
-/// Family name on the left; Add and the person menu on the right.
+/// The phone's slim bar on the places Today doesn't head: the family's name and the person.
 class DenTopBar extends StatelessWidget {
   const DenTopBar({super.key});
 
@@ -91,52 +132,95 @@ class DenTopBar extends StatelessWidget {
     final c = context.colors;
     final me = app.me;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.s, Sp.s),
+      padding: const EdgeInsets.fromLTRB(DenLayout.gutter + DenLayout.headingInset, Sp.xs, Sp.s, Sp.xs),
       child: Row(
         children: [
           Expanded(
-            child: Text(app.den.family?.name ?? 'Den', style: context.type.bodyStrong(c.ink2), overflow: TextOverflow.ellipsis),
+            child: Text(app.den.family?.name ?? 'Den', style: context.text.meta(c.ink2).bold, overflow: TextOverflow.ellipsis),
           ),
-          FilledButton.icon(
-            onPressed: () => showAddSheet(context),
-            icon: const Icon(PhosphorIconsBold.plus, size: 18),
-            label: const Text('Add'),
-          ),
-          const SizedBox(width: Sp.s),
-          PopupMenuButton<String>(
-            tooltip: 'Menu',
-            onSelected: (route) => context.push(route),
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: '/points', child: Text('Points and rewards')),
-              const PopupMenuItem(value: '/family', child: Text('Family and devices')),
-              const PopupMenuItem(value: '/history', child: Text('History')),
-              const PopupMenuItem(value: '/settings', child: Text('Settings')),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.all(Sp.s),
-              child: me == null
-                  ? Icon(PhosphorIconsRegular.userCircle, size: 32, color: c.ink2)
-                  : DenAvatar(me, size: 32),
-            ),
-          ),
+          PersonButton(member: me, size: 36),
         ],
       ),
     );
   }
 }
 
-/// The one way to add anything: type, snap or say it and let Den work out what it is, or pick
-/// one kind of thing to add by hand, by permission.
-Future<void> showAddSheet(BuildContext context) {
+/// The person using the device as a round face; it opens their menu.
+class PersonButton extends StatelessWidget {
+  const PersonButton({super.key, required this.member, this.size = 44});
+
+  final Member? member;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Tooltip(
+      message: 'Family and settings',
+      excludeFromSemantics: true,
+      child: DenPressable(
+        onTap: () => showPersonMenu(context),
+        shape: const CircleBorder(),
+        semanticLabel: 'Family and settings',
+        child: SizedBox.square(
+          dimension: size < Targets.adult ? Targets.adult : size,
+          child: Center(
+            child: member == null
+                ? Icon(PhosphorIconsRegular.userCircle, size: size, color: c.ink2)
+                : DenAvatar(member!, size: size),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// What opens from the person: Family, Points and rewards (when stars are on), History and
+/// Settings.
+Future<void> showPersonMenu(BuildContext context) {
   final app = DenScope.read(context);
-  final today = app.today;
+  final router = GoRouter.of(context);
   final pointsOn = app.den.family?.pointsEnabled ?? true;
-  final choices = <(String, IconData, String, bool)>[
-    ('Event', PhosphorIconsRegular.calendarPlus, '/event/new?date=$today', app.allows(DenAction.editEvents)),
-    ('Chore', PhosphorIconsRegular.checkSquare, '/chore/new', app.allows(DenAction.editChores)),
-    ('Grocery item', PhosphorIconsRegular.shoppingCart, '/lists/groceries/add', app.canChangeItems),
-    ('List', PhosphorIconsRegular.listPlus, '/lists/new', app.allows(DenAction.editLists)),
-    ('Points', PhosphorIconsRegular.star, '/points/adjust', pointsOn && app.allows(DenAction.managePoints)),
-  ].where((choice) => choice.$4).toList();
-  return showCaptureSheet(context, [for (final c in choices) (c.$1, c.$2, c.$3)]);
+  final me = app.me;
+  void open(BuildContext sheet, String route) {
+    Navigator.of(sheet).pop();
+    router.push(route);
+  }
+
+  return showDenSheet<void>(
+    context,
+    builder: (sheet) {
+      final c = sheet.colors;
+      final rows = [
+        NavRow(icon: PhosphorIconsRegular.usersThree, label: 'Family and devices', onTap: () => open(sheet, '/family')),
+        if (pointsOn) NavRow(icon: PhosphorIconsRegular.star, label: 'Points and rewards', onTap: () => open(sheet, '/points')),
+        NavRow(icon: PhosphorIconsRegular.clockCounterClockwise, label: 'History', onTap: () => open(sheet, '/history')),
+        NavRow(icon: PhosphorIconsRegular.gearSix, label: 'Settings', onTap: () => open(sheet, '/settings')),
+      ];
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, Sp.s, DenLayout.headingInset, Sp.l),
+              child: Row(
+                children: [
+                  if (me != null) ...[DenAvatar(me, size: 44), const SizedBox(width: Sp.m)],
+                  Expanded(
+                    child: Semantics(
+                      header: true,
+                      child: Text(me?.name ?? app.den.family?.name ?? 'Den', style: sheet.text.sheetTitle(c.ink)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            GroupCard(child: Column(children: ruled(rows, indent: 36))),
+          ],
+        ),
+      );
+    },
+  );
 }

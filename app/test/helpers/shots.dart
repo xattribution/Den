@@ -106,3 +106,16 @@ Future<void> shootRoute(
   await tester.pumpAndSettle();
   await expectLater(find.byType(MaterialApp), matchesGoldenFile('../goldens/$name.png'));
 }
+
+/// Text that reads [words], whatever spaces the line-breaking helpers made unbreakable
+/// ("3:30 PM", "same time").
+Finder findWords(String words) => find.byWidgetPredicate(
+      (w) => w is Text && (w.data ?? w.textSpan?.toPlainText())?.replaceAll(RegExp('[\u00a0\u202f]'), ' ') == words,
+      description: 'text "$words"',
+    );
+
+/// Sets the system text size to [scale] (2.0 is 200 %) for the rest of the test.
+void withTextScale(WidgetTester tester, double scale) {
+  tester.platformDispatcher.textScaleFactorTestValue = scale;
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+}

@@ -11,6 +11,7 @@ import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
 import 'package:den_app/features/add/screens/capture_screen.dart';
 import 'package:den_app/features/advanced/screens/connections_screen.dart';
+import 'package:den_app/features/lists/lists.dart';
 import 'package:den_app/app/app_state.dart';
 import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart';
@@ -97,6 +98,31 @@ Future<void> settle(WidgetTester tester, CaptureController c) async {
 Future<void> setReview(WidgetTester tester, AppState state, bool review) =>
     write(tester, () => state.den.updateFamily({'capture': review ? 'review' : 'direct'}));
 
+/// Opens Add from the tab bar.
+Future<void> openAdd(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Add'));
+  await tester.pumpAndSettle();
+}
+
+/// Types into Add and waits for Den to read it.
+Future<void> typeInAdd(WidgetTester tester, String words) async {
+  await tester.enterText(find.byType(TextField).first, words);
+  await tester.pump(const Duration(milliseconds: 300));
+  await tester.pumpAndSettle();
+}
+
+/// Taps on the real clock, so the engine can sign what the tap writes, then lets the sheet
+/// catch up.
+Future<void> tapReal(WidgetTester tester, Finder finder) async {
+  await tester.runAsync(() async {
+    await tester.tap(finder);
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+  });
+  await tester.pumpAndSettle();
+  await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -104,12 +130,15 @@ void main() {
   });
 
   group('The Add sheet', () {
-    testWidgets('type, snap or say, over the one-thing choices', (tester) async {
+    testWidgets('type or say anything, over the one-thing choices', (tester) async {
       final state = await demoIn(tester);
-      await shootAt(tester, 'capture_add_sheet_phone', state: state, location: '/today', act: () => tester.tap(find.text('Add')));
+      await shootAt(tester, 'capture_add_sheet_phone', state: state, location: '/today', act: () => openAdd(tester));
+      expect(find.text('Type or say anything'), findsOneWidget);
+      expect(find.text('Event'), findsOneWidget);
+      expect(find.text('Grocery item'), findsOneWidget);
     });
 
-    testWidgets('night', (tester) async {
+    testWidgets('night: what Den found, as you type, with When, Who and Repeats', (tester) async {
       final state = await demoIn(tester);
       await shootAt(
         tester,
@@ -118,36 +147,57 @@ void main() {
         location: '/today',
         night: true,
         act: () async {
-          await tester.tap(find.text('Add'));
-          await tester.pumpAndSettle();
-          await tester.enterText(find.byType(TextField), 'Leo has soccer every Wednesday at 5');
+          await openAdd(tester);
+          await typeInAdd(tester, 'Leo has soccer every Wednesday at 5');
+          expect(find.text('Den found'), findsOneWidget);
+          expect(find.text('Add to calendar'), findsOneWidget);
+          expect(find.bySemanticsLabel(RegExp('^Repeats')), findsOneWidget);
         },
       );
     });
 
-    testWidgets('what was said fills the field, and sending reads it', (tester) async {
+    testWidgets('what was said fills the field, and Den reads it there', (tester) async {
       final state = await demoIn(tester);
-      await setReview(tester, state, true);
       await shootAt(
         tester,
-        'capture_said_review_phone',
+        'capture_said_phone',
         state: state,
         location: '/today',
         act: () async {
-          await tester.tap(find.text('Add'));
-          await tester.pumpAndSettle();
-          await tester.tap(find.byTooltip('Say it'));
+          await openAdd(tester);
+          await tester.tap(find.text('Say it'));
+          await tester.pump(const Duration(milliseconds: 300));
           await tester.pumpAndSettle();
           expect(find.text('soccer every Wednesday at 5 for Leo'), findsOneWidget);
-          await tester.tap(find.byTooltip('Read it'));
-          await tester.pumpAndSettle();
-          expect(find.text('From what you said'), findsOneWidget);
           expect(find.text('Soccer'), findsOneWidget);
-          expect(find.text('Add 1 thing'), findsOneWidget);
+          expect(find.text('Add to calendar'), findsOneWidget);
         },
       );
     });
 
+    testWidgets('One thing, "lemons", goes straight to the groceries, and Undo takes it back in place', (tester) async {
+      final state = await demoIn(tester);
+      final groceries = groceriesList(state.den)!.list.id;
+      bool hasLemons() => state.den.list(groceries)!.items.any((i) => i.text.toLowerCase() == 'lemons' && !i.checked);
+      expect(hasLemons(), isFalse);
+      await shootAt(
+        tester,
+        'capture_added_item_phone',
+        state: state,
+        location: '/today',
+        act: () async {
+          await openAdd(tester);
+          await typeInAdd(tester, 'lemons');
+          expect(find.text('Add to Groceries'), findsOneWidget);
+          await tapReal(tester, find.text('Add to Groceries'));
+          expect(hasLemons(), isTrue);
+          expect(findWords('Added Lemons to Groceries'), findsOneWidget);
+        },
+      );
+      await tapReal(tester, find.text('Undo'));
+      expect(hasLemons(), isFalse);
+      expect(find.widgetWithText(TextField, 'lemons'), findsOneWidget, reason: 'the words come back to change');
+    });
   });
 
   group('Review', () {

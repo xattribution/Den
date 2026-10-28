@@ -75,7 +75,7 @@ String choreWhen(FamilyReads app, DraftChore c) {
     else
       ?describeRrule(c.rrule, f, startDate: c.date, weekStart: app.den.family?.weekStart ?? 0),
     if (c.dueTime != null) 'by ${f.clock(f.parseHhmm(c.dueTime)!)}',
-    if (c.points > 0) '${c.points} ${c.points == 1 ? 'star' : 'stars'}',
+    if (c.points > 0 && (app.den.family?.pointsEnabled ?? true)) '${c.points} ${c.points == 1 ? 'star' : 'stars'}',
   ].join(' · ');
 }
 
