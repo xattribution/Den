@@ -57,7 +57,7 @@ void main() {
     testWidgets('Today, phone$n', (tester) => shootDesign(tester, 'today_phone$n', const TodaySample(), night: night));
 
     testWidgets('type and controls, phone$n', (tester) {
-      return shootDesign(tester, 'controls_phone$n', const ControlsSample(), size: const Size(390, 1640), night: night);
+      return shootDesign(tester, 'controls_phone$n', const ControlsSample(), size: const Size(390, 1360), night: night);
     });
 
     testWidgets('picture sheet, phone$n', (tester) {
@@ -65,7 +65,7 @@ void main() {
     });
 
     testWidgets('picture pack, iPad$n', (tester) {
-      return shootDesign(tester, 'pictures_pad$n', const PackSample(), size: const Size(1180, 1600), night: night);
+      return shootDesign(tester, 'pictures_pad$n', const PackSample(), size: const Size(1180, 1660), night: night);
     });
   }
 
