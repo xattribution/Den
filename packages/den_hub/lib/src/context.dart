@@ -10,6 +10,7 @@ import 'edge.dart';
 import 'gate.dart';
 import 'http_util.dart';
 import 'log.dart';
+import 'net_guard.dart';
 import 'state.dart';
 
 /// What every part of the hub shares.
@@ -23,7 +24,8 @@ class HubContext {
     required this.state,
     required this.node,
     required this.http,
-  });
+    http_client.Client? fetch,
+  }) : fetch = fetch ?? NetGuard(resolve: config.resolver, allow: config.fetchAllow).client();
 
   /// The hub's engine.
   final Den den;
@@ -43,8 +45,12 @@ class HubContext {
   /// Sync for [den].
   final SyncNode node;
 
-  /// Outgoing HTTP (feeds, notifiers).
+  /// Outgoing HTTP to what the operator configured (notifiers, readers, model providers).
   final http_client.Client http;
+
+  /// Outgoing HTTP to addresses callers gave the hub (calendar feeds, OAuth client metadata):
+  /// [NetGuard]'s client, which refuses the hub's own machine and network.
+  final http_client.Client fetch;
 
   /// In a family, approved, log loaded: the API answers.
   bool get ready => den.hasFamily && den.isApproved;

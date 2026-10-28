@@ -47,6 +47,8 @@ ArgParser cliParser() {
     ..addOption('public-url', help: 'Public base URL for OAuth and link codes (env DEN_PUBLIC_URL)')
     ..addOption('trusted-proxies',
         help: 'Reverse proxies whose X-Forwarded-* headers to believe, addresses or CIDRs (env DEN_TRUSTED_PROXIES)')
+    ..addOption('fetch-allow',
+        help: 'Private networks calendar feeds may be fetched from, addresses or CIDRs (env DEN_FETCH_ALLOW)')
     ..addOption('csp', help: 'Replace the web app\'s Content-Security-Policy (env DEN_CSP)')
     ..addOption('log-level', help: 'debug, info, warn or error (env DEN_LOG)')
     ..addFlag('public',
@@ -156,6 +158,12 @@ Future<int> serve(ArgResults a, DataDir data, int port, CliIo io) async {
   } on FormatException catch (e) {
     throw CliUsage('DEN_TRUSTED_PROXIES: ${e.message}');
   }
+  final List<IpNetwork> fetchAllow;
+  try {
+    fetchAllow = IpNetwork.parseList(opt('fetch-allow', 'DEN_FETCH_ALLOW') ?? '');
+  } on FormatException catch (e) {
+    throw CliUsage('DEN_FETCH_ALLOW: ${e.message}');
+  }
   final public = opt('public-url', 'DEN_PUBLIC_URL');
   final publicUrl = public == null || public.isEmpty ? null : Uri.parse(public);
   final exposed = a['public'] as bool? ?? _envFlag(env['DEN_PUBLIC']);
@@ -178,6 +186,7 @@ Future<int> serve(ArgResults a, DataDir data, int port, CliIo io) async {
     publicUrl: publicUrl,
     allowedOrigins: [...?env['DEN_ALLOWED_ORIGINS']?.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty)],
     trustedProxies: proxies,
+    fetchAllow: fetchAllow,
     public: exposed,
     contentSecurityPolicy: opt('csp', 'DEN_CSP'),
     mailbox: a['mailbox'] as bool? ?? _envFlag(env['DEN_MAILBOX']) ?? false,

@@ -444,6 +444,7 @@ class DenHub {
     await _server?.close(force: true);
     await _ctx.state.flush();
     if (_ownsHttp) _ctx.http.close();
+    _ctx.fetch.close();
     _ctx.log.info('Den hub stopped');
   }
 }

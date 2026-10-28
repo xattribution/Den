@@ -13,6 +13,7 @@ export 'src/config.dart';
 export 'src/edge.dart' show IpNetwork;
 export 'src/hub.dart';
 export 'src/log.dart';
+export 'src/net_guard.dart' show BlockedAddress, HostResolver, NetGuard, isPublicAddress, systemResolver;
 export 'src/setup.dart' show SetupStage, setupAlphabet, setupTries, restrictToOwner, linkOpenFile;
 export 'src/mcp/server.dart' show McpServer, mcpProtocolVersions;
 export 'src/mcp/stdio.dart' show serveMcpStdio;
