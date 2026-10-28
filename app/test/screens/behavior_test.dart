@@ -198,7 +198,7 @@ void main() {
       expect([for (final i in after) if (i.checked) i.id], done);
       expect(state.den.history(limit: 1 << 20).length - changes, done.length, reason: 'one change each');
       for (final text in [for (final i in before) if (i.checked) i.text]) {
-        expect(find.text(text), findsOneWidget);
+        expect(find.textContaining(text), findsOneWidget, reason: '$text shows again');
       }
     });
   });

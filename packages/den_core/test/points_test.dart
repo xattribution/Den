@@ -148,6 +148,7 @@ void main() {
       await den.decideRedemption(request, approve: false);
       expect(den.points().totals[leo], 40);
       expect(den.history().first.verb, 'declined');
+      await sync(den, tablet);
       final second = await tablet.requestReward(money);
       await sync(tablet, den);
       await den.decideRedemption(second, approve: true);
