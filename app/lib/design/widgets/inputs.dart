@@ -8,12 +8,15 @@ import 'buttons.dart';
 /// round ink Add button. Return or the button adds; the field clears and keeps the keyboard up
 /// for the next one. [onAdd] returns whether it worked (the words stay when it didn't).
 class InlineAdd extends StatefulWidget {
-  const InlineAdd({super.key, required this.hint, required this.onAdd, this.enabled = true});
+  const InlineAdd({super.key, required this.hint, required this.onAdd, this.enabled = true, this.autofocus = false});
 
   /// "Add to groceries": the field's placeholder and the button's label.
   final String hint;
   final Future<bool> Function(String text) onAdd;
   final bool enabled;
+
+  /// Focuses the field when it first shows (a page opened to add something).
+  final bool autofocus;
 
   @override
   State<InlineAdd> createState() => _InlineAddState();
@@ -55,6 +58,7 @@ class _InlineAddState extends State<InlineAdd> {
             controller: _text,
             focusNode: _focus,
             enabled: widget.enabled,
+            autofocus: widget.autofocus,
             textInputAction: TextInputAction.done,
             textCapitalization: TextCapitalization.sentences,
             onSubmitted: (_) => _add(),
