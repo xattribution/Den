@@ -56,7 +56,10 @@ class SectionCount extends StatelessWidget {
   Widget build(BuildContext context) => Text(text, style: context.text.meta(context.colors.ink2));
 }
 
-/// A section heading's link: bold meta in ink2 ("Week", "14 items"), 44 tall to tap.
+/// A section heading's link: bold meta in ink2 ("Week", "14 items"). It stays the heading's
+/// height, so the card keeps its 10 pt under the heading; its tap area, 28 tall and running
+/// 16 pt before the words, clears WCAG 2.5.8's 24 pt, and the same place is always a tap away
+/// in the tab bar or the sidebar too.
 class SectionLink extends StatelessWidget {
   const SectionLink(this.text, {super.key, required this.onTap, this.semanticLabel});
 
@@ -73,10 +76,13 @@ class SectionLink extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(Radii.pill),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: Targets.adult),
-            child: Center(
-              widthFactor: 1,
-              child: Text(text, style: context.text.meta(context.colors.ink2).bold),
+            constraints: const BoxConstraints(minHeight: 28),
+            child: Padding(
+              padding: const EdgeInsetsDirectional.only(start: 16),
+              child: Center(
+                widthFactor: 1,
+                child: Text(text, style: context.text.meta(context.colors.ink2).bold),
+              ),
             ),
           ),
         ),
@@ -113,7 +119,7 @@ class RowRule extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
         padding: EdgeInsetsDirectional.only(start: indent),
-        child: SizedBox(height: 1, child: ColoredBox(color: context.colors.line)),
+        child: SizedBox(height: 1, width: double.infinity, child: ColoredBox(color: context.colors.line)),
       );
 }
 

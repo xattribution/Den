@@ -41,7 +41,7 @@ class DenTabBar extends StatelessWidget {
           child: Row(
             children: [
               for (final p in places.take(half)) Expanded(child: _Tab(p)),
-              Expanded(child: Center(child: RoundButton(icon: PhosphorIconsBold.plus, label: addLabel, onTap: onAdd))),
+              Expanded(child: Center(heightFactor: 1, child: RoundButton(icon: PhosphorIconsBold.plus, label: addLabel, onTap: onAdd))),
               for (final p in places.skip(half)) Expanded(child: _Tab(p)),
             ],
           ),

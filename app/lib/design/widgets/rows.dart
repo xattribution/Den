@@ -33,7 +33,7 @@ class ActionRow extends StatelessWidget {
   final VoidCallback? onTap;
 
   /// Forces the action under the words (true) or beside them (false). Null decides by room:
-  /// beside from 480 pt wide at up to 135 % text.
+  /// beside from 360 pt wide (a phone's card is 326; an iPad column 390 and up) at up to 135 % text.
   final bool? actionBelow;
 
   @override
@@ -43,7 +43,7 @@ class ActionRow extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final scale = MediaQuery.textScalerOf(context).scale(1);
-        final below = actionBelow ?? (constraints.maxWidth < 480 || scale > 1.35);
+        final below = actionBelow ?? (constraints.maxWidth < 360 || scale > 1.35);
         final words = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
