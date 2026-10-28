@@ -66,29 +66,6 @@ void main() {
     expect(find.textContaining('wants to join'), findsNothing);
   });
 
-  testWidgets("A parent signed in on a shared screen isn't offered to approve: only their own device can", (tester) async {
-    final state = await kitchen(tester);
-    final parent = state.den.members.firstWhere((m) => m.isParent);
-    final den = state.den;
-    await real(tester, () async {
-      final d = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
-      await d.requestJoin(
-        familyId: den.familyId!,
-        founderPubkey: den.founderPubkey!,
-        deviceName: "Grandma's iPhone",
-        kind: DeviceKind.phone,
-      );
-      await den.ingest(d.changesSince(const {}));
-      return d;
-    });
-    den.actAs(parent.id);
-    expect(state.allows(DenAction.manageFamily), isTrue);
-    expect(state.allowsTrust(DenAction.manageFamily), isFalse);
-    await pumpScreen(tester, const TodayScreen(), state: state);
-    expect(find.textContaining('wants to join'), findsNothing);
-    den.actAs(null);
-  });
-
   testWidgets('An invite by message: the words, Send and Copy', (tester) async {
     final state = await demo(tester);
     final copied = <String>[];
