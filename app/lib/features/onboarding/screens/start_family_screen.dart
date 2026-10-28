@@ -1,14 +1,16 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 
-import '../../../design/forms/frame.dart';
-import '../../../design/pickers/family_pickers.dart';
 import '../../family/words/family_words.dart';
 import '../../../design/pickers/picture_picker.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
 import '../../../platform/capabilities.dart';
+import '../../../design/forms/forms.dart';
+import '../../../design/pickers/time_zone_picker.dart';
+import '../../../platform/time_zone.dart';
+import '../state/this_device.dart';
 
 /// Starting a family: its name and time zone, you (the first parent), and this device. Creating
 /// it writes the genesis changes; the router then moves on to "Add people".
@@ -158,7 +160,7 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
             },
           ),
         ),
-        const FormBlock(child: FieldLabel('Time zone')),
+        const FormBlock(child: FieldLabel.quiet('Time zone')),
         FormBlock(
           top: 0,
           child: TimeZoneField(value: _zone, onChanged: (z) => setState(() => _zone = z)),
@@ -177,7 +179,7 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
             onChanged: (_) => setState(() {}),
           ),
         ),
-        const FormBlock(child: FieldLabel('Your picture')),
+        const FormBlock(child: FieldLabel.quiet('Your picture')),
         FormBlock(
           top: 0,
           child: PicturePicker(
@@ -222,7 +224,7 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
             onChanged: (_) => _deviceNameEdited = true,
           ),
         ),
-        const FormBlock(child: FieldLabel('Kind')),
+        const FormBlock(child: FieldLabel.quiet('Kind')),
         FormBlock(
           top: 0,
           child: Align(

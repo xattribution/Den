@@ -4,10 +4,10 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/fields.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
+import '../../../design/forms/forms.dart';
 
 /// A points goal: who's in it, the target, whether everyone can reach it or the first one wins,
 /// the window it counts over, and what it's for. `/points/goal/new`, `/points/goal/:id`.
@@ -236,12 +236,12 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
                 Wrap(
                   spacing: Sp.s,
                   children: [
-                    InkChip(
+                    ChoiceTile.chip(
                       label: 'Everyone who reaches it',
                       selected: _mode == GoalMode.target,
                       onTap: () => setState(() => _mode = GoalMode.target),
                     ),
-                    InkChip(
+                    ChoiceTile.chip(
                       label: 'First to reach it',
                       selected: _mode == GoalMode.race,
                       onTap: () => setState(() => _mode = GoalMode.race),
@@ -264,7 +264,7 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
                   spacing: Sp.s,
                   children: [
                     for (final n in const [10, 25, 50, 100])
-                      InkChip(label: '$n', selected: _target == n, onTap: () => setState(() => _target = n)),
+                      ChoiceTile.chip(label: '$n', selected: _target == n, onTap: () => setState(() => _target = n)),
                   ],
                 ),
                 const FieldLabel('Counts'),
@@ -288,16 +288,16 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text('From', style: context.type.body(c.ink2)),
-                      ValueButton(
+                      PickerButton.outlined(
                         icon: PhosphorIconsRegular.calendarBlank,
                         label: f.relative(_start!, app.today),
-                        onPressed: () => _pickDate(_start, (d) => setState(() => _start = d)),
+                        onTap: () => _pickDate(_start, (d) => setState(() => _start = d)),
                       ),
                       Text('until', style: context.type.body(c.ink2)),
-                      ValueButton(
+                      PickerButton.outlined(
                         icon: PhosphorIconsRegular.calendarBlank,
                         label: _end == null ? 'No end' : f.relative(f.addDays(_end!, -1), app.today),
-                        onPressed: () => _pickDate(
+                        onTap: () => _pickDate(
                           _end == null ? null : f.addDays(_end!, -1),
                           (d) => setState(() => _end = f.addDays(d, 1)),
                         ),

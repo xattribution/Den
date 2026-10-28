@@ -17,6 +17,7 @@ import '../../../app/app_state.dart';
 import '../../../platform/web/web_app.dart';
 import 'member_editor.dart';
 import '../../../platform/capabilities.dart';
+import '../../../design/pictograms.dart';
 
 /// Devices waiting for approval: the synced join requests, with the matching words from the
 /// pairing session when this device holds it.
@@ -143,12 +144,12 @@ Future<DeviceOwner?> showWhoseDeviceSheet(BuildContext context, String deviceNam
               for (final m in den.members) row(DenAvatar(m, size: 32), m.name, DeviceOwner.person(m.id)),
               Divider(color: c.rule),
               row(
-                Icon(FamilyWords.deviceIcon(DeviceKind.display), color: c.ink2),
+                Icon(Pictograms.device(DeviceKind.display), color: c.ink2),
                 'Shared display',
                 const DeviceOwner.shared(DeviceMode.shared),
               ),
               row(
-                Icon(FamilyWords.deviceIcon(DeviceKind.hub), color: c.ink2),
+                Icon(Pictograms.device(DeviceKind.hub), color: c.ink2),
                 'Hub',
                 const DeviceOwner.shared(DeviceMode.hub),
               ),
@@ -215,7 +216,7 @@ class DeviceRow extends StatelessWidget {
     return ListTile(
       contentPadding: EdgeInsets.only(left: indent ? Sp.l + 30 : Sp.l, right: Sp.l),
       leading: Icon(
-        FamilyWords.deviceIcon(device.mode == DeviceMode.shared ? DeviceKind.display : device.kind),
+        Pictograms.device(device.mode == DeviceMode.shared ? DeviceKind.display : device.kind),
         color: c.ink2,
       ),
       title: Text(device.name),

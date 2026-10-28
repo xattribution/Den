@@ -5,13 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/choices.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
-import '../../calendar/screens/event_detail.dart' show closePage;
 import '../../add/words/capture_words.dart' show sourceWords;
 import '../words/history_words.dart';
+import '../../../design/forms/forms.dart';
+import '../../../app/navigation.dart';
 
 /// Everything that changed, newest first and grouped by day: "Mia completed Dishes", with the
 /// time, the device, and each changed field as the old value struck through beside the new.

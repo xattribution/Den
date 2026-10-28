@@ -2,10 +2,8 @@ import 'dart:math' as math;
 
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/choices.dart';
 import '../../../app/side_panel.dart';
 import '../../../design/feedback.dart';
 import '../widgets/calendar_category.dart';
@@ -19,6 +17,8 @@ import '../state/event_lookup.dart';
 import '../words/event_words.dart';
 import '../words/recurrence.dart';
 import 'recurrence_editor.dart';
+import '../../../design/forms/forms.dart';
+import '../../../app/navigation.dart';
 
 /// Adds an event, or edits one occurrence's event. New events take their day, time and person
 /// from where the person tapped (`?date=`, `?time=`, `?who=`). Repeating events ask how far a
@@ -329,7 +329,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
         return;
       }
       _initialSignature = _signature();
-      closeEditor(context, EditOutcome.saved);
+      closePage(context, result: EditOutcome.saved);
       return;
     }
 
@@ -354,7 +354,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
       if (_audience != event.audience) 'audience': _audience.name,
     };
     if (patch.isEmpty) {
-      closeEditor(context, EditOutcome.saved);
+      closePage(context, result: EditOutcome.saved);
       return;
     }
 
@@ -388,7 +388,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
     }
     _initialSignature = _signature();
     final moved = patch.containsKey('start') || scope == EditScope.following || patch.containsKey('rrule');
-    closeEditor(context, moved ? EditOutcome.moved : EditOutcome.saved);
+    closePage(context, result: moved ? EditOutcome.moved : EditOutcome.saved);
   }
 
   /// Fields one occurrence can change on its own and show as changed. (The engine also lets one
@@ -479,7 +479,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
         if (didPop) return;
         if (await _confirmDiscard() && context.mounted) {
           _initialSignature = _signature();
-          closeEditor(context, null);
+          closePage(context);
         }
       },
       child: Scaffold(
@@ -547,7 +547,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          FieldLabel(label),
+          FieldLabel.quiet(label),
           Row(
             children: [
               Expanded(
@@ -580,7 +580,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
     }
 
     return [
-      const FieldLabel('Title'),
+      const FieldLabel.quiet('Title'),
       TextField(
         controller: _title,
         autofocus: _isNew,
@@ -593,9 +593,9 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
         ),
         onChanged: (_) => setState(() {}),
       ),
-      if (_titleError != null) ...[const SizedBox(height: Sp.s), FieldError(_titleError!)],
+      if (_titleError != null) ...[const SizedBox(height: Sp.s), FieldError(_titleError!, body: true)],
       const SizedBox(height: Sp.l),
-      _SwitchRow(
+      SwitchRow(
         label: 'All day',
         value: _allDay,
         onChanged: (v) => setState(() {
@@ -607,7 +607,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
       when('Starts', start: true),
       const SizedBox(height: Sp.m),
       when('Ends', start: false),
-      if (timeError != null) ...[const SizedBox(height: Sp.s), FieldError(timeError)],
+      if (timeError != null) ...[const SizedBox(height: Sp.s), FieldError(timeError, body: true)],
       const SizedBox(height: Sp.xl),
       RecurrenceEditor(
         value: _repeat,
@@ -629,7 +629,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
     final c = context.colors;
     final categories = app.den.categories;
     return [
-      const FieldLabel('Who'),
+      const FieldLabel.quiet('Who'),
       Wrap(
         spacing: Sp.s,
         runSpacing: Sp.s,
@@ -652,7 +652,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
       ),
       if (categories.isNotEmpty) ...[
         const SizedBox(height: Sp.xl),
-        const FieldLabel('Category'),
+        const FieldLabel.quiet('Category'),
         Wrap(
           spacing: Sp.s,
           runSpacing: Sp.s,
@@ -669,7 +669,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
         ),
       ],
       const SizedBox(height: Sp.xl),
-      const FieldLabel('Where'),
+      const FieldLabel.quiet('Where'),
       TextField(
         controller: _location,
         textCapitalization: TextCapitalization.words,
@@ -691,11 +691,9 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
     };
 
     return [
-      const FieldLabel(
+      const FieldLabel.quiet(
         'Rides',
-        info: InfoTip(
-          'Add drop-off or pick-up when someone needs a ride. A ride with no driver shows on Today until someone takes it.',
-        ),
+        info: 'Add drop-off or pick-up when someone needs a ride. A ride with no driver shows on Today until someone takes it.',
       ),
       for (final ride in _rides) ...[_rideRow(context, ride), const SizedBox(height: Sp.s)],
       Wrap(
@@ -717,7 +715,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
         ],
       ),
       const SizedBox(height: Sp.xl),
-      const FieldLabel('Reminders'),
+      const FieldLabel.quiet('Reminders'),
       Wrap(
         spacing: Sp.s,
         runSpacing: Sp.s,
@@ -739,16 +737,16 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
         ],
       ),
       const SizedBox(height: Sp.xl),
-      _SwitchRow(
+      SwitchRow(
         label: 'Countdown',
         info: 'Shows the days left on Today and on the wall.',
         value: _countdown,
         onChanged: (v) => setState(() => _countdown = v),
       ),
       const SizedBox(height: Sp.xl),
-      const FieldLabel('Who can see it'),
+      const FieldLabel.quiet('Who can see it'),
       if (_lockedAudience(app))
-        Text(audienceWords(app, _event!.space), style: context.type.body(c.ink))
+        Text(app.seenBy(_event!.space), style: context.type.body(c.ink))
       else
         Align(
           alignment: Alignment.centerLeft,
@@ -759,7 +757,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
           ),
         ),
       const SizedBox(height: Sp.xl),
-      const FieldLabel('Notes'),
+      const FieldLabel.quiet('Notes'),
       TextField(
         controller: _notes,
         minLines: 3,
@@ -854,15 +852,6 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
   }
 }
 
-/// Closes the editor with [outcome] for the page below.
-void closeEditor(BuildContext context, EditOutcome? outcome) {
-  if (context.canPop()) {
-    context.pop(outcome);
-  } else {
-    context.go('/calendar');
-  }
-}
-
 class _Gap extends StatelessWidget {
   const _Gap();
   @override
@@ -870,36 +859,6 @@ class _Gap extends StatelessWidget {
     padding: const EdgeInsets.symmetric(vertical: Sp.xl),
     child: Divider(height: 1, color: context.colors.rule),
   );
-}
-
-class _SwitchRow extends StatelessWidget {
-  const _SwitchRow({required this.label, required this.value, required this.onChanged, this.info});
-  final String label;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  final String? info;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return MergeSemantics(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(Radii.control),
-        onTap: () => onChanged(!value),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: Targets.adult),
-          child: Row(
-            children: [
-              Text(label, style: context.type.body(c.ink)),
-              if (info != null) InfoTip(info!),
-              const Spacer(),
-              Switch(value: value, onChanged: onChanged),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _EveryoneChip extends StatelessWidget {
@@ -1002,7 +961,7 @@ class _CustomReminderDialogState extends State<_CustomReminderDialog> {
             value: _unit,
             onChanged: (v) => setState(() => _unit = v),
           ),
-          if (_error != null) ...[const SizedBox(height: Sp.s), FieldError(_error!)],
+          if (_error != null) ...[const SizedBox(height: Sp.s), FieldError(_error!, body: true)],
         ],
       ),
       actions: [
@@ -1032,7 +991,7 @@ class _Blocked extends StatelessWidget {
                 children: [
                   IconButton(
                     tooltip: 'Back',
-                    onPressed: () => closeEditor(context, null),
+                    onPressed: () => closePage(context),
                     icon: const Icon(PhosphorIconsRegular.arrowLeft),
                   ),
                 ],

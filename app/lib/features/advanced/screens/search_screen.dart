@@ -9,8 +9,8 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../calendar/words/calendar_time.dart';
-import '../../calendar/screens/event_detail.dart' show closePage;
 import '../words/history_words.dart';
+import '../../../app/navigation.dart';
 
 /// Finds events, chores, lists and items by what they're called or what's written in them, and
 /// opens the one you pick.

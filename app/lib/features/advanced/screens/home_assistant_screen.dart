@@ -4,10 +4,10 @@ import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../design/forms/frame.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
+import '../../../design/forms/forms.dart';
 
 /// Where the Home Assistant integration's README lives.
 final Uri homeAssistantGuide = Uri.parse('https://github.com/xattribution/den/tree/main/integrations/homeassistant');

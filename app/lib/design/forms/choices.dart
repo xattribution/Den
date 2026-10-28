@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../tokens.dart';
 
-/// One choice among several, laid out in a Wrap: solid ink when chosen (owner rule O1), the
-/// well otherwise. Radius 6, like every control.
+/// One choice among several, in a Wrap or a [ChoiceRow]: solid ink when chosen (owner rule O1),
+/// the well otherwise. Radius 6, like every control.
+///
+/// [ChoiceTile] is 44 tall with an ink ripple (calendar and family forms). [ChoiceTile.chip] is
+/// a 40 tall chip inside a 48 tall target, with a selection click and an optional [count] (the
+/// chores, lists and points editors, and [DayToggles]).
 class ChoiceTile extends StatelessWidget {
   const ChoiceTile({
     super.key,
@@ -14,7 +19,19 @@ class ChoiceTile extends StatelessWidget {
     this.icon,
     this.semanticsLabel,
     this.padding = Sp.m,
-  });
+  })  : count = null,
+        _chip = false;
+
+  const ChoiceTile.chip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.icon,
+    this.count,
+    this.semanticsLabel,
+    this.padding = Sp.m,
+  }) : _chip = true;
 
   final String label;
   final bool selected;
@@ -22,11 +39,66 @@ class ChoiceTile extends StatelessWidget {
   final IconData? icon;
   final String? semanticsLabel;
 
-  /// Space on each side of the label; [ChoiceRow] narrows it to fit equal tiles.
+  /// A number after the label (a chip only), such as how many items a store has.
+  final int? count;
+
+  /// Space on each side of the label; [ChoiceRow] narrows it to fit equal tiles, and day
+  /// toggles use none to fit seven across a phone.
   final double padding;
 
+  final bool _chip;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => _chip ? _buildChip(context) : _buildTile(context);
+
+  Widget _buildChip(BuildContext context) {
+    final c = context.colors;
+    final enabled = onTap != null;
+    final fg = selected ? c.onInk : (enabled ? c.ink : c.ink3);
+    return Semantics(
+      button: true,
+      selected: selected,
+      enabled: enabled,
+      label: semanticsLabel,
+      excludeSemantics: semanticsLabel != null,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: enabled
+            ? () {
+                HapticFeedback.selectionClick();
+                onTap!();
+              }
+            : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: Sp.xs),
+          child: AnimatedContainer(
+            duration: Motion.of(context, Motion.state),
+            curve: Motion.curve,
+            constraints: const BoxConstraints(minHeight: 40, minWidth: 48),
+            padding: EdgeInsets.symmetric(horizontal: padding),
+            decoration: BoxDecoration(
+              color: selected ? c.ink : c.well,
+              borderRadius: BorderRadius.circular(Radii.control),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (icon != null) ...[Icon(icon, size: 18, color: fg), const SizedBox(width: Sp.s - 2)],
+                Text(label, style: selected ? context.type.bodyStrong(fg) : context.type.body(fg)),
+                if (count != null) ...[
+                  const SizedBox(width: Sp.s - 2),
+                  Text('$count', style: context.type.meta(selected ? c.onInk : c.ink2)),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTile(BuildContext context) {
     final c = context.colors;
     final fg = selected ? c.onInk : (onTap == null ? c.ink3 : c.ink);
     return Semantics(
@@ -163,38 +235,50 @@ class RemovableTile extends StatelessWidget {
   }
 }
 
-/// A form label with an optional (i) beside it. Never a subtitle.
-class FieldLabel extends StatelessWidget {
-  const FieldLabel(this.text, {super.key, this.info});
-  final String text;
-  final Widget? info;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: Sp.s),
-      child: Row(
-        children: [
-          Text(text, style: context.type.meta(c.ink2)),
-          ?info,
-        ],
-      ),
-    );
-  }
-}
-
-/// A well-filled control that shows a value and opens a picker: a date, a time, a driver.
+/// A control that shows a chosen value (a date, a time, a driver, an event) and opens a picker;
+/// [onClear] adds an x that clears it. [PickerButton] is filled with the well (calendar forms);
+/// [PickerButton.outlined] is an outlined button (the chores, lists and points editors).
 class PickerButton extends StatelessWidget {
-  const PickerButton({super.key, required this.label, required this.onTap, this.icon, this.semanticsLabel, this.error = false});
+  const PickerButton({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.semanticsLabel,
+    this.error = false,
+    this.onClear,
+  }) : _outlined = false;
+
+  const PickerButton.outlined({super.key, required this.label, required this.onTap, required IconData this.icon, this.onClear})
+      : semanticsLabel = null,
+        error = false,
+        _outlined = true;
+
   final String label;
   final VoidCallback? onTap;
   final IconData? icon;
   final String? semanticsLabel;
   final bool error;
+  final VoidCallback? onClear;
+  final bool _outlined;
 
   @override
   Widget build(BuildContext context) {
+    final button = _outlined
+        ? OutlinedButton.icon(onPressed: onTap, icon: Icon(icon, size: 18), label: Text(label))
+        : _filled(context);
+    if (!_outlined && onClear == null) return button;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_outlined) button else Flexible(child: button),
+        if (onClear != null)
+          IconButton(tooltip: 'Clear', onPressed: onClear, icon: const Icon(PhosphorIconsRegular.x, size: 18)),
+      ],
+    );
+  }
+
+  Widget _filled(BuildContext context) {
     final c = context.colors;
     return Semantics(
       button: true,

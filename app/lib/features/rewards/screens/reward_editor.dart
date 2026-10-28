@@ -2,12 +2,12 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../design/forms/fields.dart';
 import '../../../design/pictograms.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../design/chore_pictograms.dart';
+import '../../../design/forms/forms.dart';
 
 /// A reward in the store: picture, name, cost, and whether a parent approves each request.
 /// Removing one takes it out of the store, with Undo. `/points/reward/new`, `/points/reward/:id`.
@@ -165,7 +165,7 @@ class _RewardEditorScreenState extends State<RewardEditorScreen> {
                   spacing: Sp.s,
                   children: [
                     for (final n in const [5, 10, 20, 50])
-                      InkChip(label: '$n', selected: _cost == n, onTap: () => setState(() => _cost = n)),
+                      ChoiceTile.chip(label: '$n', selected: _cost == n, onTap: () => setState(() => _cost = n)),
                   ],
                 ),
                 const SizedBox(height: Sp.l),

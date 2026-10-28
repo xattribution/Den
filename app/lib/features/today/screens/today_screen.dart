@@ -9,6 +9,8 @@ import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../calendar/words/event_words.dart';
 import 'join_requests.dart';
+import '../../chores/state/chore_groups.dart';
+import '../../chores/widgets/chore_row.dart';
 
 /// The first screen for every adult: what's happening today and who's doing what.
 class TodayScreen extends StatelessWidget {
@@ -119,25 +121,10 @@ class TodayScreen extends StatelessWidget {
     await attempt(context, () => app.den.claimRide(occ.event.id, occurrence: occ.seriesStart, leg: leg, driver: app.me?.id));
   }
 
-  List<Widget> _choreGroups(BuildContext context, List<ChoreDay> chores) {
-    final den = context.den;
-    final byOwner = <String?, List<ChoreDay>>{};
-    for (final d in chores) {
-      byOwner.putIfAbsent(d.owner, () => []).add(d);
-    }
-    final me = context.app.me?.id;
-    final owners = byOwner.keys.toList()
-      ..sort((a, b) {
-        if (a == me) return -1;
-        if (b == me) return 1;
-        if (a == null) return 1;
-        if (b == null) return -1;
-        return (den.member(a)?.order ?? 0).compareTo(den.member(b)?.order ?? 0);
-      });
-    return [
-      for (final owner in owners) _ChoreGroup(owner: owner == null ? null : den.member(owner), days: byOwner[owner]!),
-    ];
-  }
+  List<Widget> _choreGroups(BuildContext context, List<ChoreDay> chores) => [
+        for (final g in choreGroups(context.den.members, chores, me: context.app.me?.id))
+          _ChoreGroup(owner: g.member, days: g.days),
+      ];
 }
 
 class _EventRow extends StatelessWidget {
@@ -217,58 +204,8 @@ class _ChoreGroup extends StatelessWidget {
               ],
             ),
           ),
-          for (final d in days) ChoreRow(day: d),
+          for (final d in days) ChoreRow(day: d, showDue: false, vertical: 2),
         ],
-      ),
-    );
-  }
-}
-
-/// A chore on a day: the check (or the step ring), its pictogram, title and points.
-/// Chores with steps complete through their steps; they have no main check.
-class ChoreRow extends StatelessWidget {
-  const ChoreRow({super.key, required this.day, this.dense = false});
-  final ChoreDay day;
-  final bool dense;
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.app;
-    final c = context.colors;
-    final chore = day.chore;
-    final mine = day.owner == null || day.owner == app.me?.id;
-    final canCheck = app.allows(mine ? DenAction.completeOwnChore : DenAction.completeAnyChore);
-    final pointsOn = app.den.family?.pointsEnabled ?? true;
-    final titleStyle = context.type.body(day.done ? c.ink2 : c.ink).copyWith(
-          decoration: day.done ? TextDecoration.lineThrough : null,
-          decorationColor: c.ink2,
-        );
-    return InkWell(
-      onTap: () => context.push('/chore/${chore.id}?date=${day.date}'),
-      child: Padding(
-        padding: EdgeInsets.only(left: Sp.xs, right: Sp.l, top: dense ? 0 : 2, bottom: dense ? 0 : 2),
-        child: Row(
-          children: [
-            if (chore.steps.isEmpty)
-              CheckDot(
-                done: day.done,
-                label: chore.title,
-                onChanged: canCheck ? (v) => attempt(context, () => app.den.setChoreDone(chore.id, day.date, v)) : null,
-              )
-            else
-              StepRing(done: day.stepsDone, total: day.stepCount),
-            SizedBox(width: 20, child: Icon(Pictograms.chore(chore.icon), size: 20, color: c.ink2)),
-            const SizedBox(width: Sp.s),
-            Expanded(child: Text(chore.title, style: titleStyle)),
-            if (day.late && !day.done) ...[
-              Icon(PhosphorIconsFill.clockCountdown, size: 16, color: c.bad),
-              const SizedBox(width: 2),
-              Text('Late', style: context.type.meta(c.bad)),
-              const SizedBox(width: Sp.s),
-            ],
-            if (pointsOn && day.pointsAvailable > 0) StarCount(day.pointsAvailable),
-          ],
-        ),
       ),
     );
   }

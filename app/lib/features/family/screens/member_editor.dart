@@ -3,15 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
-import '../../../design/forms/frame.dart';
 import '../../../design/pickers/pattern_pad.dart';
-import '../../../design/pickers/family_pickers.dart';
 import '../../../design/pickers/pin_pad.dart';
 import '../words/family_words.dart';
 import '../../../design/pickers/picture_picker.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
+import '../../../design/forms/forms.dart';
 
 /// One person: name, role, age group, look, permissions, shared-screen sign-in and privacy.
 /// A new person is added with one button; an existing person's changes save as they're made.
@@ -250,7 +249,7 @@ class _MemberEditorState extends State<MemberEditor> {
           ),
         ),
         FormBlock(
-          child: const FieldLabel(
+          child: const FieldLabel.quiet(
             'Role',
             info:
                 'Parents manage the family and devices. Adults add and change plans, chores and lists. '
@@ -269,7 +268,7 @@ class _MemberEditorState extends State<MemberEditor> {
         ),
         if (_role == Role.kid) ...[
           FormBlock(
-            child: FieldLabel(
+            child: FieldLabel.quiet(
               'Age group',
               info:
                   'Pre-readers and little kids get the picture-first kids\' app. Big kids and teens use the regular app.',
@@ -289,7 +288,7 @@ class _MemberEditorState extends State<MemberEditor> {
             ),
           ),
         ],
-        FormBlock(child: const FieldLabel('Birthday')),
+        FormBlock(child: const FieldLabel.quiet('Birthday')),
         FormBlock(
           top: 0,
           child: Align(
@@ -300,7 +299,7 @@ class _MemberEditorState extends State<MemberEditor> {
             ),
           ),
         ),
-        FormBlock(child: const FieldLabel('Picture')),
+        FormBlock(child: const FieldLabel.quiet('Picture')),
         FormBlock(
           top: 0,
           child: PicturePicker(
@@ -426,7 +425,7 @@ class _SignInSection extends StatelessWidget {
         SectionHeader('Shared screens'),
         FormBlock(
           top: 0,
-          child: FieldLabel(
+          child: FieldLabel.quiet(
             'Sign-in',
             info:
                 'How ${member.name} shows it\'s them on the wall display or a shared tablet before checking things off.',

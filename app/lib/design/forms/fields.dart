@@ -1,22 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show OverflowBoxFit;
-import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../tokens.dart';
 import '../widgets.dart';
+import 'choices.dart';
 
-/// Shared pieces for the chores, lists and points editors: a field label, text chips with a
-/// solid selected state, a number stepper, a pictogram grid and day toggles.
+/// Labels, steppers, pictogram grids, day toggles, switch rows and errors for every form.
 
-/// The label above a group of controls in an editor. Help goes in [info], never under it.
+/// The label above a field or a group of controls. Help goes in [info] (an (i) beside it), never
+/// under it.
+///
+/// [FieldLabel] heads a group in an editor (chores, lists, points), with room above it.
+/// [FieldLabel.quiet] is the calendar and family forms' label: meta type in ink2, nothing above.
 class FieldLabel extends StatelessWidget {
-  const FieldLabel(this.text, {super.key, this.info, this.trailing, this.top = Sp.xl});
+  const FieldLabel(this.text, {super.key, this.info, this.trailing, this.top = Sp.xl}) : quiet = false;
+
+  const FieldLabel.quiet(this.text, {super.key, this.info, this.trailing})
+      : quiet = true,
+        top = 0;
 
   final String text;
   final String? info;
   final Widget? trailing;
   final double top;
+  final bool quiet;
 
   @override
   Widget build(BuildContext context) {
@@ -25,84 +33,13 @@ class FieldLabel extends StatelessWidget {
       padding: EdgeInsets.only(top: top, bottom: Sp.s),
       child: Row(
         children: [
-          Semantics(header: true, child: Text(text, style: context.type.bodyStrong(c.ink))),
-          if (info != null) InfoTip(info!),
-          const Spacer(),
-          ?trailing,
-        ],
-      ),
-    );
-  }
-}
-
-/// A text choice: well when idle, solid ink with onInk text when selected (owner rule O1).
-/// The visible chip is 40 tall inside a 48 tall touch target.
-class InkChip extends StatelessWidget {
-  const InkChip({
-    super.key,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    this.icon,
-    this.count,
-    this.semanticLabel,
-    this.padding = Sp.m,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback? onTap;
-  final IconData? icon;
-  final int? count;
-  final String? semanticLabel;
-
-  /// Horizontal padding inside the chip; day toggles use none to fit seven across a phone.
-  final double padding;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final enabled = onTap != null;
-    final fg = selected ? c.onInk : (enabled ? c.ink : c.ink3);
-    return Semantics(
-      button: true,
-      selected: selected,
-      enabled: enabled,
-      label: semanticLabel,
-      excludeSemantics: semanticLabel != null,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: enabled
-            ? () {
-                HapticFeedback.selectionClick();
-                onTap!();
-              }
-            : null,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: Sp.xs),
-          child: AnimatedContainer(
-            duration: Motion.of(context, Motion.state),
-            curve: Motion.curve,
-            constraints: const BoxConstraints(minHeight: 40, minWidth: 48),
-            padding: EdgeInsets.symmetric(horizontal: padding),
-            decoration: BoxDecoration(
-              color: selected ? c.ink : c.well,
-              borderRadius: BorderRadius.circular(Radii.control),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (icon != null) ...[Icon(icon, size: 18, color: fg), const SizedBox(width: Sp.s - 2)],
-                Text(label, style: selected ? context.type.bodyStrong(fg) : context.type.body(fg)),
-                if (count != null) ...[
-                  const SizedBox(width: Sp.s - 2),
-                  Text('$count', style: context.type.meta(selected ? c.onInk : c.ink2)),
-                ],
-              ],
-            ),
+          Semantics(
+            header: true,
+            child: Text(text, style: quiet ? context.type.meta(c.ink2) : context.type.bodyStrong(c.ink)),
           ),
-        ),
+          if (info != null) InfoTip(info!),
+          if (trailing != null) ...[const Spacer(), trailing!],
+        ],
       ),
     );
   }
@@ -327,10 +264,10 @@ class DayToggles extends StatelessWidget {
       children: [
         for (final d in order) ...[
           Expanded(
-            child: InkChip(
+            child: ChoiceTile.chip(
               label: _short[d]!,
               padding: 0,
-              semanticLabel: _long[d],
+              semanticsLabel: _long[d],
               selected: days.contains(d),
               onTap: () {
                 final next = {...days};
@@ -341,28 +278,6 @@ class DayToggles extends StatelessWidget {
           ),
           if (d != order.last) const SizedBox(width: 2),
         ],
-      ],
-    );
-  }
-}
-
-/// A button showing a chosen value (a date, a time, an event) that opens a picker.
-class ValueButton extends StatelessWidget {
-  const ValueButton({super.key, required this.icon, required this.label, required this.onPressed, this.onClear});
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onPressed;
-  final VoidCallback? onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        OutlinedButton.icon(onPressed: onPressed, icon: Icon(icon, size: 18), label: Text(label)),
-        if (onClear != null)
-          IconButton(tooltip: 'Clear', onPressed: onClear, icon: const Icon(PhosphorIconsRegular.x, size: 18)),
       ],
     );
   }
@@ -382,6 +297,7 @@ class SwitchRow extends StatelessWidget {
     final c = context.colors;
     return MergeSemantics(
       child: InkWell(
+        borderRadius: BorderRadius.circular(Radii.control),
         onTap: onChanged == null ? null : () => onChanged!(!value),
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: Targets.adult),
@@ -405,15 +321,30 @@ class SwitchRow extends StatelessWidget {
   }
 }
 
-/// Error text under a field, in the bad color with its icon.
+/// Error text under a field, in the bad color with its icon; nothing when [message] is null.
+/// [body] sets it in body type, as the calendar's forms do.
 class FieldError extends StatelessWidget {
-  const FieldError(this.message, {super.key});
+  const FieldError(this.message, {super.key, this.body = false});
   final String? message;
+  final bool body;
 
   @override
   Widget build(BuildContext context) {
     if (message == null) return const SizedBox.shrink();
     final c = context.colors;
+    if (body) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(PhosphorIconsFill.warningOctagon, size: 18, color: c.bad),
+          ),
+          const SizedBox(width: Sp.s),
+          Expanded(child: Text(message!, style: context.type.body(c.bad))),
+        ],
+      );
+    }
     return Padding(
       padding: const EdgeInsets.only(top: Sp.xs),
       child: Row(

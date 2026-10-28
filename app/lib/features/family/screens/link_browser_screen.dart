@@ -6,13 +6,13 @@ import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/frame.dart';
-import '../../../design/pickers/family_pickers.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
 import 'device_parts.dart';
+import '../../../design/forms/forms.dart';
+import '../../../platform/capabilities.dart';
 
 /// Linking a browser from a parent's phone: scan the code the browser shows (or paste it on a
 /// computer), then approve the browser when its request arrives through the hub.
@@ -31,7 +31,7 @@ class LinkBrowserScreen extends StatefulWidget {
 
 class _LinkBrowserScreenState extends State<LinkBrowserScreen> {
   final _code = TextEditingController();
-  late final bool _scanning = widget.scan ?? canScanQr;
+  late final bool _scanning = widget.scan ?? Capabilities.scanQr;
   late String? _hub = widget.linkedTo;
   bool _busy = false;
   String? _error;

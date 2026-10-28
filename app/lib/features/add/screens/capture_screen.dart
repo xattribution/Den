@@ -9,14 +9,14 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../state/capture_controller.dart';
 import '../state/capture_service.dart';
 import '../state/capture_settings.dart';
-import '../../../design/forms/frame.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
-import '../../calendar/screens/event_detail.dart' show closePage;
 import '../../advanced/words/history_words.dart' show routeForRecord;
 import 'capture_edit.dart';
 import '../words/capture_words.dart';
+import '../../../design/forms/forms.dart';
+import '../../../app/navigation.dart';
 
 /// `/capture`: reads what someone typed, said, photographed or shared, then shows what Den
 /// found. In direct mode what needs no look is already added, with Undo; everything else waits

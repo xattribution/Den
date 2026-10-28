@@ -1,6 +1,6 @@
 import 'package:den_core/den_core.dart';
 
-import '../../../app/app_state.dart';
+import '../../../app/family_reads.dart';
 import '../../calendar/words/calendar_time.dart';
 import '../../calendar/words/event_words.dart';
 import '../../calendar/words/recurrence.dart';
@@ -105,7 +105,7 @@ bool hiddenField(String field) =>
     }.contains(field);
 
 /// Before and after of one change, in words; null means "none".
-(String?, String?) diffWords(AppState app, String type, FieldDiff diff) {
+(String?, String?) diffWords(FamilyReads app, String type, FieldDiff diff) {
   final f = app.formats;
   final before = diff.before;
   final after = diff.after;
@@ -120,7 +120,7 @@ bool hiddenField(String field) =>
 }
 
 /// One field value in words, or null when it's empty.
-String? valueWords(AppState app, String type, String field, Object? value) {
+String? valueWords(FamilyReads app, String type, String field, Object? value) {
   final f = app.formats;
   final den = app.den;
   if (value == null) return null;
@@ -200,7 +200,7 @@ String? valueWords(AppState app, String type, String field, Object? value) {
 }
 
 /// Where an entry leads when tapped, or null when there's no page for it.
-String? routeForRecord(AppState app, String type, String id) {
+String? routeForRecord(FamilyReads app, String type, String id) {
   switch (type) {
     case RecordType.event:
       return app.den.event(id) == null ? null : '/event/$id';
@@ -249,7 +249,7 @@ bool _same(Object? a, Object? b) => a == b || (a != null && b != null && a.toStr
 
 /// Reads an entry for people. A change to one occurrence of a repeating event reads "changed
 /// Soccer practice on Oct 20" with the fields it overrode; "canceled" when it was removed.
-HistoryLine historyLine(AppState app, HistoryEntry e) {
+HistoryLine historyLine(FamilyReads app, HistoryEntry e) {
   final f = app.formats;
   if (e.type == RecordType.eventException) {
     FieldDiff? find(String field) {
@@ -329,7 +329,7 @@ HistoryLine historyLine(AppState app, HistoryEntry e) {
 
 /// "took the drop-off for Swim lesson", "let go of the pick-up for Soccer practice": a change
 /// that only set or cleared the actor's own ride, said the way Today offers it.
-HistoryLine? _rideLine(AppState app, HistoryEntry e, List<FieldDiff> diffs, String title) {
+HistoryLine? _rideLine(FamilyReads app, HistoryEntry e, List<FieldDiff> diffs, String title) {
   if (diffs.length != 1 || diffs.single.field != 'rides' || e.actor == null) return null;
   List<Map<String, Object?>> legs(Object? v) => [
         for (final r in (v is List ? v : const [])) Map<String, Object?>.from(r as Map),

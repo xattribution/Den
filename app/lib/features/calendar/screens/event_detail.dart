@@ -16,6 +16,7 @@ import '../state/event_lookup.dart';
 import '../words/event_words.dart';
 import '../words/recurrence.dart';
 import '../../../platform/capabilities.dart';
+import '../../../app/navigation.dart';
 
 /// What the editor tells the detail when it closes: whether the occurrence the detail shows
 /// still exists as it was addressed.
@@ -67,15 +68,6 @@ class EventDetailScreen extends StatelessWidget {
   Future<void> _edit(BuildContext context, Occurrence occ) async {
     final outcome = await context.push<EditOutcome>('/event/${occ.event.id}/edit?at=${occ.start}');
     if (outcome == EditOutcome.moved && context.mounted) closePage(context);
-  }
-}
-
-/// Leaves a pushed page, or goes to the calendar when there's nothing to go back to.
-void closePage(BuildContext context) {
-  if (context.canPop()) {
-    context.pop();
-  } else {
-    context.go('/calendar');
   }
 }
 
@@ -193,7 +185,7 @@ class _Body extends StatelessWidget {
           ),
         if (source.readOnly) ...[const SizedBox(height: Sp.l), _SourceBanner(source)],
         const SizedBox(height: Sp.l),
-        _Fact(
+        FactRow(
           label: 'Who',
           child: occ.forEveryone
               ? Text('Everyone', style: context.type.body(c.ink))
@@ -214,7 +206,7 @@ class _Body extends StatelessWidget {
                 ),
         ),
         if (category != null)
-          _Fact(
+          FactRow(
             label: 'Category',
             child: Row(
               children: [
@@ -224,15 +216,15 @@ class _Body extends StatelessWidget {
               ],
             ),
           ),
-        if (occ.location.isNotEmpty) _Fact(label: 'Where', child: _Location(occ.location)),
+        if (occ.location.isNotEmpty) FactRow(label: 'Where', child: _Location(occ.location)),
         for (final ride in occ.rides)
-          _Fact(
+          FactRow(
             label: legWords(ride.leg),
             center: true,
             child: _RideValue(occ: occ, ride: ride),
           ),
         if (occ.reminders.isNotEmpty)
-          _Fact(
+          FactRow(
             label: 'Reminders',
             child: Text(
               (occ.reminders.toList()..sort()).map(reminderWords).join(', '),
@@ -240,16 +232,16 @@ class _Body extends StatelessWidget {
             ),
           ),
         if (countdown != null)
-          _Fact(
+          FactRow(
             label: 'Countdown',
             child: Text(countdown, style: context.type.body(c.ink)),
           ),
-        _Fact(
+        FactRow(
           label: 'Seen by',
-          child: Text(audienceWords(app, event.space), style: context.type.body(c.ink)),
+          child: Text(app.seenBy(event.space), style: context.type.body(c.ink)),
         ),
         if (occ.notes.isNotEmpty)
-          _Fact(
+          FactRow(
             label: 'Notes',
             child: SelectableText(occ.notes, style: context.type.body(c.ink)),
           ),
@@ -268,39 +260,6 @@ class _Body extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-/// A labeled line of the detail: label in ink2 on the left, the value in ink.
-class _Fact extends StatelessWidget {
-  const _Fact({required this.label, required this.child, this.center = false});
-  final String label;
-  final Widget child;
-
-  /// For a value that holds a button: the label centers on it, and the button's own 48 px
-  /// height stands in for the row's padding.
-  final bool center;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(Sp.l, center ? 0 : Sp.s, Sp.l, center ? 0 : Sp.s),
-      child: Row(
-        crossAxisAlignment: center ? CrossAxisAlignment.center : CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 96 * context.type.scale,
-            child: Padding(
-              padding: EdgeInsets.only(top: center ? 0 : 2),
-              child: Text(label, style: context.type.meta(c.ink2)),
-            ),
-          ),
-          const SizedBox(width: Sp.s),
-          Expanded(child: child),
-        ],
-      ),
     );
   }
 }

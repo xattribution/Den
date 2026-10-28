@@ -4,11 +4,11 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/frame.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../widgets/scope_picker.dart';
+import '../../../design/forms/forms.dart';
 
 /// Creating an API token for an AI client or an automation: a label, what it may do and whose
 /// permissions it uses. The token is shown once, with Copy.

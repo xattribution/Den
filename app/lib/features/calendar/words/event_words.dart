@@ -1,6 +1,6 @@
 import 'package:den_core/den_core.dart';
 
-import '../../../app/app_state.dart';
+import '../../../app/family_reads.dart';
 
 /// Reminder offsets offered first, in minutes before the start.
 const List<int> reminderPresets = [5, 15, 30, 60, 120, 1440];
@@ -23,21 +23,10 @@ String reminderWords(int minutes) {
 String legWords(String leg) => leg == 'from' ? 'Pick-up' : 'Drop-off';
 
 /// "Everyone", or the people's names.
-String whoWords(AppState app, List<String> assignees) {
+String whoWords(FamilyReads app, List<String> assignees) {
   if (assignees.isEmpty) return 'Everyone';
   final names = assignees.map(app.memberById).whereType<Member>().map((m) => m.name).toList();
   return names.isEmpty ? 'Everyone' : names.join(', ');
-}
-
-/// Who can see an item in [space]: "Everyone", "Parents", "Just you", "Just Mia".
-String audienceWords(AppState app, String space) {
-  final owner = Space.memberOf(space);
-  if (space == Space.family) return 'Everyone';
-  if (space == Space.parents) return 'Parents';
-  if (owner == null) return 'Everyone';
-  if (owner == app.me?.id) return 'Just you';
-  final name = app.memberById(owner)?.name;
-  return name == null ? 'Just one person' : 'Just $name';
 }
 
 /// Days until a countdown event: "Today", "Tomorrow", "In 12 days"; null once it's past.
@@ -49,7 +38,7 @@ String? countdownWords(int days) {
 }
 
 /// Members who might drive: adults, and teens.
-List<Member> possibleDrivers(AppState app) =>
+List<Member> possibleDrivers(FamilyReads app) =>
     app.den.members.where((m) => m.role == Role.parent || m.role == Role.adult || m.tier == Tier.teen).toList();
 
 /// Whether this person could take a ride leg.
@@ -57,4 +46,4 @@ bool canDrive(Member? me) => me != null && (me.role == Role.parent || me.role ==
 
 /// Whether whoever is acting may take a ride leg themselves: someone who could drive, and whom
 /// the engine lets set a driver (that changes the event, so it needs [DenAction.editEvents]).
-bool canTakeRide(AppState app) => canDrive(app.me) && app.allows(DenAction.editEvents);
+bool canTakeRide(FamilyReads app) => canDrive(app.me) && app.allows(DenAction.editEvents);

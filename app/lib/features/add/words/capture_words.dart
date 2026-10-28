@@ -1,7 +1,7 @@
 import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart';
 
-import '../../../app/app_state.dart';
+import '../../../app/family_reads.dart';
 import '../../calendar/words/calendar_time.dart';
 import '../../calendar/words/recurrence.dart';
 
@@ -50,7 +50,7 @@ String readerWords(ReaderInfo reader) => switch (reader.place) {
     };
 
 /// When an event happens, in words: "Wed, Oct 21 · 5:00 PM to 6:00 PM · Every Wednesday".
-String eventWhen(AppState app, DraftEvent e) {
+String eventWhen(FamilyReads app, DraftEvent e) {
   final f = app.formats;
   final day = f.shortWithYear(e.date, relativeTo: app.today);
   final parts = <String>[
@@ -65,7 +65,7 @@ String eventWhen(AppState app, DraftEvent e) {
 }
 
 /// "Leo · Every Thursday · by 7:00 PM", "Anyone · Sat, Oct 24".
-String choreWhen(AppState app, DraftChore c) {
+String choreWhen(FamilyReads app, DraftChore c) {
   final f = app.formats;
   return [
     ownerWords(app, c.owner),
@@ -78,14 +78,14 @@ String choreWhen(AppState app, DraftChore c) {
   ].join(' · ');
 }
 
-String ownerWords(AppState app, ChoreOwner owner) => switch (owner) {
+String ownerWords(FamilyReads app, ChoreOwner owner) => switch (owner) {
       OwnerMember(:final id) => app.memberById(id)?.name ?? 'Someone',
       OwnerRotation(:final ids) => '${joinWords([for (final id in ids) app.memberById(id)?.name ?? 'someone'])} take turns',
       OwnerAnyone() => 'Anyone',
     };
 
 /// "Sat, Oct 17 · 9:00 AM · Alex".
-String reminderWhen(AppState app, DraftReminder r) {
+String reminderWhen(FamilyReads app, DraftReminder r) {
   final f = app.formats;
   return [
     f.shortWithYear(r.date, relativeTo: app.today),
@@ -98,7 +98,7 @@ String reminderWhen(AppState app, DraftReminder r) {
 String itemDetail(DraftItem i) => [?i.qty, ?i.store].join(' · ');
 
 /// The list an item goes on, by name, and whether Den will make it.
-(String, bool) itemList(AppState app, DraftItem i) {
+(String, bool) itemList(FamilyReads app, DraftItem i) {
   if (i.listId != null) return (app.den.list(i.listId!)?.list.title ?? 'A list', false);
   return (i.newList!.title, true);
 }

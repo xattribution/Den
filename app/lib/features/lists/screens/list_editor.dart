@@ -4,13 +4,13 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/fields.dart';
 import '../../../design/pictograms.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../state/list_actions.dart';
 import '../words/list_words.dart';
+import '../../../design/forms/forms.dart';
 
 /// Adds a list or changes one: name, kind, whether it runs on or is needed by a date or for an
 /// event, pinned, and who sees it. `/lists/new`, `/lists/:id/edit`.
@@ -266,7 +266,7 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
                   spacing: Sp.s,
                   children: [
                     for (final k in ListKind.values)
-                      InkChip(
+                      ChoiceTile.chip(
                         icon: Pictograms.listKind(k),
                         label: kindWords(k),
                         selected: _kind == k,
@@ -301,10 +301,10 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
                   const SizedBox(height: Sp.m),
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: ValueButton(
+                    child: PickerButton.outlined(
                       icon: PhosphorIconsRegular.calendarBlank,
                       label: _needBy == null ? 'Choose a date' : 'Need by ${f.relative(_needBy!, app.today)}',
-                      onPressed: _pickDate,
+                      onTap: _pickDate,
                     ),
                   ),
                 ],
@@ -312,12 +312,12 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
                   const SizedBox(height: Sp.m),
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: ValueButton(
+                    child: PickerButton.outlined(
                       icon: PhosphorIconsRegular.calendarCheck,
                       label: event == null
                           ? (_event == null ? 'Choose an event' : 'An event that was removed')
                           : '${event.title}, ${f.relative(f.localDate(event.start), app.today)}',
-                      onPressed: _pickEvent,
+                      onTap: _pickEvent,
                     ),
                   ),
                 ],

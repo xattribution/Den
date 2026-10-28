@@ -3,13 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/frame.dart';
-import '../../../design/pickers/family_pickers.dart';
 import '../words/family_words.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import 'device_parts.dart';
+import '../../../design/forms/forms.dart';
+import '../../../design/pictograms.dart';
 
 /// One device: its name, whose it is, a shared display's layout and open check-off, and Revoke.
 /// Whose it is doesn't change; giving it to someone else means revoking it and adding it again.
@@ -90,7 +90,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
         ),
         const SizedBox(height: Sp.s),
         ListTile(
-          leading: Icon(FamilyWords.deviceIcon(device.kind), color: c.ink2),
+          leading: Icon(Pictograms.device(device.kind), color: c.ink2),
           title: Text(FamilyWords.deviceKind(device.kind)),
           subtitle: Text(
             isThis
@@ -106,7 +106,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
           leading: owner != null
               ? DenAvatar(owner, size: 28)
               : Icon(
-                  FamilyWords.deviceIcon(device.mode == DeviceMode.hub ? DeviceKind.hub : DeviceKind.display),
+                  Pictograms.device(device.mode == DeviceMode.hub ? DeviceKind.hub : DeviceKind.display),
                   color: c.ink2,
                 ),
           // A device stays with whoever it was approved for, since it keeps what it already
@@ -115,7 +115,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
         ),
         if (shared) ...[
           const SectionHeader('Wall display'),
-          const FormBlock(top: 0, child: FieldLabel('Shows')),
+          const FormBlock(top: 0, child: FieldLabel.quiet('Shows')),
           FormBlock(
             top: 0,
             child: Align(

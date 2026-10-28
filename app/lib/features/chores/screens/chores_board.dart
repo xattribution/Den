@@ -4,11 +4,12 @@ import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../widgets/chore_row.dart';
-import '../../../design/forms/fields.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import 'swap_sheet.dart';
+import '../../../design/forms/forms.dart';
+import '../state/chore_groups.dart';
 
 /// The Chores tab: reads the day from the URL (`/chores?date=2026-10-17`).
 class ChoresTab extends StatelessWidget {
@@ -69,23 +70,8 @@ class ChoresBoard extends StatelessWidget {
   }
 
   static List<ChoreGroup> _groups(AppState app, List<ChoreDay> days, String date) {
-    final den = app.den;
-    final byOwner = <String?, List<ChoreDay>>{};
-    for (final d in days) {
-      final owner = d.owner != null && den.member(d.owner!) != null ? d.owner : null;
-      byOwner.putIfAbsent(owner, () => []).add(d);
-    }
-    for (final list in byOwner.values) {
-      list.sort((a, b) => _order(a, date).compareTo(_order(b, date)));
-    }
-    final me = app.me?.id;
-    final ordered = <ChoreGroup>[
-      if (me != null && byOwner.containsKey(me)) ChoreGroup(den.member(me), byOwner[me]!),
-      for (final m in den.members)
-        if (m.id != me && byOwner.containsKey(m.id)) ChoreGroup(m, byOwner[m.id]!),
-      if (byOwner.containsKey(null)) ChoreGroup(null, byOwner[null]!),
-    ];
-    return ordered;
+    final sorted = [...days]..sort((a, b) => _order(a, date).compareTo(_order(b, date)));
+    return choreGroups(app.den.members, sorted, me: app.me?.id);
   }
 
   /// A key that doesn't change when a chore is checked, so rows never jump: chores carried over
@@ -94,15 +80,6 @@ class ChoresBoard extends StatelessWidget {
     final carried = d.date != date ? '0' : '1';
     return '$carried${d.chore.dueTime ?? '99:99'}${d.chore.title.toLowerCase()}';
   }
-}
-
-/// One person's (or nobody's) chores on the board.
-class ChoreGroup {
-  const ChoreGroup(this.member, this.days);
-  final Member? member;
-  final List<ChoreDay> days;
-  int get left => days.where((d) => !d.done).length;
-  String get leftWords => days.isEmpty ? 'Nothing' : (left == 0 ? 'All done' : '$left left');
 }
 
 class _Toolbar extends StatelessWidget {
@@ -218,7 +195,7 @@ class _Sections extends StatelessWidget {
         for (final (i, g) in groups.indexed) ...[
           Padding(padding: EdgeInsets.fromLTRB(Sp.l, i == 0 ? Sp.s : Sp.xl, Sp.l, Sp.xs), child: _PersonHead(g)),
           for (final d in g.days)
-            BoardChoreRow(day: d, onSwap: canSwap(app, d) ? () => showSwapSheet(context, d) : null),
+            ChoreRow(day: d, onSwap: canSwap(app, d) ? () => showSwapSheet(context, d) : null),
         ],
       ],
     );
@@ -278,7 +255,7 @@ class _Columns extends StatelessWidget {
                                 padding: const EdgeInsets.only(top: Sp.xs, bottom: Sp.xxl),
                                 children: [
                                   for (final d in g.days)
-                                    BoardChoreRow(
+                                    ChoreRow(
                                       day: d,
                                       compact: compact,
                                       onSwap: canSwap(app, d) ? () => showSwapSheet(context, d) : null,

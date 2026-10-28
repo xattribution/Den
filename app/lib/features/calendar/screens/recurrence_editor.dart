@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/choices.dart';
 import '../../../design/tokens.dart';
 import '../../../app/app_state.dart';
 import '../../../app/format.dart';
 import '../words/calendar_time.dart';
 import '../words/recurrence.dart';
+import '../../../design/forms/forms.dart';
 
 enum _Ends { never, onDate, after }
 
@@ -45,7 +45,7 @@ class RecurrenceEditor extends StatelessWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const FieldLabel('Repeats'),
+          const FieldLabel.quiet('Repeats'),
           Text('On a custom schedule from another calendar app', style: context.type.body(c.ink)),
           const SizedBox(height: Sp.xs),
           SelectableText(custom!, style: context.type.meta(c.ink2)),
@@ -67,7 +67,7 @@ class RecurrenceEditor extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const FieldLabel('Repeats'),
+        const FieldLabel.quiet('Repeats'),
         ChoiceRow<RepeatFrequency?>(
           options: options,
           value: rule?.frequency,
@@ -119,7 +119,7 @@ class RecurrenceEditor extends StatelessWidget {
             ],
           ),
         ],
-        if (error != null) ...[const SizedBox(height: Sp.s), _Error(error!)],
+        if (error != null) ...[const SizedBox(height: Sp.s), FieldError(error!, body: true)],
       ],
     );
   }
@@ -240,7 +240,7 @@ class RecurrenceEditor extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const FieldLabel('Ends'),
+        const FieldLabel.quiet('Ends'),
         ChoiceRow<_Ends>(
           options: {_Ends.never: 'Never', _Ends.onDate: 'On a date', _Ends.after: 'After ${rule.count ?? 10} times'},
           value: ends,
@@ -347,33 +347,4 @@ class CountStepper extends StatelessWidget {
       ),
     );
   }
-}
-
-class _Error extends StatelessWidget {
-  const _Error(this.message);
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: Icon(PhosphorIconsFill.warningOctagon, size: 18, color: c.bad),
-        ),
-        const SizedBox(width: Sp.s),
-        Expanded(child: Text(message, style: context.type.body(c.bad))),
-      ],
-    );
-  }
-}
-
-/// A plain error line under a field: icon and words in the bad color.
-class FieldError extends StatelessWidget {
-  const FieldError(this.message, {super.key});
-  final String message;
-  @override
-  Widget build(BuildContext context) => _Error(message);
 }

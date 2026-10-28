@@ -3,13 +3,12 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 
 import '../state/capture_controller.dart';
-import '../../../design/forms/frame.dart';
-import '../../../design/forms/fields.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../calendar/words/calendar_time.dart';
 import '../../calendar/words/recurrence.dart';
+import '../../../design/forms/forms.dart';
 
 /// Issues a person settles by looking at an entry and saving it.
 const Set<IssueKind> _settled = {IssueKind.needsDay, IssueKind.unknownPerson, IssueKind.guessed};
@@ -253,9 +252,9 @@ class _EntryEditorState extends State<_EntryEditor> {
                 runSpacing: Sp.s,
                 children: [
                   if (e.newList != null)
-                    InkChip(label: '${e.newList!.title} (new)', selected: e.listId == null, onTap: () => setState(() => _e = e.copyWith(listId: null))),
+                    ChoiceTile.chip(label: '${e.newList!.title} (new)', selected: e.listId == null, onTap: () => setState(() => _e = e.copyWith(listId: null))),
                   for (final l in app.den.lists)
-                    InkChip(
+                    ChoiceTile.chip(
                       label: l.list.title,
                       selected: e.listId == l.list.id,
                       onTap: () => setState(() => _e = e.copyWith(listId: l.list.id, newList: e.newList)),

@@ -1,5 +1,6 @@
 import 'package:intl/intl.dart';
 import 'package:timezone/timezone.dart' as tz;
+import 'words.dart';
 
 /// Dates and times as US families read them, in the family's time zone.
 /// Local dates are `YYYY-MM-DD` strings, matching den_core.
@@ -19,7 +20,10 @@ class Formats {
   tz.TZDateTime at(int ms) => tz.TZDateTime.fromMillisecondsSinceEpoch(location, ms);
 
   /// "3:30 PM"
-  String time(int ms) => DateFormat.jm().format(at(ms));
+  String time(int ms) {
+    final t = at(ms);
+    return clockAt(t.hour, t.minute);
+  }
 
   /// "3:30 PM to 5:00 PM", or "All day".
   String span(int start, int end, {bool allDay = false}) =>

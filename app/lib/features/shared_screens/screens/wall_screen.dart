@@ -16,6 +16,7 @@ import '../../../app/app_state.dart';
 import '../../calendar/screens/family_week.dart';
 import '../../calendar/screens/month_view.dart';
 import '../../family/screens/device_parts.dart';
+import '../../chores/state/chore_groups.dart';
 
 /// The kitchen wall: the date and a large clock, the family week as the main region, and a strip
 /// with today's chores per person and the grocery list. Anyone can read it; writes ask "Who's
@@ -315,15 +316,7 @@ class _TodayStrip extends StatelessWidget {
     final c = context.colors;
     final view = den.today();
     final chores = onlyAnyone ? view.chores.where((d) => d.owner == null).toList() : view.chores;
-    final byOwner = <String?, List<ChoreDay>>{};
-    for (final d in chores) {
-      byOwner.putIfAbsent(d.owner, () => []).add(d);
-    }
-    final owners = [
-      for (final m in den.members)
-        if (byOwner.containsKey(m.id)) m.id,
-      if (byOwner.containsKey(null)) null,
-    ];
+    final groups = choreGroups(den.members, chores);
     final groceries =
         view.lists.where((l) => l.list.kind == ListKind.shopping).firstOrNull ??
         den.lists.where((l) => l.list.pinned && l.list.kind == ListKind.shopping).firstOrNull;
@@ -341,8 +334,7 @@ class _TodayStrip extends StatelessWidget {
         if (onlyAnyone)
           for (final d in chores) _WallChore(day: d, onAct: onAct)
         else
-          for (final owner in owners)
-            _ChoreGroup(owner: owner == null ? null : den.member(owner), days: byOwner[owner]!, onAct: onAct),
+          for (final g in groups) _ChoreGroup(owner: g.member, days: g.days, onAct: onAct),
         if (groceries != null) ...[
           if (chores.isNotEmpty || !onlyAnyone) Divider(height: Sp.xl, color: c.rule),
           _ListPanel(state: groceries, onAct: onAct, limit: 12),
@@ -637,27 +629,19 @@ class _TodayBand extends StatelessWidget {
     final c = context.colors;
     final view = den.today();
     final chores = onlyAnyone ? view.chores.where((d) => d.owner == null).toList() : view.chores;
-    final byOwner = <String?, List<ChoreDay>>{};
-    for (final d in chores) {
-      byOwner.putIfAbsent(d.owner, () => []).add(d);
-    }
-    final owners = [
-      for (final m in den.members)
-        if (byOwner.containsKey(m.id)) m.id,
-      if (byOwner.containsKey(null)) null,
-    ];
+    final groups = choreGroups(den.members, chores);
     final groceries =
         view.lists.where((l) => l.list.kind == ListKind.shopping).firstOrNull ??
         den.lists.where((l) => l.list.pinned && l.list.kind == ListKind.shopping).firstOrNull;
 
     final columns = <Widget>[
-      for (final owner in owners)
+      for (final g in groups)
         SizedBox(
           width: 280,
           child: ListView(
             padding: const EdgeInsets.only(bottom: Sp.l),
             children: [
-              _ChoreGroup(owner: owner == null ? null : den.member(owner), days: byOwner[owner]!, onAct: onAct),
+              _ChoreGroup(owner: g.member, days: g.days, onAct: onAct),
             ],
           ),
         ),

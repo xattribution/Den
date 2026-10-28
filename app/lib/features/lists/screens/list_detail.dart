@@ -4,13 +4,13 @@ import 'package:flutter/semantics.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/fields.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../state/list_actions.dart';
 import 'list_share.dart';
 import '../words/list_words.dart';
+import '../../../design/forms/forms.dart';
 
 /// One list. Items keep their places: a checked item stays where it was, struck through.
 /// Shopping lists group and filter by store. The add row sits at the bottom with separate
@@ -341,7 +341,7 @@ class _StoreBar extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: Sp.l),
         children: [
-          InkChip(
+          ChoiceTile.chip(
             icon: PhosphorIconsRegular.storefront,
             label: 'By store',
             selected: byStore,
@@ -351,14 +351,14 @@ class _StoreBar extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: Sp.s, vertical: Sp.m),
             child: VerticalDivider(width: 1, color: c.rule),
           ),
-          InkChip(label: 'All stores', selected: store == null, onTap: () => onStore(null)),
+          ChoiceTile.chip(label: 'All stores', selected: store == null, onTap: () => onStore(null)),
           for (final s in stores) ...[
             const SizedBox(width: Sp.s),
-            InkChip(label: s, count: open(s), selected: store == s, onTap: () => onStore(store == s ? null : s)),
+            ChoiceTile.chip(label: s, count: open(s), selected: store == s, onTap: () => onStore(store == s ? null : s)),
           ],
           if (hasNoStore) ...[
             const SizedBox(width: Sp.s),
-            InkChip(
+            ChoiceTile.chip(
               label: 'No store',
               count: open(''),
               selected: store == '',
@@ -690,7 +690,7 @@ class _AddItemRowState extends State<AddItemRow> {
                           scrollDirection: Axis.horizontal,
                           children: [
                             for (final s in known) ...[
-                              InkChip(
+                              ChoiceTile.chip(
                                 label: s,
                                 selected: s.toLowerCase() == current.toLowerCase(),
                                 onTap: () {
@@ -711,7 +711,7 @@ class _AddItemRowState extends State<AddItemRow> {
             if (widget.kind == ListKind.meal)
               Align(
                 alignment: Alignment.centerLeft,
-                child: InkChip(
+                child: ChoiceTile.chip(
                   icon: PhosphorIconsRegular.shoppingCart,
                   label: 'Also add to groceries',
                   selected: _toGroceries,

@@ -135,5 +135,15 @@ abstract final class Pictograms {
   static IconData category(String? key) =>
       categories[canonical(key ?? '')] ?? PhosphorIconsRegular.calendarBlank;
 
+  /// A device by its kind.
+  static IconData device(DeviceKind k) => switch (k) {
+        DeviceKind.phone => PhosphorIconsRegular.deviceMobile,
+        DeviceKind.tablet => PhosphorIconsRegular.deviceTablet,
+        DeviceKind.desktop => PhosphorIconsRegular.laptop,
+        DeviceKind.browser => PhosphorIconsRegular.browser,
+        DeviceKind.hub => PhosphorIconsRegular.hardDrives,
+        DeviceKind.display => PhosphorIconsRegular.monitor,
+      };
+
   static IconData reward(String key) => rewards[canonical(key)] ?? PhosphorIconsFill.gift;
 }

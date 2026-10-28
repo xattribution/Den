@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/frame.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
 import '../../../platform/web/web_app.dart';
 import '../../../platform/capabilities.dart';
+import '../../../design/forms/forms.dart';
 
 /// After a join request: the matching words to compare with the parent's screen, and where the
 /// request stands. Approval arrives by sync, also after Den was closed and opened again; the

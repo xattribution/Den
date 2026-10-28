@@ -5,7 +5,6 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../pictograms.dart';
 import '../tokens.dart';
-import '../../features/family/words/family_words.dart';
 
 /// The picture-pattern sign-in: the nine animals in a 3×3 grid, four taps, Undo. Animals are
 /// the digits 0-8 in [Animal] order, so the pattern "cat, fish, dog, cow" is the secret "0517".
@@ -132,6 +131,19 @@ class _Slot extends StatelessWidget {
   }
 }
 
+/// What a screen reader calls each symbol.
+const Map<Animal, String> _names = {
+  Animal.cat: 'Cat',
+  Animal.dog: 'Dog',
+  Animal.rabbit: 'Rabbit',
+  Animal.bird: 'Bird',
+  Animal.butterfly: 'Butterfly',
+  Animal.fish: 'Fish',
+  Animal.horse: 'Horse',
+  Animal.cow: 'Cow',
+  Animal.bug: 'Ladybug',
+};
+
 class _AnimalTile extends StatelessWidget {
   const _AnimalTile({required this.animal, required this.size, required this.onTap});
   final Animal animal;
@@ -143,7 +155,7 @@ class _AnimalTile extends StatelessWidget {
     final c = context.colors;
     return Semantics(
       button: true,
-      label: FamilyWords.animal(animal),
+      label: _names[animal],
       child: Material(
         color: c.well,
         borderRadius: BorderRadius.circular(Radii.card),

@@ -8,14 +8,22 @@ import '../../../app/app_state.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../design/chore_pictograms.dart';
+import '../../../app/words.dart';
 
-/// The chores board's row: Today's `ChoreRow` plus the due time and a swap gesture
-/// (long-press on touch, right-click with a mouse, or the screen reader's "Swap" action).
-/// Done is a check plus strike-through; late is the bad color with its icon and the word.
-class BoardChoreRow extends StatelessWidget {
-  const BoardChoreRow({super.key, required this.day, this.onSwap, this.compact = false});
+/// A chore on a day: the check (or, for a chore with steps, the ring of steps it completes
+/// through), its pictogram, title, due time and stars. Tapping opens the chore; [onSwap] adds
+/// the swap gesture (long-press on touch, right-click with a mouse, or the screen reader's "Swap"
+/// action). Done is a check plus strike-through; late is the bad color with its icon and the word.
+class ChoreRow extends StatelessWidget {
+  const ChoreRow({super.key, required this.day, this.onSwap, this.compact = false, this.showDue = true, this.vertical = 0});
 
   final ChoreDay day;
+
+  /// Whether "by 5:00 PM" shows; Today leaves it out.
+  final bool showDue;
+
+  /// Space above and below the row.
+  final double vertical;
 
   /// Null when the actor may not swap this chore.
   final VoidCallback? onSwap;
@@ -33,7 +41,7 @@ class BoardChoreRow extends StatelessWidget {
     final pointsOn = app.den.family?.pointsEnabled ?? true;
     final late = day.late && !day.done;
     final scale = context.type.scale;
-    final due = chore.dueTime == null ? null : _clock(chore.dueTime!);
+    final due = chore.dueTime == null ? null : clockWords(chore.dueTime!);
     final titleStyle = context.type
         .body(day.done ? c.ink2 : c.ink)
         .copyWith(decoration: day.done ? TextDecoration.lineThrough : null, decorationColor: c.ink2);
@@ -47,7 +55,7 @@ class BoardChoreRow extends StatelessWidget {
       ],
     );
 
-    final dueText = due == null || day.done ? null : Text('by $due', style: context.type.meta(c.ink2));
+    final dueText = due == null || day.done || !showDue ? null : Text('by $due', style: context.type.meta(c.ink2));
 
     final swapLabel = day.date == app.today ? 'Swap for today' : 'Swap for ${app.formats.short(day.date)}';
     return Semantics(
@@ -57,7 +65,7 @@ class BoardChoreRow extends StatelessWidget {
         onLongPress: onSwap,
         onSecondaryTap: onSwap,
         child: Padding(
-          padding: const EdgeInsets.only(left: Sp.xs, right: Sp.l),
+          padding: EdgeInsets.only(left: Sp.xs, right: Sp.l, top: vertical, bottom: vertical),
           child: Row(
             children: [
               if (chore.steps.isEmpty)
@@ -100,14 +108,5 @@ class BoardChoreRow extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  static String _clock(String hhmm) {
-    final p = hhmm.split(':');
-    var h = int.tryParse(p.first) ?? 0;
-    final m = p.length > 1 ? int.tryParse(p[1]) ?? 0 : 0;
-    final pm = h >= 12;
-    h = h % 12 == 0 ? 12 : h % 12;
-    return '$h:${m.toString().padLeft(2, '0')} ${pm ? 'PM' : 'AM'}';
   }
 }

@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/frame.dart';
-import '../../../design/pickers/family_pickers.dart';
 import '../../family/words/family_words.dart';
 import '../../../design/pickers/picture_picker.dart';
 import '../../../design/tokens.dart';
@@ -12,6 +10,7 @@ import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../family/screens/device_parts.dart';
 import 'hub_adoption_panel.dart';
+import '../../../design/forms/forms.dart';
 
 /// The short step after creating a family: kids (name, age, look) and a partner with an invite
 /// for their phone. Everything here can also be done later in Family.
@@ -185,7 +184,7 @@ class _QuickPersonState extends State<_QuickPerson> {
               ),
               if (widget.kid) ...[
                 const SizedBox(height: Sp.l),
-                const FieldLabel('Age'),
+                const FieldLabel.quiet('Age'),
                 Row(
                   children: [
                     IconButton.outlined(
@@ -205,7 +204,7 @@ class _QuickPersonState extends State<_QuickPerson> {
                   ],
                 ),
                 const SizedBox(height: Sp.l),
-                const FieldLabel(
+                const FieldLabel.quiet(
                   'Age group',
                   info:
                       'Pre-readers and little kids get the picture-first kids\' app. Big kids and teens use the regular app.',
@@ -223,7 +222,7 @@ class _QuickPersonState extends State<_QuickPerson> {
                 ),
               ],
               const SizedBox(height: Sp.l),
-              const FieldLabel('Picture'),
+              const FieldLabel.quiet('Picture'),
               PicturePicker(
                 name: _name.text.trim().isEmpty ? (widget.kid ? 'Kid' : 'Partner') : _name.text.trim(),
                 picture: _picture,

@@ -1,44 +1,11 @@
-import 'package:den_core/den_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import '../tokens.dart';
-import '../../platform/web/web_app.dart';
-import '../widgets.dart';
-import '../../features/family/words/family_words.dart';
-
-/// A form label in meta type, with an optional (i).
-class FieldLabel extends StatelessWidget {
-  const FieldLabel(this.text, {super.key, this.info, this.trailing});
-
-  final String text;
-  final String? info;
-  final Widget? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: Sp.s),
-      child: Row(
-        children: [
-          Text(text, style: context.type.meta(c.ink2)),
-          if (info != null) InfoTip(info!),
-          const Spacer(),
-          ?trailing,
-        ],
-      ),
-    );
-  }
-}
-
-// ------------------------------------------------------------------------------- time zones
 
 /// Common US zones first, in the words families use.
-const Map<String, String> _commonZones = {
+const Map<String, String> commonZones = {
   'America/New_York': 'Eastern Time',
   'America/Chicago': 'Central Time',
   'America/Denver': 'Mountain Time',
@@ -52,27 +19,10 @@ const Map<String, String> _commonZones = {
 String zoneLabel(String iana) {
   final parts = iana.split('/');
   final city = parts.last.replaceAll('_', ' ');
-  final common = _commonZones[iana];
+  final common = commonZones[iana];
   if (common != null) return '$common · $city';
   if (parts.length < 2) return iana;
   return '$city · ${parts.first.replaceAll('_', ' ')}';
-}
-
-/// This device's IANA time zone, or a best guess from its UTC offset, or UTC.
-Future<String> deviceTimeZone() async {
-  try {
-    final info = await FlutterTimezone.getLocalTimezone();
-    if (tz.timeZoneDatabase.locations.containsKey(info.identifier)) return info.identifier;
-  } on Object catch (e) {
-    debugPrint('Time zone lookup failed: $e');
-  }
-  final offset = DateTime.now().timeZoneOffset;
-  final now = DateTime.now().millisecondsSinceEpoch;
-  for (final name in _commonZones.keys) {
-    final loc = tz.timeZoneDatabase.locations[name];
-    if (loc != null && loc.timeZone(now).offset == offset) return name;
-  }
-  return 'UTC';
 }
 
 /// Shows the family's time zone; tapping opens a searchable list.
@@ -130,10 +80,10 @@ class _ZoneSheetState extends State<_ZoneSheet> {
 
   late final List<String> _all = () {
     final names = tz.timeZoneDatabase.locations.keys
-        .where((n) => n.contains('/') && !n.startsWith('Etc/') && !_commonZones.containsKey(n))
+        .where((n) => n.contains('/') && !n.startsWith('Etc/') && !commonZones.containsKey(n))
         .toList()
       ..sort();
-    return [..._commonZones.keys, ...names];
+    return [...commonZones.keys, ...names];
   }();
 
   @override
@@ -176,42 +126,3 @@ class _ZoneSheetState extends State<_ZoneSheet> {
     );
   }
 }
-
-// ------------------------------------------------------------------------------- this device
-
-/// The kinds a person picks for the device in their hand; hubs and displays are chosen by mode.
-const personalKinds = [DeviceKind.phone, DeviceKind.tablet, DeviceKind.desktop, DeviceKind.browser];
-
-/// A sensible kind for the device the app is running on.
-DeviceKind guessDeviceKind(BuildContext context) {
-  if (kIsWeb) return WebApp.info.kind;
-  switch (defaultTargetPlatform) {
-    case TargetPlatform.android:
-    case TargetPlatform.iOS:
-      return MediaQuery.sizeOf(context).shortestSide >= 600 ? DeviceKind.tablet : DeviceKind.phone;
-    case TargetPlatform.macOS:
-    case TargetPlatform.windows:
-    case TargetPlatform.linux:
-    case TargetPlatform.fuchsia:
-      return DeviceKind.desktop;
-  }
-}
-
-/// "Sam's phone", from a person's name and the device kind ("Sam's iPhone" in Safari on one).
-String suggestDeviceName(String personName, DeviceKind kind) {
-  final apple = kIsWeb && WebApp.info.ios;
-  final word = switch (kind) {
-    DeviceKind.phone => apple ? 'iPhone' : 'phone',
-    DeviceKind.tablet => apple ? 'iPad' : 'tablet',
-    DeviceKind.desktop => 'computer',
-    DeviceKind.browser => 'browser',
-    DeviceKind.hub => 'hub',
-    DeviceKind.display => 'display',
-  };
-  final name = personName.trim();
-  if (name.isEmpty) return apple && (kind == DeviceKind.phone || kind == DeviceKind.tablet) ? word : FamilyWords.deviceKind(kind);
-  return '${FamilyWords.possessive(name)} $word';
-}
-
-/// Whether this platform can scan a QR code with its camera.
-bool get canScanQr => !kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS);

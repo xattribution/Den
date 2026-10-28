@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../../app/format.dart';
+import '../../../app/words.dart';
 
 /// Calendar arithmetic on top of [Formats], always in the family's time zone. Local dates are
 /// `YYYY-MM-DD` strings, which sort the same way as the days they name.
@@ -78,7 +79,7 @@ extension CalendarTime on Formats {
   }
 
   /// "3:30 PM" for minutes past midnight.
-  String clock(int minutes) => DateFormat.jm().format(DateTime(2000, 1, 1, minutes ~/ 60, minutes % 60));
+  String clock(int minutes) => clockAt(minutes ~/ 60, minutes % 60);
 
   /// "15:30" for routes and storage.
   String hhmm(int minutes) =>

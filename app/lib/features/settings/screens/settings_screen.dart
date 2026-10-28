@@ -5,8 +5,6 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../../design/forms/frame.dart';
-import '../../../design/pickers/family_pickers.dart';
 import '../../family/words/family_words.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
@@ -18,6 +16,8 @@ import '../../advanced/screens/device_sync.dart';
 import '../../advanced/state/export.dart';
 import 'web_reminders.dart';
 import '../../../platform/capabilities.dart';
+import '../../../design/forms/forms.dart';
+import '../../../design/pictograms.dart';
 
 
 /// Settings: this device's look and role, notifications, AI and automations, Home Assistant,
@@ -133,7 +133,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.only(bottom: Sp.xxxl),
               children: [
                 const SectionHeader('Appearance'),
-                block(const FieldLabel('Theme'), top: 0),
+                block(const FieldLabel.quiet('Theme'), top: 0),
                 block(
                   Align(
                     alignment: Alignment.centerLeft,
@@ -173,7 +173,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: Sp.s),
                   ListTile(
-                    leading: Icon(FamilyWords.deviceIcon(device.kind), color: c.ink2),
+                    leading: Icon(Pictograms.device(device.kind), color: c.ink2),
                     title: const Row(
                       children: [
                         Text('Mode'),

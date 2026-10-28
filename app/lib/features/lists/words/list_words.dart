@@ -1,6 +1,6 @@
 import 'package:den_core/den_core.dart';
 
-import '../../../app/app_state.dart';
+import '../../../app/family_reads.dart';
 
 /// "14 items, 5 at Costco, 3 at Target", "All done", "No items".
 String listSummary(ListState lv, {int stores = 2}) {
@@ -21,7 +21,7 @@ String listSummary(ListState lv, {int stores = 2}) {
 
 /// When a list is for: "Need by Fri, Oct 23", "For Soccer tournament, Sat, Oct 24", or null for
 /// running lists. [late] is true when a dated list's day has passed with items still open.
-({String text, bool late})? listTiming(AppState app, ListState lv) {
+({String text, bool late})? listTiming(FamilyReads app, ListState lv) {
   final list = lv.list;
   final f = app.formats;
   switch (list.lifecycle) {

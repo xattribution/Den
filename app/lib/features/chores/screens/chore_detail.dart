@@ -3,13 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/fields.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../words/chore_words.dart';
 import 'swap_sheet.dart';
 import '../../../design/chore_pictograms.dart';
+import '../../../design/forms/forms.dart';
+import '../../../app/words.dart';
 
 /// One chore on one day: who has it and why, its steps to check, how it repeats, and what
 /// happened on recent days. `/chore/:id?date=`.
@@ -86,22 +87,22 @@ class ChoreDetailScreen extends StatelessWidget {
                 const SizedBox(height: Sp.l),
                 Divider(color: c.rule),
                 const SizedBox(height: Sp.s),
-                _Fact('Repeats', Text(spec.words(f), style: context.type.body(c.ink))),
-                _Fact(
-                  'Due',
-                  Text(
+                FactRow.compact(label: 'Repeats', child: Text(spec.words(f), style: context.type.body(c.ink))),
+                FactRow.compact(
+                  label: 'Due',
+                  child: Text(
                     chore.dueTime == null ? 'Any time that day' : 'By ${clockWords(chore.dueTime!)}',
                     style: context.type.body(c.ink),
                   ),
                 ),
-                if (pointsOn) _Fact('Points', _PointsWords(chore)),
+                if (pointsOn) FactRow.compact(label: 'Points', child: _PointsWords(chore)),
                 if (chore.reminders.isNotEmpty && chore.dueTime != null)
-                  _Fact(
-                    'Reminders',
-                    Text(chore.reminders.map(reminderWords).join(', '), style: context.type.body(c.ink)),
+                  FactRow.compact(
+                    label: 'Reminders',
+                    child: Text(chore.reminders.map(reminderWords).join(', '), style: context.type.body(c.ink)),
                   ),
-                _Fact('Who sees it', Text(_audienceWords(app, chore), style: context.type.body(c.ink))),
-                if (chore.notes.isNotEmpty) _Fact('Notes', Text(chore.notes, style: context.type.body(c.ink))),
+                FactRow.compact(label: 'Who sees it', child: Text(app.seenBy(chore.space), style: context.type.body(c.ink))),
+                if (chore.notes.isNotEmpty) FactRow.compact(label: 'Notes', child: Text(chore.notes, style: context.type.body(c.ink))),
                 if (cd != null && canSwap(app, cd)) ...[
                   const SizedBox(height: Sp.l),
                   Align(
@@ -124,13 +125,6 @@ class ChoreDetailScreen extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  static String _audienceWords(AppState app, Chore chore) {
-    final owner = Space.memberOf(chore.space);
-    if (owner == null) return chore.audience == Audience.parents ? 'Parents' : 'Everyone';
-    if (owner == app.me?.id) return 'Just me';
-    return 'Only ${app.den.member(owner)?.name ?? 'one person'}';
   }
 
   Future<void> _delete(BuildContext context, Chore chore) async {
@@ -373,35 +367,6 @@ class _NotScheduled extends StatelessWidget {
             ),
           ],
         ],
-      ),
-    );
-  }
-}
-
-class _Fact extends StatelessWidget {
-  const _Fact(this.label, this.value);
-  final String label;
-  final Widget value;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return MergeSemantics(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: Sp.s - 2),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 108,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(label, style: context.type.meta(c.ink2)),
-              ),
-            ),
-            Expanded(child: value),
-          ],
-        ),
       ),
     );
   }

@@ -1,10 +1,10 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 
-import '../../../design/forms/fields.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
+import '../../../design/forms/forms.dart';
 
 /// Whether the actor may hand [day] to someone else: kids only their own chores.
 bool canSwap(AppState app, ChoreDay day) {

@@ -1,8 +1,6 @@
 import 'package:den_core/den_core.dart';
-import 'package:flutter/widgets.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-/// The words and glyphs family, device and connection screens use for engine enums, so every
+/// The words family, device and connection screens use for engine enums, so every
 /// screen says the same thing the same way.
 abstract final class FamilyWords {
   static String role(Role r) => switch (r) {
@@ -30,19 +28,6 @@ abstract final class FamilyWords {
         Tier.teen => 'Teen',
       };
 
-  /// The pictures of the sign-in pattern pad.
-  static String animal(Animal a) => switch (a) {
-        Animal.cat => 'Cat',
-        Animal.dog => 'Dog',
-        Animal.rabbit => 'Rabbit',
-        Animal.bird => 'Bird',
-        Animal.butterfly => 'Butterfly',
-        Animal.fish => 'Fish',
-        Animal.horse => 'Horse',
-        Animal.cow => 'Cow',
-        Animal.bug => 'Ladybug',
-      };
-
   static String deviceKind(DeviceKind k) => switch (k) {
         DeviceKind.phone => 'Phone',
         DeviceKind.tablet => 'Tablet',
@@ -50,15 +35,6 @@ abstract final class FamilyWords {
         DeviceKind.browser => 'Browser',
         DeviceKind.hub => 'Hub',
         DeviceKind.display => 'Display',
-      };
-
-  static IconData deviceIcon(DeviceKind k) => switch (k) {
-        DeviceKind.phone => PhosphorIconsRegular.deviceMobile,
-        DeviceKind.tablet => PhosphorIconsRegular.deviceTablet,
-        DeviceKind.desktop => PhosphorIconsRegular.laptop,
-        DeviceKind.browser => PhosphorIconsRegular.browser,
-        DeviceKind.hub => PhosphorIconsRegular.hardDrives,
-        DeviceKind.display => PhosphorIconsRegular.monitor,
       };
 
   static String mode(DeviceMode m) => switch (m) {

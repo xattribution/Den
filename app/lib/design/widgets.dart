@@ -399,6 +399,67 @@ class EmptyLine extends StatelessWidget {
   }
 }
 
+/// A fact on a detail page: its label in a column on the left, the value beside it.
+///
+/// [FactRow] is the event page's: inside the page gutters, with a label column that grows with
+/// the text. [center] is for a value that holds a button: the label centers on it, and the
+/// button's own 48 px height stands in for the row's padding. [FactRow.compact] is the chore
+/// page's: inside the page's own padding, read by screen readers as one phrase.
+class FactRow extends StatelessWidget {
+  const FactRow({super.key, required this.label, required this.child, this.center = false}) : _compact = false;
+
+  const FactRow.compact({super.key, required this.label, required this.child})
+      : center = false,
+        _compact = true;
+
+  final String label;
+  final Widget child;
+  final bool center;
+  final bool _compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    if (_compact) {
+      return MergeSemantics(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: Sp.s - 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 108,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(label, style: context.type.meta(c.ink2)),
+                ),
+              ),
+              Expanded(child: child),
+            ],
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: EdgeInsets.fromLTRB(Sp.l, center ? 0 : Sp.s, Sp.l, center ? 0 : Sp.s),
+      child: Row(
+        crossAxisAlignment: center ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96 * context.type.scale,
+            child: Padding(
+              padding: EdgeInsets.only(top: center ? 0 : 2),
+              child: Text(label, style: context.type.meta(c.ink2)),
+            ),
+          ),
+          const SizedBox(width: Sp.s),
+          Expanded(child: child),
+        ],
+      ),
+    );
+  }
+}
+
 /// Shows a message with Undo, the way reversible actions confirm themselves.
 void showUndo(BuildContext context, String message, VoidCallback onUndo) {
   final messenger = ScaffoldMessenger.of(context);

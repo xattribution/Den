@@ -2,13 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/frame.dart';
-import '../../../design/pickers/family_pickers.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/hub_client.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
+import '../../../design/forms/forms.dart';
 
 /// Adding a hub (a NAS, a Raspberry Pi, an always-on computer): find it on the network or type
 /// its address, enter the setup code it printed, then compare the words and approve it.
@@ -161,7 +160,7 @@ class _AddHubScreenState extends State<AddHubScreen> {
           ),
         ),
         const FormBlock(
-          child: FieldLabel(
+          child: FieldLabel.quiet(
             'Setup code',
             info: "A new hub prints an 8-character code like ABCD-EFGH. Find it in the hub's log, by running "
                 '"den_hub setup-code" on it, or on the hub\'s web page.',

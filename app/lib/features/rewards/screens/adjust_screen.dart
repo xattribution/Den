@@ -2,10 +2,10 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../design/forms/fields.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
+import '../../../design/forms/forms.dart';
 
 /// A parent gives or takes points: who, how many, and why (a reason is required so everyone
 /// can see it in Recent). `/points/adjust?member=`.
@@ -137,7 +137,7 @@ class _AdjustScreenState extends State<AdjustScreen> {
                   spacing: Sp.s,
                   children: [
                     for (final n in const [1, 2, 5, 10, 20])
-                      InkChip(label: '$n', selected: _amount == n, onTap: () => setState(() => _amount = n)),
+                      ChoiceTile.chip(label: '$n', selected: _amount == n, onTap: () => setState(() => _amount = n)),
                   ],
                 ),
                 const FieldLabel('Reason'),

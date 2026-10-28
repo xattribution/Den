@@ -4,13 +4,13 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/forms/fields.dart';
 import '../../../design/pictograms.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../words/chore_words.dart';
 import '../../../design/chore_pictograms.dart';
+import '../../../design/forms/forms.dart';
 
 enum _OwnerKind { person, anyone, turns }
 
@@ -348,10 +348,10 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
                 ),
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: ValueButton(
+                  child: PickerButton.outlined(
                     icon: PhosphorIconsRegular.clock,
                     label: _due == null ? 'Any time that day' : _due!.format(context),
-                    onPressed: () async {
+                    onTap: () async {
                       final t = await showTimePicker(
                         context: context,
                         initialTime: _due ?? const TimeOfDay(hour: 18, minute: 0),
@@ -367,7 +367,7 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
                     spacing: Sp.s,
                     children: [
                       for (final entry in reminderChoices.entries)
-                        InkChip(
+                        ChoiceTile.chip(
                           label: entry.value,
                           selected: _reminders.contains(entry.key),
                           onTap: () => setState(() {
@@ -513,7 +513,7 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
         spacing: Sp.s,
         children: [
           for (final e in choices.entries)
-            InkChip(label: e.value, selected: spec.raw == null && spec.repeat == e.key, onTap: () => set(e.key)),
+            ChoiceTile.chip(label: e.value, selected: spec.raw == null && spec.repeat == e.key, onTap: () => set(e.key)),
         ],
       ),
       const SizedBox(height: Sp.s),
@@ -556,10 +556,10 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
       if (spec.repeat == Repeat.once)
         Align(
           alignment: Alignment.centerLeft,
-          child: ValueButton(
+          child: PickerButton.outlined(
             icon: PhosphorIconsRegular.calendarBlank,
             label: f.relative(spec.once, app.today),
-            onPressed: () => _pickDate(spec.once, (d) => setState(() => spec.once = d)),
+            onTap: () => _pickDate(spec.once, (d) => setState(() => spec.once = d)),
           ),
         ),
       if (spec.repeat != Repeat.once)
