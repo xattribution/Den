@@ -58,6 +58,7 @@ const _labels = {
   'role': 'Role',
   'marker': 'Color',
   'animal': 'Animal',
+  'picture': 'Picture',
   'birthday': 'Birthday',
   'grants': 'Can edit',
   'timezone': 'Time zone',
@@ -181,6 +182,7 @@ String? valueWords(AppState app, String type, String field, Object? value) {
       return value is num ? f.weekdayName(value.toInt() % 7, long: true) : '$value';
     case 'marker':
     case 'animal':
+    case 'picture':
     case 'role':
     case 'status':
     case 'kind':

@@ -19,7 +19,7 @@ Future<Den> founded(DenStorage storage, MemoryKeys keys) async {
     familyName: 'The Testers',
     timezone: 'America/Chicago',
     yourName: 'Sam',
-    marker: Marker.blue,
+    marker: Marker.sky,
     animal: Animal.cat,
     deviceName: "Sam's iPhone",
     deviceKind: DeviceKind.phone,

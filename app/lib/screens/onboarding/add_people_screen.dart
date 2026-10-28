@@ -6,6 +6,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../../design/parts/family_frame.dart';
 import '../../design/parts/family_pickers.dart';
 import '../../design/parts/family_words.dart';
+import '../../design/pickers/picture_picker.dart';
 import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
@@ -114,7 +115,7 @@ class _QuickPersonState extends State<_QuickPerson> {
   Tier _tier = FamilyWords.tierForAge(7);
   bool _tierChosen = false;
   late Marker _marker;
-  late Animal _animal;
+  late String _picture;
   bool _ready = false;
   bool _tried = false;
 
@@ -125,7 +126,7 @@ class _QuickPersonState extends State<_QuickPerson> {
     _ready = true;
     final look = freshLook(context.den.members);
     _marker = look.$1;
-    _animal = look.$2;
+    _picture = look.$2;
   }
 
   @override
@@ -151,7 +152,7 @@ class _QuickPersonState extends State<_QuickPerson> {
         role: widget.kid ? Role.kid : Role.parent,
         tier: widget.kid ? _tier : null,
         marker: _marker,
-        animal: _animal,
+        picture: _picture,
       );
     });
     if (ok && mounted) Navigator.of(context).pop(id);
@@ -222,14 +223,14 @@ class _QuickPersonState extends State<_QuickPerson> {
                 ),
               ],
               const SizedBox(height: Sp.l),
-              const FieldLabel('Animal'),
-              AnimalPicker(value: _animal, marker: _marker, onChanged: (a) => setState(() => _animal = a)),
-              const SizedBox(height: Sp.l),
-              const FieldLabel('Marker'),
-              MarkerPicker(
-                value: _marker,
-                takenBy: markersTaken(context.den.members),
-                onChanged: (m) => setState(() => _marker = m),
+              const FieldLabel('Picture'),
+              PicturePicker(
+                name: _name.text.trim().isEmpty ? (widget.kid ? 'Kid' : 'Partner') : _name.text.trim(),
+                picture: _picture,
+                color: _marker,
+                takenBy: colorsTaken(context.den.members),
+                onPicture: (p) => setState(() => _picture = p),
+                onColor: (m) => setState(() => _marker = m),
               ),
               const SizedBox(height: Sp.xl),
               FilledButton(

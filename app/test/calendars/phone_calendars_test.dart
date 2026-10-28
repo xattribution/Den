@@ -18,7 +18,7 @@ Future<Den> _family() async {
     familyName: 'Carter family',
     timezone: 'America/Chicago',
     yourName: 'Alex',
-    marker: Marker.blue,
+    marker: Marker.sky,
     animal: Animal.dog,
     deviceName: "Alex's phone",
     deviceKind: DeviceKind.phone,

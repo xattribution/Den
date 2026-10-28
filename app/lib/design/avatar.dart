@@ -6,7 +6,6 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import 'pictograms.dart';
 import 'pictures.dart';
 import 'tokens.dart';
 
@@ -17,8 +16,7 @@ enum _Kind { member, picture, initial, photo }
 /// their color. Color is never the only clue: a name goes beside it, and the picture or letter
 /// tells people apart too.
 class DenAvatar extends StatelessWidget {
-  /// A member as the model describes them today: their animal pictogram on their color.
-  // TODO(design phase 2): once members carry a picture, initial or photo, build those here.
+  /// A member: their picture in a ring of their color, or their initial on it.
   const DenAvatar(Member this.member, {super.key, this.size = 32})
       : _kind = _Kind.member,
         color = null,
@@ -71,7 +69,7 @@ class DenAvatar extends StatelessWidget {
   static const double pictureFill = 0.84;
 
   String get _label => switch (_kind) {
-        _Kind.member => member!.name,
+        _Kind.member => semanticLabel ?? member!.name,
         _Kind.picture => semanticLabel ?? DenPictures.find(picture)?.name ?? 'Picture',
         _Kind.initial => semanticLabel ?? initial!,
         _Kind.photo => semanticLabel ?? 'Photo',
@@ -81,16 +79,17 @@ class DenAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final ring = color ?? c.marker(member!.marker);
-    final Widget face = switch (_kind) {
-      _Kind.member => DecoratedBox(
-          decoration: BoxDecoration(color: ring, shape: BoxShape.circle),
-          child: Center(child: Icon(Pictograms.animal(member!.animal), size: size * 0.6, color: c.onMarker)),
-        ),
-      _Kind.initial => DecoratedBox(
+    final kind = _kind == _Kind.member
+        ? (member!.picture == Picture.initial || DenPictures.find(member!.picture) == null ? _Kind.initial : _Kind.picture)
+        : _kind;
+    final letters = _kind == _Kind.member ? member!.name : initial ?? '';
+    final pictureId = _kind == _Kind.member ? member!.picture : picture;
+    final Widget face = switch (kind) {
+      _Kind.member || _Kind.initial => DecoratedBox(
           decoration: BoxDecoration(color: ring, shape: BoxShape.circle),
           child: Center(
             child: Text(
-              initial!.characters.isEmpty ? '' : initial!.characters.first.toUpperCase(),
+              letters.characters.isEmpty ? '' : letters.characters.first.toUpperCase(),
               textScaler: TextScaler.noScaling,
               style: TextStyle(
                 fontFamily: DenType.family,
@@ -112,7 +111,7 @@ class DenAvatar extends StatelessWidget {
             child: FractionallySizedBox(
               widthFactor: pictureFill,
               heightFactor: pictureFill,
-              child: _PictureView(picture!),
+              child: _PictureView(pictureId!),
             ),
           ),
         ),

@@ -30,19 +30,7 @@ abstract final class FamilyWords {
         Tier.teen => 'Teen',
       };
 
-  static String marker(Marker m) => switch (m) {
-        Marker.blue => 'Blue',
-        Marker.green => 'Green',
-        Marker.orange => 'Orange',
-        Marker.pink => 'Pink',
-        Marker.teal => 'Teal',
-        Marker.plum => 'Plum',
-        Marker.brown => 'Brown',
-        Marker.olive => 'Olive',
-        Marker.sky => 'Sky',
-        Marker.slate => 'Slate',
-      };
-
+  /// The pictures of the sign-in pattern pad.
   static String animal(Animal a) => switch (a) {
         Animal.cat => 'Cat',
         Animal.dog => 'Dog',
@@ -167,11 +155,6 @@ abstract final class FamilyWords {
   }
 }
 
-/// The next marker and animal nobody in the family uses yet, for a new person's defaults.
-(Marker, Animal) freshLook(Iterable<Member> members) {
-  final markers = members.map((m) => m.marker).toSet();
-  final animals = members.map((m) => m.animal).toSet();
-  final marker = Marker.values.firstWhere((m) => !markers.contains(m), orElse: () => Marker.values.first);
-  final animal = Animal.values.firstWhere((a) => !animals.contains(a), orElse: () => Animal.values.first);
-  return (marker, animal);
-}
+/// A new person's defaults: the next family color (the first nobody has) and their initial.
+(Marker, String) freshLook(Iterable<Member> members) =>
+    (Marker.next(members.map((m) => m.marker)), Picture.initial);

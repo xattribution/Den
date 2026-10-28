@@ -8,6 +8,7 @@ import '../../design/parts/family_pattern_pad.dart';
 import '../../design/parts/family_pickers.dart';
 import '../../design/parts/family_pin_pad.dart';
 import '../../design/parts/family_words.dart';
+import '../../design/pickers/picture_picker.dart';
 import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
@@ -33,7 +34,7 @@ class _MemberEditorState extends State<MemberEditor> {
   late Role _role;
   Tier _tier = Tier.big;
   bool _tierChosen = false;
-  late Animal _animal;
+  late String _picture;
   late Marker _marker;
   String? _birthday;
   Set<Grant> _grants = {};
@@ -54,7 +55,7 @@ class _MemberEditorState extends State<MemberEditor> {
       _role = m.role;
       _tier = m.tier ?? Tier.big;
       _tierChosen = m.tier != null;
-      _animal = m.animal;
+      _picture = m.picture;
       _marker = m.marker;
       _birthday = m.birthday;
       _grants = {...m.grants};
@@ -62,7 +63,7 @@ class _MemberEditorState extends State<MemberEditor> {
       final look = freshLook(context.den.members);
       _role = Role.values.firstWhere((r) => r.name == widget.role, orElse: () => Role.kid);
       _marker = look.$1;
-      _animal = look.$2;
+      _picture = look.$2;
     }
     _nameFocus.addListener(() {
       if (!_nameFocus.hasFocus) _saveName();
@@ -175,7 +176,7 @@ class _MemberEditorState extends State<MemberEditor> {
         role: _role,
         tier: _role == Role.kid ? _tier : null,
         marker: _marker,
-        animal: _animal,
+        picture: _picture,
         birthday: _birthday,
         grants: _role == Role.kid ? _grants : const {},
       );
@@ -299,25 +300,19 @@ class _MemberEditorState extends State<MemberEditor> {
             ),
           ),
         ),
-        FormBlock(child: const FieldLabel('Animal')),
+        FormBlock(child: const FieldLabel('Picture')),
         FormBlock(
           top: 0,
-          child: AnimalPicker(
-            value: _animal,
-            marker: _marker,
-            onChanged: (a) {
-              setState(() => _animal = a);
-              _patch({'animal': a.name});
+          child: PicturePicker(
+            name: _name.text.trim().isEmpty ? 'New person' : _name.text.trim(),
+            picture: _picture,
+            color: _marker,
+            takenBy: colorsTaken(den.members, except: widget.memberId),
+            onPicture: (p) {
+              setState(() => _picture = p);
+              _patch({'picture': p});
             },
-          ),
-        ),
-        FormBlock(child: const FieldLabel('Marker', info: 'The color that means this person everywhere in Den.')),
-        FormBlock(
-          top: 0,
-          child: MarkerPicker(
-            value: _marker,
-            takenBy: markersTaken(den.members, except: widget.memberId),
-            onChanged: (m) {
+            onColor: (m) {
               setState(() => _marker = m);
               _patch({'marker': m.name});
             },

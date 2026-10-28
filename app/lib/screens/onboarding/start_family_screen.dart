@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../design/parts/family_frame.dart';
 import '../../design/parts/family_pickers.dart';
 import '../../design/parts/family_words.dart';
+import '../../design/pickers/picture_picker.dart';
 import '../../design/widgets.dart';
 import '../../net/pairing.dart';
 import '../../state/app_state.dart';
@@ -35,8 +36,8 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
   final _code = TextEditingController();
   HubInfo? _hub;
   bool _askedHub = false;
-  Marker _marker = Marker.blue;
-  Animal _animal = Animal.cat;
+  Marker _marker = Marker.sky;
+  String _picture = Picture.initial;
   String _zone = 'UTC';
   DeviceKind? _kind;
   bool _deviceNameEdited = false;
@@ -110,7 +111,7 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
         timezone: _zone,
         yourName: _name.text.trim(),
         marker: _marker,
-        animal: _animal,
+        picture: _picture,
         deviceName: _device.text.trim().isEmpty ? suggestDeviceName(_name.text, _kind!) : _device.text.trim(),
         deviceKind: _kind!,
       ),
@@ -176,17 +177,17 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
             onChanged: (_) => setState(() {}),
           ),
         ),
-        const FormBlock(
-          child: FieldLabel('Your animal', info: 'Your animal and marker are how the family sees you on every screen.'),
-        ),
+        const FormBlock(child: FieldLabel('Your picture')),
         FormBlock(
           top: 0,
-          child: AnimalPicker(value: _animal, marker: _marker, onChanged: (a) => setState(() => _animal = a)),
-        ),
-        const FormBlock(child: FieldLabel('Your marker')),
-        FormBlock(
-          top: 0,
-          child: MarkerPicker(value: _marker, onChanged: (m) => setState(() => _marker = m)),
+          child: PicturePicker(
+            name: _name.text.trim().isEmpty ? 'You' : _name.text.trim(),
+            picture: _picture,
+            color: _marker,
+            colorLabel: 'Your color',
+            onPicture: (p) => setState(() => _picture = p),
+            onColor: (m) => setState(() => _marker = m),
+          ),
         ),
         if (_adopting) ...[
           InfoHeader(
