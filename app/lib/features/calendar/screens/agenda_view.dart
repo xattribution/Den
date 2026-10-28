@@ -1,89 +1,97 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
-import '../widgets/event_row.dart';
-import '../../../design/tokens.dart';
-import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
-import '../words/calendar_time.dart';
+import '../../../design/layout.dart';
+import '../../../design/tokens.dart';
 import '../state/calendar_models.dart';
+import '../widgets/calendar_parts.dart';
+import '../widgets/day_list.dart';
+import '../words/calendar_time.dart';
 
-/// The calendar as a list: days that have events, from [start], each under "Today",
-/// "Tomorrow" or "Wed, Oct 22". Events only; chores live on Today and in Chores.
+/// The calendar as a list: [start]'s events as solid blocks by time (or a line saying it's
+/// free), then each later day that has something, for two weeks, and the way to see more.
+/// Events only; chores live on Today and in Chores. [header] scrolls with it (the phone's title,
+/// week strip and who to show).
 class AgendaView extends StatefulWidget {
-  const AgendaView({super.key, required this.start, this.weeks = 4});
+  const AgendaView({super.key, required this.start, this.person, this.combined, this.header = const [], this.days = 14});
 
   final String start;
 
-  /// How many weeks to show before "Show 4 more weeks".
-  final int weeks;
+  /// One person's events (and everyone's); null for all.
+  final String? person;
+
+  /// Which groups are combined; one of its own when not given.
+  final Combined? combined;
+  final List<Widget> header;
+
+  /// How many days to list before "Show the next two weeks".
+  final int days;
 
   @override
   State<AgendaView> createState() => _AgendaViewState();
 }
 
 class _AgendaViewState extends State<AgendaView> {
-  late int _weeks = widget.weeks;
+  late int _days = widget.days;
+  Combined? _own;
+
+  Combined get _combined => widget.combined ?? (_own ??= Combined());
 
   @override
   void didUpdateWidget(AgendaView old) {
     super.didUpdateWidget(old);
-    if (old.start != widget.start) _weeks = widget.weeks;
+    if (old.start != widget.start) _days = widget.days;
+  }
+
+  @override
+  void dispose() {
+    _own?.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch(calendarReads);
     final f = app.formats;
-    final today = app.today;
     final from = widget.start;
-    final to = f.addDays(from, _weeks * 7 - 1);
+    final to = f.addDays(from, _days - 1);
     final occurrences = context.view(OccurrencesModel(f.startOf(from), f.startOf(f.addDays(to, 1))));
     final byDate = occurrencesByDate(occurrences, f, from: from, to: to);
-    final dates = byDate.keys.toList()..sort();
-    final canAdd = app.allows(DenAction.editEvents);
+    List<Occurrence> on(String date) => [
+          for (final occ in byDate[date] ?? const <Occurrence>[])
+            if (showsFor(occ, widget.person)) occ,
+        ];
+    final later = [
+      for (final date in byDate.keys.toList()..sort())
+        if (date != from && on(date).isNotEmpty) date,
+    ];
 
-    if (dates.isEmpty) {
-      return ListView(
-        children: [
-          EmptyLine(
-            message: 'Nothing on the calendar from ${f.monthDay(from)} to ${f.monthDay(to, relativeTo: from)}.',
-            actionLabel: canAdd ? 'Add event' : null,
-            onAction: () => context.push('/event/new?date=$from'),
-          ),
-          _more(context),
-        ],
-      );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.only(bottom: Sp.xxxl),
-      itemCount: dates.length + 1,
-      itemBuilder: (context, i) {
-        if (i == dates.length) return _more(context);
-        final date = dates[i];
-        final label = f.relative(date, today);
-        final named = label != f.short(date);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SectionHeader(
-              named ? label : f.shortWithYear(date, relativeTo: today),
-              trailing: named ? f.short(date) : null,
-            ),
-            for (final occ in byDate[date]!) CalendarEventRow(occ: occ, date: date),
-          ],
+    Widget section(String date) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: DenLayout.gutter),
+          child: DaySection(date: date, occurrences: on(date), combined: _combined, person: widget.person),
         );
-      },
+
+    final children = <Widget>[
+      ...widget.header,
+      section(from),
+      for (final date in later) ...[const SizedBox(height: DenLayout.sectionGap), section(date)],
+      const SizedBox(height: DenLayout.sectionGap),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: DenLayout.gutter),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: CalendarPill(
+            label: 'Show the next two weeks',
+            onTap: () => setState(() => _days += 14),
+          ),
+        ),
+      ),
+    ];
+
+    return ListView(
+      padding: EdgeInsets.only(top: widget.header.isEmpty ? Sp.s : Sp.s, bottom: Sp.l),
+      children: children,
     );
   }
-
-  Widget _more(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(Sp.l, Sp.l, Sp.l, 0),
-    child: Align(
-      alignment: Alignment.centerLeft,
-      child: OutlinedButton(onPressed: () => setState(() => _weeks += 4), child: const Text('Show 4 more weeks')),
-    ),
-  );
 }
