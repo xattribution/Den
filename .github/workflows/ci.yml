@@ -107,6 +107,15 @@ jobs:
       # icon's source (tagged golden) is skipped.
       - working-directory: app
         run: flutter test --exclude-tags golden
+      # The browser's own storage (IndexedDB), in Chrome.
+      - working-directory: app
+        run: flutter test --platform chrome test/web
+      # The service worker, against a fake build, in Node.
+      - working-directory: app
+        run: node test/web/sw_test.mjs web/sw.js
+      # The web app as the hub serves it: CanvasKit and fonts from the hub, no CDN.
+      - working-directory: app
+        run: flutter build web --release --no-web-resources-cdn --csp
 
   homeassistant:
     name: Home Assistant integration
@@ -182,7 +191,7 @@ jobs:
             artifact: app/build/app/outputs/flutter-apk/app-release.apk
           - target: web
             os: ubuntu-latest
-            command: flutter build web --release
+            command: flutter build web --release --no-web-resources-cdn --csp
             artifact: app/build/web
           - target: linux
             os: ubuntu-latest

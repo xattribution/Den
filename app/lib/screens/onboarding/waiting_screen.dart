@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
@@ -7,9 +8,11 @@ import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../net/pairing.dart';
 import '../../state/app_state.dart';
+import '../../web/web_app.dart';
 
 /// After a join request: the matching words to compare with the parent's screen, and where the
-/// request stands. Approval arrives by sync; the router then moves on to Today.
+/// request stands. Approval arrives by sync, also after Den was closed and opened again; the
+/// router then moves on to Today. Start over withdraws the request, for a new invite.
 class WaitingScreen extends StatelessWidget {
   const WaitingScreen({super.key, this.ticket});
 
@@ -92,7 +95,33 @@ class WaitingScreen extends StatelessWidget {
             );
           },
         ),
+        FormBlock(
+          top: Sp.xl,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(onPressed: () => _startOver(context), child: const Text('Start over with a new invite')),
+          ),
+        ),
       ],
     );
+  }
+
+  Future<void> _startOver(BuildContext context) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Start over?'),
+        content: const Text('This device stops asking to join. Ask a parent for a new invite to join again.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialog).pop(false), child: const Text('Keep waiting')),
+          FilledButton(onPressed: () => Navigator.of(dialog).pop(true), child: const Text('Start over')),
+        ],
+      ),
+    );
+    if (yes != true || !context.mounted) return;
+    final den = context.den;
+    await attempt(context, den.leaveFamily);
+    // A browser opens again as a fresh device, with new keys (see Boot).
+    if (kIsWeb) WebApp.reload();
   }
 }

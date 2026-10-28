@@ -1,4 +1,5 @@
 import 'package:den_core/den_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -16,15 +17,19 @@ import '../../reminders/reminder_scheduler.dart';
 import '../onboarding/demo_session.dart';
 import 'device_sync.dart';
 import 'export.dart';
+import 'web_reminders.dart';
 
 
 /// Settings: this device's look and role, notifications, AI and automations, Home Assistant,
 /// backup and export, and About.
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, this.version});
+  const SettingsScreen({super.key, this.version, this.web});
 
   /// Overrides the version read from the platform, for tests.
   final String? version;
+
+  /// Shows what a browser shows, for tests; by default only on the web.
+  final bool? web;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -185,11 +190,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   if (parent && app.phoneCalendars != null) _PhoneCalendarsRow(app.phoneCalendars!),
                 ],
                 const SectionHeader('Notifications'),
-                SwitchListTile(
-                  title: const Text('Reminders on this device'),
-                  value: _reminders ?? true,
-                  onChanged: _reminders == null ? null : _setReminders,
-                ),
+                // A browser can't schedule notifications itself; the hub sends them (Web Push).
+                if (widget.web ?? kIsWeb)
+                  const WebReminders()
+                else
+                  SwitchListTile(
+                    title: const Text('Reminders on this device'),
+                    value: _reminders ?? true,
+                    onChanged: _reminders == null ? null : _setReminders,
+                  ),
                 if (parent) ...[
                   const SectionHeader('Connections'),
                   ListTile(

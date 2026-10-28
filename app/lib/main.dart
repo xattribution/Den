@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 
@@ -7,6 +8,7 @@ import 'app.dart';
 import 'background/background.dart';
 import 'boot/boot.dart';
 import 'boot/boot_screen.dart';
+import 'boot/other_tab_screen.dart';
 import 'calendars/device_calendar_source.dart';
 import 'calendars/phone_calendars.dart';
 import 'capture/capture_service.dart';
@@ -19,6 +21,7 @@ import 'net/pairing.dart';
 import 'reminders/os_notifications.dart';
 import 'reminders/reminder_scheduler.dart';
 import 'state/app_state.dart';
+import 'web/web_app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,6 +29,15 @@ Future<void> main() async {
   tzdata.initializeTimeZones();
   // A background refresh may have this device's engine open; wait for it to finish.
   final lock = await EngineLock.acquire();
+  if (kIsWeb) {
+    // Tabs of one browser share the family's log; one at a time writes it.
+    if (!await WebApp.holdEngine()) {
+      runApp(const OtherTabScreen());
+      await WebApp.waitForEngine();
+      runApp(const BootScreen());
+    }
+    unawaited(WebApp.persist());
+  }
   final den = await Boot.start();
   final network = await DenNetwork.load(den);
   Pairing.service = NetPairing(network);

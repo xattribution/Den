@@ -1,16 +1,21 @@
 import 'dart:async';
 
 import 'package:den_core/den_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../design/parts/family_words.dart';
 import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../net/pairing.dart';
 import '../../state/app_state.dart';
+import '../../web/web_app.dart';
 import 'member_editor.dart';
 
 /// Devices waiting for approval: the synced join requests, with the matching words from the
@@ -274,23 +279,30 @@ List<Widget> deviceGroups(BuildContext context) {
   return widgets;
 }
 
-/// The invite for a new device: a QR code to scan and a 4-word code to read out, with the
-/// time left. Both come from the pairing service; without a hub or relay it says so.
+/// The invite for a new device. With a hub: an invite to send as a message (the share sheet,
+/// or copy), a link and four words that work for three days, bound to [memberId] when given,
+/// and the same invite as a QR code for a phone with a camera. Without one: a QR code and four
+/// words to read out, live for ten minutes while this device stays open.
 class InvitePanel extends StatefulWidget {
-  const InvitePanel({super.key, this.qrSize = 280, this.now});
+  const InvitePanel({super.key, this.qrSize = 280, this.now, this.memberId});
   final double qrSize;
 
   /// The clock for the expiry countdown; tests pass a fixed time.
   final DateTime Function()? now;
+
+  /// Who the invite is for; the device that uses it asks to be theirs.
+  final String? memberId;
 
   @override
   State<InvitePanel> createState() => _InvitePanelState();
 }
 
 class _InvitePanelState extends State<InvitePanel> {
+  InviteMessage? _message;
   String? _uri;
   SpokenCode? _code;
   String? _error;
+  String? _sent;
   bool _loading = true;
   Timer? _tick;
   PairingService? _service;
@@ -309,7 +321,29 @@ class _InvitePanelState extends State<InvitePanel> {
     setState(() {
       _loading = true;
       _error = null;
+      _sent = null;
     });
+    try {
+      final message = await _service!.createInvite(memberId: widget.memberId);
+      if (!mounted) return;
+      setState(() {
+        _message = message;
+        _loading = false;
+      });
+      return;
+    } on PairingException catch (e) {
+      // Without a hub (or one too old for invites), fall back to a live code below. A browser
+      // can't host one, so there it says why.
+      if (kIsWeb) {
+        if (mounted) {
+          setState(() {
+            _error = e.message;
+            _loading = false;
+          });
+        }
+        return;
+      }
+    }
     try {
       final uri = await _service!.createInviteQr();
       final code = await _service!.createSpokenCode();
@@ -329,6 +363,28 @@ class _InvitePanelState extends State<InvitePanel> {
         });
       }
     }
+  }
+
+  /// Hands the message to the share sheet, or copies it where there's none. Called straight
+  /// from the tap: browsers open the share sheet only for a user gesture.
+  Future<void> _send(InviteMessage message, Rect? origin) async {
+    if (kIsWeb) {
+      final outcome = await WebApp.share(message.text);
+      if (!mounted) return;
+      setState(() => _sent = switch (outcome) {
+            ShareOutcome.shared => 'Sent. Approve them on Today when they ask to join.',
+            ShareOutcome.copied => 'Copied. Paste it into a message to them.',
+            ShareOutcome.cancelled => null,
+            ShareOutcome.failed => "Couldn't open the share sheet. Copy the invite instead.",
+          });
+      return;
+    }
+    await SharePlus.instance.share(ShareParams(text: message.text, subject: 'Join us on Den', sharePositionOrigin: origin));
+  }
+
+  Future<void> _copy(InviteMessage message) async {
+    await Clipboard.setData(ClipboardData(text: message.text));
+    if (mounted) setState(() => _sent = 'Copied. Paste it into a message to them.');
   }
 
   @override
@@ -352,10 +408,10 @@ class _InvitePanelState extends State<InvitePanel> {
         child: AttentionLine(message: _error!),
       );
     }
+    final message = _message;
+    if (message != null) return _messageInvite(context, message);
     final left = Duration(milliseconds: _code!.expires - (widget.now ?? DateTime.now)().millisecondsSinceEpoch);
     final expired = left.isNegative;
-    // QR codes read most reliably dark on light, so the code keeps day colors at night too.
-    const day = DenColors.day;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -368,26 +424,7 @@ class _InvitePanelState extends State<InvitePanel> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.l, 0),
-          child: Container(
-            padding: const EdgeInsets.all(Sp.l),
-            decoration: BoxDecoration(
-              color: day.paper,
-              borderRadius: BorderRadius.circular(Radii.control),
-              border: Border.all(color: c.rule),
-            ),
-            child: QrImageView(
-              data: _uri!,
-              size: widget.qrSize,
-              padding: EdgeInsets.zero,
-              backgroundColor: day.paper,
-              eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.square, color: day.ink),
-              dataModuleStyle: QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: day.ink),
-              semanticsLabel: 'Invite code',
-            ),
-          ),
-        ),
+        Padding(padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.l, 0), child: _qr(context, _uri!)),
         Padding(
           padding: const EdgeInsets.fromLTRB(Sp.l, Sp.xl, Sp.l, 0),
           child: Row(
@@ -418,6 +455,95 @@ class _InvitePanelState extends State<InvitePanel> {
               : Text('Expires in ${FamilyWords.countdown(left)}', style: context.type.meta(c.ink2)),
         ),
       ],
+    );
+  }
+
+  Widget _messageInvite(BuildContext context, InviteMessage message) {
+    final c = context.colors;
+    final until = DateFormat('EEEE, MMMM d').format(DateTime.fromMillisecondsSinceEpoch(message.expires));
+    final expired = message.expires <= (widget.now ?? DateTime.now)().millisecondsSinceEpoch;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.l, 0),
+          child: Row(
+            children: [
+              Text('The code in the invite', style: context.type.meta(c.ink2)),
+              const InfoTip('Whoever opens the link, or types these words in Den, asks to join. You approve them on Today.'),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Sp.l, Sp.xs, Sp.l, 0),
+          child: SelectableText(message.code, style: context.type.heading(expired ? c.ink3 : c.ink)),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Sp.l, Sp.xs, Sp.l, 0),
+          child: Text(expired ? 'This invite expired.' : 'Works until $until', style: context.type.meta(c.ink2)),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Sp.l, Sp.l, Sp.l, 0),
+          child: expired
+              ? OutlinedButton(onPressed: _load, child: const Text('Make a new invite'))
+              : Wrap(
+                  spacing: Sp.s,
+                  runSpacing: Sp.s,
+                  children: [
+                    Builder(
+                      builder: (button) => FilledButton.icon(
+                        onPressed: () {
+                          final box = button.findRenderObject() as RenderBox?;
+                          _send(message, box == null ? null : box.localToGlobal(Offset.zero) & box.size);
+                        },
+                        icon: const Icon(PhosphorIconsRegular.paperPlaneTilt, size: 18),
+                        label: const Text('Send invite'),
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => _copy(message),
+                      icon: const Icon(PhosphorIconsRegular.copy, size: 18),
+                      label: const Text('Copy invite'),
+                    ),
+                  ],
+                ),
+        ),
+        if (_sent != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.l, 0),
+            child: Text(_sent!, style: context.type.body(c.ink2)),
+          ),
+        if (message.qr != null && !expired) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Sp.l, Sp.xl, Sp.l, 0),
+            child: Text('Or scan it with a phone that has Den', style: context.type.meta(c.ink2)),
+          ),
+          Padding(padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.l, 0), child: _qr(context, message.qr!, size: 200)),
+        ],
+      ],
+    );
+  }
+
+  Widget _qr(BuildContext context, String data, {double? size}) {
+    final c = context.colors;
+    // QR codes read most reliably dark on light, so the code keeps day colors at night too.
+    const day = DenColors.day;
+    return Container(
+      padding: const EdgeInsets.all(Sp.l),
+      decoration: BoxDecoration(
+        color: day.paper,
+        borderRadius: BorderRadius.circular(Radii.control),
+        border: Border.all(color: c.rule),
+      ),
+      child: QrImageView(
+        data: data,
+        size: size ?? widget.qrSize,
+        padding: EdgeInsets.zero,
+        backgroundColor: day.paper,
+        eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.square, color: day.ink),
+        dataModuleStyle: QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: day.ink),
+        semanticsLabel: 'Invite code',
+      ),
     );
   }
 }

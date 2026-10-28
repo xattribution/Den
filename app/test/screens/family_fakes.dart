@@ -22,6 +22,8 @@ class FakePairing extends PairingService {
     this.hubInfo,
     this.setup,
     this.link,
+    this.invite,
+    this.serving,
   });
 
   final List<PendingJoin> pending;
@@ -31,6 +33,33 @@ class FakePairing extends PairingService {
   final HubInfo? hubInfo;
   final HubSetupSession? setup;
   final BrowserLinkSession? link;
+
+  /// The invite [createInvite] makes; without one it says there's no hub.
+  final InviteMessage? invite;
+
+  /// The hub that served the page.
+  final HubInfo? serving;
+
+  /// What [joinWithInvite] was asked: the words and the device name it chose for "Zoe".
+  final List<(String, String)> invitesUsed = [];
+
+  @override
+  Future<HubInfo?> servingHub() async => serving;
+
+  @override
+  Future<InviteMessage> createInvite({String? memberId}) async =>
+      invite ?? (throw const PairingException(LocalOnlyPairing.message));
+
+  @override
+  Future<JoinTicket> joinWithInvite(
+    String words, {
+    String? hubUrl,
+    required String Function(String? forName) deviceName,
+    required DeviceKind kind,
+  }) async {
+    invitesUsed.add((words, deviceName('Zoe')));
+    return const JoinTicket(familyId: 'FAMILY', familyName: 'The Carters');
+  }
 
   @override
   Future<List<FoundHub>> findHubs() async => found;

@@ -8,7 +8,9 @@ WORKDIR /src
 COPY packages packages
 COPY app app
 WORKDIR /src/app
-RUN flutter pub get && flutter build web --release
+# CanvasKit and the fonts ship with the app, so the hub serves everything and the page needs no
+# CDN; --csp keeps the JavaScript free of eval for the hub's Content-Security-Policy.
+RUN flutter pub get && flutter build web --release --no-web-resources-cdn --csp
 
 FROM dart:3.10 AS hub
 WORKDIR /src

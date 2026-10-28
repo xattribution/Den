@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -135,6 +136,20 @@ class _LinkThisBrowserScreenState extends State<LinkThisBrowserScreen> {
                   semanticsLabel: 'Link code',
                 ),
               ),
+            ),
+          ),
+          // A parent at the same computer, or with Den in a browser, pastes the code instead.
+          FormBlock(
+            top: Sp.s,
+            child: Row(
+              children: [
+                Expanded(child: SelectableText(link.uri, maxLines: 2, style: context.type.meta(c.ink2))),
+                TextButton.icon(
+                  onPressed: () => Clipboard.setData(ClipboardData(text: link.uri)),
+                  icon: const Icon(PhosphorIconsRegular.copy, size: 18),
+                  label: const Text('Copy code'),
+                ),
+              ],
             ),
           ),
           FormBlock(
