@@ -9,6 +9,7 @@ import 'agenda_view.dart';
 import 'day_view.dart';
 import '../widgets/family_week.dart';
 import '../widgets/month_view.dart';
+import '../state/calendar_models.dart';
 
 enum CalendarView { family, month, day, agenda }
 
@@ -22,7 +23,7 @@ class CalendarScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final f = app.formats;
     final c = context.colors;
     final anchor = date ?? app.today;

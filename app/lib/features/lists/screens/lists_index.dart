@@ -8,6 +8,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../words/list_words.dart';
+import '../state/lists_model.dart';
 
 /// The Lists tab: pinned lists first, then the rest, each a card you open on its own.
 class ListsIndex extends StatelessWidget {
@@ -18,9 +19,9 @@ class ListsIndex extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(listReads);
     final c = context.colors;
-    final lists = app.den.lists;
+    final lists = context.view(const ListsModel());
     final pinned = lists.where((l) => l.list.pinned).toList();
     final rest = lists.where((l) => !l.list.pinned).toList();
     final canAdd = app.allows(DenAction.editLists);
@@ -109,7 +110,7 @@ class ListCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(listReads);
     final c = context.colors;
     final timing = listTiming(app, lv);
     return Material(

@@ -11,6 +11,7 @@ import '../state/list_actions.dart';
 import 'list_share.dart';
 import '../words/list_words.dart';
 import '../../../design/forms/forms.dart';
+import '../state/lists_model.dart';
 
 /// One list. Items keep their places: a checked item stays where it was, struck through.
 /// Shopping lists group and filter by store. The add row sits at the bottom with separate
@@ -74,7 +75,7 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
       setState(() => _hidden.remove(item.id));
       return;
     }
-    _offerRestore(keep, '${item.text} removed', result, [item.id]);
+    if (keep.mounted) _offerRestore(keep, '${item.text} removed', result, [item.id]);
   }
 
   Future<void> _clearDone(ListState lv) async {
@@ -84,7 +85,7 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
     final result = await perform(context, () => ListActions(actions).clearChecked(lv.list.id));
     if (result == null || !mounted) return;
     final count = (result.data['removed'] as int?) ?? done.length;
-    _offerRestore(keep, 'Cleared $count done ${count == 1 ? 'item' : 'items'}', result, done);
+    if (keep.mounted) _offerRestore(keep, 'Cleared $count done ${count == 1 ? 'item' : 'items'}', result, done);
   }
 
   /// Undo: the same items come back where they were, checked or not. [keep] outlives this
@@ -125,7 +126,7 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(listReads);
     final den = app.den;
     final c = context.colors;
     final lv = den.list(widget.id);
@@ -520,7 +521,7 @@ class _GroceriesAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(listReads);
     final c = context.colors;
     if (item.toGroceries) {
       return Padding(
@@ -620,7 +621,7 @@ class _AddItemRowState extends State<AddItemRow> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final known = _shopping ? context.den.stores.take(8).toList() : const <String>[];
+    final known = _shopping ? context.watch(listReads).den.stores.take(8).toList() : const <String>[];
     final current = _store.text.trim();
     return SafeArea(
       top: false,

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../app/app_state.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
+import '../state/calendar_models.dart';
 
 /// One event on one line, the way it's written in a calendar square: the person's marker bar
 /// (3 px), an optional time in ink2, the title in ink.
@@ -34,7 +35,7 @@ class CalendarEventLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final c = context.colors;
     final line = SizedBox(
       height: height ?? lineHeight(context),

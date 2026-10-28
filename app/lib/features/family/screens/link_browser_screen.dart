@@ -41,7 +41,7 @@ class _LinkBrowserScreenState extends State<LinkBrowserScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_before.isEmpty) {
-      _before = {for (final d in context.den.devices) d.id};
+      _before = {for (final d in context.watch(const {}).den.devices) d.id};
       // A hub reachable from the internet gives browsers link codes only while a parent has
       // "Add a device" open.
       unawaited(Pairing.of(context).openLinking());
@@ -78,7 +78,7 @@ class _LinkBrowserScreenState extends State<LinkBrowserScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final den = context.den;
+    final den = context.watch(const {}).den;
     final hub = _hub;
     final width = MediaQuery.sizeOf(context).width;
     final camera = (width.clamp(0.0, 600.0) - Sp.l * 2).clamp(200.0, 420.0);

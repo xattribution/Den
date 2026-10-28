@@ -61,7 +61,7 @@ class _MemberEditorState extends State<MemberEditor> {
       _birthday = m.birthday;
       _grants = {...m.grants};
     } else {
-      final look = freshLook(context.den.members);
+      final look = freshLook(context.watch(const {}).den.members);
       _role = Role.values.firstWhere((r) => r.name == widget.role, orElse: () => Role.kid);
       _marker = look.$1;
       _picture = look.$2;
@@ -95,7 +95,7 @@ class _MemberEditorState extends State<MemberEditor> {
   }
 
   Tier? get _suggested {
-    final age = FamilyWords.ageOn(_birthday, context.app.today);
+    final age = FamilyWords.ageOn(_birthday, context.watch(const {}).today);
     return age == null ? null : FamilyWords.tierForAge(age);
   }
 
@@ -136,8 +136,8 @@ class _MemberEditorState extends State<MemberEditor> {
   }
 
   Future<void> _pickBirthday() async {
-    final today = context.app.formats.dateTime(context.app.today);
-    final current = _birthday == null ? null : context.app.formats.dateTime(_birthday!);
+    final today = context.watch(const {}).formats.dateTime(context.watch(const {}).today);
+    final current = _birthday == null ? null : context.watch(const {}).formats.dateTime(_birthday!);
     final picked = await showDatePicker(
       context: context,
       initialDate: current ?? DateTime(today.year - 8, today.month, today.day),
@@ -204,7 +204,7 @@ class _MemberEditorState extends State<MemberEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(const {});
     final den = app.den;
     final c = context.colors;
     final member = _member;
@@ -414,7 +414,7 @@ class _SignInSection extends StatelessWidget {
     final kind = member.signIn.kind;
     final needed = member.isParent &&
         kind == 'none' &&
-        context.den.devices.any((d) => d.mode == DeviceMode.shared && d.approved && !d.revoked);
+        context.watch(const {}).den.devices.any((d) => d.mode == DeviceMode.shared && d.approved && !d.revoked);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -532,7 +532,7 @@ class _OversightRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final den = context.den;
+    final den = context.watch(const {}).den;
     final family = den.family;
     final on = family?.parentsSeePrivate(member.id) ?? true;
     return Column(

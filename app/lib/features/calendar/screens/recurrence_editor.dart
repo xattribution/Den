@@ -7,6 +7,7 @@ import '../../../app/format.dart';
 import '../words/calendar_time.dart';
 import '../words/recurrence.dart';
 import '../../../design/forms/forms.dart';
+import '../state/calendar_models.dart';
 
 enum _Ends { never, onDate, after }
 
@@ -36,7 +37,7 @@ class RecurrenceEditor extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final f = app.formats;
     final c = context.colors;
     final weekStart = app.den.family?.weekStart ?? 0;
@@ -151,7 +152,7 @@ class RecurrenceEditor extends StatelessWidget {
   }
 
   Widget _weekdays(BuildContext context, Recurrence rule, int weekStart) {
-    final f = context.app.formats;
+    final f = context.watch(calendarReads).formats;
     final c = context.colors;
     return Row(
       children: [
@@ -197,7 +198,7 @@ class RecurrenceEditor extends StatelessWidget {
   }
 
   Widget _monthly(BuildContext context, Recurrence rule) {
-    final f = context.app.formats;
+    final f = context.watch(calendarReads).formats;
     final start = f.dateTime(startDate);
     final startWeekday = start.weekday % 7;
     final dayChoice = rule.copyWith(
@@ -231,7 +232,7 @@ class RecurrenceEditor extends StatelessWidget {
   }
 
   Widget _ends(BuildContext context, Recurrence rule) {
-    final f = context.app.formats;
+    final f = context.watch(calendarReads).formats;
     final ends = rule.count != null
         ? _Ends.after
         : rule.until != null

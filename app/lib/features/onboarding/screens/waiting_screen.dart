@@ -24,7 +24,7 @@ class WaitingScreen extends StatelessWidget {
     final c = context.colors;
     final t = ticket ?? Pairing.ticket;
     final words = t?.words ?? const <String>[];
-    final device = context.den.thisDevice?.name;
+    final device = context.watch(const {}).den.thisDevice?.name;
     final other = t?.inviterName ?? 'the other screen';
 
     return FormFrame(
@@ -82,7 +82,7 @@ class WaitingScreen extends StatelessWidget {
                 ),
               },
             );
-            if (!ended || context.den.hasFamily) return line;
+            if (!ended || context.watch(const {}).den.hasFamily) return line;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -119,7 +119,7 @@ class WaitingScreen extends StatelessWidget {
       ),
     );
     if (yes != true || !context.mounted) return;
-    final den = context.den;
+    final den = context.watch(const {}).den;
     await attempt(context, den.leaveFamily);
     // A browser opens again as a fresh device, with new keys (see Boot).
     if (Capabilities.web) WebApp.reload();

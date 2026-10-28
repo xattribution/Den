@@ -7,6 +7,7 @@ import '../../../app/app_state.dart';
 import 'list_detail.dart';
 import '../words/list_words.dart';
 import '../state/list_actions.dart';
+import '../state/lists_model.dart';
 
 /// The Add sheet's "Grocery item": the first pinned shopping list with its add row focused.
 /// `/lists/groceries/add`.
@@ -15,7 +16,7 @@ class GroceryAddScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(listReads);
     final target = groceriesList(app.den);
     if (target != null) return ListDetailScreen(id: target.list.id, focusAdd: true);
 

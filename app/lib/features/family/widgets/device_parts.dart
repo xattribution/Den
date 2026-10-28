@@ -28,8 +28,8 @@ class PendingApprovals extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final den = context.den;
-    if (!context.app.allowsTrust(DenAction.manageFamily)) return const SizedBox.shrink();
+    final den = context.watch(const {}).den;
+    if (!context.watch(const {}).allowsTrust(DenAction.manageFamily)) return const SizedBox.shrink();
     return StreamBuilder<List<PendingJoin>>(
       stream: Pairing.of(context).pendingJoins,
       builder: (context, snap) {
@@ -119,7 +119,7 @@ class DeviceOwner {
 
 /// Asks "Whose device is Leo's iPad?"; returns the answer, or null if dismissed.
 Future<DeviceOwner?> showWhoseDeviceSheet(BuildContext context, String deviceName, {String verb = 'Approve'}) {
-  final den = context.den;
+  final den = context.watch(const {}).den;
   return showModalBottomSheet<DeviceOwner>(
     context: context,
     isScrollControlled: true,
@@ -205,7 +205,7 @@ class DeviceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final den = context.den;
+    final den = context.watch(const {}).den;
     final c = context.colors;
     final isThis = den.thisDevice?.id == device.id;
     final detail = [
@@ -241,7 +241,7 @@ DisplayLayout wallLayoutOf(Device? device) {
 /// Devices grouped by person, then shared displays and hubs. Pending and revoked devices are
 /// left out.
 List<Widget> deviceGroups(BuildContext context) {
-  final den = context.den;
+  final den = context.watch(const {}).den;
   final c = context.colors;
   final live = den.devices.where((d) => d.approved && !d.revoked).toList();
   final widgets = <Widget>[];

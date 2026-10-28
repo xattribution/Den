@@ -9,6 +9,7 @@ import '../../../app/app_state.dart';
 import '../../../design/chore_pictograms.dart';
 import '../../../design/forms/forms.dart';
 import '../state/reward_actions.dart';
+import '../state/points_model.dart';
 
 /// A reward in the store: picture, name, cost, and whether a parent approves each request.
 /// Removing one takes it out of the store, with Undo. `/points/reward/new`, `/points/reward/:id`.
@@ -38,7 +39,7 @@ class _RewardEditorScreenState extends State<RewardEditorScreen> {
     if (_loaded) return;
     _loaded = true;
     if (widget.id == null) return;
-    final reward = context.den.points().rewards.where((r) => r.id == widget.id).firstOrNull;
+    final reward = context.watch(pointsReads).den.points().rewards.where((r) => r.id == widget.id).firstOrNull;
     _existing = reward;
     if (reward == null) return;
     _title.text = reward.title;
@@ -89,7 +90,7 @@ class _RewardEditorScreenState extends State<RewardEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(pointsReads);
     final c = context.colors;
     if (!app.allows(DenAction.managePoints)) {
       return Scaffold(

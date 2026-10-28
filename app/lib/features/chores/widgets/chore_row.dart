@@ -10,6 +10,7 @@ import '../../../design/widgets.dart';
 import '../../../design/chore_pictograms.dart';
 import '../../../app/words.dart';
 import '../state/chore_actions.dart';
+import '../state/chores_model.dart';
 
 /// A chore on a day: the check (or, for a chore with steps, the ring of steps it completes
 /// through), its pictogram, title, due time and stars. Tapping opens the chore; [onSwap] adds
@@ -34,7 +35,7 @@ class ChoreRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final c = context.colors;
     final chore = day.chore;
     final mine = day.owner == null || day.owner == app.me?.id;

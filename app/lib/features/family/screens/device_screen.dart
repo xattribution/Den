@@ -62,7 +62,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(const {});
     final den = app.den;
     final c = context.colors;
     final device = den.device(widget.deviceId);

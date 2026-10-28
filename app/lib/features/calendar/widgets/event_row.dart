@@ -6,6 +6,7 @@ import '../words/calendar_time.dart';
 import '../../../app/app_state.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
+import '../state/calendar_models.dart';
 
 /// An event as a row of a day's list, matching Today: a time column, the person bar, the title
 /// and place, and who it's for on the right. [date] is the day the row sits under, so a
@@ -20,7 +21,7 @@ class CalendarEventRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final f = app.formats;
     final c = context.colors;
     final people = occ.assignees.map(app.memberById).whereType<Member>().toList();

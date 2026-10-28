@@ -95,7 +95,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _setReminders(bool on) async {
     setState(() => _reminders = on);
-    final reminders = context.app.reminders;
+    final reminders = context.watch(const {}).reminders;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(remindersPrefKey, on);
@@ -108,7 +108,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(const {});
     final den = app.den;
     final c = context.colors;
     final device = den.thisDevice;

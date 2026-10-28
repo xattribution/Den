@@ -7,6 +7,7 @@ import '../../../design/pictograms.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
+import '../state/calendar_models.dart';
 
 /// Den's signature view, taken from the paper family organizer: a column per person, a row per
 /// day. Each cell holds that person's events and chores in their marker; events for everyone
@@ -35,8 +36,7 @@ class FamilyWeek extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
-    final grid = app.den.week(startDate, days: days);
+    final grid = context.view(WeekModel(startDate, days: days));
     final c = context.colors;
 
     return LayoutBuilder(
@@ -156,7 +156,7 @@ class _DayRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final f = app.formats;
     final c = context.colors;
     final isToday = date == app.today;
@@ -245,7 +245,7 @@ class _EventChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final c = context.colors;
     final time = occ.allDay ? null : app.formats.time(occ.start);
     return InkWell(

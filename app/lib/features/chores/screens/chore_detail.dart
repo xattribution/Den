@@ -12,6 +12,7 @@ import '../../../design/chore_pictograms.dart';
 import '../../../design/forms/forms.dart';
 import '../../../app/words.dart';
 import '../state/chore_actions.dart';
+import '../state/chores_model.dart';
 
 /// One chore on one day: who has it and why, its steps to check, how it repeats, and what
 /// happened on recent days. `/chore/:id?date=`.
@@ -23,7 +24,7 @@ class ChoreDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final den = app.den;
     final chore = den.chore(id);
     if (chore == null) {
@@ -152,7 +153,7 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final den = app.den;
     final f = app.formats;
     final c = context.colors;
@@ -242,7 +243,7 @@ class _MainCheck extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final c = context.colors;
     final can = _canCheckFor(app, day.owner);
     final by = app.memberById(day.doneBy);
@@ -278,7 +279,7 @@ class _Steps extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final c = context.colors;
     final steps = day.chore.steps;
     final pointsOn = app.den.family?.pointsEnabled ?? true;
@@ -340,7 +341,7 @@ class _NotScheduled extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final f = app.formats;
     final c = context.colors;
     String? next;
@@ -402,7 +403,7 @@ class _Recent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final f = app.formats;
     final c = context.colors;
     final recent = <ChoreDay>[];

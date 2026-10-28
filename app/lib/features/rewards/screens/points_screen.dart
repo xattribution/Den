@@ -10,6 +10,7 @@ import '../../../app/app_state.dart';
 import '../words/points_words.dart';
 import '../../../design/chore_pictograms.dart';
 import '../state/reward_actions.dart';
+import '../state/points_model.dart';
 
 /// Points and rewards: everyone's balance, goals as each person's progress in their marker,
 /// requests waiting for a parent, the rewards store, and recent points in and out. `/points`.
@@ -25,7 +26,7 @@ class _PointsScreenState extends State<PointsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(pointsReads);
     final den = app.den;
     final family = den.family;
     final manage = app.allows(DenAction.managePoints);
@@ -44,7 +45,7 @@ class _PointsScreenState extends State<PointsScreen> {
       );
     }
 
-    final summary = den.points();
+    final summary = context.view(const PointsModel());
     final me = app.me;
     final members = den.members;
     final holders = [
@@ -188,7 +189,7 @@ class _Pending extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(pointsReads);
     final c = context.colors;
     final den = app.den;
     String rewardTitle(Redemption r) => rewards.where((x) => x.id == r.reward).firstOrNull?.title ?? 'a reward';
@@ -273,7 +274,7 @@ class _Goals extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(pointsReads);
     final c = context.colors;
     if (goals.isEmpty && !manage) return const SizedBox.shrink();
     return Column(
@@ -307,7 +308,7 @@ class _GoalBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(pointsReads);
     final den = app.den;
     final c = context.colors;
     final goal = standing.goal;
@@ -506,7 +507,7 @@ class _RewardCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(pointsReads);
     final c = context.colors;
     final me = app.me;
     final canAsk = !manage && me != null && app.allows(DenAction.requestReward);
@@ -563,7 +564,7 @@ class _Recent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(pointsReads);
     final f = app.formats;
     final c = context.colors;
     return Column(

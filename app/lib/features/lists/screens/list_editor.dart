@@ -11,6 +11,7 @@ import '../../../app/app_state.dart';
 import '../state/list_actions.dart';
 import '../words/list_words.dart';
 import '../../../design/forms/forms.dart';
+import '../state/lists_model.dart';
 
 /// Adds a list or changes one: name, kind, whether it runs on or is needed by a date or for an
 /// event, pinned, and who sees it. `/lists/new`, `/lists/:id/edit`.
@@ -44,7 +45,7 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
     super.didChangeDependencies();
     if (_loaded) return;
     _loaded = true;
-    final den = context.den;
+    final den = context.watch(listReads).den;
     final lv = widget.id == null ? null : den.list(widget.id!);
     _existing = lv;
     if (lv == null) {
@@ -107,7 +108,7 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
   }
 
   Future<void> _pickDate() async {
-    final app = context.app;
+    final app = context.watch(listReads);
     final f = app.formats;
     final d = f.dateTime(_needBy ?? app.today);
     final picked = await showDatePicker(
@@ -125,7 +126,7 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
   }
 
   Future<void> _pickEvent() async {
-    final app = context.app;
+    final app = context.watch(listReads);
     final f = app.formats;
     final start = f.startOf(app.today);
     final seen = <String>{};
@@ -189,7 +190,7 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(listReads);
     final c = context.colors;
     final f = app.formats;
     if (!app.allows(DenAction.editLists)) {

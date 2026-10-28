@@ -109,7 +109,7 @@ class _HubAdoptionPanelState extends State<HubAdoptionPanel> {
 
   Widget _codeEntry(BuildContext context, String? error, {HubInfo? hub, bool header = true}) {
     final target = hub ?? _hub;
-    final den = context.den;
+    final den = context.watch(const {}).den;
     final hasHub = den.devices.any((d) => d.approved && !d.revoked && d.mode == DeviceMode.hub && d.id != den.deviceId);
     if (target == null || hasHub || (error == null && (target.paired || target.stage != 'waiting_for_code'))) {
       return const SizedBox.shrink();

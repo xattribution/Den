@@ -7,6 +7,7 @@ import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../design/forms/forms.dart';
 import '../state/reward_actions.dart';
+import '../state/points_model.dart';
 
 /// A parent gives or takes points: who, how many, and why (a reason is required so everyone
 /// can see it in Recent). `/points/adjust?member=`.
@@ -60,7 +61,7 @@ class _AdjustScreenState extends State<AdjustScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(pointsReads);
     final c = context.colors;
     final den = app.den;
     if (!(den.family?.pointsEnabled ?? true)) {

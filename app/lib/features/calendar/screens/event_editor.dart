@@ -19,6 +19,7 @@ import 'recurrence_editor.dart';
 import '../../../design/forms/forms.dart';
 import '../../../app/navigation.dart';
 import '../state/event_actions.dart';
+import '../state/calendar_models.dart';
 
 /// Adds an event, or edits one occurrence's event. New events take their day, time and person
 /// from where the person tapped (`?date=`, `?time=`, `?who=`). Repeating events ask how far a
@@ -450,7 +451,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final c = context.colors;
 
     if (!app.allows(DenAction.editEvents)) {
@@ -542,7 +543,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
 
   List<Widget> _whatAndWhen(BuildContext context, Formats f, String? timeError) {
     final c = context.colors;
-    final today = context.app.today;
+    final today = context.watch(calendarReads).today;
     Widget when(String label, {required bool start}) {
       final date = start ? _startDate : _endDate;
       final minutes = start ? _startMin : _endMin;
@@ -628,7 +629,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
   }
 
   List<Widget> _whoAndWhere(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final c = context.colors;
     final categories = app.den.categories;
     return [
@@ -684,7 +685,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
   }
 
   List<Widget> _extras(BuildContext context, Formats f) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final c = context.colors;
     final me = app.me;
     final audiences = <Audience, String>{
@@ -783,7 +784,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
   }
 
   Widget _rideRow(BuildContext context, Ride ride) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final c = context.colors;
     final driver = app.memberById(ride.driver);
     return Row(

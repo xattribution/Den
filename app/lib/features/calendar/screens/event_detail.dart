@@ -17,6 +17,7 @@ import '../words/recurrence.dart';
 import '../../../platform/capabilities.dart';
 import '../../../app/navigation.dart';
 import '../state/event_actions.dart';
+import '../state/calendar_models.dart';
 
 /// What the editor tells the detail when it closes: whether the occurrence the detail shows
 /// still exists as it was addressed.
@@ -34,7 +35,7 @@ class EventDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final den = app.den;
     final event = den.event(eventId);
     if (event == null) return const _Missing();
@@ -135,7 +136,7 @@ class _Body extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final den = app.den;
     final f = app.formats;
     final c = context.colors;
@@ -276,7 +277,7 @@ class _SourceBanner extends StatelessWidget {
     if (source.kind == 'device') {
       // A phone calendar: its name, and the phone it lives on (the device id leads the ref).
       final ref = source.ref ?? '';
-      final phone = ref.contains('/') ? context.den.device(ref.substring(0, ref.indexOf('/')))?.name : null;
+      final phone = ref.contains('/') ? context.watch(calendarReads).den.device(ref.substring(0, ref.indexOf('/')))?.name : null;
       final name = label == null || label.isEmpty ? 'a phone calendar' : label;
       from = phone == null || phone.isEmpty ? 'From $name on a phone.' : 'From $name on $phone.';
     } else {
@@ -363,7 +364,7 @@ class _RideValue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final c = context.colors;
     final me = app.me;
     final driver = app.memberById(ride.driver);
@@ -406,7 +407,7 @@ class _Provenance extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final f = app.formats;
     final c = context.colors;
     final rec = event.rec;

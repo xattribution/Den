@@ -10,6 +10,7 @@ import '../../../app/app_state.dart';
 import 'swap_sheet.dart';
 import '../../../design/forms/forms.dart';
 import '../state/chore_groups.dart';
+import '../state/chores_model.dart';
 
 /// The Chores tab: reads the day from the URL (`/chores?date=2026-10-17`).
 class ChoresTab extends StatelessWidget {
@@ -35,11 +36,10 @@ class ChoresBoard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
-    final den = app.den;
+    final app = context.watch(choreReads);
     final today = app.today;
     final day = date ?? today;
-    final groups = _groups(app, den.choresOn(day), day);
+    final groups = _groups(app, context.view(ChoresModel(day)), day);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -90,7 +90,7 @@ class _Toolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final f = app.formats;
     final c = context.colors;
     final today = app.today;
@@ -188,7 +188,7 @@ class _Sections extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     return ListView(
       padding: const EdgeInsets.only(bottom: Sp.xxxl),
       children: [
@@ -211,7 +211,7 @@ class _Columns extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final c = context.colors;
     return LayoutBuilder(
       builder: (context, constraints) {

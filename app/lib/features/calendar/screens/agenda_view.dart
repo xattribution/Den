@@ -7,6 +7,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../words/calendar_time.dart';
+import '../state/calendar_models.dart';
 
 /// The calendar as a list: days that have events, from [start], each under "Today",
 /// "Tomorrow" or "Wed, Oct 22". Events only; chores live on Today and in Chores.
@@ -33,12 +34,12 @@ class _AgendaViewState extends State<AgendaView> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final f = app.formats;
     final today = app.today;
     final from = widget.start;
     final to = f.addDays(from, _weeks * 7 - 1);
-    final occurrences = app.den.occurrences(f.startOf(from), f.startOf(f.addDays(to, 1)));
+    final occurrences = context.view(OccurrencesModel(f.startOf(from), f.startOf(f.addDays(to, 1))));
     final byDate = occurrencesByDate(occurrences, f, from: from, to: to);
     final dates = byDate.keys.toList()..sort();
     final canAdd = app.allows(DenAction.editEvents);

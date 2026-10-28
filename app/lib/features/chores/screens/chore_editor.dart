@@ -12,6 +12,7 @@ import '../words/chore_words.dart';
 import '../../../design/chore_pictograms.dart';
 import '../../../design/forms/forms.dart';
 import '../state/chore_actions.dart';
+import '../state/chores_model.dart';
 
 enum _OwnerKind { person, anyone, turns }
 
@@ -67,7 +68,7 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
     super.didChangeDependencies();
     if (_loaded) return;
     _loaded = true;
-    final app = context.app;
+    final app = context.watch(choreReads);
     final today = app.today;
     final chore = widget.id == null ? null : app.den.chore(widget.id!);
     _existing = chore;
@@ -199,7 +200,7 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
   }
 
   Future<void> _save() async {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final spec = _spec!;
     setState(() {
       _titleError = _title.text.trim().isEmpty ? 'Give the chore a name.' : null;
@@ -253,7 +254,7 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
   }
 
   Future<void> _pickDate(String initial, ValueChanged<String> onPicked) async {
-    final f = context.app.formats;
+    final f = context.watch(choreReads).formats;
     final d = f.dateTime(initial);
     final picked = await showDatePicker(
       context: context,
@@ -266,7 +267,7 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final c = context.colors;
     if (!app.allows(DenAction.editChores)) {
       return Scaffold(
@@ -728,7 +729,7 @@ class _StepEditor extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(choreReads);
     final c = context.colors;
     final owner = app.memberById(step.owner);
     final people = app.den.members.where((m) => m.role != Role.guest).toList();

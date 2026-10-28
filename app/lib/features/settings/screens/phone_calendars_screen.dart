@@ -33,12 +33,12 @@ class _PhoneCalendarsScreenState extends State<PhoneCalendarsScreen> {
     super.didChangeDependencies();
     if (_asked) return;
     _asked = true;
-    context.app.phoneCalendars?.refresh();
+    context.watch(const {}).phoneCalendars?.refresh();
   }
 
   @override
   Widget build(BuildContext context) {
-    final calendars = context.app.phoneCalendars;
+    final calendars = context.watch(const {}).phoneCalendars;
     if (calendars == null) {
       return const FormFrame(
         title: 'Calendars on this phone',
@@ -115,7 +115,7 @@ class _Updated extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final at = calendars.syncedAt;
-    final words = calendars.syncing ? 'Updating' : (at == null ? null : 'Updated ${context.app.formats.time(at)}');
+    final words = calendars.syncing ? 'Updating' : (at == null ? null : 'Updated ${context.watch(const {}).formats.time(at)}');
     if (words == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(right: Sp.s),

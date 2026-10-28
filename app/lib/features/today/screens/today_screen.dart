@@ -10,6 +10,7 @@ import '../../../app/app_state.dart';
 import 'join_requests.dart';
 import '../../calendar/calendar.dart';
 import '../../chores/chores.dart';
+import '../state/today_model.dart';
 
 /// The first screen for every adult: what's happening today and who's doing what.
 class TodayScreen extends StatelessWidget {
@@ -17,9 +18,8 @@ class TodayScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
-    final den = app.den;
-    final view = den.today();
+    final app = context.watch(todayReads);
+    final view = context.view(const TodayModel());
     final f = app.formats;
     final c = context.colors;
 
@@ -121,7 +121,7 @@ class TodayScreen extends StatelessWidget {
   }
 
   List<Widget> _choreGroups(BuildContext context, List<ChoreDay> chores) => [
-        for (final g in choreGroups(context.den.members, chores, me: context.app.me?.id))
+        for (final g in choreGroups(context.watch(todayReads).den.members, chores, me: context.watch(todayReads).me?.id))
           _ChoreGroup(owner: g.member, days: g.days),
       ];
 }
@@ -132,7 +132,7 @@ class _EventRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(todayReads);
     final f = app.formats;
     final c = context.colors;
     final people = occ.assignees.map(app.memberById).whereType<Member>().toList();

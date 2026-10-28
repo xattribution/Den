@@ -19,7 +19,7 @@ class FamilyScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(const {});
     final manage = app.allows(DenAction.manageFamily);
     final wide = MediaQuery.sizeOf(context).width >= 900;
 
@@ -92,7 +92,7 @@ class _MemberRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(const {});
     final c = context.colors;
     final isMe = app.me?.id == member.id;
     return ListTile(
@@ -144,7 +144,7 @@ class _FamilySettingsState extends State<_FamilySettings> {
 
   @override
   Widget build(BuildContext context) {
-    final den = context.den;
+    final den = context.watch(const {}).den;
     final family = den.family;
     if (family == null) return const SizedBox.shrink();
     return Column(

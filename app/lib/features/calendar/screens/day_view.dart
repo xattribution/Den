@@ -16,6 +16,7 @@ import '../../../app/format.dart';
 import '../words/calendar_time.dart';
 import '../state/day_layout.dart';
 import '../state/event_actions.dart';
+import '../state/calendar_models.dart';
 
 /// One day as a time grid with a column per person who has something that day (the family
 /// columns, turned on their side), plus an Everyone column for family events. All-day events
@@ -150,13 +151,13 @@ class _DayViewState extends State<DayView> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final f = app.formats;
     final c = context.colors;
     final date = widget.date;
     final dayStart = f.startOf(date);
     final dayEnd = f.startOf(f.addDays(date, 1));
-    final occurrences = app.den.occurrences(dayStart, dayEnd);
+    final occurrences = context.view(OccurrencesModel(dayStart, dayEnd));
     final columns = _columns(app, occurrences, dayStart, dayEnd);
     final empty = columns.isEmpty;
     final canAdd = app.allows(DenAction.editEvents);
@@ -432,7 +433,7 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final c = context.colors;
     final narrow = columnWidth < 112;
     final members = app.den.members;
@@ -613,7 +614,7 @@ class _Block extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final f = app.formats;
     final c = context.colors;
     final titleStyle = context.type.meta(c.ink).copyWith(fontWeight: FontWeight.w700);

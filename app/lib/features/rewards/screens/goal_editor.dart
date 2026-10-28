@@ -9,6 +9,7 @@ import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../design/forms/forms.dart';
 import '../state/reward_actions.dart';
+import '../state/points_model.dart';
 
 /// A points goal: who's in it, the target, whether everyone can reach it or the first one wins,
 /// the window it counts over, and what it's for. `/points/goal/new`, `/points/goal/:id`.
@@ -44,7 +45,7 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
     super.didChangeDependencies();
     if (_loaded) return;
     _loaded = true;
-    final app = context.app;
+    final app = context.watch(pointsReads);
     _start = app.today;
     if (widget.id == null) return;
     final goal = app.den.points().goals.map((g) => g.goal).where((g) => g.id == widget.id).firstOrNull;
@@ -117,7 +118,7 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
   }
 
   Future<void> _pickDate(String? initial, ValueChanged<String> onPicked) async {
-    final app = context.app;
+    final app = context.watch(pointsReads);
     final d = app.formats.dateTime(initial ?? app.today);
     final picked = await showDatePicker(
       context: context,
@@ -130,7 +131,7 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(pointsReads);
     final c = context.colors;
     final f = app.formats;
     if (!app.allows(DenAction.managePoints)) {

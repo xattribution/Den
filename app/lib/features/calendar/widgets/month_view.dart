@@ -8,6 +8,7 @@ import 'event_line.dart';
 import '../../../design/tokens.dart';
 import '../../../app/app_state.dart';
 import '../words/calendar_time.dart';
+import '../state/calendar_models.dart';
 
 /// The month as a grid of day squares that fills the height it's given (the wall uses it whole).
 /// Weeks start on the family's week start; today is a solid well square with a bold date.
@@ -26,7 +27,7 @@ class MonthView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final f = app.formats;
     final c = context.colors;
     final weekStart = app.den.family?.weekStart ?? 0;
@@ -35,7 +36,7 @@ class MonthView extends StatelessWidget {
     final lead = f.daysFrom(gridStart, first);
     final weeks = ((lead + f.daysInMonth(first)) / 7).ceil();
     final gridEnd = f.addDays(gridStart, weeks * 7 - 1);
-    final occurrences = app.den.occurrences(f.startOf(gridStart), f.startOf(f.addDays(gridEnd, 1)));
+    final occurrences = context.view(OccurrencesModel(f.startOf(gridStart), f.startOf(f.addDays(gridEnd, 1))));
     final byDate = occurrencesByDate(occurrences, f, from: gridStart, to: gridEnd);
     final month = first.substring(0, 7);
     final today = app.today;
@@ -132,7 +133,7 @@ class _DaySquare extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(calendarReads);
     final f = app.formats;
     final c = context.colors;
     final day = f.dateTime(date).day;

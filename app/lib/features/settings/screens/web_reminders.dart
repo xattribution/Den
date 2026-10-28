@@ -43,7 +43,7 @@ class _WebRemindersState extends State<WebReminders> {
     super.didChangeDependencies();
     if (_started) return;
     _started = true;
-    final network = context.app.network;
+    final network = context.watch(const {}).network;
     final client = _client = widget.client ?? (network == null ? null : HubPushClient(network));
     if (pushAvailability(_web) != PushAvailability.ready) return;
     if (client == null) {

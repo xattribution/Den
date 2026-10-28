@@ -87,7 +87,7 @@ class DenTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(const {});
     final c = context.colors;
     final me = app.me;
     return Padding(

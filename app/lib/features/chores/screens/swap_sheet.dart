@@ -6,6 +6,7 @@ import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../../design/forms/forms.dart';
 import '../state/chore_actions.dart';
+import '../state/chores_model.dart';
 
 /// Whether the actor may hand [day] to someone else: kids only their own chores.
 bool canSwap(AppState app, ChoreDay day) {
@@ -19,7 +20,7 @@ bool canSwap(AppState app, ChoreDay day) {
 /// "Give Dishes to…": one tap hands the chore to a person, or to anyone, for that day only.
 /// Undo gives it back.
 Future<void> showSwapSheet(BuildContext context, ChoreDay day) {
-  final app = context.app;
+  final app = context.watch(choreReads);
   final f = app.formats;
   final den = app.den;
   final people = den.members.where((m) => m.role != Role.guest).toList();

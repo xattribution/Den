@@ -5,6 +5,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
 import '../../family/family.dart';
+import '../state/today_model.dart';
 
 /// Devices asking to join, at the top of Today for parents on their own devices (a shared screen
 /// can't approve anyone). A device whose invite named a person is approved for them with one
@@ -14,7 +15,7 @@ class JoinRequests extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(todayReads);
     if (!app.allowsTrust(DenAction.manageFamily)) return const SizedBox.shrink();
     final waiting = app.den.pendingDevices;
     if (waiting.isEmpty) return const SizedBox.shrink();
@@ -32,7 +33,7 @@ class _Request extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final den = context.den;
+    final den = context.watch(todayReads).den;
     final who = device.member == null ? null : den.member(device.member!);
     return Container(
       decoration: BoxDecoration(

@@ -18,7 +18,7 @@ class AddPeopleScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
+    final app = context.watch(const {});
     final members = app.den.members;
     final me = app.me;
     final others = members.where((m) => m.id != me?.id).toList();
@@ -73,7 +73,7 @@ class AddPeopleScreen extends StatelessWidget {
       builder: (_) => _QuickPerson(kid: kid),
     );
     if (member == null || kid || !context.mounted) return;
-    final m = context.den.member(member);
+    final m = context.watch(const {}).den.member(member);
     if (m != null) await _invite(context, m);
   }
 
@@ -122,7 +122,7 @@ class _QuickPersonState extends State<_QuickPerson> {
     super.didChangeDependencies();
     if (_ready) return;
     _ready = true;
-    final look = freshLook(context.den.members);
+    final look = freshLook(context.watch(const {}).den.members);
     _marker = look.$1;
     _picture = look.$2;
   }
@@ -226,7 +226,7 @@ class _QuickPersonState extends State<_QuickPerson> {
                 name: _name.text.trim().isEmpty ? (widget.kid ? 'Kid' : 'Partner') : _name.text.trim(),
                 picture: _picture,
                 color: _marker,
-                takenBy: colorsTaken(context.den.members),
+                takenBy: colorsTaken(context.watch(const {}).den.members),
                 onPicture: (p) => setState(() => _picture = p),
                 onColor: (m) => setState(() => _marker = m),
               ),
