@@ -21,8 +21,10 @@ String oauthPagePolicy(String nonce) => [
 /// tokens (paper and ink, Atkinson Hyperlegible Next when the web app ships it). It names the
 /// app by what it calls itself and, so a made-up name can't pass for another app, by [host],
 /// where its sign-in returns to; and shows [code], which the parent's app shows beside the same
-/// request. With [failed] it explains that the sign-in link doesn't work instead. [nonce] is
-/// the CSP nonce of its inline style and script ([oauthPagePolicy]).
+/// request. With [loopback] (it returns to this computer, where any program could be
+/// listening) it says so; [describedAt] is the host of a client's metadata document. With
+/// [failed] it explains that the sign-in link doesn't work instead. [nonce] is the CSP nonce of
+/// its inline style and script ([oauthPagePolicy]).
 String authorizePage({
   required String client,
   required List<String> scopes,
@@ -33,6 +35,8 @@ String authorizePage({
   String code = '',
   String? webDir,
   bool failed = false,
+  bool loopback = false,
+  String? describedAt,
 }) {
   final fontFile = webDir == null
       ? null
@@ -46,7 +50,8 @@ String authorizePage({
   final intro = failed
       ? '<h1>This sign-in link doesn\'t work</h1>'
       : '<h1>Approve $name in the Den app</h1>\n'
-          '${host.isEmpty ? '' : '<p class="from">It signs in for <strong>${_html.convert(host)}</strong>. Only approve it if that is where you started.</p>\n'}'
+          '${host.isEmpty ? '' : loopback ? '<p class="from">It signs in for <strong>a program on this computer</strong> (${_html.convert(host)}). Any program here could ask, so only approve it if you just started it.</p>\n' : '<p class="from">It signs in for <strong>${_html.convert(host)}</strong>. Only approve it if that is where you started.</p>\n'}'
+          '${describedAt == null ? '' : '<p class="meta">It describes itself at ${_html.convert(describedAt)}.</p>\n'}'
           '<p>A parent needs to say yes on their phone before $name can use your family\'s Den.</p>\n'
           '<p class="where">Settings &rarr; AI and automations</p>\n'
           '${code.isEmpty ? '' : '<p>Den shows this request with the code <strong class="code">${_html.convert(code)}</strong>. Approve the one with the same code.</p>\n'}'

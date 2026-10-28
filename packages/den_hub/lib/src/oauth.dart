@@ -7,18 +7,19 @@ import 'package:cryptography/dart.dart';
 import 'package:den_core/den_core.dart';
 import 'package:shelf/shelf.dart';
 
+import 'access.dart' show defaultScopes;
 import 'context.dart';
 import 'device_auth.dart';
 import 'edge.dart';
 import 'http_util.dart';
 import 'hub.dart' show HubService;
 import 'mcp/http.dart' show corsHeaders, originAllowed;
+import 'oauth_cimd.dart';
 import 'oauth_page.dart';
 import 'oauth_store.dart';
 import 'setup.dart' show setupAlphabet;
 
 const List<String> _scopeNames = ['read', 'calendar', 'chores', 'lists', 'points', 'admin'];
-const Set<Scope> _defaultScopes = {Scope.read, Scope.calendar, Scope.chores, Scope.lists, Scope.points};
 
 /// One sign-in request from an OAuth client, held by the hub (never in the family's log) until
 /// a parent admits it.
@@ -33,6 +34,7 @@ class _Pending {
     required this.state,
     required this.scopes,
     required this.created,
+    this.resource,
   });
 
   /// The id the parent's app knows it by (not the secret the waiting browser polls with).
@@ -51,6 +53,9 @@ class _Pending {
   final List<String> scopes;
   final int created;
 
+  /// The `resource` the client asked for (RFC 8707), if it named one.
+  final String? resource;
+
   /// The pending `connection` written once a parent admitted the request.
   String? connection;
   bool declined = false;
@@ -61,9 +66,13 @@ class _Pending {
   Set<Scope> get scopeSet => {for (final s in Scope.values) if (scopes.contains(s.name)) s};
 }
 
-/// OAuth 2.1 for remote MCP clients: metadata, dynamic registration, authorization approved by
-/// a parent in the Den app, and tokens with PKCE and refresh-token rotation. Access tokens live
-/// only as hashes in the connection record.
+/// OAuth 2.1 for remote MCP clients: metadata, three ways for a client to be known (a client ID
+/// metadata document at an https `client_id`, which MCP prefers; dynamic registration; or a
+/// client a parent created for an assistant that can do neither, such as Alexa+),
+/// authorization approved by a parent in the Den app, and tokens with PKCE and refresh-token
+/// rotation. Access tokens live only as hashes in the connection record. A `resource` a client
+/// names (RFC 8707) must be this hub's MCP endpoint or the hub itself, and every answer to the
+/// client's browser names the hub as its issuer (`iss`, RFC 9207).
 ///
 /// A sign-in request needs no credentials, so the hub keeps it to itself: nothing reaches the
 /// family's log until a parent's own device admits it (`GET` and `POST
@@ -73,7 +82,9 @@ class _Pending {
 /// self-chosen name alone.
 class OAuthServer implements HubService {
   /// Creates the server for [hub]; [auth] checks the parent's signed requests.
-  OAuthServer(this.hub, this.auth) : store = OAuthStore(hub.state);
+  OAuthServer(this.hub, this.auth)
+      : store = OAuthStore(hub.state),
+        documents = ClientMetadataDocuments(hub.fetch, now: hub.now);
 
   /// Shared hub context.
   final HubContext hub;
@@ -83,6 +94,9 @@ class OAuthServer implements HubService {
 
   /// Clients and refresh tokens.
   final OAuthStore store;
+
+  /// Clients known by their metadata documents.
+  final ClientMetadataDocuments documents;
 
   final Map<String, _Pending> _requests = {};
   final Random _random = Random.secure();
@@ -153,7 +167,7 @@ class OAuthServer implements HubService {
     await store.pruneClients(before: at ~/ 1000 - unusedClients.inSeconds, keep: keep);
   }
 
-  /// `/.well-known/oauth-protected-resource`.
+  /// `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp`.
   Response resourceMetadata(Request r) => _json(r, {
         'resource': urlOf(_base(r), '/mcp'),
         'authorization_servers': [urlOf(_base(r), '')],
@@ -161,6 +175,27 @@ class OAuthServer implements HubService {
         'bearer_methods_supported': ['header'],
         'resource_name': 'Den',
       });
+
+  /// Whether [resource], a client's RFC 8707 `resource`, names this hub: its MCP endpoint (what
+  /// the resource metadata says, and what Claude sends) or the hub itself (what ChatGPT sends),
+  /// compared without case in the scheme and host and without a trailing slash.
+  bool resourceOk(Request r, String resource) {
+    final canonical = _canonical(resource);
+    if (canonical == null) return false;
+    final base = _base(r);
+    return canonical == _canonical(urlOf(base, '/mcp')) || canonical == _canonical(urlOf(base, ''));
+  }
+
+  static String? _canonical(String uri) {
+    final u = Uri.tryParse(uri.trim());
+    if (u == null || !u.hasScheme || u.host.isEmpty || u.hasFragment) return null;
+    var path = u.path;
+    while (path.endsWith('/')) {
+      path = path.substring(0, path.length - 1);
+    }
+    final port = u.hasPort ? ':${u.port}' : '';
+    return '${u.scheme.toLowerCase()}://${u.host.toLowerCase()}$port$path${u.hasQuery ? '?${u.query}' : ''}';
+  }
 
   /// `/.well-known/oauth-authorization-server`.
   Response serverMetadata(Request r) {
@@ -175,15 +210,9 @@ class OAuthServer implements HubService {
       'code_challenge_methods_supported': ['S256'],
       'token_endpoint_auth_methods_supported': ['none', 'client_secret_post', 'client_secret_basic'],
       'scopes_supported': _scopeNames,
+      'client_id_metadata_document_supported': true,
+      'authorization_response_iss_parameter_supported': true,
     });
-  }
-
-  static bool _redirectOk(String uri) {
-    final u = Uri.tryParse(uri);
-    if (u == null || !u.hasScheme || u.fragment.isNotEmpty) return false;
-    if (u.scheme == 'https') return u.host.isNotEmpty;
-    if (u.scheme == 'http') return const {'localhost', '127.0.0.1', '[::1]', '::1'}.contains(u.host);
-    return !const {'javascript', 'data', 'file', 'vbscript', 'blob'}.contains(u.scheme);
   }
 
   /// Where a redirect URI returns to, as a parent should read it: its host, or its scheme for an
@@ -209,7 +238,7 @@ class OAuthServer implements HubService {
       return _registerError(r, 'invalid_client_metadata', 'The body must be a JSON object');
     }
     final uris = body['redirect_uris'];
-    if (uris is! List || uris.isEmpty || uris.length > 10 || uris.any((u) => u is! String || u.length > 2000 || !_redirectOk(u))) {
+    if (uris is! List || uris.isEmpty || uris.length > 10 || uris.any((u) => u is! String || u.length > 2000 || !redirectAllowed(u))) {
       return _registerError(r, 'invalid_redirect_uri', 'redirect_uris must list https (or loopback http) addresses');
     }
     final method = body['token_endpoint_auth_method'] as String? ?? 'client_secret_basic';
@@ -272,7 +301,31 @@ class OAuthServer implements HubService {
         status: status,
         nonce: nonce,
         webDir: hub.config.webDir,
+        loopback: _loopback(p.redirectUri),
+        describedAt: _documentHost(p.client),
       ));
+
+  /// Whether [redirect] returns to the person's own computer, where any program could be
+  /// listening: the page and the parent's app say so.
+  static bool _loopback(String redirect) {
+    final u = Uri.tryParse(redirect);
+    return u != null && u.scheme == 'http' && loopbackHosts.contains(u.host);
+  }
+
+  /// For a client known by its metadata document, the host that published it.
+  static String? _documentHost(OAuthClient client) =>
+      client.kind == OAuthClientKind.document ? Uri.tryParse(client.id)?.host : null;
+
+  /// The client [id] names: a metadata document's (fetched, or kept from before), or one the
+  /// hub registered or a parent created. Null when there is none; throws
+  /// [ClientMetadataProblem] for a document that can't be used.
+  Future<OAuthClient?> _client(Request r, String id) async {
+    if (!ClientMetadataDocuments.isDocumentUrl(id)) return store.client(id);
+    if (!documents.isKept(id) && !hub.limits.allow('oauth-document', hub.clientOf(r), Limits.oauthRegister)) {
+      throw const ClientMetadataProblem('Too many sign-in requests from here. Wait a few minutes, then start again.');
+    }
+    return documents.resolve(id);
+  }
 
   static String _withQuery(String uri, Map<String, String?> params) {
     final u = Uri.parse(uri);
@@ -297,20 +350,31 @@ class OAuthServer implements HubService {
       return _waiting(existing, pending, decided.message);
     }
     if (!hub.ready) return _fail('This hub isn\'t part of a family yet.');
-    final client = store.client(q['client_id'] ?? '');
+    final OAuthClient? client;
+    try {
+      client = await _client(r, q['client_id'] ?? '');
+    } on ClientMetadataProblem catch (e) {
+      return _fail(e.message);
+    }
     if (client == null) return _fail('The app asking to connect isn\'t registered with this hub.');
     final redirect = q['redirect_uri'] ?? (client.redirectUris.length == 1 ? client.redirectUris.single : null);
-    if (redirect == null || !client.redirectUris.contains(redirect)) return _fail('The app gave an address this hub doesn\'t know.');
+    if (redirect == null || !client.redirectUris.any((u) => redirectMatches(u, redirect))) {
+      return _fail('The app gave an address this hub doesn\'t know.');
+    }
     String back(String error, String description) =>
         _withQuery(redirect, {'error': error, 'error_description': description, 'state': q['state'], 'iss': urlOf(_base(r), '')});
     if (q['response_type'] != 'code') return Response.found(back('unsupported_response_type', 'Only the code flow is supported'));
+    final resource = q['resource'];
+    if (resource != null && !resourceOk(r, resource)) {
+      return Response.found(back('invalid_target', 'This hub only issues tokens for ${urlOf(_base(r), '/mcp')}'));
+    }
     final challenge = q['code_challenge'];
     if (challenge == null || challenge.length < 43 || challenge.length > 128 || q['code_challenge_method'] != 'S256') {
       return Response.found(back('invalid_request', 'PKCE with S256 is required'));
     }
     final asked = (q['scope'] ?? '').split(RegExp(r'[\s+]+')).where((s) => s.isNotEmpty).toSet();
     final scopes = asked.isEmpty
-        ? _defaultScopes
+        ? defaultScopes
         : {for (final s in Scope.values) if (asked.contains(s.name)) s};
     if (scopes.isEmpty) return Response.found(back('invalid_scope', 'Den\'s scopes are ${_scopeNames.join(' ')}'));
     if (!hub.limits.allow('oauth-authorize', hub.clientOf(r), Limits.oauthAuthorize)) {
@@ -331,6 +395,7 @@ class OAuthServer implements HubService {
       state: q['state'],
       scopes: [for (final s in Scope.values) if (scopes.contains(s)) s.name],
       created: now,
+      resource: resource,
     );
     hub.log.info('An app asked to connect; a parent can approve it in the Den app');
     return _waiting(id, pending, 'Waiting for a parent to approve it.');
@@ -378,6 +443,9 @@ class OAuthServer implements HubService {
         'code': p.code,
         'client_name': p.client.name,
         'redirect_host': p.host,
+        'redirect_loopback': _loopback(p.redirectUri),
+        'client_kind': p.client.kind.name,
+        'client_document_host': ?_documentHost(p.client),
         'scopes': p.scopes,
         'connection': p.connection,
         'requested': DateTime.fromMillisecondsSinceEpoch(p.created, isUtc: true).toIso8601String(),
@@ -445,6 +513,95 @@ class OAuthServer implements HubService {
     return label.length > 120 ? label.substring(0, 120) : label;
   }
 
+  Map<String, Object?> _staticJson(OAuthClient c) => {
+        'client_id': c.id,
+        'name': c.name,
+        'redirect_uris': c.redirectUris,
+        'created': DateTime.fromMillisecondsSinceEpoch(c.created * 1000, isUtc: true).toIso8601String(),
+      };
+
+  /// `GET /api/v1/connections/clients`, signed by a parent's own device: the apps parents set
+  /// up to sign in with (never their secrets).
+  Future<Response> clients(Request r) async {
+    await auth.parent(r, message: 'Only a parent\'s own phone can see the apps parents set up.');
+    return jsonResponse({'clients': [for (final c in store.staticClients) _staticJson(c)]});
+  }
+
+  /// `POST /api/v1/connections/clients` `{"name": "Alexa", "redirect_uris": [...]}`, signed by a
+  /// parent's own device: sets up a client for an assistant that can't register itself or
+  /// publish a metadata document (Alexa+ takes a client id and secret). It answers the
+  /// `client_secret`, shown this once, with the addresses to enter beside it. Signing in with it
+  /// still needs a parent's approval in the Den app, as for any app.
+  Future<Response> createClient(Request r) async {
+    final signed = await auth.withBody(r, limit: 16 * 1024);
+    final c = DeviceAuth.parentOf(signed.check, message: 'Only a parent\'s own phone can set up an app.');
+    final Object? json;
+    try {
+      json = jsonDecode(utf8.decode(signed.body));
+    } on FormatException {
+      throw ApiError.invalid('The body must be a JSON object.');
+    }
+    if (json is! Map) throw ApiError.invalid('The body must be a JSON object.');
+    final name = json['name'];
+    if (name is! String || name.trim().isEmpty || name.trim().length > 60) {
+      throw ApiError.invalid('"name" must be the app\'s name, up to 60 characters.', field: 'name');
+    }
+    final uris = json['redirect_uris'];
+    if (uris is! List || uris.isEmpty || uris.length > 10 || uris.any((u) => u is! String || u.length > 2000 || !redirectAllowed(u))) {
+      throw ApiError.invalid('"redirect_uris" must list the https addresses the app gave you.', field: 'redirect_uris');
+    }
+    if (store.staticClients.length >= maxStaticClients) {
+      throw ApiError(409, 'too_many', 'This hub already has $maxStaticClients apps set up by parents. Remove one first.');
+    }
+    final secret = store.secret();
+    final client = OAuthClient(
+      id: store.secret(16).substring(4),
+      name: name.trim(),
+      redirectUris: uris.cast<String>(),
+      authMethod: 'client_secret_basic',
+      secretHash: hashToken(secret),
+      created: hub.now() ~/ 1000,
+      kind: OAuthClientKind.static,
+    );
+    await store.addClient(client);
+    hub.log.info('${c.actor!.name} set up an app to sign in with');
+    final base = _base(r);
+    return jsonResponse({
+      ..._staticJson(client),
+      'client_secret': secret,
+      'authorization_endpoint': urlOf(base, '/oauth/authorize'),
+      'token_endpoint': urlOf(base, '/oauth/token'),
+      'token_endpoint_auth_methods': ['client_secret_basic', 'client_secret_post'],
+      'resource': urlOf(base, '/mcp'),
+      'scopes': [for (final s in Scope.values) if (defaultScopes.contains(s)) s.name],
+    }, status: 201);
+  }
+
+  /// `DELETE /api/v1/connections/clients/{id}`, signed by a parent's own device: removes an app
+  /// parents set up. Its refresh tokens stop working and the hub ends the connections it made.
+  Future<Response> deleteClient(Request r, String id) async {
+    final c = await auth.parent(r, message: 'Only a parent\'s own phone can remove an app.');
+    final client = store.client(id);
+    if (client == null || client.kind != OAuthClientKind.static) {
+      throw ApiError.notFound(type: 'client', message: 'There\'s no app with that id.');
+    }
+    await store.removeClient(id);
+    final ended = await hub.gate.asHub(() async {
+      var n = 0;
+      for (final x in hub.den.connections) {
+        if (x.client != id || x.status == ConnectionStatus.revoked) continue;
+        await hub.den.revokeConnection(x.id);
+        n++;
+      }
+      return n;
+    });
+    hub.log.info('${c.actor!.name} removed an app parents set up');
+    return jsonResponse({'ok': true, 'connections_ended': ended});
+  }
+
+  /// Most apps parents set up.
+  static const int maxStaticClients = 20;
+
   Response _tokenError(Request r, String error, String description, {int status = 400}) => jsonResponse(
         {'error': error, 'error_description': description},
         status: status,
@@ -484,10 +641,20 @@ class OAuthServer implements HubService {
         return _badClient(r, 'invalid_client', 'Malformed client credentials', status: 401);
       }
     }
-    final client = clientId == null ? null : store.client(clientId);
+    // A client known by its metadata document is public: the code or refresh token it brings
+    // must have been issued to that same address, which the checks below hold it to.
+    final client = clientId == null
+        ? null
+        : ClientMetadataDocuments.isDocumentUrl(clientId)
+            ? OAuthClient(id: clientId, name: '', redirectUris: const [], authMethod: 'none', created: 0, kind: OAuthClientKind.document)
+            : store.client(clientId);
     if (client == null) return _badClient(r, 'invalid_client', 'Unknown client', status: 401);
     if (client.secretHash != null && (secret == null || hashToken(secret) != client.secretHash)) {
       return _badClient(r, 'invalid_client', 'Wrong client secret', status: 401);
+    }
+    final resource = form['resource'];
+    if (resource != null && !resourceOk(r, resource)) {
+      return _tokenError(r, 'invalid_target', 'This hub only issues tokens for ${urlOf(_base(r), '/mcp')}');
     }
     switch (form['grant_type']) {
       case 'authorization_code':
@@ -509,6 +676,10 @@ class OAuthServer implements HubService {
     }
     if (form['redirect_uri'] != null && form['redirect_uri'] != p.redirectUri) {
       return _badClient(r, 'invalid_grant', 'redirect_uri doesn\'t match');
+    }
+    final resource = form['resource'];
+    if (resource != null && p.resource != null && _canonical(resource) != _canonical(p.resource!)) {
+      return _tokenError(r, 'invalid_target', 'resource doesn\'t match the one the app asked for');
     }
     final verifier = form['code_verifier'] ?? '';
     final digest = b64e(const DartSha256().hashSync(utf8.encode(verifier)).bytes);

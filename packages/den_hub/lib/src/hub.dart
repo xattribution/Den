@@ -92,6 +92,7 @@ class DenHub {
       state: HubState(config.dataDir),
       node: node,
       http: client,
+      fetch: config.fetchClient,
     );
     final hub = DenHub._(den, config, ctx, ChangeFeed(den), config.httpClient == null);
     await hub._start();
@@ -195,6 +196,9 @@ class DenHub {
       ..add('OPTIONS', '/oauth/token', (r, _) => _mcpHttp.options(r))
       ..add('GET', '/api/v1/connections/requests', (r, _) => _oauth.requests(r))
       ..add('POST', '/api/v1/connections/requests/<id>', (r, p) => _oauth.decide(r, p['id']!))
+      ..add('GET', '/api/v1/connections/clients', (r, _) => _oauth.clients(r))
+      ..add('POST', '/api/v1/connections/clients', (r, _) => _oauth.createClient(r))
+      ..add('DELETE', '/api/v1/connections/clients/<id>', (r, p) => _oauth.deleteClient(r, p['id']!))
       ..add('GET', '/ics/<token>/<file>', (r, p) => _ics.feed(r, p['token']!, p['file']!));
     _api.register(_routes);
     _capture.register(_routes);

@@ -54,6 +54,7 @@ class HubConfig {
     this.httpClient,
     this.fetchAllow = const [],
     this.resolver,
+    this.fetchClient,
     this.feedInterval = const Duration(minutes: 30),
     this.reminderInterval = const Duration(minutes: 1),
     this.accessTokenLifetime = const Duration(hours: 1),
@@ -137,6 +138,10 @@ class HubConfig {
 
   /// Looks host names up for those fetches; null is the system's resolver (tests pass a fake).
   final HostResolver? resolver;
+
+  /// Replaces the guarded client for those fetches altogether: for tests that serve a client
+  /// metadata document from a fake https address. Null in real use.
+  final http.Client? fetchClient;
 
   /// How often calendar feeds are fetched.
   final Duration feedInterval;
