@@ -13,7 +13,14 @@ import 'pairing.dart';
 /// [PairingService] on den_net: QR invites and spoken codes over the hub, the relay's
 /// rendezvous, or (with neither) a direct connection on the same Wi-Fi.
 class NetPairing extends PairingService {
-  NetPairing(this.network, {HubClient? client, this.servedBy}) : _client = client ?? HubClient();
+  NetPairing(this.network, {HubClient? client, this.servedBy}) : _client = client ?? HubClient() {
+    network.addListener(_watchTurnedAway);
+  }
+
+  static const _turnedAway = JoinStatus(
+    JoinState.declined,
+    message: 'A parent turned this device away. Ask them for a new invite, then start over.',
+  );
 
   final DenNetwork network;
 
@@ -26,8 +33,20 @@ class NetPairing extends PairingService {
   /// invites made here.
   net.SyncNode get _node => network.activeNode;
 
+  bool _toldTurnedAway = false;
+
+  /// A device waiting for approval learns it was turned away from its connection to the family.
+  void _watchTurnedAway() {
+    if (!network.turnedAway || _toldTurnedAway) return;
+    _toldTurnedAway = true;
+    _status.add(_turnedAway);
+  }
+
   @override
-  Stream<JoinStatus> get joinStatus => _status.stream;
+  Stream<JoinStatus> get joinStatus async* {
+    if (network.turnedAway) yield _turnedAway;
+    yield* _status.stream;
+  }
 
   @override
   Future<JoinTicket> joinWithQr(String uri, {required String deviceName, required DeviceKind kind}) async {

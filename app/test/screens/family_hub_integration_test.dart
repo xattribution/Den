@@ -192,6 +192,44 @@ void main() {
     expect(ipad.family!.name, 'The Testers');
   });
 
+  test('A device turned away while it waits hears it and stops asking, also after Den opens again', () async {
+    final (_, hub) = await startHub();
+    final served = Uri.parse('http://127.0.0.1:${hub.port}/');
+    final mom = await parentPhone();
+    final momNet = DenNetwork(mom, localHub: noHub());
+    addTearDown(momNet.dispose);
+    final momPairing = NetPairing(momNet, servedBy: served);
+    final adoption = momPairing.adoptServingHub((await momPairing.servingHub())!, hub.setupCode!);
+    await until(() => adoption.stage == HubSetupStage.done || adoption.stage == HubSetupStage.failed, what: 'the hub to be taken in');
+    await until(() => momNet.status.state.name == 'live', what: 'Mom to sync with the hub');
+    final message = await momPairing.createInvite();
+
+    final ipad = await freshDen();
+    final ipadNet = DenNetwork(ipad, localHub: noHub());
+    await NetPairing(ipadNet, servedBy: served).joinWithInvite(message.code, deviceName: (_) => 'iPad', kind: DeviceKind.tablet);
+    await until(() => mom.pendingDevices.any((d) => d.id == ipad.deviceId), what: 'the request to reach Mom');
+    await ipadNet.close();
+    final reopened = await DenNetwork.load(ipad);
+    addTearDown(reopened.dispose);
+    await reopened.start();
+    await until(() => reopened.status.awaitingApproval, what: 'the iPad to wait on the hub');
+
+    await mom.revokeDevice(ipad.deviceId);
+    await until(() => reopened.turnedAway, what: 'the iPad to hear it was turned away');
+    expect(reopened.connecting, isFalse, reason: 'it stops asking');
+    expect(ipad.isApproved, isFalse);
+
+    // Opened again later: it doesn't ask again, and says why.
+    final again = await DenNetwork.load(ipad);
+    addTearDown(again.dispose);
+    expect(again.turnedAway, isTrue);
+    await again.start();
+    expect(again.connecting, isFalse);
+    final status = await NetPairing(again, servedBy: served).joinStatus.first;
+    expect(status.state, JoinState.declined);
+    expect(status.message, contains('new invite'));
+  });
+
   test("Keep the family online runs the hub in the app and a tablet joins through it", () async {
     final phone = await parentPhone();
     final sam = phone.owner!.id;

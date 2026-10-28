@@ -364,7 +364,9 @@ receive; the session's limit then applies.
   asks nothing on those connections, so it needs no new invite: the device it waits on tells it
   `approved` when a parent approves, or simply syncs with it once it is. A connection that
   proves nothing lasts 30 seconds, so a waiting device reconnects with the client's backoff
-  (at most 2 minutes apart); the approval reaches it on the next connection at the latest.
+  (at most 2 minutes apart); the approval reaches it on the next connection at the latest. A
+  device turned away is told so (`join_rejected`, at once when it connects after the fact),
+  stops asking, and remembers it; a new invite on a fresh device id is the way back in.
 
 A device's keys and its log belong together. A device opens its keys only with a log that holds
 its family (`familyId` in the metadata); keys without one (storage cleared or evicted, a device
