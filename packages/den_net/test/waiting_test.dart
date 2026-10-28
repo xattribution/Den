@@ -38,7 +38,7 @@ void main() {
     if (!await setUpWaiting()) return;
     final peer = await link(phoneNode, waitingNode);
     await eventually(() => peer.awaitingApproval);
-    await fam.founder.approveDevice(waiting.deviceId);
+    await fam.founder.approveDevice(waiting.deviceId, member: fam.parent);
     await eventually(() => waiting.isApproved);
     await peer.close();
   });
