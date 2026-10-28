@@ -144,7 +144,7 @@ class DenHub {
     _stream = EventStream(_ctx, _feed);
     _api = RestApi(_ctx);
     _capture = HubCapture(_ctx, _auth);
-    _mcp = McpServer(_ctx);
+    _mcp = McpServer(_ctx, reader: _capture.reader);
     _mcpHttp = McpHttp(_ctx, _mcp);
     _oauth = OAuthServer(_ctx, _auth);
     _ics = IcsExport(_ctx);

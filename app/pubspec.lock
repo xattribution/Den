@@ -121,6 +121,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.15"
+  den_actions:
+    dependency: transitive
+    description:
+      path: "../packages/den_actions"
+      relative: true
+    source: path
+    version: "0.1.0"
   den_capture:
     dependency: "direct main"
     description:

@@ -1,4 +1,4 @@
-import '../times.dart';
+import 'package:den_actions/times.dart';
 
 /// A date or date-time from an iCalendar property.
 class IcsTime {

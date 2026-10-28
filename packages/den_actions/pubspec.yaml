@@ -1,0 +1,19 @@
+name: den_actions
+description: "Den's shared actions: every verb the app, the hub's REST API, MCP and the in-app assistant offer, with portable schemas, permissions, previews on a fork, confirmations and undo receipts."
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  collection: ^1.19.1
+  den_capture:
+    path: ../den_capture
+  den_core:
+    path: ../den_core
+  timezone: ^0.11.2
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.31.1

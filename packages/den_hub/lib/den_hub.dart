@@ -5,14 +5,15 @@
 /// Start one over an open [Den] with [DenHub.start]; it also runs in-process inside the Den app.
 library;
 
-export 'src/access.dart' show Access, accessForToken, readableSpacesFor;
+export 'package:den_actions/den_actions.dart' show readableSpacesFor;
+export 'package:den_actions/times.dart' show parseInstant, isoIn;
+export 'src/access.dart' show Access, accessForToken;
 export 'src/capture.dart' show HubCapture;
 export 'src/config.dart';
 export 'src/edge.dart' show IpNetwork;
 export 'src/hub.dart';
 export 'src/log.dart';
 export 'src/setup.dart' show SetupStage, setupAlphabet, setupTries, restrictToOwner, linkOpenFile;
-export 'src/times.dart' show parseInstant, isoIn;
 export 'src/mcp/server.dart' show McpServer, mcpProtocolVersions;
 export 'src/mcp/stdio.dart' show serveMcpStdio;
 export 'src/ics/expand.dart' show expandCalendar, groupSeries, IcsOccurrence, IcsSeries;

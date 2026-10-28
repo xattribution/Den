@@ -1,10 +1,9 @@
 import 'package:den_core/den_core.dart';
 
-import 'config.dart';
 import 'times.dart';
 
-/// Turns den_core's views into the API's JSON (docs/hub-api.md, "Shared objects"): snake_case
-/// keys, instants as ISO 8601 in the family's zone plus UTC milliseconds.
+/// Turns den_core's views into the JSON every surface answers with (docs/hub-api.md, "Shared
+/// objects"): snake_case keys, instants as ISO 8601 in the family's zone plus UTC milliseconds.
 class Wire {
   /// Creates a serializer for [den]'s family.
   Wire(this.den) : zone = den.family?.timezone ?? 'UTC';
@@ -351,10 +350,4 @@ class Wire {
         ...instant('when', s.when),
       };
 
-  /// Who this hub is.
-  Map<String, Object?> hub(String fallbackName) => {
-        'device': den.deviceId,
-        'name': den.thisDevice?.name ?? fallbackName,
-        'version': hubVersion,
-      };
 }

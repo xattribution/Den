@@ -41,9 +41,10 @@ jobs:
             den_relay: ['packages/den_core/**', 'packages/den_net/**', 'packages/den_relay/**']
             den_sett_import: ['packages/den_core/**', 'packages/den_sett_import/**']
             den_assistant: ['packages/den_assistant/**']
+            den_actions: ['packages/den_core/**', 'packages/den_capture/**', 'packages/den_assistant/**', 'packages/den_actions/**']
             den_hub: ['packages/**', 'deploy/hub/**']
             den_hub_cli: ['packages/**', 'deploy/hub/**']
-            app: ['packages/den_core/**', 'packages/den_net/**', 'packages/den_capture/**', 'packages/den_hub/**', 'packages/den_relay/**', 'app/**']
+            app: ['packages/den_core/**', 'packages/den_net/**', 'packages/den_capture/**', 'packages/den_actions/**', 'packages/den_assistant/**', 'packages/den_hub/**', 'packages/den_relay/**', 'app/**']
             homeassistant: ['integrations/**']
             images: ['packages/**', 'app/**', 'deploy/**']
       - id: pick
@@ -52,7 +53,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
         run: |
-          all='["den_core","den_net","den_capture","den_relay","den_hub","den_hub_cli","den_sett_import","den_assistant"]'
+          all='["den_core","den_net","den_capture","den_relay","den_hub","den_hub_cli","den_sett_import","den_assistant","den_actions"]'
           if [ "$EVENT" = workflow_dispatch ] || [[ "$REF" == refs/tags/* ]] || echo "$CHANGES" | grep -q '"ci"'; then
             echo "packages=$all" >> "$GITHUB_OUTPUT"; echo "app=true" >> "$GITHUB_OUTPUT"; echo "homeassistant=true" >> "$GITHUB_OUTPUT"; echo "images=true" >> "$GITHUB_OUTPUT"
             exit 0

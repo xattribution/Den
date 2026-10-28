@@ -1,0 +1,7 @@
+include: package:lints/recommended.yaml
+
+linter:
+  rules:
+    - public_member_api_docs
+    - unawaited_futures
+    - avoid_dynamic_calls

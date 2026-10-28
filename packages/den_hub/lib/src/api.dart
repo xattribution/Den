@@ -1,16 +1,16 @@
 import 'dart:async';
 
+import 'package:den_actions/den_actions.dart';
+import 'package:den_actions/times.dart';
 import 'package:den_core/den_core.dart';
 import 'package:shelf/shelf.dart';
 
 import 'access.dart';
+import 'config.dart';
 import 'api_writes.dart';
 import 'context.dart';
 import 'http_util.dart';
 import 'log.dart';
-import 'privacy.dart';
-import 'times.dart';
-import 'wire.dart';
 
 /// One authenticated API call: who is calling, what they may read, and how to answer.
 class Call {
@@ -114,7 +114,7 @@ class RestApi {
   Response _members(Call c) {
     final connection = c.access.connection;
     return jsonResponse({
-      'hub': c.wire.hub(hub.config.name),
+      'hub': {'device': c.den.deviceId, 'name': c.den.thisDevice?.name ?? hub.config.name, 'version': hubVersion},
       'family': c.wire.family(),
       'token': {
         'label': connection.label,
@@ -256,34 +256,6 @@ class RestApi {
       'results': [for (final h in hits.take(limit)) c.wire.searchHit(h)],
     });
   }
-}
-
-/// Whether a search hit belongs to a space in [readable].
-bool searchHitVisible(Den den, SearchHit hit, Set<String> readable) {
-  String? space;
-  switch (hit.type) {
-    case RecordType.member:
-      space = Space.family;
-    case RecordType.event:
-      space = den.event(hit.id)?.space;
-    case RecordType.chore:
-      space = den.chore(hit.id)?.space;
-    case RecordType.list:
-      space = den.list(hit.id)?.list.space;
-    case RecordType.item:
-      for (final l in den.lists) {
-        if (l.items.any((i) => i.id == hit.id)) space = l.list.space;
-      }
-  }
-  if (space == null) {
-    for (final h in den.history(type: hit.type, limit: 500)) {
-      if (h.rid == hit.id) {
-        space = h.space;
-        break;
-      }
-    }
-  }
-  return space != null && readable.contains(space);
 }
 
 extension on List<ChoreDay> {
