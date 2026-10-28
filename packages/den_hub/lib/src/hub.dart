@@ -18,11 +18,13 @@ import 'gate.dart';
 import 'http_util.dart';
 import 'ics/export.dart';
 import 'ics/feeds.dart';
+import 'invites.dart';
 import 'log.dart';
 import 'mcp/http.dart';
 import 'mdns/responder.dart';
 import 'mcp/server.dart';
 import 'oauth.dart';
+import 'push/push_service.dart';
 import 'reminders.dart';
 import 'setup.dart';
 import 'state.dart';
@@ -57,6 +59,7 @@ class DenHub {
   late final IcsExport _ics;
   late final FeedService _feeds;
   late final ReminderService _reminders;
+  late final WebPushService _push;
   final Routes _routes = Routes();
   Handler? _web;
   late final Handler _ws;
@@ -115,6 +118,9 @@ class DenHub {
   /// Reminders out; [ReminderService.tick] looks ahead now.
   ReminderService get reminders => _reminders;
 
+  /// Reminders and nudges to browsers through Web Push.
+  WebPushService get push => _push;
+
   /// Where setup stands.
   SetupStage get setupStage => _setup.stage;
 
@@ -140,9 +146,12 @@ class DenHub {
     _ics = IcsExport(_ctx);
     _feeds = FeedService(_ctx);
     _reminders = ReminderService(_ctx);
+    _push = WebPushService(_ctx);
+    _reminders.sinks.add(_push);
     _services
       ..add(_feeds)
-      ..add(_reminders);
+      ..add(_reminders)
+      ..add(_push);
     _web = webAppHandler(config.webDir);
     _ws = syncWebSocketHandler(node);
     _routes
@@ -170,6 +179,8 @@ class DenHub {
       ..add('GET', '/ics/<token>/<file>', (r, p) => _ics.feed(r, p['token']!, p['file']!));
     _api.register(_routes);
     _capture.register(_routes);
+    HubInvites(_ctx).register(_routes);
+    _push.register(_routes);
     _changes = den.onChange.listen((_) {
       _setup.refresh();
       final m = _mdns;

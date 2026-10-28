@@ -37,6 +37,8 @@ covers `/health`, everything under `/api/v1`, and the mDNS advertisement.
   [`GET /api/v1/stream`](#get-apiv1stream-server-sent-events) ·
   [`GET /api/v1/hub/status`](#get-apiv1hubstatus)
 - [Capture: reading for every device](#capture-reading-for-every-device)
+- [Invites by message](#invites-by-message)
+- [Web Push: reminders in browsers](#web-push-reminders-in-browsers)
 
 ## Conventions
 
@@ -1205,3 +1207,120 @@ parent's private ones). Answer:
 Errors: `403 permission_denied` ("Sign in on this screen to add things", "Leo can't add anything
 Den reads"), `409 no_reader` when nothing is set up, `429 busy` (`details.retry`: true) when four
 reads are already running, `502 reader_failed` with the reader's own reason and `details.retry`.
+
+## Invites by message
+
+A parent invites someone (a partner, a grandparent, a kid's iPad) from anywhere, and they join
+later, with no camera and with the parent's phone asleep: the hub keeps the invite and admits
+the device on the parent's behalf. A parent still approves every device that asks.
+
+These endpoints take no token. Creating an invite carries its own proof, an `InviteGrant`
+(`packages/den_net`): the invite names this hub as the inviting device and is signed by a
+parent's own approved device.
+
+### `POST /api/v1/invites`
+
+Body: `InviteGrant.toJson()`, with `context` `invite` (anyone) or `invite:<memberId>` (an invite
+for that person; the device that uses it asks to be theirs).
+
+```json
+{"invite": "den://join?f=...&d=<hub>&k=<hub key>&s=...&h=wss%3A%2F%2Fden.example.com%2Fws&x=1793750400",
+ "device": "D3ALEXPHONE7QK4MX", "context": "invite:M5ZOE7QK4MXN3TB2", "sig": "<base64url Ed25519>"}
+```
+
+The hub keeps it under four random words from Den's word list (44 bits) until the invite
+expires, in `<data>/hub/invites.json` (its user only), so a restart doesn't lose it. Answer
+`201`:
+
+```json
+{
+  "code": "maple river candle tiger",
+  "words": ["maple", "river", "candle", "tiger"],
+  "link": "https://den.example.com/#/join/maple-river-candle-tiger",
+  "expires": "2026-10-31T17:00:00.000Z",
+  "expires_ms": 1793466000000,
+  "member": "M5ZOE7QK4MXN3TB2"
+}
+```
+
+`link` is built on the hub's public URL (`DEN_PUBLIC_URL`), else the address the request came
+to. Errors: `400 invalid_input` (not a grant, a context other than these, no such member, an
+invite lasting over a week), `403 permission_denied` (not signed by a parent's own device of this
+family, or not naming this hub), `429 rate_limited` (50 invites waiting), `503 not_ready`.
+
+### `POST /api/v1/invites/redeem`
+
+Body `{"code": "maple river candle tiger"}`, typed any way people type it (case, commas, hyphens;
+each word may be its first four letters). Answer `200`:
+
+```json
+{
+  "invite": "den://join?...",
+  "member": "M5ZOE7QK4MXN3TB2",
+  "member_name": "Zoe",
+  "family": "The Carters",
+  "expires": "2026-10-31T17:00:00.000Z",
+  "expires_ms": 1793466000000
+}
+```
+
+The hub starts accepting the invite on `/ws` (see ARCHITECTURE.md, "Pairing"); the device joins
+with it there, pinning the hub's key from the invite. An invite works for every device that uses
+it until it expires; each one still needs a parent's approval. Errors: `400 invalid_input` (not
+four words from the list), `404 not_found` (no such invite, expired, or its parent's device was
+revoked since), `429 rate_limited` (10 wrong codes in 10 minutes; every wrong code counts, against
+every invite), `503 not_ready`.
+
+## Web Push: reminders in browsers
+
+Den in a browser (on an iPhone, a Home Screen web app on iOS 16.4 or later) gets its reminders
+and nudges from the hub through Web Push. The hub's VAPID key pair (P-256, RFC 8292) is made on
+first use and kept with the subscriptions in `<data>/hub/push.json`, readable by the hub's user
+only. Requests are signed with the device's own key, as for capture (`DeviceRequest`).
+
+### `GET /api/v1/push`
+
+Any approved device. `{"key": "<base64url uncompressed P-256 public key>", "subscribed": false}`:
+the key is the browser's `applicationServerKey`; `subscribed` says whether this device gets
+pushes.
+
+### `PUT /api/v1/push`
+
+A personal device (shared screens show reminders themselves). Body: the browser's
+`PushSubscription.toJSON()`:
+
+```json
+{"endpoint": "https://web.push.apple.com/QGuQyavXutnMH...", "keys": {"p256dh": "BCVx...", "auth": "BTBZ..."}}
+```
+
+`endpoint` must be https on a known push service (`push.apple.com`, `fcm.googleapis.com`,
+`push.services.mozilla.com`, `notify.windows.com`), so the hub never posts to an address of a
+device's choosing. Answers like `GET`. Errors: `400 invalid_input` (`details.field` `endpoint` or
+`keys`), `401 unauthorized`, `403 permission_denied` (not a personal device).
+
+### `DELETE /api/v1/push`
+
+No more pushes to this device. Answers like `GET`.
+
+### `POST /api/v1/push/test`
+
+One notification to this device ("Reminders are on"), to see them arrive. `200 {"ok": true}`;
+`404 not_found` when the device hasn't subscribed; `502 push_failed` when the push service
+refused it (a subscription it says is gone, `404`/`410`, is forgotten).
+
+### What the hub sends
+
+Each push is one `aes128gcm` record (RFC 8291) with `Authorization: vapid t=<ES256 JWT>,
+k=<key>` (`aud` the push service's origin, `exp` 12 hours, `sub` the hub's https address), `TTL`
+and `Urgency`. The plaintext is JSON the service worker shows:
+
+```json
+{"title": "Soccer practice", "body": "5:30 PM, Field 3", "route": "/event/E2SOCCER7QK4MXN3?at=1792535400000", "tag": "event:E2SOCCER7QK4MXN3:1792535400000:30"}
+```
+
+- Reminders: each reminder the hub's reminder service sends (see "Notifications" in
+  ARCHITECTURE.md) goes to the subscribed devices of the people it is for who can read it, `TTL`
+  one hour, `Urgency: high`.
+- Nudges, each once: a device asking to join, to parents (`/today`); a reward asked for, to
+  whoever decides rewards (`/points`); a chore given to someone for today or tomorrow, to them
+  ("Your turn", `/chore/<id>?date=`).

@@ -37,7 +37,15 @@ beside it.
 | `backup --out FILE --passphrase-env VAR` / `restore --in FILE --passphrase-env VAR [--force]` | Keys, log and hub state sealed with den_net's backup format |
 
 Data directory: `keys.json` (device keys, owner-only), `log/` (change log), `hub/` (reminders
-sent, OAuth clients and refresh-token hashes, feed caches), `hub.lock` (one process at a time).
+sent, OAuth clients and refresh-token hashes, feed caches, invites waiting in `invites.json`, the
+Web Push key and subscriptions in `push.json`), `hub.lock` (one process at a time).
+
+## Invites and reminders for browsers
+
+A parent's device leaves the hub an invite to send as a message (`/api/v1/invites`): the hub
+keeps it under four words and admits whoever redeems them, for a parent to approve. Browsers get
+reminders and nudges by Web Push (`/api/v1/push`, RFC 8291 and 8292, P-256 through
+pointycastle). Both are specified in [docs/hub-api.md](../../docs/hub-api.md#invites-by-message).
 
 ## Adding a hub to a family
 
