@@ -3,12 +3,12 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:multicast_dns/multicast_dns.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
-import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'src/relay_protocol.dart';
@@ -156,29 +156,39 @@ Handler boundedWebSocketHandler(
   required int maxMessageBytes,
   Duration? pingInterval,
 }) {
-  final upgrade = webSocketHandler(
-    (WebSocketChannel socket, String? _) => onConnection(socket),
-    pingInterval: pingInterval,
-  );
+  // The same handshake checks and answer as shelf_web_socket (RFC 6455, no subprotocols), on
+  // the request itself, so the socket's bytes can be watched before the WebSocket reads them.
   return (Request request) {
-    if (!request.canHijack) return upgrade(request);
-    final guarded = Request(
-      request.method,
-      request.requestedUri,
-      protocolVersion: request.protocolVersion,
-      headers: request.headersAll,
-      handlerPath: request.handlerPath,
-      url: request.url,
-      context: request.context,
-      onHijack: (callback) {
-        try {
-          request.hijack((channel) => callback(channel.changeStream((bytes) => _limitFrames(bytes, maxMessageBytes))));
-        } on HijackException {
-          // Expected: the server now hands the socket over; the outer hijack signals it too.
-        }
-      },
-    );
-    return upgrade(guarded);
+    if (request.method != 'GET') return Response.notFound('Only WebSocket connections are supported.');
+    final connection = request.headers['Connection'];
+    final upgrade = request.headers['Upgrade'];
+    if (connection == null ||
+        !connection.toLowerCase().split(',').map((t) => t.trim()).contains('upgrade') ||
+        upgrade == null ||
+        upgrade.toLowerCase() != 'websocket') {
+      return Response.notFound('Only WebSocket connections are supported.');
+    }
+    if (request.headers['Sec-WebSocket-Version'] != '13') {
+      return Response(426, body: 'Only WebSocket version 13 is supported.', headers: {'Sec-WebSocket-Version': '13'});
+    }
+    final key = request.headers['Sec-WebSocket-Key'];
+    if (request.protocolVersion != '1.1' || key == null) {
+      return Response.badRequest(body: 'This isn\'t a WebSocket handshake.');
+    }
+    request.hijack((channel) {
+      channel.sink.add(utf8.encode(
+        'HTTP/1.1 101 Switching Protocols\r\n'
+        'Upgrade: websocket\r\n'
+        'Connection: Upgrade\r\n'
+        'Sec-WebSocket-Accept: ${WebSocketChannel.signKey(key)}\r\n'
+        '\r\n',
+      ));
+      onConnection(WebSocketChannel(
+        channel.changeStream((bytes) => _limitFrames(bytes, maxMessageBytes)),
+        pingInterval: pingInterval,
+        serverSide: true,
+      ));
+    });
   };
 }
 
