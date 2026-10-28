@@ -8,13 +8,17 @@ library;
 export 'package:den_actions/den_actions.dart' show readableSpacesFor;
 export 'package:den_actions/times.dart' show parseInstant, isoIn;
 export 'src/access.dart' show Access, accessForToken;
+export 'src/assistant.dart' show HubAssistant;
 export 'src/capture.dart' show HubCapture;
 export 'src/config.dart';
 export 'src/edge.dart' show IpNetwork;
 export 'src/hub.dart';
 export 'src/log.dart';
+export 'src/net_guard.dart' show BlockedAddress, HostResolver, NetGuard, isPublicAddress, systemResolver;
 export 'src/setup.dart' show SetupStage, setupAlphabet, setupTries, restrictToOwner, linkOpenFile;
-export 'src/mcp/server.dart' show McpServer, mcpProtocolVersions;
+export 'src/mcp/http.dart' show decodeMcpHeader, encodeMcpHeader, mcpRequestHeaders;
+export 'src/mcp/server.dart'
+    show McpMeta, McpReply, McpServer, RpcError, legacyProtocolVersions, mcpProtocolVersions, modernProtocolVersions;
 export 'src/mcp/stdio.dart' show serveMcpStdio;
 export 'src/ics/expand.dart' show expandCalendar, groupSeries, IcsOccurrence, IcsSeries;
 export 'src/ics/feeds.dart' show FeedService;

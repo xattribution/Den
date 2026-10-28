@@ -144,6 +144,68 @@ trusts.
 The hub logs a warning when a proxy sends `X-Forwarded-For` from an address it doesn't trust;
 until you list the proxy, every family member counts as one client against the limits.
 
+## Connecting AI assistants
+
+Claude, ChatGPT, Gemini, Grok and Alexa+ reach Den from their own servers over MCP with OAuth.
+Only a few paths have to be on the public internet for that; the rest can stay behind a private
+proxy (Tailscale Serve, a VPN, the home network), where the family's phones and the web app
+already reach them.
+
+| Path | Who calls it | Public? |
+| --- | --- | --- |
+| `POST /mcp` (and `OPTIONS /mcp`) | The assistant's servers, for every tool call | Yes |
+| `GET /.well-known/oauth-protected-resource`, `GET /.well-known/oauth-protected-resource/mcp` | The assistant's servers, to find the sign-in (Alexa+ when you deploy) | Yes |
+| `GET /.well-known/oauth-authorization-server` | The assistant's servers | Yes |
+| `POST /oauth/token` | The assistant's servers: the first token and every refresh | Yes |
+| `POST /oauth/register` | The assistant's servers, for assistants that register themselves (Gemini; Claude and ChatGPT when they don't use a client document) | Yes, unless every assistant you use has a client document or a client you set up |
+| `GET /oauth/authorize`, `GET /oauth/authorize/status` | The browser of the person connecting (the waiting page polls the second) | Only where that browser is: on the phone or computer connecting, which may be anywhere |
+| `/api/v1/*`, `/ws`, the web app | The family's devices, Siri Shortcuts, Home Assistant | No: keep them behind the private proxy if you can |
+| `/ics/*` | Calendar apps subscribed to Den's feeds | Only if a calendar service fetches them from its own servers (Google Calendar does; Apple Calendar fetches from the device) |
+
+With Caddy (above) everything is public, which works; the public posture's limits and the parent
+approval of every sign-in apply either way. To expose only the assistants' paths, route those
+paths to the hub on the public hostname and leave everything else to the private one.
+
+The hub also fetches out: the client documents Claude and ChatGPT identify themselves with (from
+`claude.ai` and `chatgpt.com`), and calendar feeds. Those fetches refuse addresses on the hub's
+own machine and network; `DEN_FETCH_ALLOW` admits a calendar server at home.
+
+Whichever assistant, the person connecting sees Den's sign-in page with a code, and a parent
+approves the request in the Den app (Settings → AI and automations), choosing what it may do and
+whose permissions it uses. The add-a-connector address is `https://den.example.com/mcp`.
+
+- **Claude** (claude.ai, Desktop, mobile, Claude Code): add Den as a custom connector with that
+  address. Claude identifies itself with a client document when the hub says it reads them
+  (it does) and otherwise registers; the hosted apps return to
+  `https://claude.ai/api/mcp/auth_callback`, Claude Code to a `localhost` port of its own, which
+  the hub matches on any port (the sign-in page then says a program on this computer is asking).
+  Claude's servers call from `160.79.104.0/21` and give each OAuth request 10 seconds. Claude
+  needs the `401` and its `resource_metadata`, which Den sends.
+  ([Anthropic: authentication for connectors](https://claude.com/docs/connectors/building/authentication.md))
+- **ChatGPT** (developer mode, for Plus, Pro, Business, Enterprise and Edu): add Den as an app
+  with OAuth. ChatGPT uses a client document (`https://chatgpt.com/oauth/.../client.json`) or
+  registers, sends `resource` as the hub's address, and returns to
+  `https://chatgpt.com/connector_platform_oauth_redirect` because Den sends `iss`. It asks before
+  every write. ([OpenAI: developer mode](https://developers.openai.com/api/docs/guides/developer-mode),
+  [Apps SDK: authentication](https://developers.openai.com/apps-sdk/build/auth))
+- **Gemini** (18 or over, in the US, a personal Google Account, English): gemini.google.com →
+  Settings → Connected Apps → Add a custom app. Gemini registers (or takes credentials by hand
+  under "Advanced"), works on the web and mobile once added, and confirms every write.
+  ([Google: custom apps for Gemini](https://support.google.com/gemini/answer/17209137))
+- **Grok**: grok.com/connectors → New Connector → Custom, then sign in. Grok refuses servers on
+  a private address, so the hub must be public. xAI's page doesn't say how Grok signs in; test it
+  with your hub. ([xAI: Grok connectors](https://docs.x.ai/grok/connectors))
+- **Alexa+** (the MCP toolkit, in preview): Alexa doesn't register clients, so a parent sets one
+  up in the Den app (or `POST /api/v1/connections/clients` from their phone, with the redirect
+  addresses the Alexa+ Developer Hub lists) and enters the client id and secret Den shows once in
+  `alexa-ai configure-account-linking`. Alexa reads the rest from the metadata, needs PKCE and a
+  refresh token with every access token (Den sends both), refreshes without `resource`, and wants
+  a public privacy policy for the add-on. Re-deploy the add-on after changing the hub's address.
+  ([Amazon: account linking for Alexa+ MCP add-ons](https://developer.amazon.com/docs/alexaplus/add-ons/mcp-toolkit-account-linking.html))
+
+Removing an app in the Den app ends its tokens at once; removing a client a parent set up also
+ends the connections it made.
+
 ## The simple case: one hub at home
 
 ```sh
@@ -167,6 +229,7 @@ front of it.
 | `DEN_PORT` | The port inside the container (one per family when several share a server) |
 | `DEN_CSP` | Replaces the web app's Content-Security-Policy, for a web build that needs a CDN after all |
 | `DEN_ALLOWED_ORIGINS` | Extra browser origins for `/mcp` and OAuth (`https://claude.ai` is allowed already) |
+| `DEN_FETCH_ALLOW` | Private networks (addresses or CIDRs) the hub may fetch calendar feeds from; by default it fetches only from the public internet |
 
 ## For the family
 

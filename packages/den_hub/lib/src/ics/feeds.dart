@@ -143,7 +143,7 @@ class FeedService implements HubService {
     final fingerprint = _fingerprint(s);
     final changedConfig = entry['config'] != fingerprint;
     final fetched = await fetchFeed(
-      hub.http,
+      hub.fetch,
       s.url,
       etag: changedConfig ? null : entry['etag'] as String?,
       modified: changedConfig ? null : entry['modified'] as String?,

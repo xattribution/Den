@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../net_guard.dart' show BlockedAddress;
+
 /// Largest calendar file the hub reads.
 const int maxFeedBytes = 10 * 1024 * 1024;
 
@@ -40,7 +42,9 @@ Uri feedUri(String address) {
   return uri;
 }
 
-/// Fetches [address] with a conditional GET, a [feedTimeout] and a [maxFeedBytes] cap.
+/// Fetches [address] with a conditional GET, a [feedTimeout] and a [maxFeedBytes] cap. [client]
+/// is the hub's guarded one ([NetGuard]), so a feed (or a redirect it answers with) that points
+/// at the hub's own machine or network is refused, not fetched.
 Future<FeedFetch> fetchFeed(http.Client client, String address, {String? etag, String? modified}) async {
   final Uri uri;
   try {
@@ -90,6 +94,8 @@ Future<FeedFetch> fetchFeed(http.Client client, String address, {String? etag, S
     );
   } on TimeoutException {
     return const FeedFetch._(problem: 'The calendar\'s server didn\'t answer in time. Den will try again.');
+  } on BlockedAddress {
+    return const FeedFetch._(problem: 'That link points inside a private network, so Den won\'t fetch it.');
   } on Object {
     return const FeedFetch._(problem: 'Den couldn\'t reach that calendar. Den will try again.');
   }

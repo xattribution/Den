@@ -136,7 +136,8 @@ re-approval.
 
 **Trust decisions are made only on a parent's own device.** Approving, revoking or changing
 another device; removing or restoring a member, or changing an existing member's `role`,
-`grants` or `signIn` (their own included); the family's `oversight`; and creating, activating,
+`grants` or `signIn` (their own included); the family's `oversight` and `assistant` (which AI
+reads the family's day, for whom, and what it may spend); and creating, activating,
 re-scoping or deleting an AI connection are valid only from a personal device, or from a
 hub-mode device whose actor is that device's own owner (a parent's phone running "Keep the
 family online") with no `_via`. A shared display never makes them, whoever verified on it, and
@@ -191,7 +192,7 @@ commit too (`Den.restoreAll`).
 
 | Type | Space | Fields |
 | --- | --- | --- |
-| `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map memberId -> `{parentsSeePrivate: bool}`) |
+| `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map memberId -> `{parentsSeePrivate: bool}`), `assistant` (`{enabled, members, kidDailyLimit, budgetCents}`: the in-app assistant, off until a parent turns it on; parents and the members listed may use it, never a little kid or a pre-reader; default 20 questions a day for a kid and $5 a month) |
 | `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, or `initial`; room for `photo:<id>` later), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order` |
 | `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`) |
 | `category` | `f` | `name`, `icon` |
@@ -246,11 +247,14 @@ name), on which device, when, what record, and each field's old and new value. A
 entries for records in spaces they hold.
 
 **Where a change came from.** A change that capture made carries `_from`:
-`{kind: photo|screenshot|pdf|email|message|link|voice|typed, reader}`, where `reader` names the
-model that read it ("Claude", "Apple Intelligence") and is absent when Den's own reader did. Any
-device may write it; the schema checks its shape. History shows it beside the device: "from a
-photo, read by Claude". Like `_via` it is bookkeeping, never a field diff, and moving a record to
-another space drops it.
+`{kind: photo|screenshot|pdf|email|message|link|voice|typed|assistant, reader}`, where `reader`
+names the model that read it ("Claude", "Apple Intelligence") and is absent when Den's own reader
+did. Any device may write it; the schema checks its shape. History shows it beside the device:
+"from a photo, read by Claude". What the in-app assistant changes carries
+`{kind: assistant, reader: "Claude"}` ("from the assistant (Claude)"): `Den.attributed(origin,
+body)` marks every change committed from its zone, except removals (which carry nothing else)
+and changes that name their own origin. Like `_via` it is bookkeeping, never a field diff, and
+moving a record to another space drops it.
 
 ### Permissions
 
@@ -452,9 +456,11 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `GET`/`PUT`/`DELETE /api/v1/push`, `POST /api/v1/push/test` | signed by a personal device | The hub's VAPID key; this device's Web Push subscription; a test notification |
 | `GET /ics/<token>/family.ics` | read token in path | Read-only ICS feed for other calendar apps |
 | `GET /ws` | session handshake | Device sync |
-| `POST /mcp` | bearer or OAuth | MCP Streamable HTTP |
-| OAuth: `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`, `/oauth/register`, `/oauth/authorize`, `/oauth/token` | | OAuth 2.1 with PKCE and dynamic client registration, for remote MCP clients such as claude.ai |
+| `POST /mcp` | bearer or OAuth | MCP Streamable HTTP: 2026-07-28 (stateless, headers checked against the body) and the session-based versions before it |
+| OAuth: `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/mcp]`, `/oauth/register`, `/oauth/authorize`, `/oauth/token` | | OAuth 2.1 with PKCE for remote MCP clients such as claude.ai: client ID metadata documents, registration, or clients a parent sets up; `resource` checked; `iss` on every redirect |
 | `GET /api/v1/connections/requests`, `POST /api/v1/connections/requests/{id}` | signed by a parent's own device | Sign-in requests waiting at the hub (client name, redirect host, a code to match); admitting one writes its `pending` connection |
+| `GET`/`POST /api/v1/connections/clients`, `DELETE /api/v1/connections/clients/{id}` | signed by a parent's own device | OAuth clients a parent sets up for assistants that can't register (Alexa+); the secret is shown once |
+| `GET`/`PUT /api/v1/assistant`, `POST /api/v1/assistant/model` | signed by a device; `PUT` by a parent's own | The in-app assistant's provider and key, kept on the hub; model requests forwarded under `family.assistant` and the month's budget |
 | `POST /api/v1/link/window` | signed by a parent's own device | Opens "Add a device" for 10 minutes; in the public posture browsers can ask to link only then |
 
 The hub is a device in the family: it holds its own key and every space, signs the changes it
@@ -523,6 +529,26 @@ annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint
 `list_members`, `list_lists`, `list_rewards`, `check_step`, `check_item`, `remove_item`,
 `clear_checked`, `create_goal`, `decide_redemption`) still run for one release, unlisted. REST
 and MCP share one runner, so a connection's receipts and confirmations work on either.
+
+Both eras of MCP share the endpoint. A request whose `params._meta` names its protocol version
+(2026-07-28) stands alone: no session, its `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name`
+headers must match the body, `server/discover` answers the versions and capabilities, and lists
+and reads say how long to keep them (`ttlMs`, `cacheScope`). `initialize` still opens a session
+for 2025-11-25 and earlier. A change that needs a yes asks through the client when it can show a
+form (MRTR: an `input_required` result whose `requestState` is the runner's confirmation token,
+which stays on the hub, bound to the connection, tool and input, for ten minutes and once);
+otherwise the `confirm` two-step. Resources (`den://today`, `den://week`, `den://family`,
+`den://lists`, `den://chores`, `den://points`, and templates for one list, day or person) are the
+read actions' answers; prompts ("Plan the week", "Make a shopping list") are offered when their
+tools are; `subscriptions/listen` streams `notifications/resources/updated` for the resources a
+client follows.
+
+Addresses callers give the hub (calendar feeds, client metadata documents) are fetched through
+`NetGuard`, which resolves each connection's host once, refuses loopback, private, link-local,
+carrier-grade NAT, unique local and metadata addresses (IPv4 inside IPv6 judged as IPv4), and
+connects to the address it checked, so DNS rebinding can't slip between the check and the
+connection; redirects are checked again. The operator can admit a home network
+(`DEN_FETCH_ALLOW`).
 
 ## Home Assistant
 

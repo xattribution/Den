@@ -4,6 +4,7 @@ library;
 import 'package:den_actions/assistant.dart';
 import 'package:den_actions/den_actions.dart';
 import 'package:den_assistant/den_assistant.dart' as assistant;
+import 'package:den_core/den_core.dart';
 
 import 'support.dart';
 
@@ -23,7 +24,7 @@ void main() {
     addTearDown(den.close);
     final runner = standardRunner();
     ActionContext context() => ActionContext(den, member: den.actor!.id, surface: Surface.assistant, caller: 'assistant');
-    final execute = actionExecutor(runner, context);
+    final execute = actionExecutor(runner, context, speaker: 'Claude');
     final tools = {for (final t in assistantTools(runner, context())) t.name: t};
     Future<assistant.ToolOutcome> call(String name, Map<String, Object?> input, assistant.ToolMode mode) => execute(
           assistant.ToolInvocation(call: assistant.ToolCall(id: 'call-1', name: name, input: input), tool: tools[name]!, mode: mode),
@@ -38,6 +39,8 @@ void main() {
     expect(done, isA<assistant.ToolDone>());
     expect((done as assistant.ToolDone).receipt!.tool, 'add_items');
     expect(done.summary, 'Added Butter to Groceries.');
+    expect(den.history().firstWhere((e) => e.title == 'Butter').from, const CaptureOrigin(CaptureKind.assistant, reader: 'Claude'),
+        reason: 'History says it came from the assistant');
 
     expect(tools['delete_list']!.confirm, assistant.ToolConfirm.tap);
     expect(tools['delete_event']!.confirm, assistant.ToolConfirm.none, reason: 'only a series asks');

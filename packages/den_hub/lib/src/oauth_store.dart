@@ -4,7 +4,20 @@ import 'package:den_core/den_core.dart';
 
 import 'state.dart';
 
-/// A client registered with `/oauth/register`.
+/// How the hub knows an OAuth client.
+enum OAuthClientKind {
+  /// It registered itself with `/oauth/register` (dynamic client registration).
+  registered,
+
+  /// Its `client_id` is the https address of its metadata document, read when it signs in.
+  document,
+
+  /// A parent created it in the Den app, for an assistant that can't register itself (Alexa+).
+  static,
+}
+
+/// An OAuth client: registered with `/oauth/register`, described by a metadata document, or
+/// created by a parent.
 class OAuthClient {
   /// Creates a client record.
   OAuthClient({
@@ -14,6 +27,7 @@ class OAuthClient {
     required this.authMethod,
     this.secretHash,
     required this.created,
+    this.kind = OAuthClientKind.registered,
   });
 
   /// Reads a stored client.
@@ -24,7 +38,11 @@ class OAuthClient {
         authMethod: json['auth'] as String? ?? 'none',
         secretHash: json['secret'] as String?,
         created: json['created'] as int? ?? 0,
+        kind: json['static'] == true ? OAuthClientKind.static : OAuthClientKind.registered,
       );
+
+  /// How the hub knows it.
+  final OAuthClientKind kind;
 
   /// `client_id`.
   final String id;
@@ -51,6 +69,7 @@ class OAuthClient {
         'auth': authMethod,
         'secret': ?secretHash,
         'created': created,
+        if (kind == OAuthClientKind.static) 'static': true,
       };
 }
 
@@ -159,10 +178,27 @@ class OAuthStore {
 
   /// Forgets clients registered before [before] (seconds) that aren't in [keep]: registrations
   /// that never led to a connection, so strangers registering can't fill the hub's list.
+  /// Clients a parent created stay until a parent removes them.
   Future<void> pruneClients({required int before, required Set<String> keep}) async {
     final clients = _section('clients');
     final count = clients.length;
-    clients.removeWhere((id, v) => !keep.contains(id) && (v is! Map || (v['created'] as int? ?? 0) < before));
+    clients.removeWhere((id, v) =>
+        !keep.contains(id) && (v is! Map || (v['static'] != true && (v['created'] as int? ?? 0) < before)));
     if (clients.length != count) await state.save('oauth');
+  }
+
+  /// The clients parents created, oldest first.
+  List<OAuthClient> get staticClients => [
+        for (final e in _section('clients').entries)
+          if (e.value is Map && (e.value as Map)['static'] == true)
+            OAuthClient.fromJson(e.key, (e.value as Map).cast<String, Object?>()),
+      ]..sort((a, b) => a.created.compareTo(b.created));
+
+  /// Forgets client [id] and every refresh token it holds. Returns whether it was there.
+  Future<bool> removeClient(String id) async {
+    final removed = _section('clients').remove(id) != null;
+    _section('refresh').removeWhere((_, v) => v is Map && v['client'] == id);
+    await state.save('oauth');
+    return removed;
   }
 }
