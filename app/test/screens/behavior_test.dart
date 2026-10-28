@@ -368,12 +368,15 @@ void main() {
   testWidgets('month view steps by calendar month (B7)', (tester) async {
     final state = await _family(tester);
     final router = await _app(tester, state, '/calendar/month/2026-10-31');
-    await tester.tap(find.byTooltip('Earlier'));
+    // The month's arrows are the iPad's; a phone swipes the month instead.
+    tester.view.physicalSize = const Size(1180, 820);
     await tester.pumpAndSettle();
-    expect(find.text('September 2026'), findsWidgets);
+    await tester.tap(find.byTooltip('Last month'));
+    await tester.pumpAndSettle();
+    expect(find.text('September'), findsWidgets);
     router.go('/calendar/month/2027-01-31');
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Later'));
+    await tester.tap(find.byTooltip('Next month'));
     await tester.pumpAndSettle();
     expect(find.text('February 2027'), findsWidgets);
     expect(state.formats.addMonths('2028-03-31', -1), '2028-02-29');
