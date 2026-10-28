@@ -1,4 +1,4 @@
-import 'package:den_app/boot/boot.dart';
+import 'package:den_app/platform/storage/boot.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;

@@ -1,7 +1,7 @@
-import 'package:den_app/screens/chores/chore_detail.dart';
-import 'package:den_app/screens/chores/chore_editor.dart';
-import 'package:den_app/screens/chores/chores_board.dart';
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/features/chores/screens/chore_detail.dart';
+import 'package:den_app/features/chores/screens/chore_editor.dart';
+import 'package:den_app/features/chores/screens/chores_board.dart';
+import 'package:den_app/app/app_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

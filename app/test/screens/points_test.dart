@@ -1,7 +1,7 @@
-import 'package:den_app/screens/points/adjust_screen.dart';
-import 'package:den_app/screens/points/goal_editor.dart';
-import 'package:den_app/screens/points/points_screen.dart';
-import 'package:den_app/screens/points/reward_editor.dart';
+import 'package:den_app/features/rewards/screens/adjust_screen.dart';
+import 'package:den_app/features/rewards/screens/goal_editor.dart';
+import 'package:den_app/features/rewards/screens/points_screen.dart';
+import 'package:den_app/features/rewards/screens/reward_editor.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -1,6 +1,6 @@
-import 'package:den_app/screens/calendar/agenda_view.dart';
-import 'package:den_app/screens/calendar/day_view.dart';
-import 'package:den_app/screens/calendar/month_view.dart';
+import 'package:den_app/features/calendar/screens/agenda_view.dart';
+import 'package:den_app/features/calendar/screens/day_view.dart';
+import 'package:den_app/features/calendar/screens/month_view.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/shots.dart';

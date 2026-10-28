@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:den_app/calendars/phone_calendars.dart';
+import 'package:den_app/platform/calendars/phone_calendars.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';

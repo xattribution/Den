@@ -1,8 +1,8 @@
-import 'package:den_app/screens/settings/connections_screen.dart';
-import 'package:den_app/screens/settings/create_token_screen.dart';
-import 'package:den_app/screens/settings/home_assistant_screen.dart';
-import 'package:den_app/screens/settings/settings_screen.dart';
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/features/advanced/screens/connections_screen.dart';
+import 'package:den_app/features/advanced/screens/create_token_screen.dart';
+import 'package:den_app/features/advanced/screens/home_assistant_screen.dart';
+import 'package:den_app/features/settings/screens/settings_screen.dart';
+import 'package:den_app/app/app_state.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

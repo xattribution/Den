@@ -1,4 +1,4 @@
-import 'package:den_app/calendars/phone_calendars.dart';
+import 'package:den_app/platform/calendars/phone_calendars.dart';
 
 /// A phone's calendars held in lists the test edits.
 class FakePhone implements PhoneCalendarSource {

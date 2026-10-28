@@ -2,7 +2,7 @@
 @TestOn('browser')
 library;
 
-import 'package:den_app/boot/storage_web.dart';
+import 'package:den_app/platform/storage/storage_web.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;

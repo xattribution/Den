@@ -1,5 +1,5 @@
-import 'package:den_app/reminders/reminder_plan.dart';
-import 'package:den_app/reminders/reminder_scheduler.dart';
+import 'package:den_app/platform/notifications/reminder_plan.dart';
+import 'package:den_app/platform/notifications/reminder_scheduler.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -3,12 +3,12 @@
 // Plain `test`s (no widget binding), so sockets and timers are real.
 import 'dart:io';
 
-import 'package:den_app/net/den_network.dart';
-import 'package:den_app/net/hub_client.dart';
-import 'package:den_app/net/hub_keep_alive.dart';
-import 'package:den_app/net/local_hub.dart';
-import 'package:den_app/net/net_pairing.dart';
-import 'package:den_app/net/pairing.dart';
+import 'package:den_app/platform/sync/den_network.dart';
+import 'package:den_app/platform/sync/hub_client.dart';
+import 'package:den_app/platform/sync/hub_keep_alive.dart';
+import 'package:den_app/platform/sync/local_hub.dart';
+import 'package:den_app/platform/sync/net_pairing.dart';
+import 'package:den_app/platform/sync/pairing.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
 import 'package:flutter_test/flutter_test.dart';
