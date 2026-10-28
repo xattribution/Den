@@ -11,6 +11,9 @@ class FakeRelay {
 
   /// Mailbox ids read, in order.
   final List<String> reads = [];
+
+  /// Mailbox ids whose appends are refused as full (507).
+  final Set<String> full = {};
   var _next = 1;
 
   late final http.Client client = MockClient((request) async {
@@ -18,6 +21,7 @@ class FakeRelay {
     if (segments.length != 2 || segments[0] != 'mailbox') return http.Response('{}', 404);
     final id = segments[1];
     if (request.method == 'POST') {
+      if (full.contains(id)) return http.Response(jsonEncode({'error': 'full', 'cap': 'mailbox'}), 507);
       (blobs[id] ??= []).add(request.bodyBytes);
       (cursors[id] ??= []).add(_next++);
       return http.Response(jsonEncode({'cursor': cursors[id]!.last}), 200);
