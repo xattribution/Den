@@ -1219,9 +1219,16 @@ These endpoints take no token. Every request is signed with the device's own key
 | `X-Den-Nonce` | Random; refused if the hub has seen it |
 | `X-Den-Actor` | The member acting on the device, when it names one |
 | `X-Den-Signature` | base64url Ed25519 over `"den/device-request/v1" 0x00` and the canonical JSON `[method, path with query, time, nonce, hex SHA-256 of the body, device, actor, hub device id]` |
+| `X-Den-Body-SHA256` | Recommended: the lowercase hex SHA-256 of the body, the same value the signature covers. With it the hub checks the signature from the headers alone and turns a forged request away before reading its body |
 
 The hub accepts a request only from an approved, unrevoked device of its family, addressed to
-itself. A personal device acts for its owner and no one else; a shared display for the member
+itself. A request with `X-Den-Body-SHA256` is verified before its body is read (`401` at once
+when the signature is wrong). Without it the hub can check only the headers that need no body
+(signed, fresh, naming an approved device) before reading, so it reads such bodies one per
+client and two at a time, answering `429 busy` (`details.retry`: true) past that, and verifies
+the signature once the body is in. Bodies are capped (64 KiB for `PUT`, 30 MB for
+`/api/v1/capture/read`, refused by `Content-Length` before reading) and must arrive within
+3 minutes. A personal device acts for its owner and no one else; a shared display for the member
 signed in on it, or nobody; a hub-mode device for its owner. Anything else is `401 unauthorized`.
 
 ### `GET /api/v1/capture/reader`

@@ -139,7 +139,7 @@ class DenHub {
     _links = LinkSlots(_ctx, _auth);
     _stream = EventStream(_ctx, _feed);
     _api = RestApi(_ctx);
-    _capture = HubCapture(_ctx);
+    _capture = HubCapture(_ctx, _auth);
     _mcp = McpServer(_ctx);
     _mcpHttp = McpHttp(_ctx, _mcp);
     _oauth = OAuthServer(_ctx);

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:cryptography/dart.dart';
 import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
@@ -227,5 +228,56 @@ void main() {
     final headers = await maya.sign('GET', url, const []);
     expect((await apiCall(f.base, 'GET', '/api/v1/capture/reader', headers: headers)).status, 200);
     expect((await apiCall(f.base, 'GET', '/api/v1/capture/reader', headers: headers)).status, 401);
+  });
+
+  /// Starts `POST /api/v1/capture/read` by hand with [headers], announcing [length] bytes but
+  /// sending only 1 KiB, and returns the start of the hub's answer (or throws if none comes).
+  Future<String> postPartly(Map<String, String> headers, {required int length, Socket? keep}) async {
+    final socket = keep ?? await Socket.connect('127.0.0.1', f.hub.port);
+    socket.write('POST /api/v1/capture/read HTTP/1.1\r\nHost: 127.0.0.1:${f.hub.port}\r\n'
+        'Content-Type: application/json\r\nContent-Length: $length\r\n');
+    headers.forEach((k, v) => socket.write('$k: $v\r\n'));
+    socket.write('\r\n');
+    socket.add(List.filled(1024, 0x20));
+    await socket.flush();
+    if (keep != null) return '';
+    try {
+      return utf8.decode(await socket.first.timeout(const Duration(seconds: 5)), allowMalformed: true);
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  Map<String, String> forged(String nonce) => {
+        'x-den-device': f.hubDen.deviceId,
+        'x-den-time': '${DateTime.now().millisecondsSinceEpoch}',
+        'x-den-nonce': nonce,
+        'x-den-signature': base64Url.encode(List.filled(64, 0)),
+      };
+
+  test('a device that signs its body\'s hash in the headers is checked before the body is read', () async {
+    await alex.client.configure(claude);
+    String hex(List<int> bytes) => [for (final b in bytes) b.toRadixString(16).padLeft(2, '0')].join();
+    final hashed = HubCaptureClient(
+      bases: () => [f.base],
+      sign: (method, url, body) async =>
+          {...await maya.sign(method, url, body), 'x-den-body-sha256': hex(const DartSha256().hashSync(body).bytes)},
+    );
+    expect((await hashed.status())!.ready, isTrue);
+    expect((await hashed.read(CaptureInput.typed('Game Saturday Oct 24 at 9')))['wire'], isA<Map<String, Object?>>());
+
+    // The hub's own device id is no secret. Naming it with a made-up signature over a claimed
+    // hash gets 401 at once, with nearly 20 MB still unsent.
+    final answer = await postPartly({...forged('n1'), 'x-den-body-sha256': '0' * 64}, length: 20 * 1024 * 1024);
+    expect(answer, startsWith('HTTP/1.1 401'));
+  });
+
+  test('a body whose signature can only be checked once it is in is read one per client at a time', () async {
+    final slow = await Socket.connect('127.0.0.1', f.hub.port);
+    addTearDown(slow.destroy);
+    await postPartly(forged('n2'), length: 20 * 1024 * 1024, keep: slow);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    final second = await postPartly(forged('n3'), length: 2048);
+    expect(second, startsWith('HTTP/1.1 429'), reason: 'the first body is still arriving');
   });
 }
