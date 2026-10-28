@@ -1,21 +1,29 @@
 import 'package:collection/collection.dart';
+import 'package:den_actions/den_actions.dart';
+import 'package:den_actions/times.dart';
 import 'package:den_core/den_core.dart';
 import 'package:shelf/shelf.dart';
 
 import 'api.dart';
 import 'body.dart';
 import 'http_util.dart';
-import 'recurrence.dart';
-import 'times.dart';
-import 'wire.dart';
 
-/// The `/api/v1` writes.
+/// The older `/api/v1` writes, as Home Assistant and scripts use them: each reads its request
+/// as it always has (ids, field names, errors naming the field), runs the den_actions action it
+/// stands for, and answers in its own shape.
 class RestWrites {
   /// Creates the writes for [api].
   RestWrites(this.api);
 
   /// The API these belong to.
   final RestApi api;
+
+  /// Runs action [name] for [c] (the person already acting), as a yes to anything it would ask.
+  Future<ActionResult> _act(Call c, String name, Map<String, Object?> args) async {
+    final result = await api.runner.run(api.actionContext(c.access), name, args, mode: RunMode.confirmed);
+    if (result.isError) throw RestApi.errorOf(result);
+    return result;
+  }
 
   // ------------------------------------------------------------------ events
 
@@ -25,9 +33,14 @@ class RestWrites {
     return e;
   }
 
-  int _when(Body b, String key, {required bool allDay, required String zone}) {
+  /// A REST time as the action takes it: UTC milliseconds for a time; for an all-day event a
+  /// local date, the last day for an end (REST ends are exclusive, the action's are the last day).
+  Object _when(Body b, String key, {required bool allDay, required String zone, bool end = false}) {
     try {
-      if (allDay) return midnightIn(zone, parseDateLike(b[key], zone));
+      if (allDay) {
+        final date = parseDateLike(b[key], zone);
+        return end ? addDays(date, -1) : date;
+      }
       return parseInstant(b[key], zone);
     } on FormatException {
       throw ApiError.invalid(
@@ -36,6 +49,9 @@ class RestWrites {
       );
     }
   }
+
+  int _ms(Object when, String zone, {bool end = false}) =>
+      when is int ? when : midnightIn(zone, end ? addDays(when as String, 1) : when as String);
 
   String? _zoneField(Body b) {
     final tz = b.string('tz', max: 64);
@@ -60,7 +76,7 @@ class RestWrites {
     return ids.toSet().toList();
   }
 
-  List<Ride>? _rides(Call c, Body b) {
+  List<Map<String, Object?>>? _rides(Call c, Body b) {
     final raw = b['rides'];
     if (raw == null) {
       if (b.has('rides')) throw ApiError.invalid('"rides" must be a list.', field: 'rides');
@@ -70,7 +86,7 @@ class RestWrites {
     return [
       for (final r in raw)
         if (r is Map && (r['leg'] == 'to' || r['leg'] == 'from') && (r['driver'] == null || c.den.member('${r['driver']}') != null))
-          Ride(r['leg'] as String, r['driver'] as String?)
+          {'leg': r['leg'], 'driver': r['driver'] ?? 'nobody'}
         else
           throw ApiError.invalid('Each ride is {"leg": "to" or "from", "driver": a member id or null}.', field: 'rides'),
     ];
@@ -82,14 +98,19 @@ class RestWrites {
     return id;
   }
 
-  String _space(Call c, Body b) {
+  /// A REST space (`f`, `p`, `m:<member id>`) as a "who can see it" input.
+  String _audience(Call c, Body b) {
     final space = b.string('space', max: 82) ?? Space.family;
     final valid = space == Space.family ||
         space == Space.parents ||
         (Space.isMember(space) && c.den.member(Space.memberOf(space)!) != null);
     if (!valid) throw ApiError.invalid('"space" must be "f", "p" or "m:<member id>".', field: 'space');
     if (!c.canSee(space)) throw ApiError.denied('This token can\'t see that space, so it can\'t write there.');
-    return space;
+    return space == Space.family
+        ? 'everyone'
+        : space == Space.parents
+            ? 'parents'
+            : space;
   }
 
   /// `POST /api/v1/events`.
@@ -100,30 +121,28 @@ class RestWrites {
     final tz = _zoneField(b) ?? c.zone;
     if (!b.has('start')) throw ApiError.invalid('"start" is required.', field: 'start');
     final start = _when(b, 'start', allDay: allDay, zone: tz);
-    final end = b.has('end') && b['end'] != null
-        ? _when(b, 'end', allDay: allDay, zone: tz)
-        : allDay
-            ? midnightIn(tz, addDays(dateIn(tz, start), 1))
-            : start + Duration.millisecondsPerHour;
-    if (end < start) throw ApiError.invalid('The end is before the start.', field: 'end');
-    final space = _space(c, b);
-    final id = await c.den.addEvent(
-      title: title,
-      start: start,
-      end: end,
-      allDay: allDay,
-      tz: tz,
-      rrule: _rule(b, 'rrule'),
-      assignees: _members(c, b, 'assignees') ?? const [],
-      category: _category(c, b),
-      location: b.string('location', max: 300) ?? '',
-      notes: b.string('notes', max: 5000) ?? '',
-      reminders: b.ints('reminders', min: 0, maxValue: 40320) ?? const [],
-      rides: _rides(c, b) ?? const [],
-      countdown: b.flag('countdown', fallback: false)!,
-      space: space,
-    );
-    return jsonResponse({'event': c.wire.event(c.den.event(id)!)}, status: 201);
+    final end = b.has('end') && b['end'] != null ? _when(b, 'end', allDay: allDay, zone: tz, end: true) : null;
+    if (end != null && _ms(end, tz, end: true) < _ms(start, tz)) {
+      throw ApiError.invalid('The end is before the start.', field: 'end');
+    }
+    final rides = _rides(c, b);
+    final result = await _act(c, 'create_event', {
+      'title': title,
+      'start': start,
+      'end': ?end,
+      'all_day': allDay,
+      'tz': tz,
+      'repeat': ?_rule(b, 'rrule'),
+      'people': _members(c, b, 'assignees') ?? const <String>[],
+      'category': ?_category(c, b),
+      'location': b.string('location', max: 300) ?? '',
+      'notes': b.string('notes', max: 5000) ?? '',
+      'reminders': b.ints('reminders', min: 0, maxValue: 40320) ?? const <int>[],
+      'rides': ?rides,
+      'countdown': b.flag('countdown', fallback: false)!,
+      'who_can_see': _audience(c, b),
+    });
+    return jsonResponse({'event': result.data['event']}, status: 201);
   }
 
   (EditScope, int?) _scope(Call c, Event e) {
@@ -155,7 +174,6 @@ class RestWrites {
     if (e.source.readOnly) throw ApiError.readOnly();
     final (scope, occurrence) = _scope(c, e);
     final b = Body(await readJsonObject(c.request));
-    final patch = <String, Object?>{};
     final allDay = b.flag('all_day');
     final tz = _zoneField(b);
     final zone = tz ?? zoneOfEvent(e, c.zone);
@@ -163,28 +181,37 @@ class RestWrites {
     if (allDay != null && allDay != e.allDay && !b.has('start')) {
       throw ApiError.invalid('Switching all-day needs a "start" in the new form.', field: 'start');
     }
-    if (b.has('title')) patch['title'] = b.string('title', min: 1, max: 200)!.trim();
-    if (b.has('notes')) patch['notes'] = b.string('notes', max: 5000, nullable: true) ?? '';
-    if (b.has('location')) patch['location'] = b.string('location', max: 300, nullable: true) ?? '';
-    if (b.has('category')) patch['category'] = _category(c, b);
-    if (allDay != null) patch['allDay'] = allDay;
-    if (tz != null) patch['tz'] = tz;
+    final args = <String, Object?>{};
+    if (b.has('title')) args['title'] = b.string('title', min: 1, max: 200)!.trim();
+    if (b.has('notes')) args['notes'] = b.string('notes', max: 5000, nullable: true) ?? '';
+    if (b.has('location')) args['location'] = b.string('location', max: 300, nullable: true) ?? '';
+    if (b.has('category')) args['category'] = _category(c, b) ?? '';
+    if (allDay != null) args['all_day'] = allDay;
+    if (tz != null) args['tz'] = tz;
     if (b.has('rrule')) {
       if (scope == EditScope.one && e.rrule != null) {
         throw ApiError.invalid('A repeat rule can\'t change for one occurrence.', field: 'rrule');
       }
-      patch['rrule'] = _rule(b, 'rrule');
+      args['repeat'] = _rule(b, 'rrule') ?? 'none';
     }
-    if (b.has('assignees')) patch['assignees'] = _members(c, b, 'assignees') ?? const <String>[];
-    if (b.has('reminders')) patch['reminders'] = b.ints('reminders', min: 0, maxValue: 40320) ?? const <int>[];
-    if (b.has('rides')) patch['rides'] = [for (final r in _rides(c, b) ?? const <Ride>[]) {'leg': r.leg, 'driver': r.driver}];
-    if (b.has('countdown')) patch['countdown'] = b.flag('countdown')!;
-    if (b.has('start') && b['start'] != null) patch['start'] = _when(b, 'start', allDay: targetAllDay, zone: zone);
-    if (b.has('end') && b['end'] != null) patch['end'] = _when(b, 'end', allDay: targetAllDay, zone: zone);
-    if (patch['start'] is int && patch['end'] is int && (patch['end'] as int) < (patch['start'] as int)) {
+    if (b.has('assignees')) args['people'] = _members(c, b, 'assignees') ?? const <String>[];
+    if (b.has('reminders')) args['reminders'] = b.ints('reminders', min: 0, maxValue: 40320) ?? const <int>[];
+    if (b.has('rides')) args['rides'] = _rides(c, b) ?? const <Map<String, Object?>>[];
+    if (b.has('countdown')) args['countdown'] = b.flag('countdown')!;
+    if (b.has('start') && b['start'] != null) args['start'] = _when(b, 'start', allDay: targetAllDay, zone: zone);
+    if (b.has('end') && b['end'] != null) args['end'] = _when(b, 'end', allDay: targetAllDay, zone: zone, end: true);
+    final start = args['start'], end = args['end'];
+    if (start != null && end != null && _ms(end, zone, end: true) < _ms(start, zone)) {
       throw ApiError.invalid('The end is before the start.', field: 'end');
     }
-    if (patch.isNotEmpty) await c.den.updateEvent(id, patch, scope: scope, occurrence: occurrence);
+    if (args.isNotEmpty) {
+      await _act(c, 'update_event', {
+        'event': id,
+        'scope': scope.name,
+        'occurrence': ?occurrence,
+        ...args,
+      });
+    }
     return jsonResponse({'ok': true});
   }
 
@@ -193,7 +220,7 @@ class RestWrites {
     final e = _visibleEvent(c, id);
     if (e.source.readOnly) throw ApiError.readOnly();
     final (scope, occurrence) = _scope(c, e);
-    await c.den.deleteEvent(id, scope: scope, occurrence: occurrence);
+    await _act(c, 'delete_event', {'event': id, 'scope': scope.name, 'occurrence': ?occurrence});
     return jsonResponse({'ok': true});
   }
 
@@ -212,28 +239,22 @@ class RestWrites {
     return raw.trim();
   }
 
+  /// Who to credit: the token's member by default, a member id, or `"nobody"` for null.
   String? _credit(Call c, Body b) {
-    if (!b.has('member')) return c.access.member;
+    if (!b.has('member')) return null;
     final who = b['member'];
-    if (who == null) return null;
+    if (who == null) return 'nobody';
     if (who is! String || c.den.member(who) == null) {
       throw ApiError.invalid('There\'s nobody with that id in the family.', field: 'member');
     }
     return who;
   }
 
-  ChoreDay _scheduled(Call c, Chore chore, String date) {
+  void _scheduled(Call c, Chore chore, String date) {
     final day = c.den.choresOn(date).firstWhereOrNull((cd) => cd.chore.id == chore.id && cd.date == date);
     if (day == null) {
       throw ApiError.notFound(type: 'chore', id: chore.id, message: '${chore.title} isn\'t on $date.');
     }
-    return day;
-  }
-
-  Response _choreResponse(Call c, String id, String date) {
-    final day = c.den.choresOn(date).firstWhereOrNull((cd) => cd.chore.id == id && cd.date == date);
-    if (day == null) throw ApiError.notFound(type: 'chore', id: id);
-    return jsonResponse({'chore': c.wire.choreDay(day)});
   }
 
   /// `POST /api/v1/chores/{id}/complete`.
@@ -244,12 +265,8 @@ class RestWrites {
     final done = b.flag('done', fallback: true)!;
     final who = _credit(c, b);
     _scheduled(c, chore, date);
-    if (who == c.access.member) {
-      await c.den.setChoreDone(id, date, done);
-    } else {
-      await c.den.setChoreDoneBy(id, date, done, who);
-    }
-    return _choreResponse(c, id, date);
+    final result = await _act(c, 'complete_chore', {'chore': id, 'date': date, 'done': done, 'person': ?who});
+    return jsonResponse({'chore': result.data['chore']});
   }
 
   /// `POST /api/v1/chores/{id}/steps/{stepId}`.
@@ -261,12 +278,8 @@ class RestWrites {
     final checked = b.flag('checked', fallback: true)!;
     final who = _credit(c, b);
     _scheduled(c, chore, date);
-    if (who == c.access.member) {
-      await c.den.setStep(id, date, stepId, checked);
-    } else {
-      await c.den.setStepBy(id, date, stepId, checked, who);
-    }
-    return _choreResponse(c, id, date);
+    final result = await _act(c, 'complete_chore', {'chore': id, 'step': stepId, 'date': date, 'done': checked, 'person': ?who});
+    return jsonResponse({'chore': result.data['chore']});
   }
 
   // ------------------------------------------------------------------ lists
@@ -277,30 +290,25 @@ class RestWrites {
     return l;
   }
 
-  (ListState, Item) _visibleItem(Call c, String id) {
+  void _visibleItem(Call c, String id) {
     for (final l in c.den.lists) {
       if (!c.canSee(l.list.space)) continue;
-      final item = l.items.firstWhereOrNull((i) => i.id == id);
-      if (item != null) return (l, item);
+      if (l.items.any((i) => i.id == id)) return;
     }
     throw ApiError.notFound(type: 'item', id: id);
   }
 
-  Item _itemNow(Call c, String listId, String itemId) =>
-      c.den.list(listId)?.items.firstWhereOrNull((i) => i.id == itemId) ?? (throw ApiError.notFound(type: 'item', id: itemId));
-
-  ({String text, String? qty, String? store, bool toGroceries}) _itemInput(Body b, {String prefix = ''}) {
-    String field(String k) => '$prefix$k';
+  Map<String, Object?> _itemInput(Body b, {String prefix = ''}) {
     try {
-      return (
-        text: b.string('text', required: true, min: 1, max: 200)!.trim(),
-        qty: b.string('qty', max: 40, nullable: true),
-        store: b.string('store', max: 60, nullable: true),
-        toGroceries: b.flag('to_groceries', fallback: false)!,
-      );
+      return {
+        'text': b.string('text', required: true, min: 1, max: 200)!.trim(),
+        'qty': b.string('qty', max: 40, nullable: true),
+        'store': b.string('store', max: 60, nullable: true),
+        'to_groceries': b.flag('to_groceries', fallback: false)!,
+      };
     } on ApiError catch (e) {
       final f = e.details?['field'];
-      throw ApiError.invalid(e.message, field: f == null ? null : field('$f'));
+      throw ApiError.invalid(e.message, field: f == null ? null : '$prefix$f');
     }
   }
 
@@ -320,59 +328,59 @@ class RestWrites {
           else
             throw ApiError.invalid('Each item is an object with "text".', field: 'items[$i]'),
       ];
-      final ids = <String>[];
-      for (final input in inputs) {
-        ids.add(await c.den.addItem(listId, text: input.text, qty: input.qty, store: input.store, toGroceries: input.toGroceries));
-      }
-      return jsonResponse({
-        'items': [for (final id in ids) Wire.item(_itemNow(c, listId, id))],
-      }, status: 201);
+      final result = await _act(c, 'add_items', {'list': listId, 'items': inputs});
+      return jsonResponse({'items': result.data['items']}, status: 201);
     }
-    final input = _itemInput(b);
-    final id = await c.den.addItem(listId, text: input.text, qty: input.qty, store: input.store, toGroceries: input.toGroceries);
-    return jsonResponse({'item': Wire.item(_itemNow(c, listId, id))}, status: 201);
+    final result = await _act(c, 'add_items', {
+      'list': listId,
+      'items': [_itemInput(b)],
+    });
+    return jsonResponse({'item': (result.data['items'] as List).single}, status: 201);
   }
 
   /// `PATCH /api/v1/items/{id}`.
   Future<Response> updateItem(Call c, String id) async {
-    final (list, item) = _visibleItem(c, id);
+    _visibleItem(c, id);
     final b = Body(await readJsonObject(c.request));
-    final fields = <String, Object?>{};
-    if (b.has('text')) fields['text'] = b.string('text', min: 1, max: 200)!.trim();
-    if (b.has('qty')) fields['qty'] = b.string('qty', max: 40, nullable: true);
-    if (b.has('store')) fields['store'] = b.string('store', max: 60, nullable: true);
+    final entry = <String, Object?>{'item': id};
+    if (b.has('text')) entry['text'] = b.string('text', min: 1, max: 200)!.trim();
+    if (b.has('qty')) entry['qty'] = b.string('qty', max: 40, nullable: true) ?? '';
+    if (b.has('store')) entry['store'] = b.string('store', max: 60, nullable: true) ?? '';
     final checked = b.flag('checked');
+    if (checked != null) entry['checked'] = checked;
     final move = b.object('move');
     if (b.has('move') && move == null) throw ApiError.invalid('"move" must be an object.', field: 'move');
-    if (fields.isNotEmpty) await c.den.updateItem(id, fields);
-    if (checked != null && checked != item.checked) await c.den.setItemChecked(id, checked);
-    if (move != null) await _move(c, list.list.id, id, move);
-    return jsonResponse({'item': Wire.item(_itemNow(c, list.list.id, id))});
+    if (move != null) entry.addAll(_move(c, id, move));
+    final result = await _act(c, 'update_items', {
+      'items': [entry],
+    });
+    return jsonResponse({'item': result.data['item']});
   }
 
-  Future<void> _move(Call c, String listId, String id, Map<String, Object?> move) async {
+  Map<String, Object?> _move(Call c, String id, Map<String, Object?> move) {
     final hasAfter = move.containsKey('after'), hasBefore = move.containsKey('before');
     final after = move['after'], before = move['before'];
     if ((after != null && after is! String) || (before != null && before is! String) || (!hasAfter && !hasBefore)) {
       throw ApiError.invalid('"move" is {"after": item id or null, "before": item id or null}.', field: 'move');
     }
-    final others = (c.den.list(listId)?.items ?? const <Item>[]).where((i) => i.id != id).toList();
+    final list = c.den.lists.firstWhere((l) => l.items.any((i) => i.id == id));
+    final others = list.items.where((i) => i.id != id).toList();
     for (final n in [after, before]) {
       if (n != null && !others.any((i) => i.id == n)) {
         throw ApiError.invalid('Neighbors must be other items on the same list.', field: 'move');
       }
     }
-    String? a = after as String?, z = before as String?;
-    if (hasAfter && after == null && !hasBefore) z = others.firstOrNull?.id;
-    if (hasBefore && before == null && !hasAfter) a = others.lastOrNull?.id;
-    if (a == null && z == null) return;
-    await c.den.moveItem(id, after: a, before: z);
+    if (hasAfter && after == null && !hasBefore) return {'move': 'top'};
+    if (hasBefore && before == null && !hasAfter) return {'move': 'bottom'};
+    return {'after': ?after, 'before': ?before};
   }
 
   /// `DELETE /api/v1/items/{id}`.
   Future<Response> deleteItem(Call c, String id) async {
     _visibleItem(c, id);
-    await c.den.removeItem(id);
+    await _act(c, 'remove_items', {
+      'items': [id],
+    });
     return jsonResponse({'ok': true});
   }
 
@@ -386,18 +394,11 @@ class RestWrites {
     final delta = b.integer('delta', required: true, min: -10000, max: 10000)!;
     if (delta == 0) throw ApiError.invalid('"delta" can\'t be zero.', field: 'delta');
     final reason = b.string('reason', required: true, min: 1, max: 200)!.trim();
-    if (!(c.den.family?.pointsEnabled ?? true)) throw ApiError.invalid('Points are turned off for this family.');
-    final before = {
-      for (final l in c.den.points().recent)
-        if (l.source == PointsSource.adjustment) l.ref,
-    };
-    await c.den.adjustPoints(member, delta, reason);
-    final summary = c.den.points();
-    final line = summary.recent.firstWhereOrNull((l) =>
-        l.source == PointsSource.adjustment && !before.contains(l.ref) && l.member == member && l.delta == delta);
+    final result = await _act(c, 'adjust_points', {'person': member, 'delta': delta, 'reason': reason});
+    final made = c.den.historyOf(result.receipt?.changes ?? const []).firstOrNull;
     return jsonResponse({
-      'adjustment': {'id': line?.ref, 'member': member, 'delta': delta, 'reason': reason, 'by': c.access.member},
-      'balance': summary.totals[member] ?? 0,
+      'adjustment': {'id': made?.rid, 'member': member, 'delta': delta, 'reason': reason, 'by': c.access.member},
+      'balance': result.data['balance'],
     }, status: 201);
   }
 }

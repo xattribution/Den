@@ -1,10 +1,9 @@
 import 'package:den_core/den_core.dart';
 
-import 'config.dart';
 import 'times.dart';
 
-/// Turns den_core's views into the API's JSON (docs/hub-api.md, "Shared objects"): snake_case
-/// keys, instants as ISO 8601 in the family's zone plus UTC milliseconds.
+/// Turns den_core's views into the JSON every surface answers with (docs/hub-api.md, "Shared
+/// objects"): snake_case keys, instants as ISO 8601 in the family's zone plus UTC milliseconds.
 class Wire {
   /// Creates a serializer for [den]'s family.
   Wire(this.den) : zone = den.family?.timezone ?? 'UTC';
@@ -283,32 +282,32 @@ class Wire {
         ...instant('requested', r.rec.created.millis),
       };
 
+  /// A goal with its standings.
+  Map<String, Object?> goal(GoalStanding g) => {
+        'id': g.goal.id,
+        'title': g.goal.title,
+        'mode': g.goal.mode.name,
+        'target': g.goal.target,
+        'members': g.goal.members,
+        'start': g.goal.start,
+        'end': g.goal.end,
+        'repeat': g.goal.repeat.name,
+        'reward': g.goal.reward,
+        'window_start': g.windowStart,
+        'window_end': g.windowEnd,
+        'winner': g.goal.mode == GoalMode.race ? g.winner : null,
+        'standings': [
+          for (final s in g.standings) {'member': s.member, 'earned': s.earned, ...instant('reached', s.reachedAt)},
+        ],
+      };
+
   /// The points summary.
   Map<String, Object?> points(PointsSummary p, {int recent = 50}) {
     final totals = {for (final m in den.members) m.id: p.totals[m.id] ?? 0};
     return {
       'enabled': den.family?.pointsEnabled ?? true,
       'totals': totals,
-      'goals': [
-        for (final g in p.goals)
-          {
-            'id': g.goal.id,
-            'title': g.goal.title,
-            'mode': g.goal.mode.name,
-            'target': g.goal.target,
-            'members': g.goal.members,
-            'start': g.goal.start,
-            'end': g.goal.end,
-            'repeat': g.goal.repeat.name,
-            'reward': g.goal.reward,
-            'window_start': g.windowStart,
-            'window_end': g.windowEnd,
-            'winner': g.goal.mode == GoalMode.race ? g.winner : null,
-            'standings': [
-              for (final s in g.standings) {'member': s.member, 'earned': s.earned, ...instant('reached', s.reachedAt)},
-            ],
-          },
-      ],
+      'goals': [for (final g in p.goals) goal(g)],
       'recent': [
         for (final l in p.recent.take(recent))
           {
@@ -351,10 +350,4 @@ class Wire {
         ...instant('when', s.when),
       };
 
-  /// Who this hub is.
-  Map<String, Object?> hub(String fallbackName) => {
-        'device': den.deviceId,
-        'name': den.thisDevice?.name ?? fallbackName,
-        'version': hubVersion,
-      };
 }

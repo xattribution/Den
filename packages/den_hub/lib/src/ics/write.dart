@@ -1,8 +1,8 @@
 import 'dart:convert';
 
+import 'package:den_actions/times.dart';
 import 'package:den_core/den_core.dart';
 
-import '../times.dart';
 
 /// One occurrence of an event changed or cancelled on its own.
 class IcsException {

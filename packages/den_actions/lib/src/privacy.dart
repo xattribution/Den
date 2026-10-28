@@ -84,3 +84,50 @@ List<String> storesOf(Iterable<ListState> lists) {
     return n != 0 ? n : a.compareTo(b);
   });
 }
+
+/// The spaces [member] may read among those [den] holds; null [member] reads what a parent
+/// reads (the family, parents-only, and private spaces the oversight policy opens to parents).
+Set<String> readableSpacesFor(Den den, String? member) {
+  final held = den.spacesForDevice(den.deviceId);
+  final family = den.family;
+  if (member != null) {
+    final m = den.member(member);
+    if (m == null) return const {};
+    return {for (final s in held) if (canRead(m, s, family)) s};
+  }
+  return {
+    for (final s in held)
+      if (s == Space.family ||
+          s == Space.parents ||
+          (Space.isMember(s) && (family?.parentsSeePrivate(Space.memberOf(s)!) ?? true)))
+        s,
+  };
+}
+
+/// Whether a search hit belongs to a space in [readable].
+bool searchHitVisible(Den den, SearchHit hit, Set<String> readable) {
+  String? space;
+  switch (hit.type) {
+    case RecordType.member:
+      space = Space.family;
+    case RecordType.event:
+      space = den.event(hit.id)?.space;
+    case RecordType.chore:
+      space = den.chore(hit.id)?.space;
+    case RecordType.list:
+      space = den.list(hit.id)?.list.space;
+    case RecordType.item:
+      for (final l in den.lists) {
+        if (l.items.any((i) => i.id == hit.id)) space = l.list.space;
+      }
+  }
+  if (space == null) {
+    for (final h in den.history(type: hit.type, limit: 500)) {
+      if (h.rid == hit.id) {
+        space = h.space;
+        break;
+      }
+    }
+  }
+  return space != null && readable.contains(space);
+}

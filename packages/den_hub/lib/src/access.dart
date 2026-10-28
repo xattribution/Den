@@ -1,3 +1,4 @@
+import 'package:den_actions/den_actions.dart' show readableSpacesFor;
 import 'package:den_core/den_core.dart';
 
 /// A caller authenticated by a bearer token: the connection it belongs to, and what it may do.
@@ -23,25 +24,6 @@ class Access {
   /// The spaces this caller may read on [den] (a hub, which holds every space): its member's
   /// readable spaces, or what a parent reads for a token with no member.
   Set<String> readable(Den den) => readableSpacesFor(den, member);
-}
-
-/// The spaces [member] may read among those [den] holds; null [member] reads what a parent
-/// reads (the family, parents-only, and private spaces the oversight policy opens to parents).
-Set<String> readableSpacesFor(Den den, String? member) {
-  final held = den.spacesForDevice(den.deviceId);
-  final family = den.family;
-  if (member != null) {
-    final m = den.member(member);
-    if (m == null) return const {};
-    return {for (final s in held) if (canRead(m, s, family)) s};
-  }
-  return {
-    for (final s in held)
-      if (s == Space.family ||
-          s == Space.parents ||
-          (Space.isMember(s) && (family?.parentsSeePrivate(Space.memberOf(s)!) ?? true)))
-        s,
-  };
 }
 
 /// Resolves a bearer token on [den]: an active, unexpired connection whose member (if any) is
