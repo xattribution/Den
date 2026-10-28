@@ -369,6 +369,97 @@ void main() {
       await expectLater((await attempt(code.text)).completed, throwsA(isA<JoinException>()));
     });
 
+    test('a spoken-code joiner trusts nothing from a peer that hasn\'t proved it knows the code', () async {
+      if (await skipUnlessDenCore()) return;
+      // Whatever answered (a fake hub on the network, say) skips the proof and acts as if the
+      // joiner were approved: it sends its own family's changes and says it's done.
+      final impostor = await TestFamily.create(name: 'Mallory');
+      final joinerDen = await openDen();
+      final joiner = SyncNode(joinerDen);
+      addTearDown(joiner.close);
+      final p = pipe<dynamic>();
+      final fake = Session.accept(p.b, keys: impostor.founder.keys, familyId: impostor.founder.familyId);
+      final attempt = await joiner.joinWithCode(p.a, 'zoo zone zero zebra', deviceName: 'Grandma phone', kind: DeviceKind.phone);
+      final server = await fake;
+      final changes = [for (final c in impostor.founder.changesSince(const {})) c.toJson()];
+      await server.send({'t': 'approved'}).catchError((Object _) {});
+      await server.send({'t': 'have', 'vv': <String, Object?>{}, 'keys': <String, Object?>{}}).catchError((Object _) {});
+      await server.send({'t': 'changes', 'list': changes, 'done': true}).catchError((Object _) {});
+      await expectLater(attempt.completed, throwsA(isA<JoinException>()));
+      expect(attempt.stage, isNot(JoinStage.done));
+      expect(joinerDen.changesSince(const {}), isEmpty);
+      expect(joinerDen.hasFamily, isFalse);
+    });
+
+    test('a waiting device can\'t ask again without a new invite, and one declined stays declined', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final phoneNode = SyncNode(fam.founder);
+      addTearDown(phoneNode.close);
+      final stranger = await openDen();
+      final strangerNode = SyncNode(stranger);
+      addTearDown(strangerNode.close);
+      Future<List<PendingJoin>> nextPending() => phoneNode.pendingJoinsChanges.firstWhere((l) => l.isNotEmpty);
+      Future<JoinAttempt> join() async {
+        final p = pipe<dynamic>();
+        unawaited(phoneNode.serve(p.b));
+        return strangerNode.joinWithInvite(p.a, await phoneNode.createInvite(), deviceName: 'Stranger', kind: DeviceKind.phone);
+      }
+
+      var pending = nextPending();
+      final first = await join();
+      await pending;
+      await first.cancel();
+      await eventually(() => phoneNode.pendingJoins.isEmpty);
+
+      // Back with the request it made before and no invite: refused.
+      final p2 = pipe<dynamic>();
+      unawaited(phoneNode.serve(p2.b));
+      final session = await Session.connect(p2.a, keys: stranger.keys, familyId: fam.founder.familyId);
+      final reply = session.messages.firstWhere((m) => m['t'] == 'join_rejected');
+      await session.send({
+        't': 'join',
+        'changes': [for (final c in stranger.changesSince(const {})) c.toJson()],
+      });
+      expect((await reply)['reason'], 'not-paired');
+      expect(phoneNode.pendingJoins, isEmpty);
+
+      // With a new invite it may ask again. Declined, it is refused from then on, invite or not.
+      pending = nextPending();
+      final second = await join();
+      await phoneNode.decline((await pending).single);
+      await expectLater(second.completed, throwsA(isA<JoinException>().having((e) => e.reason, 'reason', 'declined')));
+      expect(fam.founder.device(stranger.deviceId)!.revoked, isTrue, reason: 'declining revokes the request');
+      final third = await join();
+      await expectLater(third.completed, throwsA(isA<JoinException>().having((e) => e.reason, 'reason', 'declined')));
+      expect(phoneNode.pendingJoins, isEmpty);
+    });
+
+    test('devices nobody approved get a few places of their own, briefly', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final laptop = await fam.approvedDevice(member: fam.parent, name: 'Pat laptop');
+      final phoneNode = SyncNode(fam.founder, maxPairingPeers: 2, unpairedTimeout: const Duration(milliseconds: 500));
+      addTearDown(phoneNode.close);
+      Future<Session> stranger() async {
+        final p = pipe<dynamic>();
+        unawaited(phoneNode.serve(p.b));
+        return Session.connect(p.a, keys: await DeviceKeys.generate(), timeout: const Duration(seconds: 5));
+      }
+
+      final first = await stranger();
+      final second = await stranger();
+      await expectLater(stranger(), throwsA(isA<SessionException>()), reason: 'no place left for strangers');
+      final laptopNode = SyncNode(laptop);
+      addTearDown(laptopNode.close);
+      await (await link(phoneNode, laptopNode)).live;
+
+      // Strangers that prove nothing are sent away, and their places free up.
+      await first.done.timeout(const Duration(seconds: 5));
+      await second.done.timeout(const Duration(seconds: 5));
+      expect(await stranger(), isA<Session>());
+    });
+
     test('a joiner cannot approve itself, end to end', () async {
       if (await skipUnlessDenCore()) return;
       final fam = await TestFamily.create();
@@ -404,13 +495,14 @@ void main() {
       expect(fam.founder.changesSince(const {}).any((c) => c.id == forged.id), isFalse);
       expect(fam.founder.device(intruder.deviceId)!.approved, isFalse);
 
-      // 3. Smuggled inside a (resumed) join request: refused.
+      // 3. Smuggled inside a join request on a new session: refused, as every request is that
+      //    doesn't come with a fresh invite or code.
       final p2 = pipe<dynamic>();
       unawaited(phoneNode.serve(p2.b));
       final session = await Session.connect(p2.a, keys: intruder.keys, familyId: fam.founder.familyId);
       final replies = session.messages.where((m) => m['t'] == 'join_rejected').first;
       await session.send({'t': 'join', 'changes': [forged.toJson()]});
-      expect((await replies)['reason'], 'bad-request');
+      expect((await replies)['reason'], 'not-paired');
 
       // 4. Even if it reached the log directly, the engine would not count it.
       await fam.founder.ingest([forged]);

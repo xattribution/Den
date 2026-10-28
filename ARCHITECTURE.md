@@ -48,7 +48,12 @@ Change {
 ```
 
 Canonical bytes: UTF-8 JSON of `[id, space, hlc, type, rid, fields, device, actor]` with object
-keys sorted recursively and no whitespace.
+keys sorted recursively and no whitespace. Bookkeeping fields (`_via`, `_from`) are fields, so
+they are signed too and can't be stripped on the way.
+
+A device numbers its changes from its own counter and never reuses one. A device that receives
+its own changes back from a peer (after a restore from an older backup, say) moves its counter
+past them before it writes again.
 
 **Merging.** Each field of a record takes the value from the valid change with the greatest HLC
 that set it (last-writer-wins per field). HLC order is `(millis, counter, deviceId)`, with the
@@ -117,6 +122,30 @@ a parent's tablet into the hub; nobody else may change a device's mode from the 
 and a personal device always needs an owner. Changes signed after a device's revocation (by HLC)
 are invalid.
 
+A device sets its own clock, so a revoked (stolen) device could sign new changes with clocks from
+before its revocation, and post them to an old epoch's mailbox the relay still keeps. So a
+revocation also records `revokedAfter`: the highest counter of that device's changes the revoking
+device held (in its log, or vouched for by a peer's `completeVector`). A change from the revoked
+device numbered past `revokedAfter` and clocked before the revocation is invalid, whatever clock
+it claims. The materializer replays in two passes, both determined by the log alone: the first
+finds the valid revocations, the second applies their cutoffs from the start, so a backdated
+change already applied is dropped when the revocation arrives. Changes of the revoked device that
+the revoker never held are lost with it; a device re-approved later writes normally after its
+re-approval.
+
+**Trust decisions are made only on a parent's own device.** Approving, revoking or changing
+another device; removing or restoring a member, or changing an existing member's `role`,
+`grants` or `signIn` (their own included); the family's `oversight`; and creating, activating,
+re-scoping or deleting an AI connection are valid only from a personal device, or from a
+hub-mode device whose actor is that device's own owner (a parent's phone running "Keep the
+family online") with no `_via`. A shared display never makes them, whoever verified on it, and
+neither does a hub nobody owns. A change carrying `_via` (the hub acting for an API token or MCP
+client) never touches a device record at all, its own included, so a connection can't switch the
+hub back to a personal device and act as its owner. The hub keeps its narrow part of connections: asking for OAuth access
+(`pending`), recording token hashes for active ones, and revoking. Adding a member isn't a trust
+decision (a parent's import through the hub does it): nothing can act for a new member until a
+parent approves a device or an AI connection for them on their own device.
+
 Each space has a key for sealing changes on the relay, with an epoch. The founder's device makes
 the first keys at genesis and a parent's device makes one for each member it adds. When a parent's
 device revokes another device (directly or by removing its member), it rotates the key of every
@@ -163,12 +192,12 @@ commit too (`Den.restoreAll`).
 | --- | --- | --- |
 | `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map memberId -> `{parentsSeePrivate: bool}`) |
 | `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (blue, green, orange, pink, teal, plum, brown, olive, sky, slate), `animal` (cat, dog, rabbit, bird, butterfly, fish, horse, cow, bug), `birthday` (local date or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order` |
-| `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`) |
+| `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`) |
 | `category` | `f` | `name`, `icon` |
 | `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `rides` (list of `{leg: to\|from, driver: memberId\|null}`), `countdown` (bool) |
 | `eventException` | same as event | id `"<eventId>@<occurrence>"`: `event`, `occurrence` (original start), `cancelled`, `patch` (map of event fields: `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `assignees`, `reminders`, `rides`) |
 | `chore` | any | `title`, `notes`, `icon`, `owner` (`{kind: member, id}`\|`{kind: anyone}`\|`{kind: rotation, ids, every: day\|week, anchor: local date}`), `schedule` (`{rrule, start: local date}` or `{once: local date}`), `dueTime` (`HH:mm` or null), `points`, `steps` (list of `{id, text, owner, points, icon}`, `icon` a chore pictogram key or absent), `reminders`, `active` |
-| `completion` | same as chore | id `"<choreId>@<date>"`: `chore`, `date`, `done`, `doneBy`, `owner` (one-day swap; present and null means swapped to anyone) , `steps` (map stepId -> memberId who checked, `""` when checked by open check-off with no owner to credit, or null when unchecked). Done when `done`, or when every step is checked |
+| `completion` | same as chore | id `"<choreId>@<date>"`: `chore`, `date`, `done`, `doneBy`, `owner` (one-day swap; present and null means swapped to anyone) , `steps` (map stepId -> memberId who checked, `""` when checked by open check-off with no owner to credit, or null when unchecked), `points` (what the chore was worth when it was done), `stepPoints` (map stepId -> what the step was worth when checked). Done when `done`, or when every step is checked. The chore must exist and not be removed in the same space, except to remove the completion |
 | `adjustment` | `f` | Append-only. `member`, `delta`, `reason`, `by` |
 | `goal` | `f` | `title`, `mode` (`target`\|`race`), `target`, `members` (ids, or null for every kid), `start` (local date), `end` (local date or null), `repeat` (`none`\|`weekly`\|`monthly`), `reward` (text) |
 | `reward` | `f` | `title`, `cost`, `icon`, `needsApproval`, `active` |
@@ -180,10 +209,20 @@ commit too (`Den.restoreAll`).
 
 **Points are derived, not stored.** A done completion awards the chore's points to the day's owner
 (`completion.owner`, else the rotation's owner that day, else the chore owner, else `doneBy`) and
-each checked step's points to the step's owner, else whoever checked it. Totals add
+each checked step's points to the step's owner, else whoever checked it. A chore or step is worth
+what the completion recorded when it was done (`points`, `stepPoints.<id>`, written by the change
+that marks it done or checks the step), so a new price never changes what was already earned; a
+completion with no recorded worth (from before Den kept it) is worth the current price, and a
+recorded worth older than the completion's `done` never pays more than the current price. Only
+someone who may manage points records more than the price at the time. Totals add
 `adjustment.delta` and subtract approved redemptions' `cost`. Concurrent devices can't double
 award, and undoing a chore undoes its points with no compensating rows. Each line is dated by the
-change behind it (when `done` or the step was set, the adjustment made, the redemption approved).
+change behind it (when `done` or the step was set, the adjustment made, the redemption approved),
+but a chore or step line never later than the end of the completion's own day (in the family's
+time zone): finishing an old day's chore late, or moving a chore to another space (which writes
+its completions again), doesn't count toward this week's goals. When a chore moved while an
+offline device checked off the old copy, the same chore and day can have a completion in both
+spaces; it is paid once, from the space where the chore still lives.
 A goal counts chore, step and adjustment lines whose time falls, in the family's time zone, in its
 window: `start` to `end` inclusive, or the current week (by `weekStart`) or month for repeating
 goals. A member reaches a goal when their running total crosses the target and stays there;
@@ -191,7 +230,10 @@ deductions can un-cross it, and a race goes to the earliest such crossing.
 
 Recurrence is expanded in the event's own `tz` (the family's when unset) as wall-clock time, then
 each occurrence is converted to UTC, so a 7:00 AM series stays at 7:00 AM across DST. All-day
-events start and end at local midnight in that zone. Supported RRULE parts: `FREQ`
+events start and end at local midnight in that zone. An occurrence lasts what the event does on
+the wall clock: an all-day occurrence spans as many local days as the event (so the 23-hour day
+the clocks spring forward doesn't spill into the next), and a timed one ends at the same
+wall-clock length after its start in the event's zone. Supported RRULE parts: `FREQ`
 (`DAILY`\|`WEEKLY`\|`MONTHLY`\|`YEARLY`), `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY` (with ordinals such
 as `2TU`), `BYMONTHDAY`, `BYMONTH`, `BYSETPOS`, `WKST`; others are refused by the schema. Editing
 "this and following" ends the original series just before the occurrence (`UNTIL`, or a shortened
@@ -222,9 +264,9 @@ another space drops it.
 | Complete someone else's chore | yes | yes | no | no | as the verified member |
 | Swap a chore for a day | yes | yes | yes (their own) | no | as the verified member |
 | Check list items | yes | yes | yes | yes | yes |
-| Points: adjust, goals, rewards, decide redemptions | yes | no | grant `points` | no | as a verified parent |
+| Points: adjust, goals, rewards, decide redemptions, set what a chore or step is worth | yes | no | grant `points` | no | as a verified parent |
 | Request a redemption | yes | yes | yes (for themselves) | no | as the verified member |
-| Members, devices, family settings, approve or revoke devices | yes | no | no | no | no |
+| Members, devices, family settings, approve or revoke devices | yes (trust decisions on their own device only, see "Genesis and trust") | no | no | no | no |
 
 The same `can()` function runs in the UI (to hide what you can't do), on every replica when
 validating, and in the hub for API and MCP calls. Validation adds the context `can()` can't see:
@@ -233,7 +275,12 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
   it, or for nobody (then only open check-off, when its `display.openCheckoff` is on), and never
   administers the family. A hub acts for a token's member, or for nobody: then it has parent-level
   permissions except family administration and activating or re-scoping connections, and it
-  records the caller's label in `_via` (only hubs may write `_via`).
+  records the caller's label in `_via` (only hubs may write `_via`). Whoever it acts for, a change
+  with `_via` never makes a trust decision (see "Genesis and trust"); the hub must record `_via` on
+  every write it makes for an API or MCP caller.
+- Setting what a chore or step is worth (a new chore or step with points, or a new price) needs
+  the points permission as well as the chores one; recording a completion's worth above the
+  price at the time does too.
 - Writes into `p` need a parent or a hub; writes into `m:X` need X, a parent the oversight policy
   allows, or a hub.
 - Kids complete only chores they own that day, "anyone" chores, and steps they own (checking the
@@ -267,7 +314,17 @@ handshake inside the WebSocket:
    64-bit counter that must strictly increase; a repeated or older counter closes the session.
 
 Fresh ephemeral keys per session give forward secrecy. A device the other side doesn't know as
-approved gets only the pairing messages below.
+approved gets only the pairing messages below. A device serving sessions (the hub, a phone during
+pairing) gives devices it doesn't know as approved a few places of their own (8 by default,
+counting handshakes in progress), apart from the approved devices' places, and 30 seconds to
+prove an invite or code; a device that proved one may wait 15 minutes for a parent's approval.
+
+A session frame carries at most 1 MiB of plaintext; a larger frame closes the session before it
+is decrypted. Servers built on den_net's WebSocket helpers (the hub's `/ws`) and the relay read
+each WebSocket frame's header as it arrives and close the connection as soon as a frame, or the
+fragments of one message, announce more than their limit, so nothing oversized is buffered.
+Clients (dart:io and browser WebSockets) have no such hook and buffer each whole message they
+receive; the session's limit then applies.
 
 ### Sync messages (inside the session)
 
@@ -282,9 +339,21 @@ approved gets only the pairing messages below.
 
 - **QR code** (default): `den://join?f=<familyId>&fk=<founderPubkey>&d=<inviterDevice>&k=<inviterPubkey>&s=<128-bit secret>&h=<hub URLs>&r=<relay URL>&x=<expiry>`. The joining device connects, presents `HMAC-SHA256(secret, its pubkey)`, and writes its join request. The inviting device shows "Approve <name>?" and a parent approves. The QR carries the key, so nothing in the middle can substitute it.
 - **Spoken code** (no camera, over the phone): 4 words from a 2048-word list (44 bits), valid 10
-  minutes, burned after 5 wrong tries. Both screens then show 3 matching words derived from the
-  session transcript; the parent approves only if they match. A relay that swapped keys would
-  produce different words.
+  minutes, burned after 5 wrong tries. Both sides first stretch the code with Argon2id (4 MiB,
+  3 passes, 1 lane, 32 bytes, fixed salt `den/spoken-code/v2`): the rendezvous slot is
+  HMAC-SHA256(stretched, `den/rendezvous/v2/code`), and each side proves the code with
+  HMAC-SHA256(stretched, label | transcript hash | its key), the joiner first. Every guess at a
+  code, by a relay holding its slot or by a device holding a proof, costs one Argon2id run, so
+  searching the 2^44 codes within a code's life is far beyond reach; a joiner stretches its code
+  once. The joiner trusts nothing the other side sends (no family, no changes, no "approved")
+  until that side's proof checks out, so a stranger answering on the network can't pose as the
+  family. Both screens then show 3 matching words derived from the session transcript; the
+  parent approves only if they match. A relay that swapped keys would produce different words.
+
+Every join request comes with a fresh proof of an invite or code, including a device asking
+again about a request already in the log. Declining a request revokes it where the declining
+device may (a parent's own device), and the device declining it refuses that device from then
+on, so a declined device can't keep asking.
 
 ### Relay
 
@@ -296,8 +365,19 @@ approved gets only the pairing messages below.
 - **Mailbox**: for families with no hub online. `POST /mailbox/<id>` appends a sealed blob;
   `GET /mailbox/<id>?after=<cursor>` reads. The id is HMAC(space key, "mailbox:<epoch>"), the blob
   is XChaCha20-Poly1305 under the space key with the signed change inside. Persistent with a
-  30-day TTL, size caps, and rate limits per IP and per mailbox.
-- **Rendezvous** for pairing without a hub: a short-lived slot keyed by the invite secret's hash.
+  30-day TTL, size caps, and rate limits per client and per mailbox. A device that rotates a key
+  leaves it, sealed, in the inbox of each device that may hold the space, once per device; a
+  delivery the relay refuses (full, rate limited, unreachable) is retried for that device alone
+  after a minute, doubling to six hours, and never holds up the other deliveries or the posting.
+- **Rendezvous** for pairing without a hub: a short-lived slot keyed by the invite secret's hash,
+  or by the stretched spoken code.
+
+A client, for every limit and share, is an IPv4 address or the /64 an IPv6 address is in. Besides
+the relay-wide caps, each client has its own share, so no one client can deny service to the
+others: mailbox bytes it stored (256 MiB) and mailboxes it created (1,000) while they hold blobs,
+hub tunnels (16), streams through any one hub's tunnel (16 of its 64), and rendezvous hosts
+waiting (8). Requests over a share are refused (`507` with `cap: client`, `503` before a
+WebSocket upgrade).
 
 Relays keep no accounts and log no content. Families can run their own; the default is
 `relay.den.family` (hosted service, placeholder name).
@@ -430,7 +510,7 @@ pluggable notifier: Home Assistant's `notify` service, ntfy, or the hosted push 
 | Sett finding | Den mechanism | Test |
 | --- | --- | --- |
 | A requester could approve itself | Approval valid only when signed by another approved parent device | `den_core` validity tests |
-| 2,700 connect codes, IP-keyed limit | QR with a 128-bit secret; spoken codes of 44 bits, 5 tries, 10 minutes | `den_net` pairing tests |
+| 2,700 connect codes, IP-keyed limit | QR with a 128-bit secret; spoken codes of 44 bits, 5 tries, 10 minutes, stretched with Argon2id | `den_net` pairing tests |
 | Relay could sit in the middle | QR carries the key; spoken codes confirmed by matching words | `den_net` SAS test |
 | No replay protection | Unique change ids, per-session counters, signed changes | `den_net` session tests |
 | One static key both ways, no forward secrecy | Per-session ephemeral X25519, separate keys per direction | `den_net` session tests |
