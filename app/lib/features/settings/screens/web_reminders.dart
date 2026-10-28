@@ -147,27 +147,26 @@ class _WebRemindersState extends State<WebReminders> {
       PushAvailability.blocked => "Notifications are off for Den. Turn them on in this $_thing's Settings, Notifications, Den.",
       PushAvailability.unsupported => "This browser can't show Den's reminders.",
     };
-    Widget block(Widget child) => Padding(padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.l, 0), child: child);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (why != null)
-          block(AttentionLine(message: why))
-        else if (!_loaded)
-          block(Text('Checking with the hub', style: context.type.body(c.ink2)))
-        else if (_on) ...[
-          block(
+    final t = context.text;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: Sp.m),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (why != null)
+            NoticeLine(icon: PhosphorIconsRegular.bellSlash, message: why)
+          else if (!_loaded)
+            Text('Checking with the hub', style: t.body(c.ink2))
+          else if (_on)
             Row(
               children: [
-                Icon(PhosphorIconsRegular.bellRinging, size: 20, color: c.ink),
+                Icon(PhosphorIconsRegular.bellRinging, size: 22, color: c.ink),
                 const SizedBox(width: Sp.m),
-                Expanded(child: Text('Reminders are on for this $_thing', style: context.type.body(c.ink))),
+                Expanded(child: Text('Reminders are on for this $_thing', style: t.body(c.ink))),
                 TextButton(onPressed: _busy ? null : _turnOff, child: const Text('Turn off')),
               ],
-            ),
-          ),
-        ] else if (_key != null)
-          block(
+            )
+          else if (_key != null)
             Align(
               alignment: Alignment.centerLeft,
               child: FilledButton.icon(
@@ -176,10 +175,13 @@ class _WebRemindersState extends State<WebReminders> {
                 label: Text('Turn on reminders on this $_thing'),
               ),
             ),
-          ),
-        if (_note != null) block(Text(_note!, style: context.type.body(c.ink2))),
-        if (_error != null) block(AttentionLine(message: _error!, bad: true)),
-      ],
+          if (_note != null) ...[const SizedBox(height: Sp.s), Text(_note!, style: t.meta(c.ink2))],
+          if (_error != null) ...[
+            const SizedBox(height: Sp.s),
+            Text(_error!, style: t.meta(c.destructive)),
+          ],
+        ],
+      ),
     );
   }
 }

@@ -4,15 +4,14 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../../../app/app_state.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
-import '../../../app/app_state.dart';
-import '../widgets/scope_picker.dart';
-import '../../../design/forms/forms.dart';
 import '../state/connection_actions.dart';
+import '../widgets/scope_picker.dart';
 
-/// Creating an API token for an AI client or an automation: a label, what it may do and whose
-/// permissions it uses. The token is shown once, with Copy.
+/// Making a token for an automation or a Shortcut that can't sign in: a name, what it may do
+/// and whose permissions it uses. The token is shown once, with Copy.
 class CreateTokenScreen extends StatefulWidget {
   const CreateTokenScreen({super.key, this.token, this.label});
 
@@ -25,7 +24,7 @@ class CreateTokenScreen extends StatefulWidget {
 }
 
 class _CreateTokenScreenState extends State<CreateTokenScreen> {
-  final _label = TextEditingController();
+  late final _label = TextEditingController(text: widget.label);
   Set<Scope> _scopes = {Scope.read};
   String? _member;
   late String? _token = widget.token;
@@ -36,7 +35,11 @@ class _CreateTokenScreenState extends State<CreateTokenScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.label != null) _label.text = widget.label!;
+    final label = widget.label?.toLowerCase() ?? '';
+    // What each usual one needs, so the switches start right.
+    if (label.contains('home assistant')) _scopes = {Scope.read, Scope.calendar, Scope.chores, Scope.lists};
+    if (label.contains('siri')) _scopes = {Scope.read, Scope.calendar, Scope.chores, Scope.lists};
+    if (label.contains('siri')) _member = DenScope.read(context).me?.id;
   }
 
   @override
@@ -68,61 +71,54 @@ class _CreateTokenScreenState extends State<CreateTokenScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final t = context.text;
     final token = _token;
     if (token != null) {
-      final label = _label.text.trim();
-      return FormFrame(
-        title: 'Token for $label',
+      return DenPage(
+        title: 'Token for ${_label.text.trim()}',
         back: false,
-        bottom: SizedBox(
-          width: double.infinity,
-          child: OutlinedButton(onPressed: () => context.pop(), child: const Text('Done')),
+        bottom: FilledButton(
+          onPressed: () => context.pop(),
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+          child: const Text('Done'),
         ),
         children: [
-          FormBlock(
-            child: AttentionLine(message: "Den won't show this token again. Copy it now and keep it somewhere safe."),
+          const NoticeLine(
+            icon: PhosphorIconsRegular.key,
+            message: "Den won't show this token again. Copy it now and keep it somewhere safe.",
           ),
-          FormBlock(
-            top: Sp.m,
-            child: Container(
-              padding: const EdgeInsets.all(Sp.m),
-              decoration: BoxDecoration(color: c.well, borderRadius: BorderRadius.circular(Radii.control)),
-              child: SelectableText(token, style: context.type.title(c.ink).copyWith(letterSpacing: 0.5)),
-            ),
+          GroupCard(
+            padding: const EdgeInsets.all(Sp.l),
+            child: SelectableText(token, style: t.rowTitle(c.ink).copyWith(letterSpacing: 0.5)),
           ),
-          FormBlock(
-            top: Sp.m,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.icon(
-                onPressed: _copy,
-                icon: Icon(_copied ? PhosphorIconsBold.check : PhosphorIconsRegular.copy, size: 18),
-                label: Text(_copied ? 'Copied' : 'Copy token'),
-              ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _copy,
+              icon: Icon(_copied ? PhosphorIconsBold.check : PhosphorIconsRegular.copy, size: 18),
+              label: Text(_copied ? 'Copied' : 'Copy token'),
             ),
           ),
         ],
       );
     }
 
-    return FormFrame(
-      title: 'Create token',
-      bottom: SizedBox(
-        width: double.infinity,
-        child: FilledButton(onPressed: _busy || _scopes.isEmpty ? null : _create, child: const Text('Create token')),
+    return DenPage(
+      title: 'Make a token',
+      bottom: FilledButton(
+        onPressed: _busy || _scopes.isEmpty ? null : _create,
+        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+        child: const Text('Make the token'),
       ),
       children: [
-        FormBlock(
+        LabeledField(
+          label: 'What will use it',
+          error: _tried && _label.text.trim().isEmpty ? 'Name it after what will use it, like Home Assistant.' : null,
           child: TextField(
             controller: _label,
             textCapitalization: TextCapitalization.sentences,
-            decoration: InputDecoration(
-              labelText: 'Label',
-              hintText: 'Home Assistant',
-              suffixIcon: const InfoTip('History shows changes made with this token under this name.'),
-              suffixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-              errorText: _tried && _label.text.trim().isEmpty ? 'Name the token after what will use it.' : null,
-            ),
+            style: t.body(c.ink),
+            decoration: const InputDecoration(hintText: 'Home Assistant'),
             onChanged: (_) => setState(() {}),
           ),
         ),

@@ -6,16 +6,14 @@ import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../../../app/app_state.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
-import '../../../platform/sync/pairing.dart';
-import '../../../app/app_state.dart';
-import '../widgets/device_parts.dart';
-import '../../../design/forms/forms.dart';
 import '../../../platform/capabilities.dart';
+import '../../../platform/sync/pairing.dart';
 
-/// Linking a browser from a parent's phone: scan the code the browser shows (or paste it on a
-/// computer), then approve the browser when its request arrives through the hub.
+/// Advanced → Hub and sync → A browser on a computer: scan the code the browser shows (or paste
+/// it), then let the browser in on Today when it asks to join through the hub.
 class LinkBrowserScreen extends StatefulWidget {
   const LinkBrowserScreen({super.key, this.scan, this.linkedTo});
 
@@ -43,7 +41,7 @@ class _LinkBrowserScreenState extends State<LinkBrowserScreen> {
     if (_before.isEmpty) {
       _before = {for (final d in context.watch(const {}).den.devices) d.id};
       // A hub reachable from the internet gives browsers link codes only while a parent has
-      // "Add a device" open.
+      // this page open.
       unawaited(Pairing.of(context).openLinking());
     }
   }
@@ -78,79 +76,64 @@ class _LinkBrowserScreenState extends State<LinkBrowserScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final t = context.text;
     final den = context.watch(const {}).den;
     final hub = _hub;
-    final width = MediaQuery.sizeOf(context).width;
-    final camera = (width.clamp(0.0, 600.0) - Sp.l * 2).clamp(200.0, 420.0);
 
     if (hub != null) {
       final linked = den.devices
           .where((d) => !_before.contains(d.id) && d.kind == DeviceKind.browser && d.approved && !d.revoked)
           .firstOrNull;
-      return FormFrame(
+      return DenPage(
         title: 'Link a browser',
-        bottom: linked == null
-            ? null
-            : SizedBox(width: double.infinity, child: FilledButton(onPressed: () => context.pop(), child: const Text('Done'))),
+        bottom: linked == null ? null : FilledButton(onPressed: () => context.pop(), child: const Text('Done')),
         children: [
-          const PendingApprovals(),
-          FormBlock(
+          GroupCard(
             child: linked != null
-                ? Row(
-                    children: [
-                      Icon(PhosphorIconsBold.check, size: 20, color: c.ink),
-                      const SizedBox(width: Sp.m),
-                      Expanded(child: Text('${linked.name} is linked.', style: context.type.body(c.ink))),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      Icon(PhosphorIconsRegular.hourglass, size: 20, color: c.ink2),
-                      const SizedBox(width: Sp.m),
-                      Expanded(
-                        child: Text('Approve the browser here when it asks to join through $hub.', style: context.type.body(c.ink2)),
-                      ),
-                    ],
+                ? DoneRow(message: '${linked.name} is linked.')
+                : NoticeLine(
+                    icon: PhosphorIconsRegular.hourglass,
+                    message: 'When the browser asks to join through $hub, let it in on Today.',
                   ),
           ),
         ],
       );
     }
 
-    return FormFrame(
+    final width = MediaQuery.sizeOf(context).width;
+    final camera = (width.clamp(0.0, 560.0) - 64).clamp(200.0, 420.0);
+    return DenPage(
       title: 'Link a browser',
       bottom: _scanning
           ? null
-          : SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _busy ? null : () => _answer(_code.text),
-                child: Text(_busy ? 'Linking' : 'Link the browser'),
-              ),
+          : FilledButton(
+              onPressed: _busy ? null : () => _answer(_code.text),
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+              child: Text(_busy ? 'Linking' : 'Link the browser'),
             ),
       children: [
-        InfoHeader(
-          _scanning ? 'Scan the code on the browser' : 'Paste the code from the browser',
-          info: "On the computer, open the hub's address in a browser and choose Link this browser.",
+        Text(
+          "On the computer, open the hub's address in a browser and choose Link with a parent's phone.",
+          style: t.body(c.ink),
         ),
         if (_scanning)
-          FormBlock(
-            top: 0,
-            child: Center(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(Radii.control),
-                child: SizedBox.square(
-                  dimension: camera,
-                  child: MobileScanner(
-                    onDetect: _scanned,
-                    errorBuilder: (context, error) => Container(
-                      color: c.well,
+          Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(Radii.tile),
+              child: SizedBox.square(
+                dimension: camera,
+                child: MobileScanner(
+                  onDetect: _scanned,
+                  errorBuilder: (context, error) => ColoredBox(
+                    color: c.card,
+                    child: Padding(
                       padding: const EdgeInsets.all(Sp.l),
-                      alignment: Alignment.center,
-                      child: Text(
-                        "Den can't use the camera. Allow camera access in this device's settings, then come back.",
-                        style: context.type.body(c.ink2),
-                        textAlign: TextAlign.center,
+                      child: Center(
+                        child: Text(
+                          "Den can't use the camera. Allow camera access in this device's settings, then come back.",
+                          style: t.body(c.ink2),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     ),
                   ),
@@ -159,17 +142,19 @@ class _LinkBrowserScreenState extends State<LinkBrowserScreen> {
             ),
           )
         else
-          FormBlock(
-            top: 0,
+          LabeledField(
+            label: 'The code the browser shows',
+            error: _error,
             child: TextField(
               controller: _code,
               autocorrect: false,
               enableSuggestions: false,
-              decoration: const InputDecoration(labelText: 'Link code', hintText: 'den://link?hub=…'),
+              style: t.body(c.ink),
+              decoration: const InputDecoration(hintText: 'den://link?hub=…'),
               onSubmitted: _answer,
             ),
           ),
-        if (_error != null) FormBlock(child: AttentionLine(message: _error!, bad: true)),
+        if (_scanning && _error != null) Text(_error!, style: t.meta(c.destructive)),
       ],
     );
   }
