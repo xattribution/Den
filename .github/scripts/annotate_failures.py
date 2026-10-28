@@ -1,5 +1,6 @@
-"""Turns `flutter analyze` or `flutter test` output into one GitHub error annotation, so the
-problems show on the pull request's checks without opening the job log.
+"""Turns `flutter analyze` or `flutter test` output into GitHub error annotations, so the
+problems show on the pull request's checks without opening the job log: one annotation per
+failed test (or per screenful of analyzer problems), each under GitHub's 4 KB limit.
 
     python3 annotate_failures.py analyze|test <output file> <title>
 """
@@ -7,31 +8,57 @@ problems show on the pull request's checks without opening the job log.
 import re
 import sys
 
-LIMIT = 30000
+PER_ANNOTATION = 3800
+MAX_ANNOTATIONS = 9
 PROGRESS = re.compile(r'^\d+:\d\d \+\d+')
 
 
 def analyze(lines):
-    return [line.strip() for line in lines if ' • ' in line]
+    problems = [line.strip() for line in lines if ' • ' in line]
+    chunks, current = [], []
+    for p in problems:
+        if current and len('\n'.join(current + [p])) > PER_ANNOTATION:
+            chunks.append(current)
+            current = []
+        current.append(p)
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def tests(lines):
-    """Each failed test's output: what it printed since the previous test, its [E] line, and
-    what came after until the next test."""
-    found, since_last, after_failure = [], [], False
+    """Each failed test's output. On GitHub Actions flutter test uses the GitHub reporter, which
+    wraps a failed test's output in ::group::❌ ... ::endgroup::; elsewhere the compact reporter
+    marks the test [E]."""
+    failed, current = [], None
+    for line in lines:
+        if line.startswith('::group::❌'):
+            current = [line[len('::group::'):]]
+        elif line.startswith('::endgroup::'):
+            if current is not None:
+                failed.append(current)
+            current = None
+        elif current is not None:
+            current.append(line)
+        elif line.startswith('❌'):
+            failed.append([line])
+    if failed:
+        return failed
+
+    since_last, after_failure = [], False
     for line in lines:
         if PROGRESS.match(line):
             if line.rstrip().endswith('[E]'):
-                found += ['', *since_last[-150:], line]
+                failed.append([line, *since_last[-150:]])
                 after_failure = True
             else:
                 after_failure = False
             since_last = []
         elif after_failure:
-            found.append(line)
+            failed[-1].append(line)
         else:
             since_last.append(line)
-    return found
+    return failed
 
 
 def escape(text):
@@ -44,11 +71,14 @@ def main():
         lines = f.read().splitlines()
     found = analyze(lines) if mode == 'analyze' else tests(lines)
     if not found:
-        found = lines[-120:]
-    message = '\n'.join(found)
-    if len(message) > LIMIT:
-        message = message[:LIMIT] + '\n[cut]'
-    print(f'::error title={title}::{escape(message)}')
+        found = [lines[-60:]]
+    for block in found[:MAX_ANNOTATIONS]:
+        message = '\n'.join(block)
+        if len(message) > PER_ANNOTATION:
+            message = message[:PER_ANNOTATION] + '\n[cut]'
+        print(f'::error title={title}::{escape(message)}')
+    if len(found) > MAX_ANNOTATIONS:
+        print(f'::error title={title}::{len(found) - MAX_ANNOTATIONS} more not shown')
 
 
 if __name__ == '__main__':

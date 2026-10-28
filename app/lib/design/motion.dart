@@ -212,6 +212,7 @@ class _DenPressableState extends State<DenPressable> with SingleTickerProviderSt
     if (widget.scale) result = ScaleTransition(scale: _scale, child: result);
 
     return Semantics(
+      container: true,
       button: true,
       enabled: _enabled,
       selected: widget.selected,
@@ -222,8 +223,12 @@ class _DenPressableState extends State<DenPressable> with SingleTickerProviderSt
         focusNode: widget.focusNode,
         autofocus: widget.autofocus,
         mouseCursor: _enabled ? SystemMouseCursors.click : MouseCursor.defer,
-        onShowFocusHighlight: (value) => setState(() => _focused = value),
-        onShowHoverHighlight: (value) => setState(() => _hovered = value),
+        onShowFocusHighlight: (value) {
+          if (value != _focused) setState(() => _focused = value);
+        },
+        onShowHoverHighlight: (value) {
+          if (value != _hovered) setState(() => _hovered = value);
+        },
         actions: <Type, Action<Intent>>{
           ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
             _tap();
