@@ -152,7 +152,7 @@ The hub counts what each client does, by IP address (an IPv6 address by its /64)
 | Browser link slots and link grants | 20 in 10 minutes |
 | Wrong setup codes | 5, then that client waits a minute, doubling to an hour with each further wrong code |
 | OAuth: registrations, sign-in requests, token requests | 10 an hour, 10 in 15 minutes, 60 in 5 minutes |
-| WebSocket connections (`/ws`) | 120 new a minute, 64 open at once |
+| WebSocket connections (`/ws`, `/api/v1/hub/setup/ws`) | 120 new a minute, 64 open at once. The first message (the session handshake's hello, before the client has proved who it is) may be 64 KiB, later ones 3 MB; a bigger message closes the socket |
 
 ### Behind a reverse proxy
 

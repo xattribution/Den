@@ -24,8 +24,9 @@ void test(
     () async {
       try {
         await body();
-      } catch (e) {
-        final text = '$description: $e'.replaceAll('%', '%25').replaceAll('\r', '').replaceAll('\n', '%0A');
+      } catch (e, stack) {
+        final frames = stack.toString().split('\n').where((l) => l.contains('den_') || l.contains('test/')).take(6).join('\n');
+        final text = '$description: $e\n$frames'.replaceAll('%', '%25').replaceAll('\r', '').replaceAll('\n', '%0A');
         print('::error title=den_hub test failed::$text');
         rethrow;
       }

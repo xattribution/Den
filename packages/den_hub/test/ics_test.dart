@@ -212,10 +212,15 @@ void main() {
     final f = await HubFixture.start();
     addTearDown(f.stop);
     final soccer = f.phone.events.firstWhere((e) => e.title == 'Soccer practice');
-    final next = f.phone.occurrences(f.phone.dayStart(f.phone.todayDate()), f.phone.dayStart(f.phone.todayDate()) + 14 * 86400000)
-        .firstWhere((o) => o.event.id == soccer.id);
+    final upcoming = f.phone
+        .occurrences(f.phone.dayStart(f.phone.todayDate()), f.phone.dayStart(f.phone.todayDate()) + 21 * 86400000)
+        .where((o) => o.event.id == soccer.id)
+        .toList();
+    final next = upcoming[0];
     await f.phone.updateEvent(soccer.id, {'location': 'Field 9', 'start': next.start + 3600000}, scope: EditScope.one, occurrence: next.seriesStart);
-    final later = next.seriesStart + 7 * 86400000;
+    // The following occurrence as Den expands it (in wall-clock time, so across a DST change
+    // it isn't exactly a week of UTC milliseconds later).
+    final later = upcoming[1].seriesStart;
     await f.phone.deleteEvent(soccer.id, scope: EditScope.one, occurrence: later);
     await f.toHub();
     final token = await f.token();

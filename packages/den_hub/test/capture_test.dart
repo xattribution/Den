@@ -55,6 +55,7 @@ void main() {
   late Phone maya;
   late Phone leo;
   late Phone kitchen;
+  final logged = <String>[];
 
   /// A personal device approved by Alex's phone for [name], or a shared display.
   Future<Den> device(String? name, {DeviceMode mode = DeviceMode.personal}) async {
@@ -75,6 +76,7 @@ void main() {
   }
 
   setUp(() async {
+    logged.clear();
     dir = await Directory.systemTemp.createTemp('den-capture-hub');
     anthropic = FakeAnthropic(claudeFixture('claude_email.json'));
     f = await HubFixture.start(
@@ -84,7 +86,7 @@ void main() {
         host: InternetAddress.loopbackIPv4,
         mdns: false,
         dataDir: dir.path,
-        log: HubLog(level: LogLevel.error, sink: (_) {}),
+        log: HubLog(level: LogLevel.warn, sink: logged.add),
         httpClient: anthropic.client,
       ),
     );
@@ -230,19 +232,21 @@ void main() {
     expect((await apiCall(f.base, 'GET', '/api/v1/capture/reader', headers: headers)).status, 401);
   });
 
-  /// Starts `POST /api/v1/capture/read` by hand with [headers], announcing [length] bytes but
-  /// sending only 1 KiB, and returns the start of the hub's answer (or throws if none comes).
-  Future<String> postPartly(Map<String, String> headers, {required int length, Socket? keep}) async {
-    final socket = keep ?? await Socket.connect('127.0.0.1', f.hub.port);
+  /// Starts `POST /api/v1/capture/read` by hand on [socket] with [headers], announcing [length]
+  /// bytes and sending [sent] of them (all by default).
+  Future<void> post(Socket socket, Map<String, String> headers, {required int length, int? sent}) async {
     socket.write('POST /api/v1/capture/read HTTP/1.1\r\nHost: 127.0.0.1:${f.hub.port}\r\n'
         'Content-Type: application/json\r\nContent-Length: $length\r\n');
     headers.forEach((k, v) => socket.write('$k: $v\r\n'));
     socket.write('\r\n');
-    socket.add(List.filled(1024, 0x20));
+    socket.add(List.filled(sent ?? length, 0x20));
     await socket.flush();
-    if (keep != null) return '';
+  }
+
+  /// The start of the hub's answer on [socket] (or throws if none comes).
+  Future<String> answer(Socket socket) async {
     try {
-      return utf8.decode(await socket.first.timeout(const Duration(seconds: 5)), allowMalformed: true);
+      return utf8.decode(await socket.first.timeout(const Duration(seconds: 10)), allowMalformed: true);
     } finally {
       socket.destroy();
     }
@@ -267,17 +271,20 @@ void main() {
     expect((await hashed.read(CaptureInput.typed('Game Saturday Oct 24 at 9')))['wire'], isA<Map<String, Object?>>());
 
     // The hub's own device id is no secret. Naming it with a made-up signature over a claimed
-    // hash gets 401 at once, with nearly 20 MB still unsent.
-    final answer = await postPartly({...forged('n1'), 'x-den-body-sha256': '0' * 64}, length: 20 * 1024 * 1024);
-    expect(answer, startsWith('HTTP/1.1 401'));
+    // hash is refused while nearly 20 MB are still unsent: the hub doesn't wait for the body.
+    final socket = await Socket.connect('127.0.0.1', f.hub.port);
+    addTearDown(socket.destroy);
+    await post(socket, {...forged('n1'), 'x-den-body-sha256': '0' * 64}, length: 20 * 1024 * 1024, sent: 1024);
+    await eventually(() => logged.any((l) => l.contains('Refused a signed request: bad-signature')));
   });
 
   test('a body whose signature can only be checked once it is in is read one per client at a time', () async {
     final slow = await Socket.connect('127.0.0.1', f.hub.port);
     addTearDown(slow.destroy);
-    await postPartly(forged('n2'), length: 20 * 1024 * 1024, keep: slow);
+    await post(slow, forged('n2'), length: 20 * 1024 * 1024, sent: 1024);
     await Future<void>.delayed(const Duration(milliseconds: 300));
-    final second = await postPartly(forged('n3'), length: 2048);
-    expect(second, startsWith('HTTP/1.1 429'), reason: 'the first body is still arriving');
+    final second = await Socket.connect('127.0.0.1', f.hub.port);
+    await post(second, forged('n3'), length: 100);
+    expect(await answer(second), startsWith('HTTP/1.1 429'), reason: 'the first body is still arriving');
   });
 }

@@ -238,13 +238,16 @@ class RateLimiter {
 /// How large WebSocket messages from a client may grow.
 class FrameLimits {
   /// Creates limits.
-  const FrameLimits({this.handshakeMessages = 2, this.handshakeBytes = 64 * 1024, this.messageBytes = 3 * 1024 * 1024});
+  const FrameLimits({this.handshakeMessages = 1, this.handshakeBytes = 64 * 1024, this.messageBytes = 3 * 1024 * 1024});
 
-  /// Messages a client sends before its session is set up (den_net: `hello`, then `auth`).
+  /// Messages a client sends that are always part of den_net's session handshake: its first,
+  /// a `hello` whichever side of the session it plays (on the setup back channel the phone
+  /// connects but answers as the session's server, so its second message may already carry
+  /// the family's data).
   final int handshakeMessages;
 
   /// Largest of those (den_net refuses handshake messages over 16 KiB itself, but only after
-  /// receiving them whole).
+  /// receiving them whole), so a stranger's first message can't be large.
   final int handshakeBytes;
 
   /// Largest message after that (den_net's sessions carry at most 1 MiB, base64 in text frames).
@@ -335,40 +338,53 @@ StreamChannel<List<int>> guardChannel(
     onClose?.call();
   }
 
-  return raw.changeStream((input) {
-    StreamSubscription<List<int>>? sub;
-    late final StreamController<List<int>> out;
-    out = StreamController<List<int>>(
-      onListen: () {
-        sub = input.listen(
-          (data) {
-            if (finished) return;
-            if (guard.feed(data)) {
-              out.add(data);
-              return;
-            }
-            onRefused?.call();
-            finish();
-            unawaited(sub?.cancel());
-            unawaited(out.close());
-            Timer(const Duration(seconds: 5), () => unawaited(raw.sink.close().then((_) {}, onError: (Object _) {})));
-          },
-          onError: out.addError,
-          onDone: () {
-            finish();
-            unawaited(out.close());
-          },
-        );
-      },
-      onPause: () => sub?.pause(),
-      onResume: () => sub?.resume(),
-      onCancel: () {
-        finish();
-        return sub?.cancel();
-      },
-    );
-    return out.stream;
-  });
+  StreamSubscription<List<int>>? sub;
+  late final StreamController<List<int>> out;
+
+  /// Ends the connection a refused client holds: the WebSocket on top sees its input end and
+  /// closes the socket itself; a moment later anything still open goes.
+  void refuse() {
+    onRefused?.call();
+    finish();
+    unawaited(sub?.cancel());
+    unawaited(out.close());
+    Timer(const Duration(seconds: 1), () {
+      final sink = raw.sink;
+      try {
+        unawaited(sink.close().then((_) {}, onError: (Object _) {}));
+      } on StateError {
+        if (sink is Socket) sink.destroy();
+      }
+    });
+  }
+
+  out = StreamController<List<int>>(
+    onListen: () {
+      sub = raw.stream.listen(
+        (data) {
+          if (finished) return;
+          if (guard.feed(data)) {
+            out.add(data);
+          } else {
+            refuse();
+          }
+        },
+        onError: out.addError,
+        onDone: () {
+          finish();
+          unawaited(out.close());
+        },
+      );
+    },
+    onPause: () => sub?.pause(),
+    onResume: () => sub?.resume(),
+    onCancel: () {
+      finish();
+      return sub?.cancel();
+    },
+  );
+  // A plain channel, so the WebSocket closing its sink closes the socket, as it would unguarded.
+  return StreamChannel<List<int>>(out.stream, raw.sink);
 }
 
 /// [request] for a WebSocket handler, with the connection it hijacks passed through

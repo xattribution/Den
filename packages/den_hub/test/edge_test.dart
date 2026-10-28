@@ -96,14 +96,18 @@ void main() {
       expect(split.feed([...frameHeader(40000, fin: false), ...List.filled(40000, 0)]), isTrue);
       expect(split.feed(frameHeader(40000, opcode: 0)), isFalse, reason: 'fragments add up to one message');
       final later = FrameGuard(const FrameLimits());
-      for (var i = 0; i < 2; i++) {
-        expect(later.feed([...frameHeader(100), ...List.filled(100, 0)]), isTrue);
-      }
-      expect(later.feed(frameHeader(1024 * 1024)), isTrue, reason: 'after the handshake, session-sized messages pass');
+      expect(later.feed([...frameHeader(100), ...List.filled(100, 0)]), isTrue);
+      expect(later.feed(frameHeader(1024 * 1024)), isTrue,
+          reason: 'after a first hello, session-sized messages pass (a phone answering as the session server sends the family next)');
+      expect(later.feed(frameHeader(4 * 1024 * 1024)), isFalse, reason: 'nothing a session sends is that large');
     });
 
     test('the hub closes a connection that announces a huge first message instead of buffering it', () async {
-      final f = await HubFixture.start();
+      final logged = <String>[];
+      final f = await HubFixture.start(
+        configure: (c) =>
+            HubConfig(port: 0, host: InternetAddress.loopbackIPv4, mdns: false, log: HubLog(level: LogLevel.warn, sink: logged.add)),
+      );
       addTearDown(f.stop);
       final socket = await Socket.connect('127.0.0.1', f.hub.port);
       addTearDown(socket.destroy);
@@ -120,9 +124,8 @@ void main() {
       await eventually(() => utf8.decode(received, allowMalformed: true).contains('\r\n\r\n'));
       expect(utf8.decode(received, allowMalformed: true), startsWith('HTTP/1.1 101'));
       socket.add([...frameHeader(1 << 30), ...List.filled(1000, 7)]);
-      final watch = Stopwatch()..start();
+      await eventually(() => logged.any((l) => l.contains('over the size limit')), timeout: const Duration(seconds: 5));
       await closed.future.timeout(const Duration(seconds: 12));
-      expect(watch.elapsed, lessThan(const Duration(seconds: 12)), reason: 'well before the 20 s handshake timeout');
     });
   });
 
