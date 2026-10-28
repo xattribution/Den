@@ -107,6 +107,26 @@ PushAvailability pushAvailability(WebAppInfo info) {
   return PushAvailability.ready;
 }
 
+/// What [WebApp.paste] found on the clipboard.
+class WebPaste {
+  const WebPaste.text(String this.text)
+      : bytes = null,
+        type = null;
+  const WebPaste.image(List<int> this.bytes, String this.type) : text = null;
+  const WebPaste.none()
+      : text = null,
+        bytes = null,
+        type = null;
+
+  final String? text;
+  final List<int>? bytes;
+
+  /// The image's media type, such as `image/png`.
+  final String? type;
+
+  bool get isEmpty => text == null && bytes == null;
+}
+
 /// What happened to text handed to the share sheet.
 enum ShareOutcome { shared, copied, cancelled, failed }
 
@@ -207,6 +227,23 @@ abstract final class WebApp {
 
   /// Routes from tapped notifications, including ones tapped before the app listened.
   static void listen(void Function(String route) onOpen) => impl.listen(onOpen);
+
+  /// What's on the clipboard: an image, text, or nothing Den can read (or the browser said no).
+  /// Call it straight from a tap.
+  static Future<WebPaste> paste() async {
+    try {
+      final json = jsonDecode(await impl.paste());
+      if (json is Map) {
+        if (json['kind'] == 'image' && json['data'] is String) {
+          return WebPaste.image(base64Decode(json['data'] as String), json['type'] as String? ?? 'image/png');
+        }
+        if (json['kind'] == 'text' && json['text'] is String) return WebPaste.text(json['text'] as String);
+      }
+    } on Object {
+      // Nothing readable.
+    }
+    return const WebPaste.none();
+  }
 
   /// The safe areas (top, right, bottom, left) in logical pixels.
   static List<double> insets() => impl.insets();

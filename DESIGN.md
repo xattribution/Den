@@ -407,9 +407,22 @@ action's `ActionResult.receipt` is what Undo takes back.
 
 ## Screens (phone)
 
-- **Today**: the date and "Good morning", the person's avatar at the right; Needs you; Today's
-  events (time column, title, who, faces); Chores by kid (face, chips); Groceries with the add
-  bar. On iPad the same in two columns.
+- **Today**: the date and the greeting for the time of day, the person's face at the right
+  (it opens Family, Points, History and Settings); Needs you, for whoever may settle each thing
+  (rides in the next 48 hours, reward requests while points are on, late chores from today and
+  yesterday, devices and AI connections asking to join, lists due), one action each, which
+  turns into what it did with Undo in place; Today's events (time column, title, who and
+  whether anyone is driving, faces); from 5 PM, Tomorrow too; Chores by person (face, pills; a
+  pill's name opens its steps, Give to… and Details in place); Groceries with the add bar. With
+  room for two columns (an iPad in landscape, beside the sidebar), Needs you and the events on
+  the left, chores as rows and groceries on the right. Every part draws its empty state with
+  the way to start, and Today says when the device can't reach the hub.
+- **Add** (one sheet from the tab bar, the sidebar or ⌘N): type or say anything; Den's own
+  reader shows what it found as you type, with When, Who and Repeats chips to adjust, and one
+  button that says where it goes ("Add to calendar", "Add to Groceries"). What was added stays
+  in the sheet with Undo, and Undo brings the words back. Photo of a flyer (a phone's camera),
+  a photo or PDF, and on the web Paste (text, or a screenshot) go to the review page. "Or add
+  one thing" offers Event, Chore and Grocery item, each only to someone who may.
 - **Calendar**: the month as the title and a Today button; a week strip in a card (selected day
   in ink, people's dots); person filters; the day's events as solid blocks by time; on iPad the
   family week (a column per person, a row per day, everyone's events across the row).

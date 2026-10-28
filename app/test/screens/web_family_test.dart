@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:den_app/platform/sync/hub_push.dart';
 import 'package:den_app/platform/sync/pairing.dart';
+import 'package:den_app/design/widgets.dart' show ActionRow;
 import 'package:den_app/features/family/widgets/device_parts.dart';
 import 'package:den_app/features/settings/screens/web_reminders.dart';
 import 'package:den_app/features/today/screens/today_screen.dart';
@@ -54,16 +55,21 @@ void main() {
       await state.den.ingest(d.changesSince(const {}));
       return d;
     });
-    await pumpScreen(tester, const TodayScreen(), state: state);
-    expect(find.text("${zoe.name}'s iPhone wants to join as ${zoe.name}"), findsOneWidget);
+    await pumpScreen(tester, const TodayScreen(), state: state, size: const Size(390, 1400));
+    final ask = findWords("${zoe.name}'s iPhone wants to join as ${zoe.name}");
+    expect(ask, findsOneWidget);
     await matchShot('today_join_request_phone');
-    await tester.tap(find.text("Approve ${zoe.name}'s iPhone"));
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
+    final row = find.ancestor(of: ask, matching: find.byType(ActionRow));
+    await tester.runAsync(() async {
+      await tester.tap(find.descendant(of: row, matching: find.text('Approve')));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
     await tester.pumpAndSettle();
     final device = state.den.device(asking.deviceId)!;
     expect(device.approved, isTrue);
     expect(device.member, zoe.id);
     expect(find.textContaining('wants to join'), findsNothing);
+    expect(findWords("${zoe.name}'s iPhone joined as ${zoe.name}"), findsOneWidget, reason: 'the row says what it did, in place');
   });
 
   testWidgets('An invite by message: the words, Send and Copy', (tester) async {

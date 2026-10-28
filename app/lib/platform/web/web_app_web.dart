@@ -15,6 +15,7 @@ extension type _DenWeb._(JSObject _) implements JSObject {
   external JSPromise<JSAny?> unsubscribe();
   external JSPromise<JSString> share(String text);
   external JSPromise<JSString> copy(String text);
+  external JSPromise<JSString> paste();
   external void listen(JSFunction onOpen);
   external String insets();
   external void reload();
@@ -77,6 +78,16 @@ Future<String> copy(String text) {
   if (web == null) return Future.value('failed');
   final pending = web.copy(text).toDart;
   return pending.then((outcome) => outcome.toDart);
+}
+
+Future<String> paste() async {
+  final web = _denWeb;
+  if (web == null) return '{"kind":"none"}';
+  try {
+    return (await web.paste().toDart).toDart;
+  } on Object {
+    return '{"kind":"none"}';
+  }
 }
 
 void listen(void Function(String route) onOpen) {
