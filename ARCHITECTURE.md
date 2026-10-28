@@ -106,7 +106,9 @@ A new device writes its own `device` record with `approved: false` (its join req
 itself, with no actor, and with a `pubkey` that hashes to its id. While it waits it may only
 rename itself or withdraw. It becomes approved only when a change setting `approved: true` is
 signed by an already approved, non-shared device whose actor is a parent; the approval also pins
-the device's `mode` and `member`. **A device can never approve itself**: a change approving device
+the device's `mode` and `member`. An approved device's `member` never changes while it stays
+approved: what it holds follows its owner, so a device handed to someone else is removed (revoked,
+which rotates the keys of what it held) and added again. **A device can never approve itself**: a change approving device
 X signed by device X is invalid (Sett's self-approval bug, closed by construction), and no device
 may change its own `approved`, `approvedBy` or `member`, or un-revoke itself. A device may revoke
 itself. A parent acting on their own approved device (its owner, or a parent who verified on it)
@@ -152,7 +154,10 @@ client doesn't know draws nothing.
 
 Removing a record sets `_deleted`; restoring it sets `_deleted` back to false, so undo is exact:
 removing an event, chore or list leaves its exceptions, completions or items in place, unseen
-while it's gone and back with it.
+while it's gone and back with it. Undo after removing one occurrence lifts its cancellation, and
+after removing "this and following" it puts the repeat rule back and restores the changed
+occurrences removed with it, in one commit (`Den.restoreEvent`); several items come back in one
+commit too (`Den.restoreAll`).
 
 | Type | Space | Fields |
 | --- | --- | --- |
@@ -235,7 +240,15 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
   last one may complete the chore); they swap only their own chores and name only themselves as
   `doneBy`, step checker or reward requester. A redemption is created `requested`, or `approved`
   when its reward needs no approval; only points managers decide it.
-- Members may change their own `signIn`. The family always keeps at least one parent.
+- Nobody gives or takes their own points or decides their own reward request (a points manager
+  asking for themselves waits for someone else like anyone). Balances can't be checked here, since
+  they derive from completions in spaces a replica may not hold, so `Den` checks them: a request
+  is refused when the balance less the requester's requests still waiting is short, and approving
+  one is refused when the balance no longer covers it.
+- Members may change their own `signIn`. The family always keeps at least one parent. On a shared
+  display a parent with no PIN or pattern never verifies (`Den.verifySignIn`), so once a family
+  has a shared display its parents need one to act there; the app asks for one when a parent
+  makes a device a shared display.
 
 ## Network
 

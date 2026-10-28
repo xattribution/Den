@@ -238,12 +238,13 @@ class Den {
     _emit({actingChanged});
   }
 
-  /// Checks a PIN or picture pattern against the member's sign-in for shared screens.
+  /// Checks a PIN or picture pattern against the member's sign-in for shared screens. A parent
+  /// with no sign-in never verifies on a shared display: anyone there could act as them.
   Future<bool> verifySignIn(String memberId, String secret) async {
     final m = member(memberId);
     if (m == null) return false;
     final signIn = m.signIn;
-    if (signIn.kind == 'none') return true;
+    if (signIn.kind == 'none') return !(m.isParent && thisDevice?.mode == DeviceMode.shared);
     if (signIn.salt == null || signIn.hash == null) return false;
     if (!signInSecretValid(signIn.kind, secret)) return false;
     return verifySignInHash(secret, signIn.salt!, signIn.hash!);
@@ -455,7 +456,11 @@ class Den {
   Future<void> updateFamily(Map<String, Object?> patch) async {
     final id = familyId;
     if (id == null || family == null) throw const InvalidInput('There is no family yet');
-    final fields = _cleanPatch(patch, {'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'oversight'});
+    final fields = _cleanPatch(patch, {
+      'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'oversight',
+      // One person's entry, `oversight.<memberId>`, so parents changing different people merge.
+      for (final k in patch.keys) if (k.startsWith('oversight.')) k,
+    });
     final tz = fields['timezone'];
     if (tz is String && !isKnownZone(tz)) throw InvalidInput('Den doesn\'t know the time zone "$tz"');
     await _commit([_Draft(RecordType.family, id, Space.family, fields)]);
@@ -608,11 +613,17 @@ class Den {
   /// Undoes a removal: the record comes back exactly as it was, with whatever belonged to it (an
   /// event's changed occurrences, a list's items, a chore's completions). Needs the same
   /// permission as editing it.
-  Future<void> restore(String type, String id) async {
-    final e = _mat.store.find(type, id);
-    if (e == null || !readableSpaces.contains(e.space)) throw const InvalidInput('That doesn\'t exist');
-    if (!e.deleted) return;
-    await _commit([_Draft(type, id, e.space, {'_deleted': false})]);
+  Future<void> restore(String type, String id) => restoreAll(type, [id]);
+
+  /// [restore] for several records of one type, in one commit: the items "Clear done" removed.
+  Future<void> restoreAll(String type, Iterable<String> ids) async {
+    final drafts = <_Draft>[];
+    for (final id in ids) {
+      final e = _mat.store.find(type, id);
+      if (e == null || !readableSpaces.contains(e.space)) throw const InvalidInput('That doesn\'t exist');
+      if (e.deleted) drafts.add(_Draft(type, id, e.space, {'_deleted': false}));
+    }
+    await _commit(drafts);
   }
 
   // ---------------------------------------------------------------- calendar
@@ -857,6 +868,44 @@ class Den {
     ]);
   }
 
+  /// Undoes [deleteEvent] with the same [scope] and [occurrence], in one commit: the event with
+  /// its changed occurrences, the one occurrence, or every occurrence from [occurrence] on, where
+  /// [rrule] is the repeat rule the series had before.
+  Future<void> restoreEvent(String id, {EditScope scope = EditScope.all, int? occurrence, String? rrule}) async {
+    final entry = _mat.store.find(RecordType.event, id);
+    if (entry == null || !readableSpaces.contains(entry.space)) throw const InvalidInput('That event doesn\'t exist');
+    if (entry.deleted || scope == EditScope.all) {
+      await restore(RecordType.event, id);
+      return;
+    }
+    if (occurrence == null) throw const InvalidInput('Choose which occurrence to put back');
+    final exceptions = [
+      for (final x in _mat.store.ofType(RecordType.eventException))
+        if (x.space == entry.space && x.fields['event'] == id) x,
+    ];
+    if (scope == EditScope.one) {
+      final x = exceptions.firstWhereOrNull((x) => x.id == '$id@$occurrence' && !x.deleted);
+      if (x == null || x.fields['cancelled'] != true) return;
+      await _commit([_Draft(RecordType.eventException, x.id, entry.space, {'cancelled': false})]);
+      return;
+    }
+    if (rrule == null) throw const InvalidInput('Choose how the event repeated');
+    // The changed occurrences removed with the series' end: removed no earlier than its rule changed.
+    final from = occurrence;
+    final cut = entry.times['rrule'];
+    bool removedWithEnd(Entry x) {
+      final at = x.times['_deleted'];
+      final when = x.fields['occurrence'];
+      return x.deleted && cut != null && at != null && !(at < cut) && when is int && when >= from;
+    }
+
+    await _commit([
+      _Draft(RecordType.event, id, entry.space, {'rrule': _normalizeRule(rrule)}),
+      for (final x in exceptions)
+        if (removedWithEnd(x)) _Draft(RecordType.eventException, x.id, entry.space, {'_deleted': false}),
+    ]);
+  }
+
   /// Sets the driver of a ride leg for one occurrence (null releases it).
   Future<void> claimRide(String eventId, {required int occurrence, required String leg, String? driver}) async {
     if (leg != 'to' && leg != 'from') throw const InvalidInput('A ride leg is "to" or "from"');
@@ -940,6 +989,22 @@ class Den {
       final t = a.chore.title.compareTo(b.chore.title);
       return t != 0 ? t : a.chore.id.compareTo(b.chore.id);
     });
+    return out;
+  }
+
+  /// Chores not done by their day, oldest first: every chore on the chart in the [days] days
+  /// before today that wasn't done (a repeating one too, which [choresOn] doesn't carry over),
+  /// one-off chores until they're done, and today's chores past their due time.
+  List<ChoreDay> lateChores({int days = 2}) {
+    final today = todayDate();
+    final seen = <String>{};
+    final out = <ChoreDay>[];
+    for (var i = days; i >= 0; i--) {
+      for (final cd in choresOn(addDays(today, -i))) {
+        if (cd.late && seen.add('${cd.chore.id}@${cd.date}')) out.add(cd);
+      }
+    }
+    mergeSort(out, compare: (a, b) => a.date.compareTo(b.date));
     return out;
   }
 
@@ -1434,15 +1499,19 @@ class Den {
   }
 
   /// Asks to spend points on a reward for [member] (default: the actor). Rewards that don't
-  /// need approval are approved at once. Refused when the balance is short.
+  /// need approval are approved at once. Refused when the balance, less what requests still
+  /// waiting for a parent would spend, is short.
   Future<String> requestReward(String rewardId, {String? member}) async {
     final rewardEntry = _requireLive(RecordType.reward, rewardId, 'That reward doesn\'t exist');
     final reward = Reward(rewardEntry.rec);
     final who = member ?? actor?.id;
     if (who == null || this.member(who) == null) throw const InvalidInput('Choose who the reward is for');
-    final balance = points().totals[who] ?? 0;
-    if (balance < reward.cost) {
-      throw InvalidInput('${this.member(who)!.name} needs ${reward.cost - balance} more stars for ${reward.title}');
+    final summary = points();
+    final available = summary.available(who);
+    if (available < reward.cost) {
+      final waiting = (summary.totals[who] ?? 0) - available;
+      throw InvalidInput('${this.member(who)!.name} needs ${reward.cost - available} more stars for ${reward.title}'
+          '${waiting > 0 ? ', since $waiting are waiting on a request' : ''}');
     }
     final id = newId();
     await _commit([
@@ -1457,8 +1526,14 @@ class Den {
     return id;
   }
 
+  /// Approving is refused when the balance no longer covers the request, so approving several
+  /// requests made at once can't overdraw it.
   Future<void> decideRedemption(String id, {required bool approve}) async {
-    _requireLive(RecordType.redemption, id, 'That request doesn\'t exist');
+    final r = Redemption(_requireLive(RecordType.redemption, id, 'That request doesn\'t exist').rec);
+    final balance = points().totals[r.member] ?? 0;
+    if (approve && r.status == RedemptionStatus.requested && balance < r.cost) {
+      throw InvalidInput('${member(r.member)?.name ?? 'They'} has $balance stars, not the ${r.cost} this costs');
+    }
     await _commit([
       _Draft(RecordType.redemption, id, Space.family, {
         'status': approve ? RedemptionStatus.approved.name : RedemptionStatus.declined.name,
@@ -1830,18 +1905,17 @@ class Den {
         final message = r.leg == 'from'
             ? (who.isEmpty ? 'Nobody is picking up from ${o.title}' : 'Nobody is picking up $who from ${o.title}')
             : (who.isEmpty ? 'Nobody is driving to ${o.title}' : 'Nobody is driving $who to ${o.title}');
-        out.add(Gap(kind: GapKind.noDriver, message: message, occurrences: [o], members: o.assignees));
+        out.add(Gap(kind: GapKind.noDriver, message: message, occurrences: [o], members: o.assignees, leg: r.leg));
       }
     }
+    // Only people named on both events: an event for everyone would flag nearly everything.
     final everyoneIds = [for (final m in members) m.id];
-    final timed = occ.where((o) => !o.allDay && o.end > o.start).toList();
+    final timed = occ.where((o) => !o.allDay && o.end > o.start && o.assignees.isNotEmpty).toList();
     for (var i = 0; i < timed.length; i++) {
       for (var j = i + 1; j < timed.length; j++) {
         final a = timed[i], b = timed[j];
         if (!(a.start < b.end && b.start < a.end)) continue;
-        final pa = a.assignees.isEmpty ? everyoneIds : a.assignees;
-        final pb = b.assignees.isEmpty ? everyoneIds : b.assignees;
-        final both = [for (final id in everyoneIds) if (pa.contains(id) && pb.contains(id)) id];
+        final both = [for (final id in everyoneIds) if (a.assignees.contains(id) && b.assignees.contains(id)) id];
         if (both.isEmpty) continue;
         out.add(Gap(
           kind: GapKind.overlap,

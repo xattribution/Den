@@ -12,6 +12,7 @@ import '../../state/app_state.dart';
 import 'device_parts.dart';
 
 /// One device: its name, whose it is, a shared display's layout and open check-off, and Revoke.
+/// Whose it is doesn't change; giving it to someone else means revoking it and adding it again.
 class DeviceScreen extends StatefulWidget {
   const DeviceScreen({super.key, required this.deviceId});
   final String deviceId;
@@ -30,14 +31,17 @@ class _DeviceScreenState extends State<DeviceScreen> {
     super.didChangeDependencies();
     if (_ready) return;
     _ready = true;
-    _name.text = context.den.device(widget.deviceId)?.name ?? '';
+    _name.text = DenScope.read(context).den.device(widget.deviceId)?.name ?? '';
     _focus.addListener(() {
       if (!_focus.hasFocus) _saveName();
     });
   }
 
+  /// Also runs when the field loses focus, which can happen as the page closes: it reads the
+  /// engine without depending on it, and only while this page is still here.
   void _saveName() {
-    final den = context.den;
+    if (!mounted) return;
+    final den = DenScope.read(context).den;
     final name = _name.text.trim();
     if (name.isEmpty || name == den.device(widget.deviceId)?.name) return;
     attempt(context, () => den.updateDevice(widget.deviceId, {'name': name}));
@@ -48,15 +52,6 @@ class _DeviceScreenState extends State<DeviceScreen> {
     _name.dispose();
     _focus.dispose();
     super.dispose();
-  }
-
-  Future<void> _changeOwner(Device device) async {
-    final owner = await showWhoseDeviceSheet(context, device.name);
-    if (owner == null || !mounted) return;
-    await attempt(
-      context,
-      () => context.den.updateDevice(device.id, {'member': owner.member, 'mode': owner.mode.name}),
-    );
   }
 
   void _display(Device device, Map<String, Object?> change) {
@@ -114,10 +109,9 @@ class _DeviceScreenState extends State<DeviceScreen> {
                   FamilyWords.deviceIcon(device.mode == DeviceMode.hub ? DeviceKind.hub : DeviceKind.display),
                   color: c.ink2,
                 ),
+          // A device stays with whoever it was approved for, since it keeps what it already
+          // holds: to give it to someone else, revoke it and add it again.
           title: Text(owner != null ? '${FamilyWords.possessive(owner.name)} device' : FamilyWords.mode(device.mode)),
-          trailing: manage && !isThis
-              ? TextButton(onPressed: () => _changeOwner(device), child: const Text('Change'))
-              : null,
         ),
         if (shared) ...[
           const SectionHeader('Wall display'),
@@ -129,7 +123,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Segmented<DisplayLayout>(
-                  options: {for (final l in DisplayLayout.values) l: FamilyWords.layout(l)},
+                  options: {for (final l in wallLayouts) l: FamilyWords.layout(l)},
                   value: wallLayoutOf(device),
                   onChanged: manage ? (l) => _display(device, {'layout': l.name}) : (_) {},
                 ),

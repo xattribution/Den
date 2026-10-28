@@ -2,6 +2,7 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 
 import '../tokens.dart';
+import '../widgets.dart';
 
 /// Asks how far a change to a repeating event reaches: "Just this one", "This and following",
 /// "All events". Returns null when the person backs out. [title] names the action and the
@@ -62,7 +63,8 @@ void showUndoOn(ScaffoldMessengerState messenger, String message, VoidCallback o
   );
 }
 
-/// The person-facing reason a write failed, or null when it succeeded.
+/// The person-facing reason a write failed, or null when it succeeded. A failure with no reason
+/// written for people (storage, say) still comes back as words, never as an error.
 Future<String?> tryWrite(Future<void> Function() write) async {
   try {
     await write();
@@ -71,5 +73,8 @@ Future<String?> tryWrite(Future<void> Function() write) async {
     return e.message;
   } on InvalidInput catch (e) {
     return e.message;
+  } on Object catch (e, stack) {
+    debugPrint('A write failed: $e\n$stack');
+    return writeFailedMessage;
   }
 }

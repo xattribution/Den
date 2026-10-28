@@ -66,7 +66,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.didChangeDependencies();
     if (_ready) return;
     _ready = true;
-    _deviceName.text = context.den.thisDevice?.name ?? '';
+    _deviceName.text = DenScope.read(context).den.thisDevice?.name ?? '';
   }
 
   @override
@@ -76,8 +76,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  /// Also runs when the field loses focus, which can happen as the page closes: it reads the
+  /// engine without depending on it, and only while this page is still here.
   void _saveDeviceName() {
-    final den = context.den;
+    if (!mounted) return;
+    final den = DenScope.read(context).den;
     final device = den.thisDevice;
     final name = _deviceName.text.trim();
     if (device == null || name.isEmpty || name == device.name) return;
@@ -224,11 +227,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     leading: Icon(PhosphorIconsRegular.fileArrowDown, color: c.ink2),
                     title: const Text('Everything as JSON'),
                     trailing: OutlinedButton(onPressed: () => exportFamilyJson(context), child: const Text('Export')),
-                  ),
-                  ListTile(
-                    leading: Icon(PhosphorIconsRegular.lock, color: c.ink3),
-                    title: Text('Encrypted backup', style: context.type.body(c.ink2)),
-                    subtitle: const Text('Arrives with the hub'),
                   ),
                 ],
                 const SectionHeader('About'),

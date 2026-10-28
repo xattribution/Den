@@ -49,8 +49,9 @@ class BoardChoreRow extends StatelessWidget {
 
     final dueText = due == null || day.done ? null : Text('by $due', style: context.type.meta(c.ink2));
 
+    final swapLabel = day.date == app.today ? 'Swap for today' : 'Swap for ${app.formats.short(day.date)}';
     return Semantics(
-      customSemanticsActions: onSwap == null ? null : {const CustomSemanticsAction(label: 'Swap for today'): onSwap!},
+      customSemanticsActions: onSwap == null ? null : {CustomSemanticsAction(label: swapLabel): onSwap!},
       child: InkWell(
         onTap: () => context.push('/chore/${chore.id}?date=${day.date}'),
         onLongPress: onSwap,

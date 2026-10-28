@@ -148,6 +148,7 @@ void main() {
       await den.decideRedemption(request, approve: false);
       expect(den.points().totals[leo], 40);
       expect(den.history().first.verb, 'declined');
+      await sync(den, tablet);
       final second = await tablet.requestReward(money);
       await sync(tablet, den);
       await den.decideRedemption(second, approve: true);
@@ -171,9 +172,39 @@ void main() {
       );
       await expectLater(
         tablet.requestReward(money),
-        completes,
-        reason: 'pending requests don\'t spend points yet',
+        throwsA(isA<InvalidInput>()),
+        reason: 'a request waiting for a parent counts against what Leo can spend',
       );
+      await expectLater(tablet.requestReward(bedtime), throwsA(isA<InvalidInput>()));
+      expect(tablet.points().available(leo), 10);
+      expect(tablet.points().totals[leo], 40);
+    });
+
+    test('approving can\'t overdraw a balance, however many requests were made at once', () async {
+      final laptop = await joinDevice(den, clock, member: leo, name: 'Leo laptop');
+      final first = await tablet.requestReward(money);
+      final second = await laptop.requestReward(money);
+      await sync(tablet, den);
+      await sync(laptop, den);
+      expect(den.points().pending.map((r) => r.id), unorderedEquals([first, second]));
+      await den.decideRedemption(first, approve: true);
+      await expectLater(den.decideRedemption(second, approve: true), throwsA(isA<InvalidInput>()));
+      await den.decideRedemption(second, approve: false);
+      expect(den.points().totals[leo], 10);
+    });
+
+    test('nobody gives themselves points or approves their own reward', () async {
+      await den.updateMember(leo, {'grants': [Grant.points]});
+      await sync(den, tablet);
+      await expectLater(tablet.adjustPoints(leo, 50, 'Because'), throwsA(isA<PermissionDenied>()));
+      await tablet.adjustPoints(maya, 2, 'Helped me');
+      final request = await tablet.requestReward(money);
+      expect(tablet.points().pending.single.id, request, reason: 'a points manager still asks');
+      await expectLater(tablet.decideRedemption(request, approve: true), throwsA(isA<PermissionDenied>()));
+      await sync(tablet, den);
+      await expectLater(den.adjustPoints(den.actor!.id, 5, 'Me'), throwsA(isA<PermissionDenied>()));
+      await den.decideRedemption(request, approve: true);
+      expect(den.points().totals[leo], 10);
     });
   });
 }

@@ -40,6 +40,16 @@ class Formats {
     return DateFormat('yyyy-MM-dd').format(tz.TZDateTime(location, d.year, d.month, d.day + days));
   }
 
+  /// [date] moved by whole calendar months, the day kept where the month has it and otherwise
+  /// the month's last: Oct 31 back one is Sep 30, Jan 31 on one is Feb 28.
+  String addMonths(String date, int months) {
+    final p = date.split('-').map(int.parse).toList();
+    final index = p[0] * 12 + p[1] - 1 + months;
+    final year = index ~/ 12, month = index % 12 + 1;
+    final last = DateTime.utc(year, month + 1, 0).day;
+    return DateFormat('yyyy-MM-dd').format(DateTime.utc(year, month, p[2] > last ? last : p[2]));
+  }
+
   /// "Fri, Oct 17"
   String short(String date) => DateFormat('EEE, MMM d').format(dateTime(date));
 

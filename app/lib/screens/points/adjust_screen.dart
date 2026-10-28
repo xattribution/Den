@@ -75,9 +75,10 @@ class _AdjustScreenState extends State<AdjustScreen> {
         body: const EmptyLine(message: 'Giving and taking points is for parents.'),
       );
     }
+    // Nobody gives or takes their own points.
     final people = [
-      ...den.members.where((m) => m.isKid),
-      ...den.members.where((m) => !m.isKid && m.role != Role.guest),
+      ...den.members.where((m) => m.isKid && m.id != app.me?.id),
+      ...den.members.where((m) => !m.isKid && m.role != Role.guest && m.id != app.me?.id),
     ];
     final who = app.memberById(_member)?.name;
     final noun = _amount == 1 ? 'point' : 'points';

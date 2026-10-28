@@ -7,6 +7,7 @@ import '../../design/pictograms.dart';
 import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
+import '../events/event_words.dart';
 
 /// The first screen for every adult: what's happening today and who's doing what.
 class TodayScreen extends StatelessWidget {
@@ -20,12 +21,13 @@ class TodayScreen extends StatelessWidget {
     final f = app.formats;
     final c = context.colors;
 
+    // Each gap shows once, under the last of its events: two that overlap warn under the second.
     final gapsByEvent = <String, List<Gap>>{};
     for (final gap in view.gaps) {
-      for (final occ in gap.occurrences) {
-        gapsByEvent.putIfAbsent('${occ.event.id}@${occ.start}', () => []).add(gap);
-      }
+      final occ = gap.occurrences.lastOrNull;
+      if (occ != null) gapsByEvent.putIfAbsent('${occ.event.id}@${occ.start}', () => []).add(gap);
     }
+    final takeRides = canTakeRide(app);
     final looseGaps = view.gaps.where((g) => g.occurrences.isEmpty).toList();
 
     final chores = view.chores;
@@ -51,9 +53,9 @@ class TodayScreen extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(Sp.l + 76 + Sp.m, 0, Sp.s, Sp.xs),
                 child: AttentionLine(
                   message: gap.message,
-                  action: gap.kind == GapKind.noDriver && app.me != null
+                  action: gap.kind == GapKind.noDriver && takeRides && !occ.event.source.readOnly
                       ? TextButton(
-                          onPressed: () => _takeRide(context, occ),
+                          onPressed: () => _takeRide(context, occ, gap),
                           child: const Text('Take it'),
                         )
                       : null,
@@ -109,11 +111,11 @@ class TodayScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _takeRide(BuildContext context, Occurrence occ) async {
-    final den = context.den;
-    final me = context.app.me;
-    final open = occ.event.rides.firstWhere((r) => r.driver == null, orElse: () => const Ride('to', null));
-    await attempt(context, () => den.claimRide(occ.event.id, occurrence: occ.seriesStart, leg: open.leg, driver: me?.id));
+  /// Takes the leg this gap is about, for this occurrence.
+  Future<void> _takeRide(BuildContext context, Occurrence occ, Gap gap) async {
+    final app = DenScope.read(context);
+    final leg = gap.leg ?? occ.rides.firstWhere((r) => r.driver == null, orElse: () => const Ride('to', null)).leg;
+    await attempt(context, () => app.den.claimRide(occ.event.id, occurrence: occ.seriesStart, leg: leg, driver: app.me?.id));
   }
 
   List<Widget> _choreGroups(BuildContext context, List<ChoreDay> chores) {
@@ -235,6 +237,7 @@ class ChoreRow extends StatelessWidget {
     final chore = day.chore;
     final mine = day.owner == null || day.owner == app.me?.id;
     final canCheck = app.allows(mine ? DenAction.completeOwnChore : DenAction.completeAnyChore);
+    final pointsOn = app.den.family?.pointsEnabled ?? true;
     final titleStyle = context.type.body(day.done ? c.ink2 : c.ink).copyWith(
           decoration: day.done ? TextDecoration.lineThrough : null,
           decorationColor: c.ink2,
@@ -262,7 +265,7 @@ class ChoreRow extends StatelessWidget {
               Text('Late', style: context.type.meta(c.bad)),
               const SizedBox(width: Sp.s),
             ],
-            if (day.pointsAvailable > 0) StarCount(day.pointsAvailable),
+            if (pointsOn && day.pointsAvailable > 0) StarCount(day.pointsAvailable),
           ],
         ),
       ),

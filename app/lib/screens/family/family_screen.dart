@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../design/parts/family_frame.dart';
 import '../../design/parts/family_pickers.dart';
 import '../../design/parts/family_words.dart';
 import '../../design/tokens.dart';
@@ -84,34 +83,6 @@ List<Widget> _devicesSection(BuildContext context) => [
   ...deviceGroups(context),
 ];
 
-/// Devices on their own, for links from Settings: approvals, then devices by person.
-class DevicesScreen extends StatelessWidget {
-  const DevicesScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final manage = context.app.allows(DenAction.manageFamily);
-    return Scaffold(
-      appBar: pageBar(context, 'Devices', maxWidth: 720),
-      body: SafeArea(
-        top: false,
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: ListView(
-              padding: const EdgeInsets.only(bottom: Sp.xxxl),
-              children: manage
-                  ? [const PendingApprovals(), ..._devicesSection(context)]
-                  : [const EmptyLine(message: 'Only parents can manage devices.')],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _MemberRow extends StatelessWidget {
   const _MemberRow(this.member, {required this.manage});
   final Member member;
@@ -132,7 +103,7 @@ class _MemberRow extends StatelessWidget {
   }
 }
 
-/// The family's name, time zone and first day of the week.
+/// The family's name, time zone, first day of the week, and whether it uses points.
 class _FamilySettings extends StatefulWidget {
   const _FamilySettings();
 
@@ -141,7 +112,7 @@ class _FamilySettings extends StatefulWidget {
 }
 
 class _FamilySettingsState extends State<_FamilySettings> {
-  late final TextEditingController _name = TextEditingController(text: context.den.family?.name ?? '');
+  late final TextEditingController _name = TextEditingController(text: DenScope.read(context).den.family?.name ?? '');
   final _focus = FocusNode();
 
   @override
@@ -152,8 +123,11 @@ class _FamilySettingsState extends State<_FamilySettings> {
     });
   }
 
+  /// Also runs when the field loses focus, which can happen as the page closes: it reads the
+  /// engine without depending on it, and only while this page is still here.
   void _saveName() {
-    final den = context.den;
+    if (!mounted) return;
+    final den = DenScope.read(context).den;
     final name = _name.text.trim();
     if (name.isEmpty || name == den.family?.name) return;
     attempt(context, () => den.updateFamily({'name': name}));
@@ -204,6 +178,12 @@ class _FamilySettingsState extends State<_FamilySettings> {
               onChanged: (v) => attempt(context, () => den.updateFamily({'weekStart': v})),
             ),
           ),
+        ),
+        const SizedBox(height: Sp.s),
+        SwitchListTile(
+          title: const Text('Points and rewards'),
+          value: family.pointsEnabled,
+          onChanged: (v) => attempt(context, () => den.updateFamily({'pointsEnabled': v})),
         ),
       ],
     );

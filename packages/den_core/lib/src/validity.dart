@@ -283,6 +283,7 @@ class Validator {
           return _schema('That person isn\'t in the family');
         }
         if (c.fields['by'] != c.actor) return _schema('An adjustment must name who made it');
+        if (member == c.actor) return _deny('${x.who} can\'t give or take their own points');
         return x.has(DenAction.managePoints) ? null : _deny('${x.who} can\'t give or take points');
       case RecordType.goal:
       case RecordType.reward:
@@ -331,6 +332,11 @@ class Validator {
     final owner = c.fields.containsKey('member') ? c.fields['member'] : target.member;
     if (c.fields.containsKey('mode') && mode == DeviceMode.personal.name && owner == null) {
       return _schema('A personal device needs an owner');
+    }
+    // What a device holds follows its owner, and changing the owner would leave the old owner's
+    // records on it: to give a device to someone else, remove it and add it again.
+    if (c.fields.containsKey('member') && target.approved && !target.revoked && owner != target.member) {
+      return _deny('A device stays with the person it was approved for. Remove it and add it again instead');
     }
     if (c.rid == c.device) {
       final f = c.fields;
@@ -435,6 +441,9 @@ class Validator {
       if (status == RedemptionStatus.approved.name && reward.needsApproval && !manager) {
         return _deny('A parent needs to approve that reward');
       }
+      if (forSelf && reward.needsApproval && status != RedemptionStatus.requested.name) {
+        return _deny('Someone else needs to approve ${x.who}\'s reward');
+      }
       if (c.fields['decidedBy'] != null && c.fields['decidedBy'] != c.actor) {
         return _schema('A decision must name who made it');
       }
@@ -444,6 +453,9 @@ class Validator {
       return _schema('A reward request can only be approved or declined');
     }
     if (!x.has(DenAction.managePoints)) return _deny('${x.who} can\'t approve rewards');
+    if (c.actor != null && x.existing!.fields['member'] == c.actor) {
+      return _deny('Someone else needs to approve ${x.who}\'s reward');
+    }
     if (c.fields['decidedBy'] != null && c.fields['decidedBy'] != c.actor) {
       return _schema('A decision must name who made it');
     }

@@ -64,12 +64,9 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
     return items;
   }
 
-  bool _canChange(AppState app, Item item) =>
-      app.allows(DenAction.editLists) || (app.me != null && item.rec.createdBy == app.me!.id);
-
   Future<void> _remove(ListState lv, Item item) async {
     final den = context.den;
-    final before = [...lv.items];
+    final keep = Navigator.of(context, rootNavigator: true).context;
     setState(() => _hidden.add(item.id));
     final ok = await attempt(context, () => den.removeItem(item.id));
     if (!mounted) return;
@@ -77,21 +74,24 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
       setState(() => _hidden.remove(item.id));
       return;
     }
-    showUndo(context, '${item.text} removed', () {
-      attempt(context, () => restoreItems(den, lv.list.id, before, [item]));
-    });
+    showUndo(context, '${item.text} removed', () => _restore(keep, den, [item.id]));
   }
 
   Future<void> _clearDone(ListState lv) async {
     final den = context.den;
-    final before = [...lv.items];
-    final done = before.where((i) => i.checked).toList();
+    final keep = Navigator.of(context, rootNavigator: true).context;
+    final done = [for (final i in lv.items) if (i.checked) i.id];
     var count = 0;
     final ok = await attempt(context, () async => count = await den.clearChecked(lv.list.id));
     if (!ok || !mounted) return;
-    showUndo(context, 'Cleared $count done ${count == 1 ? 'item' : 'items'}', () {
-      attempt(context, () => restoreItems(den, lv.list.id, before, done));
-    });
+    showUndo(context, 'Cleared $count done ${count == 1 ? 'item' : 'items'}', () => _restore(keep, den, done));
+  }
+
+  /// Undo: the same items come back where they were, checked or not, in one change. [keep]
+  /// outlives this page, since Undo can be tapped after leaving it.
+  void _restore(BuildContext keep, Den den, List<String> ids) {
+    if (mounted) setState(() => _hidden.removeAll(ids));
+    restoreItems(keep, den, ids);
   }
 
   void _reorder(List<Item> items, int from, int to) {
@@ -135,9 +135,8 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
       );
     }
 
-    final canEdit = app.allows(DenAction.editLists);
+    final canEdit = app.canChangeItems;
     final canCheck = app.allows(DenAction.checkItems);
-    final canAdd = canCheck || canEdit;
     final items = _visibleItems(lv);
     final storeOrder = den.stores;
     final stores = items.map((i) => i.store ?? '').where((s) => s.isNotEmpty).toSet().toList()
@@ -162,8 +161,8 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
       showStore: !grouped && _store == null,
       dragIndex: dragIndex,
       canCheck: canCheck,
-      onRemove: _canChange(app, item) ? () => _remove(lv, item) : null,
-      onEdit: _canChange(app, item) ? () => _editItem(lv, item) : null,
+      onRemove: canEdit ? () => _remove(lv, item) : null,
+      onEdit: canEdit ? () => _editItem(lv, item) : null,
     );
 
     final clear = canEdit && doneCount > 0 && _store == null
@@ -280,7 +279,7 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
               ),
             ),
           ),
-          if (canAdd) ...[
+          if (canEdit) ...[
             Divider(height: 1, color: c.rule),
             FormWidth(
               max: _maxWidth,
@@ -532,7 +531,7 @@ class _GroceriesAction extends StatelessWidget {
         ),
       );
     }
-    if (!app.allows(DenAction.checkItems)) return const SizedBox.shrink();
+    if (!app.canChangeItems) return const SizedBox.shrink();
     return IconButton(
       tooltip: 'Also add to groceries',
       icon: Icon(PhosphorIconsRegular.shoppingCartSimple, size: 20, color: c.ink2),

@@ -348,7 +348,7 @@ class _Stars extends StatelessWidget {
                     ),
                     if (asked.contains(r.id))
                       Text('Asked', style: context.type.title(c.ink2))
-                    else if (total >= r.cost)
+                    else if (points.available(kid.id) >= r.cost)
                       SizedBox(
                         height: Targets.kid,
                         child: FilledButton(
@@ -357,7 +357,7 @@ class _Stars extends StatelessWidget {
                         ),
                       )
                     else
-                      Text('${r.cost - total} more', style: context.type.title(c.ink2)),
+                      Text('${r.cost - points.available(kid.id)} more', style: context.type.title(c.ink2)),
                   ],
                 ),
               ),
