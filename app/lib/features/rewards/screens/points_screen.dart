@@ -29,20 +29,13 @@ class PointsScreen extends StatefulWidget {
   State<PointsScreen> createState() => _PointsScreenState();
 }
 
-/// What a tap did, kept in its place with its Undo while the page is open.
-class _Note {
-  const _Note(this.message, this.receipt);
-  final String message;
-  final Receipt? receipt;
-}
-
 class _PointsScreenState extends State<PointsScreen> {
   int _recentShown = 10;
-  final _decided = <String, _Note>{};
-  final _asked = <String, _Note>{};
-  _Note? _given;
+  final _decided = <String, Done>{};
+  final _asked = <String, Done>{};
+  Done? _given;
 
-  Future<void> _undo(_Note note, VoidCallback forget) async {
+  Future<void> _undo(Done note, VoidCallback forget) async {
     final receipt = note.receipt;
     if (receipt == null) return;
     final result = await perform(context, () => context.actions.undo(receipt));
@@ -54,18 +47,18 @@ class _PointsScreenState extends State<PointsScreen> {
     final result = await perform(context, () => context.rewardActions.decide(r, approve: approve));
     if (result == null || !mounted) return;
     final what = reward?.title ?? 'The reward';
-    setState(() => _decided[r.id] = _Note(approve ? '$what approved for $name' : '$what declined for $name', result.receipt));
+    setState(() => _decided[r.id] = (message: approve ? '$what approved for $name' : '$what declined for $name', receipt: result.receipt));
   }
 
   Future<void> _give([String? member]) async {
     final given = await showGiveStars(context, member: member);
-    if (given != null && mounted) setState(() => _given = _Note(given.message, given.receipt));
+    if (given != null && mounted) setState(() => _given = given);
   }
 
   Future<void> _ask(Reward reward) async {
     final result = await perform(context, () => context.rewardActions.request(reward));
     if (result == null || !mounted) return;
-    setState(() => _asked[reward.id] = _Note(reward.needsApproval ? 'Asked' : 'Yours', result.receipt));
+    setState(() => _asked[reward.id] = (message: reward.needsApproval ? 'Asked' : 'Yours', receipt: result.receipt));
   }
 
   @override
@@ -325,7 +318,7 @@ class _Store extends StatelessWidget {
   /// What the person can still spend: their balance less their requests waiting for a parent.
   final int balance;
   final bool manage;
-  final Map<String, _Note> asked;
+  final Map<String, Done> asked;
   final ValueChanged<Reward> onAsk;
   final ValueChanged<String> onUndo;
 
@@ -386,7 +379,7 @@ class _RewardCard extends StatelessWidget {
   final List<Redemption> pending;
   final int balance;
   final bool manage;
-  final _Note? note;
+  final Done? note;
   final VoidCallback onAsk;
   final VoidCallback onUndo;
 

@@ -50,7 +50,7 @@ class ChoresBoard extends StatefulWidget {
 class _Note {
   const _Note(this.from, this.given);
   final String? from;
-  final Given given;
+  final Done given;
 }
 
 class _ChoresBoardState extends State<ChoresBoard> {
@@ -233,7 +233,7 @@ class _PersonSection extends StatelessWidget {
   final String date;
   final PointsSummary? points;
   final String? open;
-  final Map<String, Given> notes;
+  final Map<String, Done> notes;
   final ValueChanged<ChoreDay> onOpen;
   final VoidCallback? Function(ChoreDay) onGive;
   final void Function(String key, Receipt receipt) onUndo;

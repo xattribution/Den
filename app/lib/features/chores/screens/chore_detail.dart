@@ -30,7 +30,7 @@ class ChoreDetailScreen extends StatefulWidget {
 }
 
 class _ChoreDetailScreenState extends State<ChoreDetailScreen> {
-  Given? _given;
+  Done? _given;
 
   Future<void> _give(ChoreDay day) async {
     final given = await giveChore(context, day);
@@ -236,7 +236,7 @@ class _Header extends StatelessWidget {
 
     String? note;
     if (swapped) {
-      note = 'Given from $usualName for ${date == today ? 'today' : f.short(date)}';
+      note = 'Done from $usualName for ${date == today ? 'today' : f.short(date)}';
     } else if (chore.owner case final OwnerRotation r) {
       note = rotationWords(r, date, today, f, (id) => den.member(id)?.name ?? 'someone', weekStart: weekStart);
     }

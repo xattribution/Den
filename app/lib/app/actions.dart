@@ -6,6 +6,10 @@ import '../design/feedback.dart';
 
 export 'package:den_actions/den_actions.dart' show ActionResult, Receipt;
 
+/// What a tap did, in words ("Gave Maya 5 stars", "Removed Milk"), with the receipt Undo takes
+/// back. A screen keeps it in the place the tap happened and shows it in a DoneRow.
+typedef Done = ({String message, Receipt? receipt});
+
 /// Every change the app makes to the family goes through here. Where den_actions has an action
 /// for it, the change runs as that action, the same verb the hub's REST API, MCP and the
 /// assistant offer, so anything the app can do they can do too. What no action offers on

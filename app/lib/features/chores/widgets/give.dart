@@ -5,13 +5,10 @@ import '../../../app/app_state.dart';
 import '../../../design/widgets.dart';
 import '../state/chore_actions.dart';
 
-/// What handing a chore on did, in words ("Dishes is Leo's today"), with the receipt Undo
-/// takes back.
-typedef Given = ({String message, Receipt? receipt});
-
 /// "Give Dishes to…": the people picker, then the chore is that person's (or anyone's) for
-/// that day only. Completes with what it did, or null when nothing changed.
-Future<Given?> giveChore(BuildContext context, ChoreDay day) async {
+/// that day only. Completes with what it did ("Dishes is Leo's today"), or null when nothing
+/// changed.
+Future<Done?> giveChore(BuildContext context, ChoreDay day) async {
   final app = DenScope.read(context);
   final people = app.den.members.where((m) => m.role != Role.guest).toList();
   final pick = await showPeoplePicker(

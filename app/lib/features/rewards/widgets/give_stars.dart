@@ -10,11 +10,8 @@ import '../../../design/widgets.dart';
 import '../state/points_model.dart';
 import '../state/reward_actions.dart';
 
-/// What giving or taking stars did ("Gave Maya 5 stars"), with the receipt Undo takes back.
-typedef StarsGiven = ({String message, Receipt? receipt});
-
 /// Give points: the sheet over the page. Completes with what it did, or null when closed.
-Future<StarsGiven?> showGiveStars(BuildContext context, {String? member}) => showDenSheet<StarsGiven>(
+Future<Done?> showGiveStars(BuildContext context, {String? member}) => showDenSheet<Done>(
       context,
       builder: (sheet) => Padding(
         padding: EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.xl + MediaQuery.viewInsetsOf(sheet).bottom),
@@ -30,7 +27,7 @@ class GiveStarsForm extends StatefulWidget {
   const GiveStarsForm({super.key, this.member, required this.onDone});
 
   final String? member;
-  final ValueChanged<StarsGiven> onDone;
+  final ValueChanged<Done> onDone;
 
   @override
   State<GiveStarsForm> createState() => _GiveStarsFormState();

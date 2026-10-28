@@ -40,7 +40,7 @@ class ListsHome extends StatefulWidget {
 }
 
 class _ListsHomeState extends State<ListsHome> {
-  ListDeleted? _deleted;
+  Done? _deleted;
 
   Future<void> _more(ListState lv) async {
     final deleted = await showListMenu(context, lv);

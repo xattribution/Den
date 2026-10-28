@@ -31,24 +31,17 @@ class ListContent extends StatefulWidget {
   State<ListContent> createState() => _ListContentState();
 }
 
-/// What a tap did, kept in place with its Undo until the list is left.
-class _Note {
-  const _Note(this.message, this.receipt);
-  final String message;
-  final Receipt? receipt;
-}
-
 class _ListContentState extends State<ListContent> {
   /// Null shows every store; the empty string the items with none.
   String? _store;
-  _Note? _added;
-  _Note? _cleared;
+  Done? _added;
+  Done? _cleared;
 
   /// Items removed here, by id, with where they were so the note stays in their place.
-  final _removed = <String, (Item, _Note)>{};
+  final _removed = <String, (Item, Done)>{};
 
   /// Meal items just put on the groceries, with their Undo.
-  final _sent = <String, _Note>{};
+  final _sent = <String, Done>{};
 
   @override
   void didUpdateWidget(ListContent old) {
@@ -62,7 +55,7 @@ class _ListContentState extends State<ListContent> {
     }
   }
 
-  Future<void> _undo(_Note note, VoidCallback forget) async {
+  Future<void> _undo(Done note, VoidCallback forget) async {
     final receipt = note.receipt;
     if (receipt == null) return;
     final result = await perform(context, () => context.actions.undo(receipt));
@@ -75,14 +68,14 @@ class _ListContentState extends State<ListContent> {
     if (items.isEmpty) return false;
     final result = await perform(context, () => context.listActions.addItems(lv.list.id, items));
     if (result == null || !mounted) return false;
-    setState(() => _added = _Note('Added ${itemNames(items)}', result.receipt));
+    setState(() => _added = (message: 'Added ${itemNames(items)}', receipt: result.receipt));
     return true;
   }
 
   Future<void> _remove(Item item) async {
     final result = await perform(context, () => context.listActions.remove(item));
     if (result == null || !mounted) return;
-    setState(() => _removed[item.id] = (item, _Note('Removed ${item.text}', result.receipt)));
+    setState(() => _removed[item.id] = (item, (message: 'Removed ${item.text}', receipt: result.receipt)));
   }
 
   Future<void> _clear(int count) async {
@@ -90,7 +83,7 @@ class _ListContentState extends State<ListContent> {
     final result = await perform(context, () => context.listActions.clearChecked(lv.list.id));
     if (result == null || !mounted) return;
     final n = (result.data['removed'] as int?) ?? count;
-    setState(() => _cleared = _Note('Cleared $n done ${n == 1 ? 'item' : 'items'}', result.receipt));
+    setState(() => _cleared = (message: 'Cleared $n done ${n == 1 ? 'item' : 'items'}', receipt: result.receipt));
   }
 
   Future<void> _toGroceries(Item item) async {
@@ -100,7 +93,7 @@ class _ListContentState extends State<ListContent> {
     }
     final result = await perform(context, () => context.listActions.sendToGroceries(item));
     if (result == null || !mounted) return;
-    setState(() => _sent[item.id] = _Note('On the groceries', result.receipt));
+    setState(() => _sent[item.id] = (message: 'On the groceries', receipt: result.receipt));
   }
 
   @override
@@ -351,7 +344,7 @@ class _ItemRow extends StatelessWidget {
   final bool canCheck;
   final VoidCallback? onRemove;
   final VoidCallback? onEdit;
-  final _Note? sent;
+  final Done? sent;
   final VoidCallback? onSend;
   final VoidCallback? onUndoSend;
 

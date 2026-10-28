@@ -14,13 +14,10 @@ import '../state/list_actions.dart';
 import '../state/lists_model.dart';
 import '../words/list_words.dart';
 
-/// What deleting a list did, for the page to say in place with Undo.
-typedef ListDeleted = ({String message, Receipt? receipt});
-
 /// The list's "More": Share and Copy its open items as text, Reorder them, Edit the list, and
 /// Delete it. Completes with what a delete did, so the page can offer Undo in place; Reorder
 /// opens its own sheet once this one has closed.
-Future<ListDeleted?> showListMenu(BuildContext context, ListState lv) async {
+Future<Done?> showListMenu(BuildContext context, ListState lv) async {
   final router = GoRouter.maybeOf(context);
   final picked = await showDenSheet<Object>(
     context,
@@ -30,7 +27,7 @@ Future<ListDeleted?> showListMenu(BuildContext context, ListState lv) async {
     await showDenSheet<void>(context, builder: (_) => _Reorder(listId: lv.list.id));
     return null;
   }
-  return picked is ListDeleted ? picked : null;
+  return picked is Done ? picked : null;
 }
 
 const Object _reorder = #reorder;
