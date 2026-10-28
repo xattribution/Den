@@ -24,10 +24,12 @@ void main() {
       name: 'Basement hub',
       log: HubLog(level: LogLevel.info, sink: logged.add),
       onSetupCode: codes.add,
+      // Lets the test speak for other clients on the network through X-Forwarded-For.
+      trustedProxies: [IpNetwork.parse('127.0.0.1')],
     ));
     addTearDown(hub.stop);
-    Future<ApiResult> call(String method, String path, {String? token, Object? body}) =>
-        apiCall(hub.localUrl, method, path, token: token, body: body);
+    Future<ApiResult> call(String method, String path, {String? token, Object? body, String? from}) =>
+        apiCall(hub.localUrl, method, path, token: token, body: body, headers: {'x-forwarded-for': ?from});
 
     final health = await call('GET', '/health');
     expect(health.body['ready'], isFalse);
@@ -45,17 +47,20 @@ void main() {
     addTearDown(phoneNode.close);
     final invite = await phoneNode.createInvite();
 
+    const stranger = '192.168.1.66';
     for (var i = 1; i <= setupTries; i++) {
-      final wrong = await call('POST', '/api/v1/hub/setup', body: {'code': 'AAAA-AAAA', 'invite': invite.toUrl()});
+      final wrong = await call('POST', '/api/v1/hub/setup', body: {'code': 'AAAA-AAAA', 'invite': invite.toUrl()}, from: stranger);
       expect(wrong.status, 403);
       expect((wrong.error['details'] as Map)['tries_left'], setupTries - i);
     }
-    expect(codes, hasLength(2), reason: 'five wrong tries print a new code');
-    final stale = await call('POST', '/api/v1/hub/setup', body: {'code': codes.first, 'invite': invite.toUrl()});
-    expect(stale.status, 403, reason: 'the old code is gone');
+    final waiting = await call('POST', '/api/v1/hub/setup', body: {'code': codes.single, 'invite': invite.toUrl()}, from: stranger);
+    expect(waiting.status, 429, reason: 'that address waits now, even with the right code');
+    expect(int.parse(waiting.headers['retry-after']!), inInclusiveRange(1, 60));
+    expect(codes, hasLength(1), reason: 'wrong codes from someone else never change the code under its owner');
+    expect(logged.where((l) => l.contains('wrong setup codes from one address')), hasLength(1));
 
     final accepted = await call('POST', '/api/v1/hub/setup',
-        body: {'code': codes.last.toLowerCase(), 'invite': invite.toUrl(), 'direct': true});
+        body: {'code': codes.single.toLowerCase(), 'invite': invite.toUrl(), 'direct': true});
     expect(accepted.status, 202);
     expect(accepted.body['connect'], '/api/v1/hub/setup/ws');
 

@@ -49,7 +49,9 @@ A fresh hub has no family. It prints a one-time setup code (`ABCD-EFGH`, from
 to the hub, so a stranger on the LAN can't claim it.
 
 1. The parent's phone makes an ordinary invite (`node.createInvite()`) and calls
-   `POST /api/v1/hub/setup {"code", "invite", "direct"?}`. Five wrong codes print a new one.
+   `POST /api/v1/hub/setup {"code", "invite", "direct"?}`. Each address gets five wrong codes, then
+   waits a minute (doubling with each further wrong code, up to an hour); the code never changes
+   because of wrong tries, so nobody else on the network can make it change under its owner.
 2. With the invite's hub URLs or relay, the hub dials the phone (`openInviteChannel`: relay
    rendezvous when the phone hosts one). With `"direct": true` (or neither), the phone opens
    the WebSocket `GET /api/v1/hub/setup/ws` and serves its side there (`node.serve(socket)`);
@@ -62,7 +64,8 @@ to the hub, so a stranger on the LAN can't claim it.
    `matching_words`. The hub logs the same words and `den_hub status` prints them, so a parent
    can compare them with the three the phone shows before approving.
 
-Errors: `403 permission_denied` with `details.tries_left`, `409 already_set_up`, `409 busy`.
+Errors: `403 permission_denied` with `details.tries_left`, `429 rate_limited` (with `Retry-After`)
+while that address waits, `409 already_set_up`, `409 busy`.
 
 ## Linking a browser
 

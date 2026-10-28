@@ -20,8 +20,24 @@ import 'log.dart';
 /// Letters for setup codes: no 0, 1, I, L, O or U, so a code read off a log can't be misread.
 const String setupAlphabet = '23456789ABCDEFGHJKMNPQRSTVWXYZ';
 
-/// Wrong setup codes allowed before the hub prints a new one.
+/// Wrong setup codes one client may send before it has to wait. The code itself stays: eight
+/// letters from [setupAlphabet] are about 39 bits, and a client gets five guesses, then a
+/// minute's wait that doubles with every further wrong code up to an hour, so no number of
+/// addresses can find it, and nobody can make the hub change it under its owner.
 const int setupTries = 5;
+
+/// How long a client waits after [setupTries] wrong setup codes the first time.
+const Duration setupLockout = Duration(minutes: 1);
+
+/// The longest a client ever waits.
+const Duration setupLockoutMax = Duration(hours: 1);
+
+class _Tries {
+  int wrong = 0;
+  int level = 0;
+  int until = 0;
+  int last = 0;
+}
 
 /// Where a hub is in joining a family.
 enum SetupStage {
@@ -66,7 +82,7 @@ class HubSetup {
   final Random _random = Random.secure();
   SetupStage _stage = SetupStage.waitingForCode;
   String? _code;
-  int _wrong = 0;
+  final Map<String, _Tries> _tries = {};
   String? _lastError;
   Completer<StreamChannel<dynamic>>? _backChannel;
   JoinAttempt? _attempt;
@@ -96,7 +112,7 @@ class HubSetup {
 
   void _issueCode() {
     _code = _newCode(_random);
-    _wrong = 0;
+    _tries.clear();
     final shown = display(_code!);
     _log.info('Setup code for this hub: $shown (enter it in the Den app to add this hub to your family)');
     final file = _codeFile;
@@ -169,9 +185,45 @@ class HubSetup {
     return diff == 0;
   }
 
-  /// `POST /api/v1/hub/setup {code, invite, direct?}`.
+  /// Throws `429 rate_limited` while the client [key] waits after wrong setup codes.
+  void _checkWaiting(String key) {
+    final t = _tries[key];
+    final now = hub.now();
+    if (t == null || now >= t.until) return;
+    throw ApiError.rateLimited(
+      ((t.until - now) / 1000).ceil(),
+      'Too many wrong setup codes from here. Wait a little, then try again.',
+    );
+  }
+
+  /// Counts a wrong code from [key]; returns how many it has left before it must wait (0: it
+  /// waits now, [setupLockout] doubling with each round up to [setupLockoutMax]).
+  int _wrongCode(String key) {
+    final now = hub.now();
+    if (_tries.length > 10000) {
+      _tries.removeWhere((_, t) => t.until < now && now - t.last > 2 * setupLockoutMax.inMilliseconds);
+      while (_tries.length > 10000) {
+        _tries.remove(_tries.keys.first);
+      }
+    }
+    final t = _tries.putIfAbsent(key, _Tries.new)..last = now;
+    t.wrong++;
+    if (t.wrong < setupTries) return setupTries - t.wrong;
+    final wait = min(setupLockout.inMilliseconds << t.level, setupLockoutMax.inMilliseconds);
+    t
+      ..until = now + wait
+      ..wrong = 0
+      ..level = min(t.level + 1, 8);
+    _log.warn('$setupTries wrong setup codes from one address; it waits ${wait ~/ 60000} min. The code stays the same.');
+    return 0;
+  }
+
+  /// `POST /api/v1/hub/setup {code, invite, direct?}`. Wrong codes are limited per client
+  /// ([setupTries], then a wait); the code never changes because of them.
   Future<Response> setup(Request request) async {
     if (hub.ready) throw ApiError(409, 'already_set_up', 'This hub is already part of a family.');
+    final key = hub.clientOf(request);
+    _checkWaiting(key);
     if (_attempt != null || _backChannel != null) {
       throw ApiError(409, 'busy', 'This hub is already joining a family. Approve it in the Den app.');
     }
@@ -180,15 +232,15 @@ class HubSetup {
     final inviteUrl = b.string('invite', required: true, min: 1, max: 4000)!;
     final direct = b.flag('direct', fallback: false)!;
     if (!_codeMatches(given)) {
-      _wrong++;
-      if (_wrong >= setupTries) {
-        _log.warn('$setupTries wrong setup codes; issuing a new one');
-        _issueCode();
-        throw ApiError(403, 'permission_denied', 'That setup code isn\'t right. The hub made a new one; find it in its log.',
-            details: {'tries_left': 0});
-      }
-      throw ApiError(403, 'permission_denied', 'That setup code isn\'t right.', details: {'tries_left': setupTries - _wrong});
+      final left = _wrongCode(key);
+      throw ApiError(
+        403,
+        'permission_denied',
+        left == 0 ? 'That setup code isn\'t right. Wait a minute, then check it in the hub\'s log.' : 'That setup code isn\'t right.',
+        details: {'tries_left': left},
+      );
     }
+    _tries.remove(key);
     final Invite invite;
     try {
       invite = await Invite.parse(inviteUrl);
