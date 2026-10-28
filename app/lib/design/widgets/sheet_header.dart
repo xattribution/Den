@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../layout.dart';
 import '../motion.dart';
 import '../tokens.dart';
+import '../words.dart';
 
 /// A sheet's top line (Invite.dc.html, AvatarPicker.dc.html): its one title (26/800) and the
 /// pill that closes it, "Close" or "Done" on the card color, or in ink ([primary]) when closing
@@ -25,7 +26,7 @@ class SheetHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, Sp.xs, 0, Sp.l),
       child: Row(
         children: [
-          Expanded(child: Semantics(header: true, child: Text(title, style: t.sheetTitle(c.ink)))),
+          Expanded(child: Semantics(header: true, child: Text(noOrphan(title), style: t.sheetTitle(c.ink)))),
           const SizedBox(width: Sp.m),
           DenPressable(
             onTap: onAction ?? () => Navigator.of(context).maybePop(),

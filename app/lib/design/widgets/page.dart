@@ -4,6 +4,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../layout.dart';
 import '../motion.dart';
 import '../tokens.dart';
+import '../words.dart';
 
 /// A page pushed over the app (Family, Settings, a setup step): a round back button and the
 /// page's one title (30/800, 34 on iPad), then its sections [DenLayout.sectionGap] apart, held
@@ -80,7 +81,7 @@ class DenPage extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (overline != null) Text(overline!, style: context.text.meta(c.ink2)),
-                Semantics(header: true, child: Text(title, style: context.text.screenTitle(c.ink, large: large))),
+                Semantics(header: true, child: Text(noOrphan(title), style: context.text.screenTitle(c.ink, large: large))),
               ],
             ),
           ),

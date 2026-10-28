@@ -157,31 +157,38 @@ class NavRow extends StatelessWidget {
         constraints: const BoxConstraints(minHeight: 56),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: Sp.s),
-          child: Row(
-            children: [
-              if (leading != null) ...[leading!, const SizedBox(width: Sp.m)],
-              if (icon != null && leading == null) ...[
-                Icon(icon, size: 22, color: enabled ? c.ink : c.ink3),
-                const SizedBox(width: 14),
-              ],
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(label, style: t.body(enabled ? c.ink : c.ink3)),
-                    if (detail != null) Text(tidy(detail!), style: t.meta(c.ink2)),
-                  ],
+          child: LayoutBuilder(
+            builder: (context, box) => Row(
+              children: [
+                if (leading != null) ...[leading!, const SizedBox(width: Sp.m)],
+                if (icon != null && leading == null) ...[
+                  Icon(icon, size: 22, color: enabled ? c.ink : c.ink3),
+                  const SizedBox(width: 14),
+                ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(label, style: t.body(enabled ? c.ink : c.ink3)),
+                      if (detail != null) Text(tidy(detail!), style: t.meta(c.ink2)),
+                    ],
+                  ),
                 ),
-              ),
-              if (value != null) ...[
-                const SizedBox(width: Sp.s),
-                Flexible(child: Text(value!, style: t.meta(c.ink2), textAlign: TextAlign.end)),
+                if (value != null) ...[
+                  const SizedBox(width: Sp.s),
+                  // At the end beside the chevron, never more than half the row: a long value
+                  // wraps there instead of squeezing the label.
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: box.maxWidth / 2),
+                    child: Text(value!, style: t.meta(c.ink2), textAlign: TextAlign.end),
+                  ),
+                ],
+                if (chevron) ...[
+                  const SizedBox(width: Sp.s),
+                  Icon(PhosphorIconsBold.caretRight, size: 18, color: c.ink3),
+                ],
               ],
-              if (chevron) ...[
-                const SizedBox(width: Sp.s),
-                Icon(PhosphorIconsBold.caretRight, size: 18, color: c.ink3),
-              ],
-            ],
+            ),
           ),
         ),
       ),
