@@ -12,6 +12,10 @@ import 'package:den_hub/src/http_util.dart' show requestBase;
 import 'package:den_hub/src/web.dart';
 import 'package:den_net/den_net.dart';
 import 'package:shelf/shelf.dart';
+import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:shelf_web_socket/shelf_web_socket.dart';
+import 'package:stream_channel/stream_channel.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'support/test.dart';
 
 import 'support/fixture.dart';
@@ -43,6 +47,24 @@ List<int> frameHeader(int length, {int opcode = 2, bool fin = true}) => [
               : [0x80 | 127, for (var i = 7; i >= 0; i--) (length >> (8 * i)) & 0xff]),
       1, 2, 3, 4,
     ];
+
+/// Opens a WebSocket on `/ws` at [port] by hand; the future completes when the server closes it.
+Future<(Socket, Future<void>)> rawWebSocket(int port) async {
+  final socket = await Socket.connect('127.0.0.1', port);
+  final closed = Completer<void>();
+  void close() {
+    if (!closed.isCompleted) closed.complete();
+  }
+
+  final received = <int>[];
+  socket.listen(received.addAll, onDone: close, onError: (Object _) => close());
+  final key = base64.encode(List.generate(16, (i) => i));
+  socket.write('GET /ws HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+      'Sec-WebSocket-Key: $key\r\nSec-WebSocket-Version: 13\r\n\r\n');
+  await eventually(() => utf8.decode(received, allowMalformed: true).contains('\r\n\r\n'));
+  expect(utf8.decode(received, allowMalformed: true), startsWith('HTTP/1.1 101'));
+  return (socket, closed.future);
+}
 
 void main() {
   group('client addresses', () {
@@ -97,35 +119,60 @@ void main() {
       expect(split.feed(frameHeader(40000, opcode: 0)), isFalse, reason: 'fragments add up to one message');
       final later = FrameGuard(const FrameLimits());
       expect(later.feed([...frameHeader(100), ...List.filled(100, 0)]), isTrue);
-      expect(later.feed(frameHeader(1024 * 1024)), isTrue,
+      expect(later.feed([...frameHeader(1024 * 1024), ...List.filled(1024 * 1024, 0)]), isTrue,
           reason: 'after a first hello, session-sized messages pass (a phone answering as the session server sends the family next)');
       expect(later.feed(frameHeader(4 * 1024 * 1024)), isFalse, reason: 'nothing a session sends is that large');
+    });
+
+    test('a guarded channel ends its stream and closes the connection past a limit', () async {
+      final raw = StreamChannelController<List<int>>();
+      var refused = false;
+      var closes = 0;
+      final guarded = guardChannel(raw.local, const FrameLimits(), onRefused: () => refused = true, onClose: () => closes++);
+      final done = Completer<void>();
+      // Paused before anything arrives and resumed later, as a WebSocket listens.
+      final sub = guarded.stream.listen((_) {}, onDone: done.complete)..pause();
+      raw.foreign.sink.add([...frameHeader(1 << 30), ...List.filled(100, 7)]);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      sub.resume();
+      await done.future.timeout(const Duration(seconds: 5));
+      expect(refused, isTrue);
+      expect(closes, 1);
+      await raw.foreign.stream.toList().timeout(const Duration(seconds: 5));
+    });
+
+    test('a guarded WebSocket upgrade closes a connection that announces a huge first message', () async {
+      var refused = false;
+      final handler = webSocketHandler((WebSocketChannel ws, String? _) => ws.stream.listen((_) {}));
+      final server = await shelf_io.serve(
+        (Request r) => handler(guardUpgrade(r, const FrameLimits(), onRefused: () => refused = true)),
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      addTearDown(() => server.close(force: true));
+      final (socket, closed) = await rawWebSocket(server.port);
+      addTearDown(socket.destroy);
+      socket.add([...frameHeader(1 << 30), ...List.filled(1000, 7)]);
+      await eventually(() => refused, timeout: const Duration(seconds: 5));
+      await closed.timeout(const Duration(seconds: 12));
     });
 
     test('the hub closes a connection that announces a huge first message instead of buffering it', () async {
       final logged = <String>[];
       final f = await HubFixture.start(
         configure: (c) =>
-            HubConfig(port: 0, host: InternetAddress.loopbackIPv4, mdns: false, log: HubLog(level: LogLevel.warn, sink: logged.add)),
+            HubConfig(port: 0, host: InternetAddress.loopbackIPv4, mdns: false, log: HubLog(level: LogLevel.debug, sink: logged.add)),
       );
       addTearDown(f.stop);
-      final socket = await Socket.connect('127.0.0.1', f.hub.port);
+      final (socket, closed) = await rawWebSocket(f.hub.port);
       addTearDown(socket.destroy);
-      final key = base64.encode(List.generate(16, (i) => i));
-      socket.write('GET /ws HTTP/1.1\r\nHost: 127.0.0.1:${f.hub.port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
-          'Sec-WebSocket-Key: $key\r\nSec-WebSocket-Version: 13\r\n\r\n');
-      final closed = Completer<void>();
-      void close() {
-        if (!closed.isCompleted) closed.complete();
-      }
-
-      final received = <int>[];
-      socket.listen(received.addAll, onDone: close, onError: (Object _) => close());
-      await eventually(() => utf8.decode(received, allowMalformed: true).contains('\r\n\r\n'));
-      expect(utf8.decode(received, allowMalformed: true), startsWith('HTTP/1.1 101'));
       socket.add([...frameHeader(1 << 30), ...List.filled(1000, 7)]);
-      await eventually(() => logged.any((l) => l.contains('over the size limit')), timeout: const Duration(seconds: 5));
-      await closed.future.timeout(const Duration(seconds: 12));
+      try {
+        await eventually(() => logged.any((l) => l.contains('over the size limit')), timeout: const Duration(seconds: 5));
+      } on TimeoutException {
+        fail('no refusal; the hub logged: ${logged.join(' | ')}');
+      }
+      await closed.timeout(const Duration(seconds: 12));
     });
   });
 
