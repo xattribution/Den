@@ -149,6 +149,15 @@ void main() {
     expect(role.code, 'permission_denied');
     final color = await runner.run(app, 'save_member', {'member': 'Leo', 'color': Marker.values.last.name});
     expect((color.data['member'] as Map)['marker'], Marker.values.last.name);
+    final picture = await runner.run(app, 'save_member', {'member': 'Leo', 'picture': 'rocket'});
+    expect((picture.data['member'] as Map)['picture'], 'rocket');
+    final unknown = await runner.run(app, 'save_member', {'member': 'Leo', 'picture': 'dragon'});
+    expect(unknown.isError, isTrue);
+    final next = Marker.next(den.members.map((m) => m.marker)).name;
+    final added = await runner.run(app, 'save_member', {'name': 'Grandpa Joe', 'role': 'adult'});
+    final joe = added.data['member'] as Map;
+    expect(joe['picture'], Picture.initial);
+    expect(joe['marker'], next, reason: 'a new person gets the next color nobody has');
     for (final url in ['http://school.example.org/cal.ics', 'https://192.168.1.10/cal.ics', 'https://nas.local/cal.ics', 'https://intranet/cal.ics']) {
       final feed = await runner.run(app, 'save_calendar_feed', {'url': url}, mode: RunMode.confirmed);
       expect(feed.isError, isTrue, reason: url);

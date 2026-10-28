@@ -80,7 +80,7 @@ List<ActionSpec> familyActions() => [
         name: 'family.save_member',
         mcpName: 'save_member',
         title: 'Add someone or change their details',
-        description: 'Adds a person to the family, or with "member" changes their name, color, animal, birthday, '
+        description: 'Adds a person to the family, or with "member" changes their name, color, picture, birthday, '
             'age group or place in the order. Roles, permissions and sign-in change only in the Den app, on a '
             'parent\'s own device.',
         input: S.input({
@@ -89,7 +89,8 @@ List<ActionSpec> familyActions() => [
           'role': S.string('For someone new: parent, adult, kid (default) or guest.', oneOf: [for (final r in Role.values) r.name]),
           'tier': S.string('For a kid: preReader, little, big or teen; empty for none.'),
           'color': S.string('Their color.', oneOf: [for (final m in Marker.values) m.name]),
-          'animal': S.string('Their animal.', oneOf: [for (final x in Animal.values) x.name]),
+          'picture': S.string('Their picture, by name from Den\'s pack, or "initial" for the first letter of their name.',
+              oneOf: [...Picture.pack, Picture.initial]),
           'birthday': S.date('Their birthday; empty for none.'),
           'order': S.integer('Their place in the family\'s order.', min: 0, max: 1000),
         }),
@@ -99,8 +100,8 @@ List<ActionSpec> familyActions() => [
         effect: Effect.destructive,
         confirm: Confirm.client,
         engine: const {'addMember', 'updateMember'},
-        // Colors and animals by name from their enums, whatever the palette holds.
-        example: {'name': 'Grandpa Joe', 'role': 'adult', 'color': Marker.values.last.name, 'animal': Animal.values.last.name},
+        // Colors and pictures by name from their lists, whatever the palette and pack hold.
+        example: {'name': 'Grandpa Joe', 'role': 'adult', 'color': Marker.values.last.name, 'picture': Picture.pack.first},
         run: _saveMember,
       ),
       ActionSpec(
@@ -240,7 +241,7 @@ Future<ActionResult> _saveMember(ActionContext c, ActionInput a) async {
       if (a.has('name')) 'name': a.str('name')!.trim(),
       if (tierText != null) 'tier': tier?.name,
       if (a.has('color')) 'marker': a.str('color'),
-      if (a.has('animal')) 'animal': a.str('animal'),
+      if (a.has('picture')) 'picture': a.str('picture'),
       if (birthday != null) 'birthday': birthday.isEmpty ? null : toolDate(birthday, c.zone, 'birthday'),
       if (a.has('order')) 'order': a.integer('order'),
     };
@@ -253,8 +254,8 @@ Future<ActionResult> _saveMember(ActionContext c, ActionInput a) async {
       name: a.str('name', required: true)!.trim(),
       role: _named(Role.values, a.str('role')) ?? Role.kid,
       tier: tier,
-      marker: _named(Marker.values, a.str('color')) ?? Marker.values.first,
-      animal: _named(Animal.values, a.str('animal')) ?? Animal.cat,
+      marker: _named(Marker.values, a.str('color')),
+      picture: a.str('picture') ?? Picture.initial,
       birthday: birthday == null || birthday.isEmpty ? null : toolDate(birthday, c.zone, 'birthday'),
     );
     if (a.has('order')) await c.den.updateMember(id, {'order': a.integer('order')});

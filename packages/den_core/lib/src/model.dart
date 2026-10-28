@@ -142,6 +142,19 @@ enum Animal { cat, dog, rabbit, bird, butterfly, fish, horse, cow, bug }
 abstract final class Picture {
   static const initial = 'initial';
 
+  /// The pack's pictures by id, in the order the app shows them (its test checks they match), so
+  /// surfaces without the artwork (MCP, the assistant) can offer them by name.
+  static const pack = [
+    'fox', 'bear', 'cat', 'dog', 'bunny', 'owl', 'panda', 'frog', //
+    'whale', 'octopus', 'turtle', 'ladybug', 'bee', 'butterfly', 'snail', 'chick',
+    'strawberry', 'avocado', 'pizza', 'cupcake', 'watermelon', 'banana', 'icecream', 'pancakes',
+    'sunflower', 'cactus', 'mushroom', 'tree', 'rainbow', 'sun', 'moon', 'cloud',
+    'soccer', 'basketball', 'rocket', 'guitar', 'palette', 'kite', 'dinosaur', 'robot',
+    'house', 'sailboat', 'balloon', 'teacup', 'tent', 'star', 'crown', 'camera',
+    'firefighter', 'police', 'doctor', 'spy', 'ninja', 'armyman', 'astronaut', 'pirate',
+    'tank', 'jet', 'racecar', 'firetruck', 'helicopter', 'train', 'sheriff', 'revolver',
+  ];
+
   static final RegExp _key = RegExp(r'^[a-z][a-z0-9:_-]{0,63}$');
 
   static bool valid(Object? raw) => raw is String && _key.hasMatch(raw);
