@@ -25,6 +25,7 @@ import 'mcp/http.dart';
 import 'mdns/responder.dart';
 import 'mcp/server.dart';
 import 'oauth.dart';
+import 'relay_watch.dart';
 import 'reminders.dart';
 import 'setup.dart';
 import 'state.dart';
@@ -64,10 +65,10 @@ class DenHub {
   final Map<String, int> _sockets = {};
   final Set<String> _warnedProxies = {};
   Handler? _web;
-  late final Handler _ws;
   HttpServer? _server;
   RelayTunnel? _tunnel;
   MailboxSync? _mailbox;
+  late final RelayWatch _relayWatch = RelayWatch(_ctx.log);
   MdnsResponder? _mdns;
   StreamSubscription<Set<String>>? _changes;
   final List<HubService> _services = [];
@@ -154,12 +155,14 @@ class DenHub {
       ..add(_reminders)
       ..add(_oauth);
     _web = webAppHandler(config.webDir, policy: _webPolicy);
-    _ws = syncWebSocketHandler(node);
     _routes
       ..add('GET', '/health', (r, _) => _health())
       ..add('GET', '/api/v1/hub/status', (r, _) => _setup.status(r))
       ..add('POST', '/api/v1/hub/setup', (r, _) => _setup.setup(r))
-      ..add('GET', '/api/v1/hub/setup/ws', (r, _) => _setup.backChannel(_upgrade(r)))
+      ..add('GET', '/api/v1/hub/setup/ws', (r, _) {
+        _admitSocket(r);
+        return _setup.backChannel(r);
+      })
       ..add('POST', '/api/v1/link', (r, _) => _links.create(r))
       ..add('POST', '/api/v1/link/window', (r, _) => _links.openWindow(r))
       ..add('POST', '/api/v1/link/<slot>', (r, p) => _links.grant(r, p['slot']!))
@@ -198,7 +201,9 @@ class DenHub {
     }
     final relay = config.relay;
     if (relay != null) {
-      _tunnel = RelayTunnel(relay: relay, keys: den.keys, onClient: (c) => unawaited(node.serve(c)))..start();
+      final tunnel = _tunnel = RelayTunnel(relay: relay, keys: den.keys, onClient: (c) => unawaited(node.serve(c)));
+      _relayWatch.watchTunnel(tunnel);
+      tunnel.start();
       log.info('Keeping a tunnel open through the relay');
     }
     if (_ctx.ready) _onReady();
@@ -209,7 +214,8 @@ class DenHub {
     _servicesStarted = true;
     final relay = config.relay;
     if (relay != null && config.mailbox) {
-      _mailbox = MailboxSync(node: node, relay: RelayMailbox(relay))..start(interval: const Duration(minutes: 1));
+      final mailbox = _mailbox = MailboxSync(node: node, relay: RelayMailbox(relay));
+      _relayWatch.runMailbox(mailbox);
     }
     for (final s in _services) {
       unawaited(_startService(s));
@@ -275,29 +281,43 @@ class DenHub {
     return webAppPolicy(connect: '${base.scheme == 'https' ? 'wss' : 'ws'}://${base.authority}', scriptHashes: scriptHashes);
   }
 
-  /// A WebSocket upgrade, limited per client (new connections a minute, connections open at
-  /// once) and with every frame the client sends checked against [FrameLimits]: a message
-  /// past the limit closes the connection as it arrives instead of being buffered whole.
-  Request _upgrade(Request request) {
+  /// Admits a WebSocket upgrade from [request]'s client, within its budget of new connections
+  /// a minute and connections open at once, and returns the client's key.
+  String _admitSocket(Request request) {
     _ctx.limit(request, 'sockets', Limits.sockets, message: 'Too many connections from here. Wait a minute.');
     final key = _ctx.clientOf(request);
     if ((_sockets[key] ?? 0) >= Limits.openSockets) {
       throw ApiError.rateLimited(30, 'Too many connections from here. Close some and try again.');
     }
-    return guardUpgrade(
-      request,
-      const FrameLimits(),
-      onOpen: () => _sockets[key] = (_sockets[key] ?? 0) + 1,
-      onClose: () {
-        final left = (_sockets[key] ?? 1) - 1;
-        if (left <= 0) {
-          _sockets.remove(key);
-        } else {
-          _sockets[key] = left;
+    return key;
+  }
+
+  /// `GET /ws`: device sync over a WebSocket whose messages den_net bounds as they arrive (a
+  /// frame announcing more than a session carries closes it before anything is buffered),
+  /// counted against its client's connections while it is open.
+  FutureOr<Response> _ws(Request request) {
+    final key = _admitSocket(request);
+    return boundedWebSocketHandler(
+      (socket) {
+        _sockets[key] = (_sockets[key] ?? 0) + 1;
+        var open = true;
+        void closed() {
+          if (!open) return;
+          open = false;
+          final left = (_sockets[key] ?? 1) - 1;
+          if (left <= 0) {
+            _sockets.remove(key);
+          } else {
+            _sockets[key] = left;
+          }
         }
+
+        unawaited(socket.sink.done.then((_) => closed(), onError: (Object _) => closed()));
+        unawaited(node.serve(socket));
       },
-      onRefused: () => _ctx.log.warn('Closed a WebSocket that sent a message over the size limit'),
-    );
+      maxMessageBytes: maxSyncSocketMessageBytes,
+      pingInterval: const Duration(seconds: 30),
+    )(request);
   }
 
   /// Security headers on every answer: no content sniffing, no referrer, HSTS when the request
@@ -378,7 +398,7 @@ class DenHub {
 
   FutureOr<Response> _route(Request request) {
     final path = request.url.path;
-    if (path == 'ws') return _ws(_upgrade(request));
+    if (path == 'ws') return _ws(request);
     final found = _routes.find(request);
     if (found != null) return found.$1.handler(request, found.$2);
     final web = _web;
@@ -402,6 +422,7 @@ class DenHub {
     }
     await _changes?.cancel();
     await _mdns?.stop();
+    await _relayWatch.stop();
     await _mailbox?.stop();
     await _tunnel?.stop();
     await node.close();

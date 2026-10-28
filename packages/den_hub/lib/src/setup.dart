@@ -4,8 +4,8 @@ import 'dart:math';
 
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
+import 'package:den_net/io.dart' show boundedWebSocketHandler, maxSyncSocketMessageBytes;
 import 'package:shelf/shelf.dart';
-import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -275,19 +275,23 @@ class HubSetup {
 
   /// `GET /api/v1/hub/setup/ws`: the inviting phone opens this WebSocket and serves its side of
   /// the pairing session on it. The hub pins the inviter's key from the invite, so only the
-  /// phone that made the invite can complete the session.
+  /// phone that made the invite can complete the session. Its messages are session frames,
+  /// bounded as they arrive like `/ws`'s.
   Handler get backChannel => (Request request) {
         final waiting = _backChannel;
         if (waiting == null || waiting.isCompleted) {
           throw ApiError.notFound(message: 'This hub isn\'t waiting for a phone.');
         }
-        return webSocketHandler((WebSocketChannel socket, String? _) {
-          if (waiting.isCompleted) {
-            unawaited(socket.sink.close());
-          } else {
-            waiting.complete(socket);
-          }
-        })(request);
+        return boundedWebSocketHandler(
+          (WebSocketChannel socket) {
+            if (waiting.isCompleted) {
+              unawaited(socket.sink.close());
+            } else {
+              waiting.complete(socket);
+            }
+          },
+          maxMessageBytes: maxSyncSocketMessageBytes,
+        )(request);
       };
 
   Future<void> _join(Invite invite, Future<StreamChannel<dynamic>> Function() open) async {

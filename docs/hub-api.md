@@ -152,7 +152,7 @@ The hub counts what each client does, by IP address (an IPv6 address by its /64)
 | Browser link slots and link grants | 20 in 10 minutes |
 | Wrong setup codes | 5, then that client waits a minute, doubling to an hour with each further wrong code |
 | OAuth: registrations, sign-in requests, token requests | 10 an hour, 10 in 15 minutes, 60 in 5 minutes |
-| WebSocket connections (`/ws`, `/api/v1/hub/setup/ws`) | 120 new a minute, 64 open at once. The first message (the session handshake's hello, before the client has proved who it is) may be 64 KiB, later ones 3 MB; a bigger message closes the socket |
+| WebSocket connections (`/ws`, `/api/v1/hub/setup/ws`) | 120 new a minute, 64 open at once. A message may be 2 MiB (a session frame, base64 encoded); a frame announcing more closes the socket as its header arrives, before any of it is buffered |
 
 ### Behind a reverse proxy
 
@@ -1276,9 +1276,10 @@ These endpoints take no token. Every request is signed with the device's own key
 | `X-Den-Body-SHA256` | Recommended: the lowercase hex SHA-256 of the body, the same value the signature covers. With it the hub checks the signature from the headers alone and turns a forged request away before reading its body |
 
 The hub accepts a request only from an approved, unrevoked device of its family, addressed to
-itself. A request with `X-Den-Body-SHA256` is verified before its body is read (`401` at once
-when the signature is wrong). Without it the hub can check only the headers that need no body
-(signed, fresh, naming an approved device) before reading, so it reads such bodies one per
+itself. A request with `X-Den-Body-SHA256` is verified before its body is read (`401` when the
+signature is wrong; the hub keeps none of the body, discarding it as it arrives, and the answer
+may come only once the client has sent it). Without it the hub can check only the headers that
+need no body (signed, fresh, naming an approved device) before reading, so it reads such bodies one per
 client and two at a time, answering `429 busy` (`details.retry`: true) past that, and verifies
 the signature once the body is in. Bodies are capped (64 KiB for `PUT`, 30 MB for
 `/api/v1/capture/read`, refused by `Content-Length` before reading) and must arrive within

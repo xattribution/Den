@@ -141,6 +141,28 @@ void main() {
     expect(text(noScope), contains('"calendar" scope'));
   });
 
+  test('only someone who sets points can give a chore stars through a tool', () async {
+    final rosa = await f.token(scopes: {Scope.read, Scope.chores}, member: f.id('Grandma Rosa'), label: 'Rosa assistant');
+    final session = await initialize(rosa);
+    Future<Map<String, Object?>> call(String name, Map<String, Object?> args) async => result((await rpc(
+            rosa, {'id': 9, 'method': 'tools/call', 'params': {'name': name, 'arguments': args}},
+            session: session))
+        .$1);
+
+    final priced = await call('create_chore', {'title': 'Water the tomatoes', 'points': 5});
+    expect(priced['isError'], isTrue);
+    expect(text(priced), startsWith('Den didn\'t allow that'));
+    expect(text(priced), contains('stars'));
+
+    final plain = await call('create_chore', {'title': 'Water the tomatoes'});
+    expect(plain['isError'], isFalse, reason: text(plain));
+    final raised = await call('update_chore', {'chore': 'Water the tomatoes', 'points': 3});
+    expect(raised['isError'], isTrue);
+    expect(text(raised), startsWith('Den didn\'t allow that'));
+    final renamed = await call('update_chore', {'chore': 'Water the tomatoes', 'title': 'Water the garden'});
+    expect(renamed['isError'], isFalse, reason: text(renamed));
+  });
+
   test('creating an event with local times, and an unknown tool', () async {
     final token = await f.token(scopes: {Scope.admin}, label: 'Planner');
     final session = await initialize(token);
