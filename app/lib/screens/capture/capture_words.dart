@@ -15,11 +15,13 @@ String originWords(CaptureKind kind) => switch (kind) {
       CaptureKind.link => 'from a web page',
       CaptureKind.voice => 'said out loud',
       CaptureKind.typed => 'typed into Add',
+      CaptureKind.assistant => 'from the assistant',
     };
 
-/// "from a photo, read by Claude".
-String sourceWords(CaptureOrigin origin) =>
-    [originWords(origin.kind), if (origin.reader != null) 'read by ${origin.reader}'].join(', ');
+/// "from a photo, read by Claude"; "from the assistant (Claude)".
+String sourceWords(CaptureOrigin origin) => origin.kind == CaptureKind.assistant
+    ? [originWords(origin.kind), if (origin.reader != null) '(${origin.reader})'].join(' ')
+    : [originWords(origin.kind), if (origin.reader != null) 'read by ${origin.reader}'].join(', ');
 
 /// The review page's heading: "From a photo".
 String captureTitle(CaptureKind kind) => switch (kind) {
@@ -39,7 +41,7 @@ String readingWords(CaptureKind kind) => switch (kind) {
       CaptureKind.email => 'Reading the email',
       CaptureKind.message => 'Reading the message',
       CaptureKind.link => 'Reading the page',
-      CaptureKind.voice || CaptureKind.typed => 'Reading what you wrote',
+      CaptureKind.voice || CaptureKind.typed || CaptureKind.assistant => 'Reading what you wrote',
     };
 
 /// "Read on this phone", "Read by Claude".

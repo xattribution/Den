@@ -31,11 +31,17 @@ class RecordingDen implements Den {
   final List<String> calls = [];
   bool active = false;
 
-  // Mirrors drop a generic method's type argument, so the one generic write is forwarded here.
+  // Mirrors drop a generic method's type argument, so the generic writes are forwarded here.
   @override
   Future<Recorded<T>> recording<T>(FutureOr<T> Function() body, {bool undoOnError = false}) {
     if (active) calls.add('recording');
     return real.recording<T>(body, undoOnError: undoOnError);
+  }
+
+  @override
+  Future<T> attributed<T>(CaptureOrigin origin, FutureOr<T> Function() body) {
+    if (active) calls.add('attributed');
+    return real.attributed<T>(origin, body);
   }
 
   @override
