@@ -9,15 +9,14 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/app_state.dart';
 import '../../../app/format.dart';
-import '../../../design/avatar.dart';
 import '../../../design/layout.dart';
 import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
+import '../../../design/widgets.dart';
 import '../state/calendar_models.dart';
 import '../state/day_layout.dart';
 import '../state/event_actions.dart';
 import '../words/calendar_time.dart';
-import '../widgets/calendar_parts.dart';
 import '../widgets/day_list.dart';
 import '../widgets/event_block.dart';
 import '../widgets/event_look.dart';
@@ -83,6 +82,9 @@ class _DayViewState extends State<DayView> {
 
   /// A move of a repeating event waiting for "just this one, or every one?".
   _Drag? _asking;
+
+  /// Does again what just failed.
+  VoidCallback? _retry;
   String? _error;
 
   static const int _snap = 15;
@@ -215,9 +217,9 @@ class _DayViewState extends State<DayView> {
             onCancel: _keep,
           )
         : _error != null
-        ? ErrorLine(message: _error!)
+        ? ErrorState(message: _error!, actionLabel: _retry == null ? 'OK' : 'Try again', onAction: _retry ?? () => setState(() => _error = null))
         : done != null
-            ? UndoLine(message: done.$1, onUndo: done.$2 == null ? null : () => _undo(done.$2!))
+            ? DoneRow(message: done.$1, onUndo: done.$2 == null ? null : () => _undo(done.$2!))
             : empty
                 ? _EmptyNote(date: date, canAdd: canAdd)
                 : null;
@@ -482,6 +484,7 @@ class _DayViewState extends State<DayView> {
     setState(() {
       _drag = null;
       _error = error;
+      _retry = error == null ? null : () => _commit(drag, scope);
       final done = result;
       if (error != null || done == null) {
         _done = null;
@@ -505,6 +508,7 @@ class _DayViewState extends State<DayView> {
     if (!mounted) return;
     setState(() {
       _error = error;
+      _retry = error == null ? null : () => _undo(result);
       _done = null;
     });
   }

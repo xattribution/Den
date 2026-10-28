@@ -7,11 +7,11 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/app_state.dart';
 import '../../../app/navigation.dart';
-import '../../../design/avatar.dart';
 import '../../../design/layout.dart';
 import '../../../design/motion.dart';
 import '../../../design/sheet.dart';
 import '../../../design/tokens.dart';
+import '../../../design/widgets.dart';
 import '../../../design/words.dart';
 import '../../../platform/capabilities.dart';
 import '../state/calendar_models.dart';
@@ -22,7 +22,6 @@ import '../words/calendar_time.dart';
 import '../words/event_words.dart';
 import '../words/recurrence.dart';
 import '../widgets/calendar_parts.dart';
-import '../widgets/driver_sheet.dart';
 import '../widgets/event_block.dart';
 import '../widgets/event_look.dart';
 import '../widgets/field_editors.dart';
@@ -274,15 +273,16 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
   Future<void> _pickDriver(Occurrence occ, Ride ride, String forWhom) async {
     final app = DenScope.read(context);
-    final picked = await showDriverSheet(
+    final picked = await showPeoplePicker(
       context,
       title: ride.leg == 'from' ? 'Who’s picking up $forWhom?' : 'Who’s driving $forWhom there?',
-      drivers: possibleDrivers(app),
+      people: possibleDrivers(app),
       current: ride.driver,
-      me: app.me?.id,
+      anyoneLabel: 'Nobody yet',
+      anyoneCurrent: ride.driver == null,
     );
     if (picked == null || !mounted) return;
-    final driver = picked.isEmpty ? null : picked;
+    final driver = picked.anyone ? null : picked.member;
     if (driver == ride.driver) return;
     await _ride(occ, ride, driver, _rideWords(app, ride.leg, driver, forWhom));
   }
@@ -393,7 +393,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     final List<Widget> children;
     if (deleted != null) {
       children = [
-        UndoLine(message: deleted.message, onUndo: deleted.result?.receipt?.undoable ?? false ? () => _undo(deleted) : null),
+        DoneRow(message: deleted.message, onUndo: deleted.result?.receipt?.undoable ?? false ? () => _undo(deleted) : null),
         const SizedBox(height: Sp.l),
         Align(alignment: Alignment.centerLeft, child: CalendarPill(label: 'Back to the calendar', onTap: () => _leave(context))),
       ];
@@ -483,7 +483,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     final notes = <Widget>[
       if (event.source.readOnly) _sourceNote(context, app, event.source),
       if (!event.source.readOnly && !app.allows(DenAction.editEvents))
-        const NoteLine(
+        const NoticeLine(
           message: 'Changing events needs calendar access. A parent can turn it on for you in Family.',
           icon: PhosphorIconsBold.lockSimple,
         ),
@@ -492,9 +492,9 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
     final scope = pending == null ? null : ScopeCard(occ: occ, onPick: (s) => _write(occ, pending.patch, s, pending.message), onCancel: () => setState(() => _pending = null));
     final status = _error != null
-        ? (_open == DetailField.title ? null : ErrorLine(message: _error!, onAction: _retry))
+        ? (_open == DetailField.title ? null : ErrorState(message: _error!, actionLabel: 'Try again', onAction: _retry ?? () => setState(() => _error = null)))
         : done != null
-            ? UndoLine(message: done.message, onUndo: done.result?.receipt?.undoable ?? false ? () => _undo(done) : null)
+            ? DoneRow(message: done.message, onUndo: done.result?.receipt?.undoable ?? false ? () => _undo(done) : null)
             : null;
 
     return [
@@ -517,7 +517,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       ),
       // A rename that didn't go through says why right under the field it was typed in.
       if (_error != null && _open == DetailField.title)
-        Padding(padding: const EdgeInsets.fromLTRB(4, Sp.s, 0, 0), child: ErrorLine(message: _error!, onAction: _retry)),
+        Padding(padding: const EdgeInsets.fromLTRB(4, Sp.s, 0, 0), child: ErrorState(message: _error!, actionLabel: 'Try again', onAction: _retry ?? () => setState(() => _error = null))),
       for (final n in notes) Padding(padding: const EdgeInsets.only(top: Sp.m), child: n),
       const SizedBox(height: Sp.l),
       _Details(
@@ -547,7 +547,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     } else {
       from = label == null || label.isEmpty ? 'From another calendar.' : 'From $label’s calendar.';
     }
-    return NoteLine(message: '$from Change it there.', icon: PhosphorIconsBold.calendarCheck);
+    return NoticeLine(message: '$from Change it there.', icon: PhosphorIconsBold.calendarCheck);
   }
 }
 
@@ -563,7 +563,7 @@ class _TopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final more = onMore == null
         ? null
-        : CalendarRoundButton(icon: PhosphorIconsBold.dotsThree, label: 'More', onTap: onMore);
+        : RoundButton(icon: PhosphorIconsBold.dotsThree, label: 'More', onTap: onMore, fill: context.colors.card, color: context.colors.ink, size: Targets.adult);
     if (inSheet) {
       return Row(
         children: [

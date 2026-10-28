@@ -1,16 +1,14 @@
 import 'package:den_net/den_net.dart' show SyncState;
 import 'package:flutter/material.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
-import '../../../design/avatar.dart';
+import '../../../design/widgets.dart';
 import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
-import '../words/block_words.dart';
 
-/// A pill to press: ink (the one primary action of a region) or the card color (Today, Done).
-/// 44 tall at least, its label never wraps or truncates, and it answers the finger in the same
-/// frame ([DenPressable]).
+/// A pill from the theme's buttons: ink (`FilledButton`, the one primary action of a region),
+/// or the card color (`OutlinedButton`; with a line edge on a card, without one on the page,
+/// as the canvas's Today button). 44 tall at least; the label never wraps.
 class CalendarPill extends StatelessWidget {
   const CalendarPill({
     super.key,
@@ -34,57 +32,24 @@ class CalendarPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final enabled = onTap != null;
-    final fill = !enabled ? c.fill : (primary ? c.primary : c.card);
-    final ink = !enabled ? c.ink2 : (primary ? c.onPrimary : c.ink);
-    return DenPressable(
-      onTap: onTap,
-      color: fill,
-      shape: StadiumBorder(side: edge ? BorderSide(color: c.line, width: 1.5) : BorderSide.none),
-      semanticLabel: semanticLabel ?? label,
-      child: ExcludeSemantics(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: Targets.adult),
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(icon == null ? Sp.l : Sp.s + 2, Sp.s, Sp.l, Sp.s),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (icon != null) ...[Icon(icon, size: 20, color: ink), const SizedBox(width: Sp.xs)],
-                Text(label, style: context.text.label(ink), maxLines: 1, softWrap: false),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A round 44 button on the card color, with its name for screen readers and on hover: the
-/// event page's More, the iPad week's arrows.
-class CalendarRoundButton extends StatelessWidget {
-  const CalendarRoundButton({super.key, required this.icon, required this.label, required this.onTap});
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Tooltip(
-      message: label,
-      excludeFromSemantics: true,
-      child: DenPressable(
-        onTap: onTap,
-        color: c.card,
-        shape: const CircleBorder(),
-        semanticLabel: label,
-        child: SizedBox.square(dimension: Targets.adult, child: Icon(icon, size: 20, color: onTap == null ? c.ink3 : c.ink)),
-      ),
-    );
+    final text = Text(label, maxLines: 1, softWrap: false);
+    final glyph = icon == null ? null : Icon(icon, size: 20);
+    final Widget button;
+    if (primary) {
+      button = glyph == null
+          ? FilledButton(onPressed: onTap, child: text)
+          : FilledButton.icon(onPressed: onTap, icon: glyph, label: text);
+    } else {
+      final style = OutlinedButton.styleFrom(
+        side: edge ? BorderSide(color: c.line, width: 1.5) : BorderSide.none,
+        padding: EdgeInsets.fromLTRB(icon == null ? Sp.l : Sp.s + 2, 10, Sp.l, 10),
+      );
+      button = glyph == null
+          ? OutlinedButton(onPressed: onTap, style: style, child: text)
+          : OutlinedButton.icon(onPressed: onTap, style: style, icon: glyph, label: text);
+    }
+    if (semanticLabel == null) return button;
+    return Semantics(label: semanticLabel, button: true, excludeSemantics: true, child: button);
   }
 }
 
@@ -326,7 +291,7 @@ class PersonFilters extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       child: Row(
         children: [
-          _FilterPill(
+          PersonPill(
             name: 'Everyone',
             selected: selected == null,
             onTap: () => onChanged(null),
@@ -344,163 +309,13 @@ class PersonFilters extends StatelessWidget {
           ),
           for (final m in people) ...[
             const SizedBox(width: Sp.s),
-            _FilterPill(
+            PersonPill(
               name: m.name,
               selected: selected == m.id,
               onTap: () => onChanged(selected == m.id ? null : m.id),
               face: DenAvatar(m, size: 32),
             ),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _FilterPill extends StatelessWidget {
-  const _FilterPill({required this.name, required this.selected, required this.onTap, required this.face});
-
-  final String name;
-  final bool selected;
-  final VoidCallback onTap;
-  final Widget face;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return DenPressable(
-      onTap: onTap,
-      color: c.card,
-      selected: selected,
-      shape: StadiumBorder(side: BorderSide(color: selected ? c.ink : Colors.transparent, width: 1.5)),
-      semanticLabel: selected ? 'Showing $name' : 'Show $name',
-      child: ExcludeSemantics(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: Targets.adult),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(6, 4, Sp.l, 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                face,
-                const SizedBox(width: Sp.s),
-                Text(name, style: selected ? context.text.label(c.ink) : context.text.control(c.ink), maxLines: 1, softWrap: false),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// What a change did, in place, with Undo: an ink check, one sentence, and an underlined Undo.
-class UndoLine extends StatelessWidget {
-  const UndoLine({super.key, required this.message, required this.onUndo});
-
-  final String message;
-
-  /// Null once there's nothing to take back.
-  final VoidCallback? onUndo;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Semantics(
-      liveRegion: true,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: Targets.adult),
-        child: Row(
-          children: [
-            Icon(PhosphorIconsBold.check, size: 20, color: c.ink),
-            const SizedBox(width: 10),
-            Expanded(child: Text(tidyLine(message), style: context.text.control(c.ink))),
-            if (onUndo != null) ...[
-              const SizedBox(width: Sp.s),
-              Semantics(
-                button: true,
-                label: 'Undo',
-                excludeSemantics: true,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: onUndo,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: Targets.adult, minWidth: Targets.adult),
-                    child: Center(
-                      child: Text(
-                        'Undo',
-                        style: context.text.label(c.ink).copyWith(decoration: TextDecoration.underline, decorationColor: c.ink),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// A change that didn't go through, next to where it was made: what happened and the way out.
-/// Red as the words and the icon, never as a background.
-class ErrorLine extends StatelessWidget {
-  const ErrorLine({super.key, required this.message, this.actionLabel = 'Try again', this.onAction});
-
-  final String message;
-  final String actionLabel;
-  final VoidCallback? onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Semantics(
-      liveRegion: true,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Icon(PhosphorIconsFill.warningOctagon, size: 20, color: c.destructive),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Text(tidyLine(message), style: context.text.control(c.destructive)),
-            ),
-          ),
-          if (onAction != null) ...[
-            const SizedBox(width: Sp.s),
-            TextButton(onPressed: onAction, child: Text(actionLabel)),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// A plain line about how things stand, with an ink glyph: offline, read-only, no access.
-class NoteLine extends StatelessWidget {
-  const NoteLine({super.key, required this.message, required this.icon, this.color});
-
-  final String message;
-  final IconData icon;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final ink = color ?? c.ink2;
-    return Semantics(
-      liveRegion: true,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(padding: const EdgeInsets.only(top: 1), child: Icon(icon, size: 20, color: ink)),
-          const SizedBox(width: 10),
-          Expanded(child: Text(tidyLine(message), style: context.text.meta(ink))),
         ],
       ),
     );
@@ -532,7 +347,7 @@ class OfflineNote extends StatelessWidget {
     Widget line(bool show) => show
         ? const Padding(
             padding: EdgeInsets.fromLTRB(4, Sp.m, 4, 0),
-            child: NoteLine(message: message, icon: PhosphorIconsBold.cloudSlash),
+            child: NoticeLine(message: message),
           )
         : const SizedBox.shrink();
     if (force != null) return line(force!);

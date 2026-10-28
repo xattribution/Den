@@ -5,11 +5,11 @@ import 'package:go_router/go_router.dart';
 import '../../../app/app_state.dart';
 import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
+import '../../../design/widgets.dart';
 import '../../../design/words.dart';
 import '../state/calendar_models.dart';
 import '../state/day_groups.dart';
 import '../words/block_words.dart';
-import 'calendar_parts.dart';
 import 'combine_stack.dart';
 import 'event_block.dart';
 
@@ -207,25 +207,16 @@ class _EmptyDay extends StatelessWidget {
     final c = context.colors;
     final who = person == null ? 'anyone' : (app.memberById(person)?.name ?? 'them');
     final canAdd = action && app.allows(DenAction.editEvents);
+    // The shared empty state, in the card where the day's blocks would be.
     return DecoratedBox(
       decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(Radii.block)),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(Sp.l, Sp.l, Sp.l, Sp.l),
-        child: Wrap(
-          spacing: Sp.m,
-          runSpacing: Sp.m,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Text(tidyLine('Nothing on the calendar for $who.'), style: context.text.control(c.ink2)),
-            if (canAdd)
-              CalendarPill(
-                label: 'Add event',
-                edge: true,
-                onTap: () => context.push(
-                  '/event/new?date=$date${person == null ? '' : '&who=$person'}',
-                ),
-              ),
-          ],
+        padding: const EdgeInsets.symmetric(horizontal: Sp.l),
+        child: EmptyState(
+          compact: true,
+          message: 'Nothing on the calendar for $who.',
+          actionLabel: canAdd ? 'Add event' : null,
+          onAction: canAdd ? () => context.push('/event/new?date=$date${person == null ? '' : '&who=$person'}') : null,
         ),
       ),
     );

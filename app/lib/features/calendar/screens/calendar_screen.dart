@@ -8,6 +8,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../../../app/app_state.dart';
 import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
+import '../../../design/widgets.dart';
 import '../state/calendar_models.dart';
 import '../widgets/calendar_parts.dart';
 import '../widgets/date_strip.dart';
@@ -123,6 +124,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
       ),
     );
   }
+
+  /// The iPad's ‹ and ›: the shared round button on the card color.
+  static Widget _arrow(BuildContext context, IconData icon, String label, VoidCallback onTap) =>
+      RoundButton(icon: icon, label: label, onTap: onTap, fill: context.colors.card, color: context.colors.ink, size: Targets.adult);
 
   Widget _today(String date, CalendarView view, String today) => CalendarPill(
         label: 'Today',
@@ -244,8 +249,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 cardThumb: true,
                 onChanged: (v) => _show(v, date),
               ),
-              CalendarRoundButton(icon: PhosphorIconsBold.caretLeft, label: back, onTap: () => _show(view, step(-1))),
-              CalendarRoundButton(icon: PhosphorIconsBold.caretRight, label: forward, onTap: () => _show(view, step(1))),
+              _arrow(context, PhosphorIconsBold.caretLeft, back, () => _show(view, step(-1))),
+              _arrow(context, PhosphorIconsBold.caretRight, forward, () => _show(view, step(1))),
             ],
           ),
           OfflineNote(force: widget.offline),

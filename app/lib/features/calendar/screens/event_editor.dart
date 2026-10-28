@@ -9,6 +9,7 @@ import '../../../app/app_state.dart';
 import '../../../design/layout.dart';
 import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
+import '../../../design/widgets.dart';
 import '../words/block_words.dart';
 import '../state/calendar_models.dart';
 import '../state/event_actions.dart';
@@ -226,20 +227,10 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
           onChanged: (_) {
             if (_tried) setState(() {});
           },
-          decoration: InputDecoration(
-            hintText: 'What’s happening',
-            enabledBorder: _titleError == null
-                ? null
-                : OutlineInputBorder(
-                    borderRadius: const BorderRadius.all(Radius.circular(Radii.input)),
-                    borderSide: BorderSide(color: c.destructive, width: 2),
-                  ),
-          ),
+          // What's missing says so under the field, in red words with a red edge (the theme's
+          // error style), never a box.
+          decoration: InputDecoration(hintText: 'What’s happening', errorText: _titleError, errorMaxLines: 3),
         ),
-        if (_titleError != null) ...[
-          const SizedBox(height: Sp.s),
-          NoteLine(message: _titleError!, icon: PhosphorIconsFill.warningOctagon, color: c.destructive),
-        ],
         const SizedBox(height: Sp.l),
         DecoratedBox(
           decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(Radii.section)),
@@ -329,9 +320,9 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (_error != null) ...[ErrorLine(message: _error!, onAction: _add), const SizedBox(height: Sp.s)],
+              if (_error != null) ...[ErrorState(message: _error!, actionLabel: 'Try again', onAction: _add), const SizedBox(height: Sp.s)],
               if (!canAdd) ...[
-                NoteLine(
+                NoticeLine(
                   message: tidyLine('Adding events needs calendar access. A parent can turn it on for you in Family.'),
                   icon: PhosphorIconsBold.lockSimple,
                 ),
