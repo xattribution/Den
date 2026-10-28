@@ -115,6 +115,7 @@ jobs:
           cache: true
       - working-directory: app
         run: flutter pub get
+      # Failures also become an annotation on the check, readable without the log.
       - working-directory: app
         run: |
           flutter analyze > analyze.txt 2>&1 && { cat analyze.txt; exit 0; }
@@ -122,9 +123,10 @@ jobs:
           cat analyze.txt
           grep -E ' (error|warning|info) [-•] ' analyze.txt | head -40 | sed 's/^ */::error::/'
           exit $status
-      # Golden images are rendered on Windows by the people reviewing them; elsewhere
-      # test/flutter_test_config.dart renders every screen without comparing pixels. The app
-      # icon's source (tagged golden) is skipped.
+      # Every screen renders (overflows and exceptions fail) but golden pixels aren't compared:
+      # the images are rendered on CI by the screenshots workflow and committed from there
+      # (test/flutter_test_config.dart, DESIGN.md "Screenshots"). The app icon's and Home
+      # Assistant brand sources (tagged golden) are skipped.
       - working-directory: app
         run: |
           flutter test --exclude-tags golden --reporter github --file-reporter json:test.jsonl && exit 0

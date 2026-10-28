@@ -128,11 +128,17 @@ cd app && flutter run -d chrome --dart-define=DEN_DEMO=true
 ```
 
 `DEN_DEMO=true` starts with a demo family so every screen has something on it. Screenshot tests
-render each screen to `app/test/goldens`; review the images after any UI change:
+render each screen (and the design gallery in `app/test/design`); review the images after any UI
+change. The committed images are rendered on CI: label the pull request `screenshots` and the
+screenshots workflow pushes them to the branch `screenshots/<branch>`, then bring them in:
 
 ```bash
-cd app && flutter test --update-goldens
+git fetch origin screenshots/<branch>:refs/remotes/origin/screenshots/<branch>
+git checkout origin/screenshots/<branch> -- app/test
 ```
+
+Tests never compare pixels, so rendering locally (`cd app && flutter test --update-goldens`) is
+for a quick look only. See DESIGN.md, "Screenshots".
 
 The hub from source:
 
