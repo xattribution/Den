@@ -24,12 +24,11 @@ class GoalEditorScreen extends StatefulWidget {
 class _GoalEditorScreenState extends State<GoalEditorScreen> {
   final _title = TextEditingController();
   final _reward = TextEditingController();
-  GoalMode _mode = GoalMode.target;
-  int _target = 50;
+  int _target = 25;
 
   /// Null means every kid.
   List<String>? _members;
-  GoalRepeat _repeat = GoalRepeat.monthly;
+  GoalRepeat _repeat = GoalRepeat.weekly;
   String? _start;
   String? _end;
   bool _loaded = false;
@@ -53,7 +52,6 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
     if (goal == null) return;
     _title.text = goal.title;
     _reward.text = goal.reward;
-    _mode = goal.mode;
     _target = goal.target;
     _members = goal.members == null ? null : [...goal.members!];
     _repeat = goal.repeat;
@@ -83,7 +81,9 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
         _existing,
         title: _title.text.trim(),
         target: _target,
-        mode: _mode,
+        // One kind of goal: everyone in it who reaches the target gets there. A race stored by
+        // an older app becomes one when it's saved here.
+        mode: GoalMode.target,
         members: _members,
         start: _start,
         end: end,
@@ -115,6 +115,21 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
     if (!keep.mounted) return;
     // The same goal comes back, not a copy.
     offerUndo(keep, actions, '${goal.title} deleted', result);
+  }
+
+  /// The goal in one line: "Reach 25 stars by Saturday, each week".
+  String _sentence(AppState app) {
+    final f = app.formats;
+    final weekStart = app.den.family?.weekStart ?? 0;
+    // The week's last day: the day before the week starts again.
+    final last = DateFormat('EEEE').format(DateTime.utc(2026, 1, 4 + (weekStart + 6) % 7));
+    return switch (_repeat) {
+      GoalRepeat.weekly => 'Reach $_target stars by $last, each week',
+      GoalRepeat.monthly => 'Reach $_target stars by the end of each month',
+      GoalRepeat.none => _end == null
+          ? 'Reach $_target stars, starting ${f.relative(_start!, app.today).toLowerCase()}'
+          : 'Reach $_target stars by ${f.short(_end!)}',
+    };
   }
 
   Future<void> _pickDate(String? initial, ValueChanged<String> onPicked) async {
@@ -195,8 +210,9 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
                       }),
                     ),
                     for (final m in people)
-                      PersonChip(
-                        member: m,
+                      PersonPill(
+                        face: DenAvatar(m, size: 32),
+                        name: m.name,
                         selected: _members?.contains(m.id) ?? false,
                         onTap: () => setState(() {
                           final next = [...?_members];
@@ -208,23 +224,7 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
                   ],
                 ),
                 FieldError(_membersError),
-                const FieldLabel('How it is won'),
-                Wrap(
-                  spacing: Sp.s,
-                  children: [
-                    ChoiceTile.chip(
-                      label: 'Everyone who reaches it',
-                      selected: _mode == GoalMode.target,
-                      onTap: () => setState(() => _mode = GoalMode.target),
-                    ),
-                    ChoiceTile.chip(
-                      label: 'First to reach it',
-                      selected: _mode == GoalMode.race,
-                      onTap: () => setState(() => _mode = GoalMode.race),
-                    ),
-                  ],
-                ),
-                const FieldLabel('Target', info: 'Only points earned while the goal counts add up toward it.'),
+                const FieldLabel('Stars to reach', info: 'Only stars earned while the goal counts add up toward it.'),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: NumberStepper(
@@ -236,17 +236,19 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
                     suffix: const Star(size: 18),
                   ),
                 ),
+                const SizedBox(height: Sp.s),
                 Wrap(
                   spacing: Sp.s,
+                  runSpacing: Sp.s,
                   children: [
                     for (final n in const [10, 25, 50, 100])
-                      ChoiceTile.chip(label: '$n', selected: _target == n, onTap: () => setState(() => _target = n)),
+                      TagChip(label: '$n', selected: _target == n, onTap: () => setState(() => _target = n)),
                   ],
                 ),
                 const FieldLabel('Counts'),
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: Segmented<GoalRepeat>(
+                  child: DenSegmented<GoalRepeat>(
                     options: const {
                       GoalRepeat.weekly: 'Each week',
                       GoalRepeat.monthly: 'Each month',
@@ -282,6 +284,10 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
                     ],
                   ),
                 ],
+                Padding(
+                  padding: const EdgeInsets.only(top: Sp.m),
+                  child: Text(_sentence(app), style: context.text.meta(c.ink2)),
+                ),
                 const FieldLabel('Reward for reaching it'),
                 TextField(
                   controller: _reward,

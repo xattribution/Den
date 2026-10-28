@@ -117,6 +117,62 @@ class DoneSwap extends StatelessWidget {
       );
 }
 
+/// One fact on a detail page, inside a card: the [label] in quiet meta and its value. Side by
+/// side with the label in a 112 pt column; one over the other on a narrow card or past 135 %
+/// text. 48 tall at least.
+class InfoRow extends StatelessWidget {
+  const InfoRow({super.key, required this.label, required this.child});
+
+  /// The value as plain words.
+  InfoRow.text({super.key, required this.label, required String value}) : child = _InfoText(value);
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final t = context.text;
+    return MergeSemantics(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: Sp.m),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final scale = MediaQuery.textScalerOf(context).scale(1);
+              final label = Text(this.label, style: t.meta(c.ink2));
+              if (constraints.maxWidth < 360 || scale > 1.35) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [label, const SizedBox(height: 2), child],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(width: 112, child: Padding(padding: const EdgeInsets.only(top: 2), child: label)),
+                  const SizedBox(width: Sp.m),
+                  Expanded(child: child),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoText extends StatelessWidget {
+  const _InfoText(this.value);
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Text(tidy(value), style: context.text.body(context.colors.ink));
+}
+
 /// A row that goes somewhere: an optional ink glyph, a label (and a detail), and a chevron.
 /// 56 tall at least. For "Or add one thing", settings and menus.
 class NavRow extends StatelessWidget {

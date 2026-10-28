@@ -3,6 +3,7 @@ import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
 import 'package:den_app/design/widgets.dart';
 import 'package:den_app/features/chores/screens/chores_board.dart';
+import 'package:den_app/features/chores/widgets/chore_row.dart';
 import 'package:den_app/features/calendar/screens/event_detail.dart';
 import 'package:den_app/features/family/screens/device_screen.dart';
 import 'package:den_app/features/family/screens/family_screen.dart';
@@ -175,7 +176,9 @@ void main() {
           }));
       await pumpScreen(tester, ListDetailScreen(id: groceriesList(state.den)!.list.id), state: state, size: _tall);
       expect(find.text('Toothpaste'), findsOneWidget);
-      expect(find.byType(AddItemRow), findsNothing);
+      // The add field stays in view, turned off, saying why.
+      expect(tester.widget<InlineAdd>(find.byType(InlineAdd)).enabled, isFalse);
+      expect(find.textContaining('adding needs the lists permission'), findsOneWidget);
       expect(find.byType(Dismissible), findsNothing);
       await _app(tester, state, '/today');
       await tester.tap(find.byTooltip('Add'));
@@ -191,7 +194,7 @@ void main() {
       final done = [for (final i in before) if (i.checked) i.id];
       expect(done, isNotEmpty);
       await pumpScreen(tester, ListDetailScreen(id: list), state: state, size: _tall);
-      await _tapAndWait(tester, find.textContaining('done item'));
+      await _tapAndWait(tester, find.text('Clear ${done.length}'));
       expect(state.den.list(list)!.items.where((i) => i.checked), isEmpty);
       final changes = state.den.history(limit: 1 << 20).length;
       await _tapAndWait(tester, find.text('Undo'));
@@ -200,7 +203,7 @@ void main() {
       expect([for (final i in after) if (i.checked) i.id], done);
       expect(state.den.history(limit: 1 << 20).length - changes, done.length, reason: 'one change each');
       for (final text in [for (final i in before) if (i.checked) i.text]) {
-        expect(find.textContaining(text), findsOneWidget, reason: '$text shows again');
+        expect(findWords(text), findsOneWidget, reason: '$text shows again');
       }
     });
   });
@@ -224,18 +227,22 @@ void main() {
       expect(den.points().totals[leo], stars);
     });
 
-    testWidgets('the screen reader\'s swap action names the day it swaps (B14)', (tester) async {
+    testWidgets('Give to… on another day hands on that day\'s chore only (B14)', (tester) async {
       final state = await _family(tester);
+      final den = state.den;
       final tomorrow = state.formats.addDays(state.today, 1);
       await pumpScreen(tester, ChoresBoard(date: tomorrow), state: state, size: _tall);
-      final labels = [
-        for (final w in tester.widgetList<Semantics>(
-          find.byWidgetPredicate((w) => w is Semantics && w.properties.customSemanticsActions != null),
-        ))
-          ...w.properties.customSemanticsActions!.keys.map((a) => a.label),
-      ];
-      expect(labels, contains('Swap for ${state.formats.short(tomorrow)}'));
-      expect(labels, isNot(contains('Swap for today')));
+      final first = den.choresOn(tomorrow).firstWhere((d) => !d.done && d.owner != null);
+      final todays = den.choresOn(state.today).where((d) => d.chore.id == first.chore.id).firstOrNull?.owner;
+      final row = find.ancestor(of: findWords(first.chore.title), matching: find.byType(ChoreRow)).first;
+      await tester.tap(find.descendant(of: row, matching: find.text('Give to…')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Anyone').last);
+      await _settle(tester);
+      await _settle(tester);
+      expect(den.choresOn(tomorrow).firstWhere((d) => d.chore.id == first.chore.id).owner, isNull);
+      expect(den.choresOn(state.today).where((d) => d.chore.id == first.chore.id).firstOrNull?.owner, todays);
+      expect(findWords('Anyone can do ${first.chore.title} on ${state.formats.short(tomorrow)}'), findsOneWidget);
     });
   });
 
@@ -253,8 +260,8 @@ void main() {
       expect(state.den.points().totals[_id(state.den, 'Maya')], 45);
       await pumpScreen(tester, const PointsScreen(), state: state, size: _tall);
       expect(find.text('Asked'), findsOneWidget);
-      expect(find.text('15 more to go'), findsOneWidget, reason: 'Pick dinner costs 30, and 30 of 45 are asked for');
-      expect(find.text('5 more to go'), findsOneWidget, reason: 'Later bedtime costs 20');
+      expect(findWords('15 more to go'), findsOneWidget, reason: 'Pick dinner costs 30, and 30 of 45 are asked for');
+      expect(findWords('5 more to go'), findsOneWidget, reason: 'Later bedtime costs 20');
     });
 
     testWidgets('a parent turns points off and on in the family settings', (tester) async {

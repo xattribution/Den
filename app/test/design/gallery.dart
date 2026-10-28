@@ -374,6 +374,8 @@ class ControlsSample extends StatelessWidget {
                       children: [
                         CheckPill(label: 'Dishes', stars: 2, done: false, color: mia.color.color, onCheck: () {}),
                         CheckPill(label: 'Feed the cat', stars: 1, done: true, color: mia.color.color, onCheck: () {}),
+                        CheckPill(label: 'Tidy room', steps: (1, 4), done: false, color: leo.color.color, onOpen: () {}),
+                        CheckPill(label: 'Dishes', steps: (0, 3), done: false, color: leo.color.color, onOpen: () {}),
                       ],
                     ),
                   ),

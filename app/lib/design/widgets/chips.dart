@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -9,8 +11,9 @@ import '../widgets.dart' show Star;
 /// the [label] (struck through when done), and its stars. 44 tall.
 ///
 /// Tapping the ring checks it ([onCheck]); tapping the label opens more ([onOpen]: steps, Give
-/// to…). A thing with steps shows how many are done in the ring and checks through its steps,
-/// so its ring opens too. [stars] null hides them (points are off).
+/// to…). A thing with steps fills its ring as an arc and checks through its steps, so its ring
+/// opens too; once a step is done, "1 of 4" follows the label. [stars] null hides them (points
+/// are off).
 class CheckPill extends StatelessWidget {
   const CheckPill({
     super.key,
@@ -48,7 +51,7 @@ class CheckPill extends StatelessWidget {
     final c = context.colors;
     final t = context.text;
     final stepped = steps != null;
-    final ring = CheckRing(color: color, done: done, stepsDone: steps?.$1);
+    final ring = CheckRing(color: color, done: done, progress: stepProgress(steps));
     final words = Text(
       label,
       style: t.control(done ? c.ink2 : c.ink).copyWith(
@@ -89,6 +92,10 @@ class CheckPill extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Flexible(child: ExcludeSemantics(child: words)),
+                      if (stepWords(steps, done: done) case final s?) ...[
+                        const SizedBox(width: 6),
+                        ExcludeSemantics(child: Text(s, style: t.meta(c.ink2))),
+                      ],
                       if (late && !done) ...[
                         const SizedBox(width: 6),
                         Text('Late', style: t.meta(c.ink).bold),
@@ -111,36 +118,87 @@ class CheckPill extends StatelessWidget {
   }
 }
 
-/// The ring a thing to check off shows: the person's [color], filled with an ink check when
-/// [done], or how many steps are done. 26 across on a pill, 32 on a row.
+/// How far through its steps a thing is (0 to 1), or null for a thing without steps.
+double? stepProgress((int, int)? steps) =>
+    steps == null || steps.$2 <= 0 ? null : (steps.$1 / steps.$2).clamp(0.0, 1.0).toDouble();
+
+/// "1 of 4" after a thing's name, once a step is done and until the last; null otherwise.
+String? stepWords((int, int)? steps, {required bool done}) {
+  if (steps == null || done) return null;
+  final (n, of) = steps;
+  return n > 0 && n < of ? '$n of $of' : null;
+}
+
+/// The ring a thing to check off shows, in the person's [color]: an empty ring, or filled with
+/// an ink check when [done]. For a thing with steps, [progress] (0 to 1) lays a heavier arc of
+/// the color over the ring: an empty ring at the start, closing as steps are checked. Never a
+/// digit inside: at this size the font's slashed zero reads as a glitch. 26 across on a pill,
+/// 32 to 34 on a row.
 class CheckRing extends StatelessWidget {
-  const CheckRing({super.key, required this.color, required this.done, this.stepsDone, this.size = 26});
+  const CheckRing({super.key, required this.color, required this.done, this.progress, this.size = 26});
 
   final Color color;
   final bool done;
-  final int? stepsDone;
+  final double? progress;
   final double size;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final t = context.text;
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: done ? color : null,
-        border: Border.all(color: color, width: size > 28 ? 2.5 : 2),
+    final stroke = size > 28 ? 2.5 : 2.0;
+    if (done) {
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: color, border: Border.all(color: color, width: stroke)),
+        alignment: Alignment.center,
+        child: Icon(PhosphorIconsBold.check, size: (size * 0.62).roundToDouble(), color: c.onMarker),
+      );
+    }
+    final p = progress;
+    if (p == null) {
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: color, width: stroke)),
+      );
+    }
+    return TweenAnimationBuilder<double>(
+      tween: Tween(end: p),
+      duration: DenMotion.reduced(context) ? Duration.zero : DenMotion.uiSettle,
+      curve: DenMotion.uiCurve,
+      builder: (context, value, _) => CustomPaint(
+        size: Size.square(size),
+        painter: _ArcPainter(value, color, stroke),
       ),
-      alignment: Alignment.center,
-      child: done
-          ? Icon(PhosphorIconsBold.check, size: (size * 0.62).roundToDouble(), color: c.onMarker)
-          : stepsDone != null
-              ? Text('$stepsDone', style: t.caption(c.ink).bold, textScaler: TextScaler.noScaling)
-              : null,
     );
   }
+}
+
+class _ArcPainter extends CustomPainter {
+  _ArcPainter(this.progress, this.color, this.stroke);
+
+  final double progress;
+  final Color color;
+  final double stroke;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // The empty ring is the same ring an unstepped thing shows; the steps done lay a heavier
+    // arc over it, from the top, clockwise.
+    final band = stroke * 2;
+    final rect = (Offset.zero & size).deflate(band / 2);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..color = color;
+    canvas.drawArc(rect, 0, math.pi * 2, false, paint..strokeWidth = stroke);
+    if (progress > 0) {
+      canvas.drawArc(rect, -math.pi / 2, math.pi * 2 * progress, false, paint..strokeWidth = band);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ArcPainter old) => old.progress != progress || old.color != color || old.stroke != stroke;
 }
 
 /// Something to check off, as a full-width row (PadToday's chores): a 32 pt ring in the
@@ -190,6 +248,7 @@ class CheckRow extends StatelessWidget {
                 ),
           ),
         ),
+        if (stepWords(steps, done: done) case final s?) ...[const SizedBox(width: Sp.s), Text(s, style: t.meta(c.ink2))],
         if (late && !done) ...[const SizedBox(width: Sp.s), Text('Late', style: t.meta(c.ink).bold)],
         if (stars != null && stars! > 0) ...[
           const SizedBox(width: Sp.s),
@@ -212,7 +271,7 @@ class CheckRow extends StatelessWidget {
             shape: const CircleBorder(),
             child: SizedBox.square(
               dimension: 48,
-              child: Center(child: CheckRing(color: color, done: done, stepsDone: steps?.$1, size: 32)),
+              child: Center(child: CheckRing(color: color, done: done, progress: stepProgress(steps), size: 32)),
             ),
           ),
           const SizedBox(width: 6),
@@ -395,4 +454,28 @@ class DenSegmented<T> extends StatelessWidget {
       ),
     );
   }
+}
+
+
+/// A row of chips that scrolls sideways when they don't fit (the lists on Lists, people to
+/// filter by), running to the screen's edges while its first chip lines up with the page.
+/// [inset] is the page's side margin.
+class ChipRow extends StatelessWidget {
+  const ChipRow({super.key, required this.children, this.inset = 16, this.spacing = Sp.s});
+
+  final List<Widget> children;
+  final double inset;
+  final double spacing;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        clipBehavior: Clip.none,
+        padding: EdgeInsets.symmetric(horizontal: inset),
+        child: Row(
+          children: [
+            for (final (i, child) in children.indexed) ...[if (i > 0) SizedBox(width: spacing), child],
+          ],
+        ),
+      );
 }

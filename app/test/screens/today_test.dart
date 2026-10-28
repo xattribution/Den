@@ -49,8 +49,8 @@ void main() {
 
     testWidgets('at 200 % text everything wraps and nothing is cut off', (tester) async {
       final state = await demoIn(tester);
-      withTextScale(tester, 2);
-      await shootAt(tester, 'today_phone_200', state: state, location: '/today', size: const Size(390, 2700));
+      // shootAt sets the text size itself (its MediaQuery is over the system's).
+      await shootAt(tester, 'today_phone_200', state: state, location: '/today', size: const Size(390, 2700), text: 2);
     });
 
     testWidgets('iPad, landscape: the sidebar and two columns', (tester) async {

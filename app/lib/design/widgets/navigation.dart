@@ -218,3 +218,79 @@ class PageHeader extends StatelessWidget {
     );
   }
 }
+
+
+/// Moving a page through days (Chores, a calendar day): back, "Today" when it isn't today, and
+/// forward, as round 44 pt buttons on the card color. The page says which day it is in its own
+/// heading; [dayLabel] names it for screen readers ("Tomorrow, Saturday, October 17").
+class DayStepper extends StatelessWidget {
+  const DayStepper({
+    super.key,
+    required this.dayLabel,
+    required this.onPrevious,
+    required this.onNext,
+    this.onToday,
+    this.previousLabel = 'Previous day',
+    this.nextLabel = 'Next day',
+  });
+
+  final String dayLabel;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+
+  /// Null on today itself, which hides the Today button.
+  final VoidCallback? onToday;
+  final String previousLabel;
+  final String nextLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Semantics(
+      container: true,
+      label: dayLabel,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          RoundButton(
+            icon: PhosphorIconsBold.caretLeft,
+            label: previousLabel,
+            onTap: onPrevious,
+            fill: c.card,
+            color: c.ink,
+            size: Targets.adult,
+          ),
+          AnimatedSize(
+            duration: DenMotion.reduced(context) ? Duration.zero : DenMotion.uiSettle,
+            curve: DenMotion.uiCurve,
+            child: onToday == null
+                ? const SizedBox(width: Sp.s)
+                : Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: Sp.s),
+                    child: DenPressable(
+                      onTap: onToday,
+                      color: c.card,
+                      semanticLabel: 'Go to today',
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: Targets.adult),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: Sp.l),
+                          child: Center(widthFactor: 1, child: Text('Today', style: context.text.label(c.ink))),
+                        ),
+                      ),
+                    ),
+                  ),
+          ),
+          RoundButton(
+            icon: PhosphorIconsBold.caretRight,
+            label: nextLabel,
+            onTap: onNext,
+            fill: c.card,
+            color: c.ink,
+            size: Targets.adult,
+          ),
+        ],
+      ),
+    );
+  }
+}

@@ -1,112 +1,226 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
+import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
-import '../../../design/chore_pictograms.dart';
-import '../../../app/words.dart';
+import '../../../design/words.dart';
 import '../state/chore_actions.dart';
 import '../state/chores_model.dart';
+import '../words/chore_words.dart';
 
-/// A chore on a day: the check (or, for a chore with steps, the ring of steps it completes
-/// through), its pictogram, title, due time and stars. Tapping opens the chore; [onSwap] adds
-/// the swap gesture (long-press on touch, right-click with a mouse, or the screen reader's "Swap"
-/// action). Done is a check plus strike-through; late is the bad color with its icon and the word.
+/// A chore on one day, as Chores.dc.html draws it: a 34 pt ring in its person's color, the
+/// title, a quiet line (when, stars, steps, late), and "Give to…" at the end for someone who
+/// may hand it on. The ring checks it (a chore with steps fills its ring as an arc and checks
+/// through its steps). Tapping the words opens it in place: its steps to check, Give to… and
+/// Details. [date] is the day the board shows.
 class ChoreRow extends StatelessWidget {
-  const ChoreRow({super.key, required this.day, this.onSwap, this.compact = false, this.showDue = true, this.vertical = 0});
+  const ChoreRow({
+    super.key,
+    required this.day,
+    required this.date,
+    required this.open,
+    required this.onOpen,
+    this.onGive,
+  });
 
   final ChoreDay day;
+  final String date;
+  final bool open;
+  final VoidCallback onOpen;
 
-  /// Whether "by 5:00 PM" shows; Today leaves it out.
-  final bool showDue;
-
-  /// Space above and below the row.
-  final double vertical;
-
-  /// Null when the actor may not swap this chore.
-  final VoidCallback? onSwap;
-
-  /// Narrow columns: the due time drops under the title.
-  final bool compact;
+  /// Null when whoever is using the device may not hand this chore on.
+  final VoidCallback? onGive;
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch(choreReads);
     final c = context.colors;
+    final t = context.text;
     final chore = day.chore;
+    final owner = app.memberById(day.owner);
+    final color = owner == null ? c.ink2 : c.marker(owner.marker);
     final canCheck = canCheckChore(app, day.owner);
     final pointsOn = app.den.family?.pointsEnabled ?? true;
-    final late = day.late && !day.done;
-    final scale = context.type.scale;
-    final due = chore.dueTime == null ? null : clockWords(chore.dueTime!);
-    final titleStyle = context.type
-        .body(day.done ? c.ink2 : c.ink)
-        .copyWith(decoration: day.done ? TextDecoration.lineThrough : null, decorationColor: c.ink2);
+    final stepped = day.stepCount > 0;
+    final meta = choreMeta(day, date: date, today: app.today, f: app.formats, stars: pointsOn ? day.pointsAvailable : null);
+    final scale = MediaQuery.textScalerOf(context).scale(1);
+    final giveBeside = onGive != null && !day.done && scale <= 1.35;
 
-    Widget lateMark() => Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(PhosphorIconsFill.clockCountdown, size: 16 * scale, color: c.bad),
-        const SizedBox(width: 2),
-        Text('Late', style: context.type.meta(c.bad)),
-      ],
+    void check() => attempt(context, () => context.choreActions.setDone(day, !day.done));
+    final ringTap = stepped ? onOpen : (canCheck ? check : null);
+
+    final words = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            tidy(chore.title),
+            style: t.rowTitle(day.done ? c.ink2 : c.ink).copyWith(
+                  decoration: day.done ? TextDecoration.lineThrough : null,
+                  decorationColor: c.ink2,
+                ),
+          ),
+          if (meta.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(tidy(meta), style: day.late && !day.done ? t.meta(c.ink).bold : t.meta(c.ink2)),
+          ],
+        ],
+      ),
     );
 
-    final dueText = due == null || day.done || !showDue ? null : Text('by $due', style: context.type.meta(c.ink2));
-
-    final swapLabel = day.date == app.today ? 'Swap for today' : 'Swap for ${app.formats.short(day.date)}';
-    return Semantics(
-      customSemanticsActions: onSwap == null ? null : {CustomSemanticsAction(label: swapLabel): onSwap!},
-      child: InkWell(
-        onTap: () => context.push('/chore/${chore.id}?date=${day.date}'),
-        onLongPress: onSwap,
-        onSecondaryTap: onSwap,
-        child: Padding(
-          padding: EdgeInsets.only(left: Sp.xs, right: Sp.l, top: vertical, bottom: vertical),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 64),
           child: Row(
             children: [
-              if (chore.steps.isEmpty)
-                CheckDot(
-                  done: day.done,
-                  size: 26 * scale,
-                  label: chore.title,
-                  onChanged: canCheck
-                      ? (v) => attempt(context, () => context.choreActions.setDone(day, v))
-                      : null,
-                )
-              else
-                StepRing(done: day.stepsDone, total: day.stepCount, size: 26 * scale),
-              ChoreGlyph(chore.icon, size: 20 * scale, color: c.ink2),
-              const SizedBox(width: Sp.s),
-              Expanded(
-                child: compact && (late || dueText != null)
-                    ? Padding(
-                        padding: const EdgeInsets.symmetric(vertical: Sp.xs),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(chore.title, style: titleStyle),
-                            if (late) lateMark() else ?dueText,
-                          ],
-                        ),
-                      )
-                    : Text(chore.title, style: titleStyle),
+              DenPressable(
+                onTap: ringTap,
+                haptic: !stepped,
+                toggled: stepped ? null : day.done,
+                shape: const CircleBorder(),
+                semanticLabel: stepped
+                    ? '${chore.title}, ${day.stepsDone} of ${day.stepCount} steps done'
+                    : '${chore.title}, ${day.done ? 'done' : 'not done'}',
+                child: SizedBox.square(
+                  dimension: 48,
+                  child: Center(
+                    child: CheckRing(
+                      color: color,
+                      done: day.done,
+                      progress: stepped ? stepProgress((day.stepsDone, day.stepCount)) : null,
+                      size: 34,
+                    ),
+                  ),
+                ),
               ),
-              if (!compact) ...[
-                if (late) ...[const SizedBox(width: Sp.s), lateMark()],
-                if (!late && dueText != null) ...[const SizedBox(width: Sp.s), dueText],
-              ],
-              if (pointsOn && day.pointsAvailable > 0) ...[
+              const SizedBox(width: 4),
+              Expanded(
+                child: DenPressable(
+                  onTap: onOpen,
+                  scale: false,
+                  selected: open,
+                  shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(Radii.input))),
+                  semanticLabel: 'More about ${chore.title}',
+                  child: ExcludeSemantics(child: Align(alignment: AlignmentDirectional.centerStart, child: words)),
+                ),
+              ),
+              if (giveBeside) ...[
                 const SizedBox(width: Sp.s),
-                StarCount(day.pointsAvailable, size: 16 * scale),
+                OutlinedButton(
+                  onPressed: onGive,
+                  style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14)),
+                  child: const Text('Give to…', maxLines: 1, softWrap: false),
+                ),
               ],
             ],
           ),
         ),
+        DenReveal(
+          visible: open,
+          child: open ? ChoreOpen(day: day, onGive: day.done ? null : onGive, color: color) : const SizedBox.shrink(),
+        ),
+      ],
+    );
+  }
+}
+
+/// A chore opened in place: its notes and due time, its steps to check, Give to… for that day,
+/// and Details.
+class ChoreOpen extends StatelessWidget {
+  const ChoreOpen({super.key, required this.day, required this.onGive, required this.color, this.indent = 52});
+
+  final ChoreDay day;
+  final VoidCallback? onGive;
+  final Color color;
+
+  /// Lines it up with the title beside the ring.
+  final double indent;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch(choreReads);
+    final c = context.colors;
+    final t = context.text;
+    final chore = day.chore;
+    final pointsOn = app.den.family?.pointsEnabled ?? true;
+    return Padding(
+      padding: EdgeInsetsDirectional.only(start: indent, bottom: Sp.m),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (chore.notes.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: Sp.s),
+              child: Text(tidy(chore.notes), style: t.meta(c.ink2)),
+            ),
+          for (final step in chore.steps)
+            Builder(
+              builder: (context) {
+                final checked = day.steps[step.id] != null;
+                final can = canCheckChore(app, step.owner ?? day.owner);
+                final who = app.memberById(step.owner);
+                return DenPressable(
+                  onTap: can ? () => attempt(context, () => context.choreActions.setStep(day, step.id, !checked)) : null,
+                  scale: false,
+                  haptic: true,
+                  toggled: checked,
+                  semanticLabel: step.text,
+                  shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(Radii.input))),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: Targets.adult),
+                    child: Row(
+                      children: [
+                        CheckRing(color: color, done: checked, size: 24),
+                        const SizedBox(width: Sp.m),
+                        Expanded(
+                          child: ExcludeSemantics(
+                            child: Text(
+                              tidy(step.text),
+                              style: t.body(checked ? c.ink2 : c.ink).copyWith(
+                                    decoration: checked ? TextDecoration.lineThrough : null,
+                                    decorationColor: c.ink2,
+                                  ),
+                            ),
+                          ),
+                        ),
+                        if (who != null) ...[const SizedBox(width: Sp.s), DenAvatar(who, size: 24)],
+                        if (pointsOn && step.points > 0) ...[
+                          const SizedBox(width: Sp.s),
+                          Text('${step.points}', style: t.meta(c.ink2)),
+                          const SizedBox(width: 2),
+                          const Star(size: 13),
+                        ],
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          const SizedBox(height: Sp.xs),
+          Wrap(
+            spacing: Sp.s,
+            runSpacing: Sp.s,
+            children: [
+              if (onGive != null)
+                OutlinedButton.icon(
+                  onPressed: onGive,
+                  icon: const Icon(PhosphorIconsRegular.arrowsLeftRight, size: 18),
+                  label: const Text('Give to…'),
+                ),
+              TextButton(
+                onPressed: () => context.push('/chore/${chore.id}?date=${day.date}'),
+                child: const Text('Details'),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

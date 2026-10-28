@@ -29,18 +29,12 @@ class TodayChores extends StatefulWidget {
   State<TodayChores> createState() => _TodayChoresState();
 }
 
-class _Note {
-  const _Note(this.message, this.receipt);
-  final String message;
-  final Receipt? receipt;
-}
-
 class _TodayChoresState extends State<TodayChores> {
   /// The chore open in place, as `id@date`.
   String? _open;
 
   /// What the last Give to… did, with Undo, under the chores.
-  _Note? _note;
+  Done? _note;
 
   static String _key(ChoreDay d) => '${d.chore.id}@${d.date}';
 
@@ -48,28 +42,12 @@ class _TodayChoresState extends State<TodayChores> {
 
   Future<void> _check(ChoreDay d) => attempt(context, () => context.choreActions.setDone(d, !d.done));
 
-  Future<void> _give(AppState app, ChoreDay d) async {
-    final people = app.den.members.where((m) => m.role != Role.guest).toList();
-    final pick = await showPeoplePicker(
-      context,
-      title: 'Give ${d.chore.title} to',
-      people: people,
-      current: d.owner,
-      anyoneLabel: 'Anyone',
-      anyoneCurrent: d.owner == null,
-    );
-    if (pick == null || !mounted) return;
-    final to = pick.anyone ? null : pick.member;
-    if (to == d.owner) return;
-    final result = await perform(context, () => context.choreActions.swap(d, to));
-    if (result == null || !mounted) return;
-    final when = d.date == app.today ? 'today' : 'on ${app.formats.short(d.date)}';
+  Future<void> _give(ChoreDay d) async {
+    final given = await giveChore(context, d);
+    if (given == null || !mounted) return;
     setState(() {
       _open = null;
-      _note = _Note(
-        to == null ? 'Anyone can do ${d.chore.title} $when' : '${d.chore.title} is ${app.memberById(to)?.name ?? 'theirs'}\'s $when',
-        result.receipt,
-      );
+      _note = given;
     });
   }
 
@@ -99,7 +77,7 @@ class _TodayChoresState extends State<TodayChores> {
 
     Widget? more(Iterable<ChoreDay> group) {
       final open = group.where((d) => _key(d) == _open).firstOrNull;
-      return open == null ? null : _ChoreMore(day: open, onGive: canSwap(app, open) ? () => _give(app, open) : null);
+      return open == null ? null : _ChoreMore(day: open, onGive: canSwap(app, open) ? () => _give(open) : null);
     }
 
     final Widget body;
