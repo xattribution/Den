@@ -80,17 +80,11 @@ final List<RouteBase> familyRoutes = [
     builder: (_, _) => const FamilyScreen(),
     routes: [
       GoRoute(
-        path: 'devices',
-        builder: (_, _) => const DevicesScreen(),
+        path: 'devices/add',
+        builder: (_, _) => const AddDeviceScreen(),
         routes: [
-          GoRoute(
-            path: 'add',
-            builder: (_, _) => const AddDeviceScreen(),
-            routes: [
-              GoRoute(path: 'hub', builder: (_, _) => const AddHubScreen()),
-              GoRoute(path: 'browser', builder: (_, _) => const LinkBrowserScreen()),
-            ],
-          ),
+          GoRoute(path: 'hub', builder: (_, _) => const AddHubScreen()),
+          GoRoute(path: 'browser', builder: (_, _) => const LinkBrowserScreen()),
         ],
       ),
       GoRoute(path: 'member/new', builder: (_, s) => MemberEditor(role: s.uri.queryParameters['role'])),

@@ -69,13 +69,14 @@ class _PointsScreenState extends State<PointsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _Balances(holders: holders, totals: summary.totals, width: width, manage: manage),
+                      _Balances(holders: holders, totals: summary.totals, width: width, manage: manage, me: me?.id),
                       if (pending.isNotEmpty) _Pending(pending: pending, rewards: summary.rewards, manage: manage),
                       _Goals(goals: summary.goals, manage: manage),
                       _Store(
                         rewards: rewards,
                         pending: summary.pending,
-                        balance: me == null ? 0 : summary.totals[me.id] ?? 0,
+                        // Requests still waiting for a parent count against what's left to spend.
+                        balance: me == null ? 0 : summary.available(me.id),
                         width: width,
                         manage: manage,
                       ),
@@ -97,11 +98,14 @@ class _PointsScreenState extends State<PointsScreen> {
 }
 
 class _Balances extends StatelessWidget {
-  const _Balances({required this.holders, required this.totals, required this.width, required this.manage});
+  const _Balances({required this.holders, required this.totals, required this.width, required this.manage, this.me});
   final List<Member> holders;
   final Map<String, int> totals;
   final double width;
   final bool manage;
+
+  /// Who is looking: nobody gives themselves points, so their own balance doesn't open Give.
+  final String? me;
 
   @override
   Widget build(BuildContext context) {
@@ -142,7 +146,7 @@ class _Balances extends StatelessWidget {
                   width: tileWidth,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(Radii.control),
-                    onTap: manage ? () => context.push('/points/adjust?back=1&member=${m.id}') : null,
+                    onTap: manage && m.id != me ? () => context.push('/points/adjust?back=1&member=${m.id}') : null,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: Sp.s),
                       child: Semantics(
@@ -187,6 +191,8 @@ class _Pending extends StatelessWidget {
     final c = context.colors;
     final den = app.den;
     String rewardTitle(Redemption r) => rewards.where((x) => x.id == r.reward).firstOrNull?.title ?? 'a reward';
+    // Nobody decides their own request, a points manager's included.
+    bool decides(Redemption r) => manage && r.member != app.me?.id;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -219,10 +225,10 @@ class _Pending extends StatelessWidget {
                         TextSpan(
                           children: [
                             TextSpan(
-                              text: manage ? (den.member(r.member)?.name ?? 'Someone') : 'You',
+                              text: decides(r) ? (den.member(r.member)?.name ?? 'Someone') : 'You',
                               style: context.type.bodyStrong(c.ink),
                             ),
-                            TextSpan(text: manage ? ' asks for ' : ' asked for ', style: context.type.body(c.ink)),
+                            TextSpan(text: decides(r) ? ' asks for ' : ' asked for ', style: context.type.body(c.ink)),
                             TextSpan(text: rewardTitle(r), style: context.type.bodyStrong(c.ink)),
                           ],
                         ),
@@ -231,7 +237,7 @@ class _Pending extends StatelessWidget {
                     StarCount(r.cost, size: 18, style: context.type.body(c.ink)),
                   ],
                 ),
-                if (manage)
+                if (decides(r))
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
@@ -470,6 +476,8 @@ class _RewardCard extends StatelessWidget {
   const _RewardCard({required this.reward, required this.pending, required this.balance, required this.manage});
   final Reward reward;
   final List<Redemption> pending;
+
+  /// What the person can still spend: their balance less their requests waiting for a parent.
   final int balance;
   final bool manage;
 

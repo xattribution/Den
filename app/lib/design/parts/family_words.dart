@@ -12,6 +12,17 @@ abstract final class FamilyWords {
         Role.guest => 'Guest',
       };
 
+  /// "a parent", "an adult".
+  static String aRole(Role r) => '${r == Role.adult ? 'an' : 'a'} ${role(r).toLowerCase()}';
+
+  /// What [name] may do as [r], said before a role change is saved.
+  static String roleChange(String name, Role r) => switch (r) {
+        Role.parent => '$name will manage the family: people, devices, settings and points.',
+        Role.adult => "$name will add and change plans, chores and lists, but won't manage people, devices or points.",
+        Role.kid => '$name will do their own chores and ask for rewards, and add only what you allow.',
+        Role.guest => "$name will see the family's plans and check things off, but won't add or change anything.",
+      };
+
   static String tier(Tier t) => switch (t) {
         Tier.preReader => 'Pre-reader',
         Tier.little => 'Little',

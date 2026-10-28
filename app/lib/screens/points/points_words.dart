@@ -22,10 +22,3 @@ String windowWords(GoalStanding g, String today, Formats f) {
 
 /// "+2", "−10" with a true minus sign.
 String deltaWords(int delta) => delta >= 0 ? '+$delta' : '−${-delta}';
-
-/// Who takes part in a goal: its members, or every kid when it names none.
-List<Member> goalPeople(Goal goal, List<Member> members) {
-  final ids = goal.members;
-  if (ids == null) return members.where((m) => m.isKid).toList();
-  return members.where((m) => ids.contains(m.id)).toList();
-}

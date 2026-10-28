@@ -117,9 +117,3 @@ List<String> entryPeople(DraftEntry e) => switch (e) {
 
 /// "Add 5 things", "Add 1 thing".
 String addWords(int n) => n == 1 ? 'Add 1 thing' : 'Add $n things';
-
-/// "Added 5 things", in the banner after adding.
-String addedWords(CaptureReceipt r) {
-  final n = r.keys.length;
-  return n == 1 ? 'Added 1 thing' : 'Added $n things';
-}

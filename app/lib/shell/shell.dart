@@ -128,14 +128,15 @@ class DenTopBar extends StatelessWidget {
 /// The one way to add anything: type, snap or say it and let Den work out what it is, or pick
 /// one kind of thing to add by hand, by permission.
 Future<void> showAddSheet(BuildContext context) {
-  final app = context.app;
+  final app = DenScope.read(context);
   final today = app.today;
-  final choices = <(String, IconData, String, DenAction)>[
-    ('Event', PhosphorIconsRegular.calendarPlus, '/event/new?date=$today', DenAction.editEvents),
-    ('Chore', PhosphorIconsRegular.checkSquare, '/chore/new', DenAction.editChores),
-    ('Grocery item', PhosphorIconsRegular.shoppingCart, '/lists/groceries/add', DenAction.checkItems),
-    ('List', PhosphorIconsRegular.listPlus, '/lists/new', DenAction.editLists),
-    ('Points', PhosphorIconsRegular.star, '/points/adjust', DenAction.managePoints),
-  ].where((choice) => app.allows(choice.$4)).toList();
+  final pointsOn = app.den.family?.pointsEnabled ?? true;
+  final choices = <(String, IconData, String, bool)>[
+    ('Event', PhosphorIconsRegular.calendarPlus, '/event/new?date=$today', app.allows(DenAction.editEvents)),
+    ('Chore', PhosphorIconsRegular.checkSquare, '/chore/new', app.allows(DenAction.editChores)),
+    ('Grocery item', PhosphorIconsRegular.shoppingCart, '/lists/groceries/add', app.canChangeItems),
+    ('List', PhosphorIconsRegular.listPlus, '/lists/new', app.allows(DenAction.editLists)),
+    ('Points', PhosphorIconsRegular.star, '/points/adjust', pointsOn && app.allows(DenAction.managePoints)),
+  ].where((choice) => choice.$4).toList();
   return showCaptureSheet(context, [for (final c in choices) (c.$1, c.$2, c.$3)]);
 }

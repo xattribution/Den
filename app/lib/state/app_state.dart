@@ -125,6 +125,11 @@ class AppState extends ChangeNotifier {
     return (device?.isShared ?? false) && can(null, action, openCheckoff: device?.openCheckoff ?? false);
   }
 
+  /// Whether whoever is acting may add, change or remove list items. The engine allows that to
+  /// whoever may edit lists, whoever added the item; checking an item off is
+  /// [DenAction.checkItems]. Every add-item and edit-item control asks this.
+  bool get canChangeItems => allows(DenAction.editLists);
+
   @override
   void dispose() {
     _sub?.cancel();

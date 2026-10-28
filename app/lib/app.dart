@@ -14,17 +14,6 @@ import 'screens/today/today_screen.dart';
 import 'shell/shell.dart';
 import 'state/app_state.dart';
 
-/// A route whose screen hasn't been built yet. Every use is replaced before release.
-class PendingScreen extends StatelessWidget {
-  const PendingScreen(this.title, {super.key});
-  final String title;
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: Text(title)),
-        body: const SizedBox.shrink(),
-      );
-}
-
 GoRouter buildRouter(AppState state) => GoRouter(
       initialLocation: '/today',
       refreshListenable: state,

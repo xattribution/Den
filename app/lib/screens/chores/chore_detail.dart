@@ -144,25 +144,8 @@ class ChoreDetailScreen extends StatelessWidget {
       context.go('/chores');
     }
     if (!keep.mounted) return;
-    showUndo(
-      keep,
-      '${chore.title} deleted',
-      () => attempt(
-        keep,
-        () => den.addChore(
-          title: chore.title,
-          owner: chore.owner,
-          schedule: chore.schedule,
-          icon: chore.icon,
-          notes: chore.notes,
-          dueTime: chore.dueTime,
-          points: chore.points,
-          steps: chore.steps,
-          reminders: chore.reminders,
-          audience: chore.audience,
-        ),
-      ),
-    );
+    // The same chore comes back, with the days it was done and the points they earned.
+    showUndo(keep, '${chore.title} deleted', () => attempt(keep, () => den.restore(RecordType.chore, chore.id)));
   }
 }
 
