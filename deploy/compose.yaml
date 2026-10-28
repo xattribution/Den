@@ -1,9 +1,15 @@
-# The family's hub, and optionally your own relay for reaching it from outside the house.
+# The family's hub on a computer at home, and optionally your own relay for reaching it from
+# outside the house. To host a hub on a server behind HTTPS instead (the web app on phones from
+# anywhere, one or several families), use deploy/hosted/ and docs/hosting.md.
 #   docker compose -f deploy/compose.yaml up -d hub
 #   docker compose -f deploy/compose.yaml --profile relay up -d
 # A fresh hub prints a setup code in its log (docker compose logs hub), or run
 #   docker compose -f deploy/compose.yaml exec hub /app/bin/den_hub setup-code
 # and enter it in the Den app to add the hub to your family.
+# Back up while it runs (the passphrase comes from your shell's environment):
+#   docker compose -f deploy/compose.yaml exec -e DEN_BACKUP_PASSPHRASE hub \
+#     /app/bin/den_hub backup --out /data/den.denbackup --passphrase-env DEN_BACKUP_PASSPHRASE
+#   docker compose -f deploy/compose.yaml cp hub:/data/den.denbackup ./den.denbackup
 services:
   hub:
     build:
@@ -17,6 +23,7 @@ services:
       DEN_NAME: "Den hub"
       # DEN_RELAY: "https://relay.den.family"        # reach the hub from anywhere
       # DEN_PUBLIC_URL: "https://den.example.com"    # behind a TLS proxy, for OAuth (claude.ai)
+      # DEN_TRUSTED_PROXIES: "127.0.0.1"             # that proxy, so the hub believes its X-Forwarded-* headers
       # DEN_HA_URL: "http://homeassistant.local:8123"
       # DEN_HA_TOKEN: "${DEN_HA_TOKEN}"               # Home Assistant long-lived token, for reminders
       # DEN_LOG: "info"
@@ -41,13 +48,15 @@ services:
   # without it leaving the house. Off unless you ask for it:
   #   docker compose -f deploy/compose.yaml --profile model up -d model
   #   docker compose -f deploy/compose.yaml exec model ollama pull llama3.2
-  # then on a parent's phone: Settings, AI and automations, A model at home, this computer's address.
+  # Ollama has no sign-in, so it listens on this computer's loopback only: the hub (on the host
+  # network) reads with it for every device. On a parent's phone: Settings, AI and automations,
+  # A model at home, on the hub, address 127.0.0.1:11434. Pinned; change the tag on purpose.
   model:
     profiles: [model]
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.9.0
     restart: unless-stopped
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     volumes:
       - den-model:/root/.ollama
 

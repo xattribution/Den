@@ -1,0 +1,78 @@
+# Two families on one server: a hub each, with its own data volume, port and address, behind
+# one Caddy that routes by hostname. Neither hub can see the other's data; each family adds its
+# hub with its own setup code. docs/hosting.md, "Two families on one server".
+#
+#   cp deploy/hosted/env.two-families.example deploy/hosted/.env   # set both domains
+#   docker compose -f deploy/hosted/two-families.yaml up -d
+#   docker compose -f deploy/hosted/two-families.yaml logs hub-a   # family A's setup code
+#   docker compose -f deploy/hosted/two-families.yaml logs hub-b   # family B's setup code
+#
+# A third family is another service like these: the next port, its own volume, a block in
+# Caddyfile.two-families.
+name: den-families
+
+x-hub: &hub
+  build:
+    context: ../..
+    dockerfile: deploy/hub/Dockerfile
+  image: ghcr.io/xattribution/den-hub:latest
+  restart: unless-stopped
+  networks: [den]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  hub-a:
+    <<: *hub
+    environment:
+      DEN_NAME: ${FAMILY_A_NAME:-Den hub}
+      DEN_PORT: "47733"
+      DEN_PUBLIC_URL: https://${FAMILY_A_DOMAIN:?set FAMILY_A_DOMAIN in deploy/hosted/.env}
+      DEN_TRUSTED_PROXIES: 172.30.74.0/24
+      DEN_MDNS: "0"
+    ports:
+      - "127.0.0.1:47733:47733"
+    volumes:
+      - den-family-a:/data
+
+  hub-b:
+    <<: *hub
+    environment:
+      DEN_NAME: ${FAMILY_B_NAME:-Den hub}
+      DEN_PORT: "47735"
+      DEN_PUBLIC_URL: https://${FAMILY_B_DOMAIN:?set FAMILY_B_DOMAIN in deploy/hosted/.env}
+      DEN_TRUSTED_PROXIES: 172.30.74.0/24
+      DEN_MDNS: "0"
+    ports:
+      - "127.0.0.1:47735:47735"
+    volumes:
+      - den-family-b:/data
+
+  caddy:
+    image: caddy:2.10.0
+    restart: unless-stopped
+    environment:
+      FAMILY_A_DOMAIN: ${FAMILY_A_DOMAIN}
+      FAMILY_B_DOMAIN: ${FAMILY_B_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.two-families:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [den]
+    depends_on: [hub-a, hub-b]
+
+networks:
+  den:
+    ipam:
+      config:
+        - subnet: 172.30.74.0/24
+
+volumes:
+  den-family-a:
+  den-family-b:
+  caddy-data:
+  caddy-config:

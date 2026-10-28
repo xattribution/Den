@@ -35,6 +35,7 @@ beside it.
 | `mcp --token T` | MCP over stdio. Bridges to a running hub's `/mcp`, else serves from the data directory |
 | `import-sett coord.db --as NAME` | Imports Sett as that parent through the hub device (changes say "via Sett import") |
 | `setup-code` | A fresh hub's setup code |
+| `open-linking [--minutes N]` | In the public posture, lets browsers ask for a link code for N minutes (default 10), as if a parent had opened "Add a device" |
 | `status` | What the hub is doing |
 | `backup --out FILE --passphrase-env VAR` | Keys, the change log, the hub's own state and `notify.json`, sealed with den_net's backup format. Works while the hub runs (`docker compose exec hub /app/bin/den_hub backup ...`): it reads the log's metadata before the log and cuts the log after its last complete line, so the copy is consistent without the hub's lock |
 | `restore --in FILE --passphrase-env VAR [--force]` | Refuses while a hub runs on the directory (stop it, then `docker compose run --rm hub restore ...`); `--force` first removes the hub that is there. Afterwards, let the family's devices connect before changing anything: what the hub wrote after the backup comes back from them, and the hub's change counter moves past it |
@@ -86,7 +87,8 @@ Slots last 10 minutes (32 at most). Errors: `404` (unknown, expired or wrong sec
 In the public posture (a hub reachable from the internet, `DEN_PUBLIC=1` or an `https`
 `DEN_PUBLIC_URL`), step 1 works only while a parent has "Add a device" open: their phone sends a
 signed `POST /api/v1/link/window` ([docs/hub-api.md](../../docs/hub-api.md#post-apiv1linkwindow))
-first, and the browser otherwise gets `403 link_closed`.
+first (or the owner runs `den_hub open-linking` on the server), and the browser otherwise gets
+`403 link_closed`.
 
 ## MCP and OAuth
 

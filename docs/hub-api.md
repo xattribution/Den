@@ -197,7 +197,8 @@ A hub reachable from the internet runs in the public posture (`DEN_PUBLIC=1`, an
 whenever `DEN_PUBLIC_URL` is `https`): `/health` answers only `ok`, `api` and `ready`;
 `/api/v1/hub/status` of a hub already in a family answers only `{"paired": true, "setup_needed":
 false, "stage": "ready"}`; `POST /api/v1/link` works only while a parent has opened "Add a device"
-(`POST /api/v1/link/window`, below); and mDNS is off unless `DEN_MDNS=1`.
+(`POST /api/v1/link/window`, below) or the owner ran `den_hub open-linking` on the server; and
+mDNS is off unless `DEN_MDNS=1`.
 
 ## Discovery (mDNS)
 
