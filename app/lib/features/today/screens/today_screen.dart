@@ -1,234 +1,183 @@
-import 'package:den_core/den_core.dart';
+import 'dart:async';
+
+import 'package:den_net/den_net.dart' show SyncState;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../../../design/pictograms.dart';
+import '../../../app/app_state.dart';
+import '../../../app/shell.dart' show PersonButton;
+import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
-import '../../../app/app_state.dart';
-import 'join_requests.dart';
-import '../../calendar/calendar.dart';
-import '../../chores/chores.dart';
+import '../../../platform/sync/den_network.dart';
 import '../state/today_model.dart';
+import '../widgets/needs_you_card.dart';
+import '../widgets/today_chores.dart';
+import '../widgets/today_events.dart';
+import '../widgets/today_groceries.dart';
+import '../words/today_words.dart';
 
-/// The first screen for every adult: what's happening today and who's doing what.
-class TodayScreen extends StatelessWidget {
+/// The first screen for every adult (Main.dc.html, PadToday.dc.html): the date and a greeting,
+/// what needs them, the day's events, everyone's chores, and the groceries. From 5 PM it looks
+/// ahead to tomorrow too.
+///
+/// On a phone, one column, the person's face in the header. With room for two columns (an iPad
+/// in landscape, beside the sidebar), Needs you and the events on the left, chores and
+/// groceries on the right.
+class TodayScreen extends StatefulWidget {
   const TodayScreen({super.key});
+
+  /// The width from which Today's content sits in two columns.
+  static const double twoColumns = 760;
+
+  @override
+  State<TodayScreen> createState() => _TodayScreenState();
+}
+
+class _TodayScreenState extends State<TodayScreen> {
+  Timer? _tick;
+  int? _hour;
+
+  @override
+  void initState() {
+    super.initState();
+    // The greeting and Tomorrow follow the clock even when nothing else changes.
+    _tick = Timer.periodic(const Duration(minutes: 1), (_) {
+      final app = DenScope.read(context);
+      final hour = app.formats.at(app.den.now()).hour;
+      if (hour != _hour) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch(todayReads);
     final view = context.view(const TodayModel());
     final f = app.formats;
-    final c = context.colors;
+    final now = app.den.now();
+    final hour = f.at(now).hour;
+    _hour = hour;
+    final compact = DenLayout.of(context).isCompact;
+    final tomorrow = showsTomorrow(hour) ? app.den.today(date: f.addDays(view.date, 1)) : null;
 
-    // Each gap shows once, under the last of its events: two that overlap warn under the second.
-    final gapsByEvent = <String, List<Gap>>{};
-    for (final gap in view.gaps) {
-      final occ = gap.occurrences.lastOrNull;
-      if (occ != null) gapsByEvent.putIfAbsent('${occ.event.id}@${occ.start}', () => []).add(gap);
-    }
-    final takeRides = canTakeRide(app);
-    final looseGaps = view.gaps.where((g) => g.occurrences.isEmpty).toList();
-
-    final chores = view.chores;
-    final doneCount = chores.where((d) => d.done).length;
-
-    final heading = Padding(
-      padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.l, Sp.m),
-      child: Semantics(header: true, child: Text(f.long(view.date), style: context.type.heading(c.ink))),
+    final events = TodayEvents(
+      title: 'Today',
+      date: view.date,
+      events: view.events,
+      gaps: view.gaps,
+      link: SectionLink('Week', onTap: () => context.go('/calendar')),
     );
-
-    final calendar = <Widget>[
-        if (view.events.isEmpty)
-          EmptyLine(
-            message: 'Nothing on the calendar today.',
-            actionLabel: app.allows(DenAction.editEvents) ? 'Add event' : null,
-            onAction: () => context.push('/event/new?date=${view.date}'),
-          )
-        else
-          for (final occ in view.events) ...[
-            _EventRow(occ),
-            for (final gap in gapsByEvent['${occ.event.id}@${occ.start}'] ?? const <Gap>[])
-              Padding(
-                padding: const EdgeInsets.fromLTRB(Sp.l + 76 + Sp.m, 0, Sp.s, Sp.xs),
-                child: AttentionLine(
-                  message: gap.message,
-                  action: gap.kind == GapKind.noDriver && takeRides && !occ.event.source.readOnly
-                      ? TextButton(
-                          onPressed: () => _takeRide(context, occ, gap),
-                          child: const Text('Take it'),
-                        )
-                      : null,
-                ),
-              ),
-          ],
-        for (final gap in looseGaps)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: Sp.l),
-            child: AttentionLine(message: gap.message),
-          ),
-    ];
-    final choreSection = <Widget>[
-      if (chores.isNotEmpty) ...[
-        SectionHeader('Chores', trailing: '$doneCount of ${chores.length} done'),
-        ..._choreGroups(context, chores),
-      ],
-    ];
-    final listSection = <Widget>[
-      if (view.lists.isNotEmpty) ...[
-        const SectionHeader('Lists'),
-        for (final lv in view.lists) _ListRow(lv),
-      ],
-    ];
+    final ahead = tomorrow == null
+        ? null
+        : TodayEvents(
+            title: 'Tomorrow',
+            date: tomorrow.date,
+            events: tomorrow.events,
+            gaps: tomorrow.gaps,
+            link: SectionLink('Calendar', onTap: () => context.go('/calendar?date=${tomorrow.date}')),
+          );
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        const bottom = EdgeInsets.only(bottom: Sp.xxxl);
-        if (constraints.maxWidth < 900) {
+        final two = constraints.maxWidth >= TodayScreen.twoColumns;
+        final side = two ? 32.0 : (compact ? DenLayout.gutter : 24.0);
+        final header = PageHeader(
+          overline: f.long(view.date),
+          title: greeting(hour),
+          large: !compact,
+          trailing: compact ? PersonButton(member: app.me) : null,
+        );
+        final notice = _SyncNotice(network: app.network);
+        if (!two) {
           return ListView(
-            padding: bottom,
-            children: [const JoinRequests(), heading, ...calendar, ...choreSection, ...listSection],
+            padding: EdgeInsets.fromLTRB(side, Sp.l, side, Sp.xxl),
+            children: [
+              header,
+              notice,
+              const SizedBox(height: DenLayout.sectionGap),
+              NeedsYouSection(now: now, gap: DenLayout.sectionGap),
+              events,
+              if (ahead != null) ...[const SizedBox(height: DenLayout.sectionGap), ahead],
+              const SizedBox(height: DenLayout.sectionGap),
+              TodayChores(chores: view.chores),
+              const SizedBox(height: DenLayout.sectionGap),
+              const TodayGroceries(),
+            ],
           );
         }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: ListView(padding: bottom, children: [const JoinRequests(), heading, ...calendar, ...listSection]),
-            ),
-            VerticalDivider(width: 1, color: c.rule),
-            Expanded(
-              child: ListView(
-                padding: bottom,
-                children: choreSection.isEmpty
-                    ? [const EmptyLine(message: 'No chores today.')]
-                    : choreSection,
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(side, 32, side, 40),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              header,
+              notice,
+              const SizedBox(height: DenLayout.sectionGap),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        NeedsYouSection(now: now, carded: true, gap: DenLayout.sectionGap),
+                        events,
+                        if (ahead != null) ...[const SizedBox(height: DenLayout.sectionGap), ahead],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: DenLayout.sectionGap),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TodayChores(chores: view.chores, rows: true),
+                        const SizedBox(height: DenLayout.sectionGap),
+                        const TodayGroceries(),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );
   }
-
-  /// Takes the leg this gap is about, for this occurrence.
-  Future<void> _takeRide(BuildContext context, Occurrence occ, Gap gap) async {
-    final app = DenScope.read(context);
-    final leg = gap.leg ?? occ.rides.firstWhere((r) => r.driver == null, orElse: () => const Ride('to', null)).leg;
-    await attempt(context, () => context.eventActions.setRide(occ, leg, app.me?.id));
-  }
-
-  List<Widget> _choreGroups(BuildContext context, List<ChoreDay> chores) => [
-        for (final g in choreGroups(context.watch(todayReads).den.members, chores, me: context.watch(todayReads).me?.id))
-          _ChoreGroup(owner: g.member, days: g.days),
-      ];
 }
 
-class _EventRow extends StatelessWidget {
-  const _EventRow(this.occ);
-  final Occurrence occ;
+/// When this device can't reach the family's hub: changes stay here and sync later. Nothing
+/// otherwise.
+class _SyncNotice extends StatelessWidget {
+  const _SyncNotice({required this.network});
+
+  final DenNetwork? network;
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch(todayReads);
-    final f = app.formats;
-    final c = context.colors;
-    final people = occ.assignees.map(app.memberById).whereType<Member>().toList();
-    final who = occ.forEveryone ? 'Everyone' : people.map((m) => m.name).join(', ');
-    return InkWell(
-      onTap: () => context.push('/event/${occ.event.id}?at=${occ.start}'),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: Sp.l, vertical: Sp.s),
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              SizedBox(
-                width: 76,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(occ.allDay ? 'All day' : f.time(occ.start), style: context.type.meta(c.ink2)),
-                ),
-              ),
-              const SizedBox(width: Sp.m),
-              PersonBar(markers: app.markersFor(occ.assignees)),
-              const SizedBox(width: Sp.m),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(occ.title, style: context.type.body(c.ink)),
-                    if (occ.location.isNotEmpty) Text(occ.location, style: context.type.meta(c.ink2)),
-                  ],
-                ),
-              ),
-              const SizedBox(width: Sp.s),
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(who, style: context.type.meta(c.ink2)),
-              ),
-            ],
+    final net = network;
+    if (net == null) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: net,
+      builder: (context, _) {
+        final status = net.status;
+        final offline = status.state == SyncState.offline || status.state == SyncState.stopped;
+        if (net.isHub || !offline || status.lastError == 'no hub' || net.hubDevice == null) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(top: Sp.m),
+          child: NoticeLine(
+            message: net.describe(),
+            action: TextButton(onPressed: () => context.push('/settings'), child: const Text('Sync')),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ChoreGroup extends StatelessWidget {
-  const _ChoreGroup({required this.owner, required this.days});
-  final Member? owner;
-  final List<ChoreDay> days;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final left = days.where((d) => !d.done).length;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: Sp.s),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.l, 0),
-            child: Row(
-              children: [
-                if (owner != null) DenAvatar(owner!, size: 22) else Icon(PhosphorIconsRegular.usersThree, size: 22, color: c.ink2),
-                const SizedBox(width: Sp.s),
-                Text(owner?.name ?? 'Anyone', style: context.type.bodyStrong(c.ink)),
-                const Spacer(),
-                Text(left == 0 ? 'All done' : '$left left', style: context.type.meta(c.ink2)),
-              ],
-            ),
-          ),
-          for (final d in days) ChoreRow(day: d, showDue: false, vertical: 2),
-        ],
-      ),
-    );
-  }
-}
-
-class _ListRow extends StatelessWidget {
-  const _ListRow(this.lv);
-  final ListState lv;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final stores = lv.openByStore.entries.where((e) => e.key.isNotEmpty).toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    final detail = [
-      '${lv.open} ${lv.open == 1 ? 'item' : 'items'}',
-      if (stores.isNotEmpty) '${stores.first.value} at ${stores.first.key}',
-    ].join(', ');
-    return ListTile(
-      leading: Icon(Pictograms.listKind(lv.list.kind), color: c.ink2),
-      title: Text(lv.list.title),
-      subtitle: Text(detail),
-      trailing: Icon(PhosphorIconsRegular.caretRight, size: 18, color: c.ink3),
-      onTap: () => context.push('/lists/${lv.list.id}'),
+        );
+      },
     );
   }
 }

@@ -38,8 +38,7 @@ class ChoreRow extends StatelessWidget {
     final app = context.watch(choreReads);
     final c = context.colors;
     final chore = day.chore;
-    final mine = day.owner == null || day.owner == app.me?.id;
-    final canCheck = app.allows(mine ? DenAction.completeOwnChore : DenAction.completeAnyChore);
+    final canCheck = canCheckChore(app, day.owner);
     final pointsOn = app.den.family?.pointsEnabled ?? true;
     final late = day.late && !day.done;
     final scale = context.type.scale;

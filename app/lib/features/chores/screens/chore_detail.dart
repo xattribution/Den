@@ -231,11 +231,6 @@ class _Header extends StatelessWidget {
   }
 }
 
-bool _canCheckFor(AppState app, String? owner) {
-  final mine = owner == null || owner == app.me?.id;
-  return app.allows(mine ? DenAction.completeOwnChore : DenAction.completeAnyChore);
-}
-
 /// The fridge chart's box for a chore without steps, large, with who did it.
 class _MainCheck extends StatelessWidget {
   const _MainCheck({required this.day});
@@ -245,7 +240,7 @@ class _MainCheck extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.watch(choreReads);
     final c = context.colors;
-    final can = _canCheckFor(app, day.owner);
+    final can = canCheckChore(app, day.owner);
     final by = app.memberById(day.doneBy);
     void toggle() => attempt(context, () => context.choreActions.setDone(day, !day.done));
     return Padding(
@@ -301,7 +296,7 @@ class _Steps extends StatelessWidget {
               final checkedBy = day.steps[step.id];
               final checked = checkedBy != null;
               final owner = app.memberById(step.owner);
-              final can = _canCheckFor(app, step.owner ?? day.owner);
+              final can = canCheckChore(app, step.owner ?? day.owner);
               void toggle() => attempt(context, () => context.choreActions.setStep(day, step.id, !checked));
               return Hang(
                 by: (Targets.adult - 26) / 2,
