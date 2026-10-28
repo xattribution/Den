@@ -9,14 +9,14 @@
   <meta name="description" content="The family's calendar, chores, lists and points">
 
   <!-- Added to the Home Screen, Den opens as its own app named Den. The status bar follows the
-       phone's light or dark setting; the page under it is the app's paper color. -->
+       phone's light or dark setting; the page under it is the app's page color. -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Den">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="application-name" content="Den">
-  <meta name="theme-color" content="#FBFAF7" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#15120F" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#F2F2F2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="color-scheme" content="light dark">
   <meta name="format-detection" content="telephone=no">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -25,12 +25,14 @@
 
   <title>Den</title>
 
-  <!-- The page is the app's paper color from the first frame, light or dark, so opening Den
-       never flashes white. -->
+  <!-- The page is the app's page color from the first frame (#F2F2F2, true black at night), so
+       opening Den never flashes white. -->
   <style>
-    html, body { margin: 0; height: 100%; background: #FBFAF7; }
-    @media (prefers-color-scheme: dark) { html, body { background: #15120F; } }
+    html, body { margin: 0; height: 100%; background: #F2F2F2; }
+    @media (prefers-color-scheme: dark) { html, body { background: #000000; } }
   </style>
+  <!-- The face every word is drawn in, fetched while Flutter starts rather than after. -->
+  <link rel="preload" href="assets/assets/fonts/AtkinsonHyperlegibleNext.ttf" as="fetch" crossorigin>
   <script src="den_web.js"></script>
 </head>
 <body>
