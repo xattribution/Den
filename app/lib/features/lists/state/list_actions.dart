@@ -55,6 +55,16 @@ class ListActions {
         ],
       });
 
+  /// Adds several items at once (the add field's "2 milk @Costco, eggs"); one receipt takes
+  /// them all back.
+  Future<ActionResult> addItems(String listId, List<({String text, String? qty, String? store})> items) =>
+      _actions.run('add_items', {
+        'list': listId,
+        'items': [
+          for (final i in items) {'text': i.text, 'qty': i.qty, 'store': i.store},
+        ],
+      });
+
   /// Checks [item] off, or not.
   Future<ActionResult> setChecked(Item item, bool checked) => _change(item, {'checked': checked});
 

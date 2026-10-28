@@ -46,6 +46,61 @@ String listSummary(ListState lv, {int stores = 2}) {
   }
 }
 
+/// One thing to put on a list, as typed into the add field.
+typedef NewItem = ({String text, String? qty, String? store});
+
+final RegExp _leadingQty = RegExp(
+  r'^(\d+(?:[.,]\d+)?(?:\s*/\s*\d+)?|a dozen|a couple of|½|¼)\s*'
+  r'(x|gal|gallons?|lbs?|pounds?|oz|ounces?|kg|g|l|ml|dozen|doz|packs?|bags?|boxes|box|bottles?|cans?|jars?|bunch(?:es)?|cartons?|loaf|loaves)?\b\s*',
+  caseSensitive: false,
+);
+final RegExp _trailingTimes = RegExp(r'\s+x\s*(\d+)$', caseSensitive: false);
+final RegExp _store = RegExp(r'\s*@\s*([^@]+)$');
+
+/// Reads the add field: commas separate things, a number (and a unit) up front is the quantity,
+/// "x2" at the end too, and "@Costco" at the end of one is its store, matched to a store the
+/// family already uses whatever its case. "2 milk @Costco, eggs" is two items.
+List<NewItem> parseItems(String input, {List<String> knownStores = const []}) {
+  final out = <NewItem>[];
+  for (final raw in input.split(RegExp(r'[,\n;]'))) {
+    var text = raw.trim();
+    if (text.isEmpty) continue;
+    String? store;
+    final at = _store.firstMatch(text);
+    if (at != null) {
+      final named = at.group(1)!.trim();
+      store = knownStores.firstWhere((s) => s.toLowerCase() == named.toLowerCase(), orElse: () => named);
+      text = text.substring(0, at.start).trim();
+    }
+    String? qty;
+    final lead = _leadingQty.firstMatch(text);
+    if (lead != null && lead.end < text.length) {
+      final n = lead.group(1)!;
+      final unit = lead.group(2);
+      qty = unit == null || unit.toLowerCase() == 'x' ? n : '$n $unit';
+      text = text.substring(lead.end).trim();
+    } else if (_trailingTimes.firstMatch(text) case final m?) {
+      qty = m.group(1);
+      text = text.substring(0, m.start).trim();
+    }
+    if (text.isEmpty) continue;
+    out.add((text: '${text[0].toUpperCase()}${text.substring(1)}', qty: qty, store: store));
+  }
+  return out;
+}
+
+/// "Milk", "Milk and Eggs", "Milk, Eggs and 2 more".
+String itemNames(List<NewItem> items) {
+  final names = [for (final i in items) i.text];
+  return switch (names.length) {
+    0 => 'nothing',
+    1 => names.single,
+    2 => '${names[0]} and ${names[1]}',
+    3 => '${names[0]}, ${names[1]} and ${names[2]}',
+    _ => '${names[0]}, ${names[1]} and ${names.length - 2} more',
+  };
+}
+
 /// Words for a list kind.
 String kindWords(ListKind kind) => switch (kind) {
   ListKind.shopping => 'Shopping',

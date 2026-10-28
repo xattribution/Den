@@ -23,11 +23,11 @@ class GroceryAddScreen extends StatelessWidget {
     final canCreate = app.allows(DenAction.editLists);
     return Scaffold(
       appBar: AppBar(title: const Text('Groceries')),
-      body: EmptyLine(
+      body: EmptyState(
         message: canCreate
             ? 'There\'s no shopping list yet.'
             : 'There\'s no shopping list yet. Ask a parent to add one.',
-        actionLabel: canCreate ? 'Add groceries list' : null,
+        actionLabel: canCreate ? 'Make a Groceries list' : null,
         onAction: () async {
           final ok = await attempt(
             context,

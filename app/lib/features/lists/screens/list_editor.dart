@@ -13,8 +13,9 @@ import '../words/list_words.dart';
 import '../../../design/forms/forms.dart';
 import '../state/lists_model.dart';
 
-/// Adds a list or changes one: name, kind, whether it runs on or is needed by a date or for an
-/// event, pinned, and who sees it. `/lists/new`, `/lists/:id/edit`.
+/// Adds a list or changes one: its name and kind, one optional date it's needed by, and whether
+/// it's pinned; the event it's for and who sees it are under More options. `/lists/new`,
+/// `/lists/:id/edit`.
 class ListEditorScreen extends StatefulWidget {
   const ListEditorScreen({super.key, this.id});
   final String? id;
@@ -99,7 +100,7 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
     if (result == null) return;
     final newId = _isNew ? ((result.data['list'] as Map?)?['id'] as String?) : null;
     if (newId != null) {
-      context.pushReplacement('/lists/$newId');
+      context.go('/lists?list=$newId');
     } else if (context.canPop()) {
       context.pop();
     } else {
@@ -254,9 +255,10 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
                 const FieldLabel('Kind'),
                 Wrap(
                   spacing: Sp.s,
+                  runSpacing: Sp.s,
                   children: [
                     for (final k in ListKind.values)
-                      ChoiceTile.chip(
+                      TagChip(
                         icon: Pictograms.listKind(k),
                         label: kindWords(k),
                         selected: _kind == k,
@@ -265,52 +267,28 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
                   ],
                 ),
                 const FieldLabel(
-                  'How long it lasts',
-                  info:
-                      'An ongoing list stays until you delete it. A list needed by a date, or for an event, shows on Today when that day comes.',
+                  'Needed by',
+                  info: 'A list needed by a date shows on Today, and in Needs you the day before.',
                 ),
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Segmented<ListLifecycle>(
-                      options: const {
-                        ListLifecycle.running: 'Ongoing',
-                        ListLifecycle.dated: 'Need by a date',
-                        ListLifecycle.event: 'For an event',
-                      },
-                      value: _lifecycle,
-                      onChanged: (v) => setState(() {
-                        _lifecycle = v;
-                        _whenError = null;
-                      }),
-                    ),
+                  child: PickerButton.outlined(
+                    icon: PhosphorIconsRegular.calendarBlank,
+                    label: _lifecycle == ListLifecycle.dated && _needBy != null
+                        ? 'Needed by ${f.relative(_needBy!, app.today)}'
+                        : 'Not by any date',
+                    onTap: () async {
+                      await _pickDate();
+                      if (_needBy != null) setState(() => _lifecycle = ListLifecycle.dated);
+                    },
+                    onClear: _lifecycle == ListLifecycle.dated
+                        ? () => setState(() {
+                              _lifecycle = ListLifecycle.running;
+                              _needBy = null;
+                            })
+                        : null,
                   ),
                 ),
-                if (_lifecycle == ListLifecycle.dated) ...[
-                  const SizedBox(height: Sp.m),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: PickerButton.outlined(
-                      icon: PhosphorIconsRegular.calendarBlank,
-                      label: _needBy == null ? 'Choose a date' : 'Need by ${f.relative(_needBy!, app.today)}',
-                      onTap: _pickDate,
-                    ),
-                  ),
-                ],
-                if (_lifecycle == ListLifecycle.event) ...[
-                  const SizedBox(height: Sp.m),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: PickerButton.outlined(
-                      icon: PhosphorIconsRegular.calendarCheck,
-                      label: event == null
-                          ? (_event == null ? 'Choose an event' : 'An event that was removed')
-                          : '${event.title}, ${f.relative(f.localDate(event.start), app.today)}',
-                      onTap: _pickEvent,
-                    ),
-                  ),
-                ],
                 FieldError(_whenError),
                 const SizedBox(height: Sp.l),
                 SwitchRow(
@@ -319,37 +297,70 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
                   value: _pinned,
                   onChanged: (v) => setState(() => _pinned = v),
                 ),
-                const FieldLabel('Who sees it'),
-                if (othersPrivate && !_audienceChanged)
-                  Row(
+                const SizedBox(height: Sp.l),
+                // An event's list and who sees it, out of the way until asked for, and open from
+                // the start when the list already uses one.
+                MoreOptions(
+                  initiallyOpen: _lifecycle == ListLifecycle.event || (_existing != null && _audience != Audience.everyone),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Expanded(
-                        child: Text(
-                          'Only ${app.den.member(privateOwner)?.name ?? 'one person'}',
-                          style: context.type.body(c.ink),
+                      const FieldLabel('For an event', top: Sp.s, info: 'A list for an event shows on Today on the day of the event.'),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: PickerButton.outlined(
+                          icon: PhosphorIconsRegular.calendarCheck,
+                          label: _lifecycle != ListLifecycle.event
+                              ? 'No event'
+                              : event == null
+                                  ? (_event == null ? 'Choose an event' : 'An event that was removed')
+                                  : '${event.title}, ${f.relative(f.localDate(event.start), app.today)}',
+                          onTap: () async {
+                            await _pickEvent();
+                            if (_event != null) setState(() => _lifecycle = ListLifecycle.event);
+                          },
+                          onClear: _lifecycle == ListLifecycle.event
+                              ? () => setState(() {
+                                    _lifecycle = _needBy == null ? ListLifecycle.running : ListLifecycle.dated;
+                                    _event = null;
+                                  })
+                              : null,
                         ),
                       ),
-                      TextButton(
-                        onPressed: () => setState(() {
-                          _audience = Audience.everyone;
-                          _audienceChanged = true;
-                        }),
-                        child: const Text('Share with everyone'),
-                      ),
+                      const FieldLabel('Who sees it'),
+                      if (othersPrivate && !_audienceChanged)
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Only ${app.den.member(privateOwner)?.name ?? 'one person'}',
+                                style: context.text.body(c.ink),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () => setState(() {
+                                _audience = Audience.everyone;
+                                _audienceChanged = true;
+                              }),
+                              child: const Text('Share with everyone'),
+                            ),
+                          ],
+                        )
+                      else
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: DenSegmented<Audience>(
+                            options: audiences,
+                            value: audiences.containsKey(_audience) ? _audience : Audience.everyone,
+                            onChanged: (a) => setState(() {
+                              _audience = a;
+                              _audienceChanged = true;
+                            }),
+                          ),
+                        ),
                     ],
-                  )
-                else
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Segmented<Audience>(
-                      options: audiences,
-                      value: audiences.containsKey(_audience) ? _audience : Audience.everyone,
-                      onChanged: (a) => setState(() {
-                        _audience = a;
-                        _audienceChanged = true;
-                      }),
-                    ),
                   ),
+                ),
                 if (!_isNew) ...[
                   const SizedBox(height: Sp.xxl),
                   DestructiveButton(label: 'Delete list', onPressed: () => deleteListWithUndo(context, _existing!)),
