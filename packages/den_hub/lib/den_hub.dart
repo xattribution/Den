@@ -11,7 +11,7 @@ export 'src/config.dart';
 export 'src/edge.dart' show IpNetwork;
 export 'src/hub.dart';
 export 'src/log.dart';
-export 'src/setup.dart' show SetupStage, setupAlphabet, setupTries, restrictToOwner;
+export 'src/setup.dart' show SetupStage, setupAlphabet, setupTries, restrictToOwner, linkOpenFile;
 export 'src/times.dart' show parseInstant, isoIn;
 export 'src/mcp/server.dart' show McpServer, mcpProtocolVersions;
 export 'src/mcp/stdio.dart' show serveMcpStdio;

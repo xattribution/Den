@@ -113,7 +113,7 @@ class DataDir {
     if (await hub.exists()) {
       for (final f in await _filesIn(hub)) {
         final name = f.uri.pathSegments.last;
-        if (name.endsWith('.tmp') || name == 'setup-code') continue;
+        if (name.endsWith('.tmp') || name == 'setup-code' || name == linkOpenFile) continue;
         out['hub/$name'] = await f.readAsBytes();
       }
     }

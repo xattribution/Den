@@ -32,6 +32,10 @@ const Duration setupLockout = Duration(minutes: 1);
 /// The longest a client ever waits.
 const Duration setupLockoutMax = Duration(hours: 1);
 
+/// The file in the hub's state directory (`<data>/hub/`) that `den_hub open-linking` writes:
+/// until when (UTC ms) browsers may ask to link in the public posture, opened from the server.
+const String linkOpenFile = 'link-open';
+
 class _Tries {
   int wrong = 0;
   int level = 0;
@@ -374,8 +378,21 @@ class LinkSlots {
   int _openUntil = 0;
 
   /// Whether browsers may ask for a slot now: always on a home network, and in the public
-  /// posture only while a parent has "Add a device" open.
-  bool get open => !hub.config.publicPosture || hub.now() < _openUntil;
+  /// posture only while a parent has "Add a device" open, or until the time (UTC ms) the
+  /// owner wrote into `<data>/hub/link-open` with `den_hub open-linking`.
+  bool get open {
+    if (!hub.config.publicPosture) return true;
+    final now = hub.now();
+    if (now < _openUntil) return true;
+    final dir = hub.config.dataDir;
+    if (dir == null) return false;
+    try {
+      final until = int.tryParse(File('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$linkOpenFile').readAsStringSync().trim());
+      return until != null && now < until;
+    } on FileSystemException {
+      return false;
+    }
+  }
 
   /// `POST /api/v1/link/window`, signed by a parent's own device: opens "Add a device" for
   /// [windowLength]. Answers `{open_until, open_until_ms}`.

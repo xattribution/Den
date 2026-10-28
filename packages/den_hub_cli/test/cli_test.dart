@@ -131,6 +131,17 @@ void main() {
     expect(againErr, contains('--force'));
   });
 
+  test('open-linking lets browsers ask a public hub for a link code for a while, and stays out of backups', () async {
+    final (code, out, err) = await run(['open-linking', '--data', dataPath, '--minutes', '5']);
+    expect(code, 0, reason: err);
+    expect(out, contains('Link this browser'));
+    final file = File('$dataPath${Platform.pathSeparator}hub${Platform.pathSeparator}link-open');
+    final until = int.parse(file.readAsStringSync().trim());
+    expect(until, greaterThan(DateTime.now().millisecondsSinceEpoch + 4 * 60000));
+    expect((await run(['open-linking', '--data', dataPath, '--minutes', '600'])).$1, 64);
+    expect((await DataDir(dataPath).readBackup()).keys, isNot(contains('hub/link-open')));
+  });
+
   test('a backup taken while the hub runs and writes is consistent, and holds notify.json', () async {
     final hubDir = DataDir(dataPath);
     await hubDir.lock();

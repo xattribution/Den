@@ -198,6 +198,23 @@ void main() {
       expect(opened.body['open_until_ms'], greaterThan(DateTime.now().millisecondsSinceEpoch));
       expect((await f.call('POST', '/api/v1/link')).status, 201);
     });
+
+    test('the owner can open linking from the server with den_hub open-linking', () async {
+      final dir = await Directory.systemTemp.createTemp('den-public');
+      addTearDown(() => dir.delete(recursive: true));
+      final hosted = await HubFixture.start(
+        dataDir: dir.path,
+        configure: (c) => HubConfig(port: 0, host: InternetAddress.loopbackIPv4, mdns: false, log: c.log, public: true, dataDir: dir.path),
+      );
+      addTearDown(hosted.stop);
+      expect((await hosted.call('POST', '/api/v1/link')).status, 403);
+      File('${dir.path}/hub/$linkOpenFile')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('${DateTime.now().millisecondsSinceEpoch + 60000}');
+      expect((await hosted.call('POST', '/api/v1/link')).status, 201);
+      File('${dir.path}/hub/$linkOpenFile').writeAsStringSync('${DateTime.now().millisecondsSinceEpoch - 1}');
+      expect((await hosted.call('POST', '/api/v1/link')).status, 403, reason: 'only until the time written');
+    });
   });
 
   group('web app', () {

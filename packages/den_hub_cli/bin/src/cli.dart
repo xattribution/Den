@@ -60,6 +60,7 @@ ArgParser cliParser() {
     ..addOption('hub', help: 'A running hub to bridge to (default http://127.0.0.1:<port>)');
   _common(root.addCommand('import-sett')).addOption('as', help: 'The parent the import acts as (by name)');
   _common(root.addCommand('setup-code'));
+  _common(root.addCommand('open-linking')).addOption('minutes', help: 'How long browsers may ask to link (default 10)');
   _common(root.addCommand('status'));
   _common(root.addCommand('backup'))
     ..addOption('out', help: 'Backup file to write')
@@ -97,6 +98,7 @@ Future<int> runCli(List<String> args, {CliIo? io}) async {
       'mcp' => await mcp(command, data, port, cli),
       'import-sett' => await importSett(command, data, cli),
       'setup-code' => await setupCode(data, port, cli),
+      'open-linking' => await openLinking(command, data, cli),
       'status' => await status(data, port, cli),
       'backup' => await backup(command, data, cli),
       'restore' => await restore(command, data, cli),
@@ -119,6 +121,7 @@ String _usage(ArgParser parser) => [
       '  mcp --token T     MCP over standard input and output',
       '  import-sett DB --as NAME   Import a Sett coord.db as that parent',
       '  setup-code        Print a fresh hub\'s setup code',
+      '  open-linking      Let browsers ask to link to a public hub for 10 minutes',
       '  status            Say what the hub is doing',
       '  backup --out FILE --passphrase-env VAR',
       '  restore --in FILE --passphrase-env VAR [--force]',

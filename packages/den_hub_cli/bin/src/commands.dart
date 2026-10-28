@@ -143,6 +143,24 @@ Future<int> setupCode(DataDir data, int port, CliIo io) async {
   return 0;
 }
 
+/// `den_hub open-linking [--minutes N]`: in the public posture, browsers may ask the hub for a
+/// link code only while a parent has "Add a device" open; this opens it from the server itself
+/// (`docker compose exec hub /app/bin/den_hub open-linking`), for N minutes (default 10, at
+/// most 60). The running hub reads `hub/link-open`; nothing else changes.
+Future<int> openLinking(ArgResults a, DataDir data, CliIo io) async {
+  if (!data.exists) throw StateError('There\'s no hub in ${data.path} yet. Run den_hub serve first.');
+  final minutes = int.tryParse(a['minutes'] as String? ?? '10');
+  if (minutes == null || minutes < 1 || minutes > 60) throw CliUsage('--minutes must be from 1 to 60');
+  final until = DateTime.now().toUtc().add(Duration(minutes: minutes));
+  final file = data.file('hub/$linkOpenFile');
+  await file.parent.create(recursive: true);
+  await file.writeAsString('${until.millisecondsSinceEpoch}\n', flush: true);
+  restrictToOwner(file.path);
+  io.out.writeln('Browsers can ask to link to this hub until ${until.toIso8601String()} (UTC). '
+      'Open the hub\'s address on the phone, choose Link this browser, and scan its code from a parent\'s phone.');
+  return 0;
+}
+
 /// `den_hub status`.
 Future<int> status(DataDir data, int port, CliIo io) async {
   final base = Uri.parse('http://127.0.0.1:$port');
