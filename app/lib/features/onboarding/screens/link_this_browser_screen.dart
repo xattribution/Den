@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -9,12 +10,12 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
-import '../../../design/forms/forms.dart';
 import '../../family/family.dart';
+import '../state/this_device.dart';
 
 /// Linking this browser through the hub that served it: a link code to scan with a parent's
-/// phone, the hub's address, and the time left. When the phone answers, the browser asks to join
-/// and the waiting screen takes over.
+/// phone, the hub's address, and the time left. The browser names itself ("Browser",
+/// "Computer"). When the phone answers, it asks to join and the waiting screen takes over.
 class LinkThisBrowserScreen extends StatefulWidget {
   const LinkThisBrowserScreen({super.key, this.now});
 
@@ -26,16 +27,18 @@ class LinkThisBrowserScreen extends StatefulWidget {
 }
 
 class _LinkThisBrowserScreenState extends State<LinkThisBrowserScreen> {
-  final _name = TextEditingController(text: 'Browser');
   BrowserLinkSession? _link;
   String? _error;
   bool _loading = true;
+  bool _copied = false;
   Timer? _tick;
   PairingService? _pairing;
+  DeviceKind? _kind;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _kind ??= guessDeviceKind(context);
     final pairing = Pairing.of(context);
     if (pairing != _pairing) {
       _pairing = pairing;
@@ -50,10 +53,7 @@ class _LinkThisBrowserScreenState extends State<LinkThisBrowserScreen> {
       _error = null;
     });
     try {
-      final link = await _pairing!.linkThisBrowser(deviceName: () {
-        final name = _name.text.trim();
-        return name.isEmpty ? 'Browser' : name;
-      });
+      final link = await _pairing!.linkThisBrowser(deviceName: () => suggestDeviceName('', _kind ?? DeviceKind.browser));
       link.addListener(_changed);
       if (!mounted) return;
       setState(() {
@@ -91,100 +91,74 @@ class _LinkThisBrowserScreenState extends State<LinkThisBrowserScreen> {
     _tick?.cancel();
     _link?.removeListener(_changed);
     _link?.cancel();
-    _name.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final t = context.text;
     final link = _link;
     final width = MediaQuery.sizeOf(context).width;
-    final qr = (width.clamp(0.0, 600.0) - Sp.l * 4).clamp(200.0, 360.0);
+    final qr = (width.clamp(0.0, 560.0) - 96).clamp(180.0, 320.0);
+    // QR codes read most reliably dark on light, so the code keeps day colors at night too.
     const day = DenColors.day;
 
-    return FormFrame(
+    return DenPage(
       title: 'Link this browser',
       children: [
-        const InfoHeader(
-          "Scan with a parent's phone",
-          info: 'On the phone: Family and devices, then Add a device, then A browser on a computer.',
+        Text(
+          "On a parent's phone: Settings, Advanced, Hub and sync, then A browser on a computer. Scan this code with it.",
+          style: t.body(c.ink),
         ),
         if (_loading)
-          FormBlock(top: 0, child: Text('Getting a code from the hub', style: context.type.body(c.ink2)))
-        else if (_error != null) ...[
-          FormBlock(top: 0, child: AttentionLine(message: _error!, bad: true)),
-          FormBlock(
-            top: Sp.m,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton(onPressed: _open, child: const Text('Try again')),
-            ),
-          ),
-        ]
+          Text('Getting a code from the hub', style: t.body(c.ink2))
+        else if (_error != null)
+          GroupCard(child: ErrorState(message: _error!, actionLabel: 'Try again', onAction: _open))
         else if (link != null) ...[
-          FormBlock(
-            top: 0,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Container(
-                padding: const EdgeInsets.all(Sp.l),
-                decoration: BoxDecoration(
-                  color: day.paper,
-                  borderRadius: BorderRadius.circular(Radii.control),
-                  border: Border.all(color: c.rule),
-                ),
-                child: QrImageView(
-                  data: link.uri,
-                  size: qr,
-                  padding: EdgeInsets.zero,
-                  backgroundColor: day.paper,
-                  eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.square, color: day.ink),
-                  dataModuleStyle: QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: day.ink),
-                  semanticsLabel: 'Link code',
-                ),
-              ),
-            ),
-          ),
-          // A parent at the same computer, or with Den in a browser, pastes the code instead.
-          FormBlock(
-            top: Sp.s,
-            child: Row(
+          GroupCard(
+            padding: const EdgeInsets.all(Sp.l),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: SelectableText(link.uri, maxLines: 2, style: context.type.meta(c.ink2))),
-                TextButton.icon(
-                  onPressed: () => Clipboard.setData(ClipboardData(text: link.uri)),
-                  icon: const Icon(PhosphorIconsRegular.copy, size: 18),
-                  label: const Text('Copy code'),
-                ),
-              ],
-            ),
-          ),
-          FormBlock(
-            child: Row(
-              children: [
-                Icon(PhosphorIconsRegular.hardDrives, size: 20, color: c.ink2),
-                const SizedBox(width: Sp.s),
-                Text('Hub ', style: context.type.meta(c.ink2)),
-                Expanded(
-                  child: SelectableText(
-                    link.hub.hasPort ? '${link.hub.host}:${link.hub.port}' : link.hub.host,
-                    style: context.type.bodyStrong(c.ink),
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(Sp.m),
+                    decoration: BoxDecoration(color: day.card, borderRadius: BorderRadius.circular(Radii.tile)),
+                    child: QrImageView(
+                      data: link.uri,
+                      size: qr,
+                      padding: EdgeInsets.zero,
+                      backgroundColor: day.card,
+                      eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.square, color: day.ink),
+                      dataModuleStyle: QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: day.ink),
+                      semanticsLabel: 'Link code',
+                    ),
                   ),
                 ),
+                const SizedBox(height: Sp.l),
+                Text('Or paste it on the phone', style: t.meta(c.ink2)),
+                Row(
+                  children: [
+                    Expanded(child: SelectableText(link.uri, maxLines: 2, style: t.meta(c.ink))),
+                    TextButton(
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: link.uri));
+                        if (mounted) setState(() => _copied = true);
+                      },
+                      child: Text(_copied ? 'Copied' : 'Copy'),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
-          FormBlock(top: Sp.s, child: _Status(link: link, now: widget.now, onRetry: _open)),
-        ],
-        FormBlock(
-          top: Sp.xl,
-          child: TextField(
-            controller: _name,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(labelText: 'Name this browser', hintText: 'Kitchen laptop'),
+          NoticeLine(
+            icon: PhosphorIconsRegular.hardDrives,
+            message: 'Hub ${link.hub.hasPort ? '${link.hub.host}:${link.hub.port}' : link.hub.host}',
           ),
-        ),
+          _Status(link: link, now: widget.now, onRetry: _open),
+        ],
       ],
     );
   }
@@ -199,26 +173,21 @@ class _Status extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final t = context.text;
     final left = Duration(milliseconds: link.expires - (now ?? DateTime.now)().millisecondsSinceEpoch);
     return switch (link.stage) {
-      LinkStage.waiting when !left.isNegative =>
-        Text('Expires in ${FamilyWords.countdown(left)}', style: context.type.meta(c.ink2)),
-      LinkStage.joining || LinkStage.joined => Text('Asking to join the family', style: context.type.meta(c.ink2)),
-      LinkStage.failed => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AttentionLine(message: link.error ?? "Linking didn't finish. Get a new code and try again.", bad: true),
-            const SizedBox(height: Sp.s),
-            OutlinedButton(onPressed: onRetry, child: const Text('Get a new code')),
-          ],
+      LinkStage.waiting when !left.isNegative => Text('Good for ${FamilyWords.countdown(left)} more', style: t.meta(c.ink2)),
+      LinkStage.joining || LinkStage.joined => Text('Asking to join the family', style: t.meta(c.ink2)),
+      LinkStage.failed => ErrorState(
+          message: link.error ?? "Linking didn't finish. Get a new code and try again.",
+          actionLabel: 'Get a new code',
+          onAction: onRetry,
         ),
-      _ => Row(
-          children: [
-            Expanded(child: Text('This code expired.', style: context.type.meta(c.ink2))),
-            OutlinedButton(onPressed: onRetry, child: const Text('Get a new code')),
-          ],
+      _ => Wrap(
+          spacing: Sp.m,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [Text('This code ran out.', style: t.meta(c.ink2)), OutlinedButton(onPressed: onRetry, child: const Text('Get a new code'))],
         ),
     };
   }
 }
-

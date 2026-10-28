@@ -5,17 +5,16 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
+import '../../../platform/capabilities.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../platform/web/web_app.dart';
-import 'home_screen_steps.dart';
-import '../../../platform/capabilities.dart';
-import '../../../design/forms/forms.dart';
 import '../state/this_device.dart';
-import '../../family/family.dart';
+import 'home_screen_steps.dart';
 
 /// Joining a family from a parent's invite: the four words from an invite message (filled in
-/// when the invite's link opened Den), or a QR code on a phone or tablet with a camera. The
-/// waiting screen takes over once the request is sent.
+/// when the invite's link opened Den), or a QR code on a phone or tablet with a camera. This
+/// device's name comes from whom the invite is for ("Zoe's iPhone"). The waiting screen takes
+/// over once the request is sent.
 ///
 /// In Safari on an iPhone or iPad, Den goes on the Home Screen first: the family will live in
 /// the Home Screen app, which keeps its own storage.
@@ -39,13 +38,11 @@ class JoinScreen extends StatefulWidget {
 }
 
 class _JoinScreenState extends State<JoinScreen> {
-  final _device = TextEditingController();
   late final _words = TextEditingController(text: widget.code);
   final _hub = TextEditingController();
   DeviceKind? _kind;
   late bool _scanning = widget.code == null && (widget.scan ?? Capabilities.scanQr);
   bool _busy = false;
-  bool _tried = false;
   bool _inSafari = false;
   String? _error;
 
@@ -59,24 +56,19 @@ class _JoinScreenState extends State<JoinScreen> {
 
   @override
   void dispose() {
-    _device.dispose();
     _words.dispose();
     _hub.dispose();
     super.dispose();
   }
 
-  bool get _named => _device.text.trim().isNotEmpty;
+  /// This device's name, from whom the invite is for ("Sam's iPhone").
+  String _name(String? forName) => suggestDeviceName(forName ?? '', _kind ?? DeviceKind.phone);
 
-  /// This device's name: what was typed, else from whom the invite is for ("Sam's iPhone").
-  String _name(String? forName) => _named ? _device.text.trim() : suggestDeviceName(forName ?? '', _kind ?? DeviceKind.phone);
-
-  Future<void> _join(Future<JoinTicket> Function(PairingService p) send, {bool needsName = false}) async {
+  Future<void> _join(Future<JoinTicket> Function(PairingService p) send) async {
     setState(() {
-      _tried = true;
       _error = null;
+      _busy = true;
     });
-    if (needsName && !_named) return;
-    setState(() => _busy = true);
     final pairing = Pairing.of(context);
     try {
       final ticket = await send(pairing);
@@ -96,26 +88,20 @@ class _JoinScreenState extends State<JoinScreen> {
     final raw = capture.barcodes.map((b) => b.rawValue).whereType<String>().firstOrNull;
     if (raw == null) return;
     if (raw.startsWith('den://link')) {
-      setState(
-        () => _error = "That's a browser's link code. Scan it from a parent's phone that's already in the family: "
-            'Family and devices, Add a device, A browser on a computer.',
-      );
+      setState(() => _error = "That's a browser's link code. Scan it from a parent's phone instead.");
       return;
     }
     if (!raw.startsWith('den://join')) {
-      setState(() => _error = "That code isn't a Den invite. Scan the code under Add a device on a parent's phone.");
+      setState(() => _error = "That code isn't a Den invite. Ask a parent for an invite.");
       return;
     }
-    _join((p) => p.joinWithQr(raw, deviceName: _name(null), kind: _kind!), needsName: true);
+    _join((p) => p.joinWithQr(raw, deviceName: _name(null), kind: _kind!));
   }
 
   void _sendWords() {
     final typed = inviteFrom(_words.text);
     if (typed.words.length != 4) {
-      setState(() {
-        _tried = true;
-        _error = 'Type all four words from the invite.';
-      });
+      setState(() => _error = 'Type all four words from the invite.');
       return;
     }
     final words = typed.words.join(' ');
@@ -137,59 +123,51 @@ class _JoinScreenState extends State<JoinScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final t = context.text;
     final web = widget.web ?? WebApp.info;
     final steps = _browser && web.needsHomeScreen && !_inSafari;
     final width = MediaQuery.sizeOf(context).width;
-    final camera = (width - Sp.l * 2).clamp(200.0, 420.0);
+    final camera = (width.clamp(0.0, 560.0) - 64).clamp(200.0, 420.0);
 
-    return FormFrame(
+    if (steps) {
+      return DenPage(
+        title: 'Join your family',
+        children: [
+          HomeScreenSteps(ipad: web.ipad, code: inviteFrom(widget.code ?? '').words.join(' ').nullIfEmpty),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(onPressed: () => setState(() => _inSafari = true), child: const Text('Join here in Safari instead')),
+          ),
+        ],
+      );
+    }
+    return DenPage(
       title: 'Join your family',
-      bottom: _scanning || steps
+      bottom: _scanning
           ? null
-          : SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _busy ? null : _sendWords,
-                child: Text(_busy ? 'Joining' : 'Join the family'),
-              ),
+          : FilledButton(
+              onPressed: _busy ? null : _sendWords,
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+              child: Text(_busy ? 'Joining' : 'Join the family'),
             ),
       children: [
-        if (steps) ...[
-          HomeScreenSteps(ipad: web.ipad, code: inviteFrom(widget.code ?? '').words.join(' ').nullIfEmpty),
-          FormBlock(
-            top: Sp.xl,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: () => setState(() => _inSafari = true),
-                child: const Text('Join here in Safari instead'),
-              ),
-            ),
-          ),
-        ] else ...[
-          InfoHeader(
-            _scanning ? 'Scan the code' : 'The code from your invite',
-            info: _browser
-                ? 'The four words in the invite a parent sent you. Opening its link fills them in.'
-                : "On a parent's device, open Family and devices, then Add a device.",
-          ),
-          if (_scanning) ...[
-            FormBlock(
-              top: 0,
-              child: Center(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(Radii.control),
-                  child: SizedBox.square(
-                    dimension: camera,
-                    child: MobileScanner(
-                      onDetect: _scanned,
-                      errorBuilder: (context, error) => Container(
-                        color: c.well,
-                        padding: const EdgeInsets.all(Sp.l),
-                        alignment: Alignment.center,
+        if (_scanning) ...[
+          Text("Scan the code on a parent's phone.", style: t.body(c.ink)),
+          Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(Radii.tile),
+              child: SizedBox.square(
+                dimension: camera,
+                child: MobileScanner(
+                  onDetect: _scanned,
+                  errorBuilder: (context, error) => ColoredBox(
+                    color: c.card,
+                    child: Padding(
+                      padding: const EdgeInsets.all(Sp.l),
+                      child: Center(
                         child: Text(
-                          "Den can't use the camera. Allow camera access in this device's settings, or enter the code instead.",
-                          style: context.type.body(c.ink2),
+                          "Den can't use the camera. Allow camera access in this device's settings, or type the words instead.",
+                          style: t.body(c.ink2),
                           textAlign: TextAlign.center,
                         ),
                       ),
@@ -198,90 +176,53 @@ class _JoinScreenState extends State<JoinScreen> {
                 ),
               ),
             ),
-            FormBlock(
-              top: Sp.s,
-              child: Center(
-                child: TextButton(
-                  onPressed: () => setState(() {
-                    _scanning = false;
-                    _error = null;
-                  }),
-                  child: const Text('Enter the code instead'),
-                ),
-              ),
-            ),
-          ] else ...[
-            FormBlock(
-              top: 0,
-              child: TextField(
-                controller: _words,
-                autocorrect: false,
-                enableSuggestions: false,
-                decoration: const InputDecoration(labelText: 'The four words', hintText: 'maple river canoe tiger'),
-                onSubmitted: (_) => _sendWords(),
-              ),
-            ),
-            if (!_browser)
-              FormBlock(
-                child: TextField(
-                  controller: _hub,
-                  autocorrect: false,
-                  keyboardType: TextInputType.url,
-                  decoration: InputDecoration(
-                    labelText: 'Hub address (optional)',
-                    hintText: 'https://den.example.com',
-                    suffixIcon: const InfoTip("The start of the invite's link. Only needed when this device can't find the hub by itself."),
-                    suffixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                  ),
-                ),
-              ),
-            if (widget.scan ?? Capabilities.scanQr)
-              FormBlock(
-                top: Sp.s,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton(
-                    onPressed: () => setState(() {
-                      _scanning = true;
-                      _error = null;
-                    }),
-                    child: const Text('Scan the code instead'),
-                  ),
-                ),
-              ),
-          ],
-          const SectionHeader('This device'),
-          FormBlock(
-            top: 0,
-            child: TextField(
-              controller: _device,
-              textCapitalization: TextCapitalization.words,
-              decoration: InputDecoration(
-                labelText: _scanning ? 'Device name' : 'Device name (optional)',
-                hintText: suggestDeviceName('Leo', _kind ?? DeviceKind.phone),
-                errorText: _scanning && _tried && !_named ? 'Name this device so a parent knows which one is asking.' : null,
-              ),
-              onChanged: (_) => setState(() {}),
+          ),
+          if (_error != null) Text(_error!, style: t.meta(c.destructive)),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () => setState(() {
+                _scanning = false;
+                _error = null;
+              }),
+              child: const Text('Type the words instead'),
             ),
           ),
-          if (!_browser) ...[
-            const FormBlock(child: FieldLabel.quiet('Kind')),
-            FormBlock(
-              top: 0,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Segmented<DeviceKind>(
-                    options: {for (final k in personalKinds) k: FamilyWords.deviceKind(k)},
-                    value: _kind ?? DeviceKind.phone,
-                    onChanged: (k) => setState(() => _kind = k),
-                  ),
-                ),
+        ] else ...[
+          LabeledField(
+            label: 'The four words from your invite',
+            error: _error,
+            child: TextField(
+              controller: _words,
+              autocorrect: false,
+              enableSuggestions: false,
+              style: t.body(c.ink),
+              decoration: const InputDecoration(hintText: 'maple river canoe tiger'),
+              onSubmitted: (_) => _sendWords(),
+            ),
+          ),
+          if (!_browser)
+            LabeledField(
+              label: "The start of the invite's link, if this device can't find the hub",
+              child: TextField(
+                controller: _hub,
+                autocorrect: false,
+                keyboardType: TextInputType.url,
+                style: t.body(c.ink),
+                decoration: const InputDecoration(hintText: 'https://den.example.com'),
               ),
             ),
-          ],
-          if (_error != null) FormBlock(child: AttentionLine(message: _error!, bad: true)),
+          if (widget.scan ?? Capabilities.scanQr)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () => setState(() {
+                  _scanning = true;
+                  _error = null;
+                }),
+                child: const Text('Scan a code instead'),
+              ),
+            ),
         ],
       ],
     );
