@@ -380,22 +380,31 @@ Request guardUpgrade(
   void Function()? onClose,
   void Function()? onRefused,
 }) =>
-    Request(
-      request.method,
-      request.requestedUri,
-      protocolVersion: request.protocolVersion,
-      headers: request.headersAll,
-      handlerPath: request.handlerPath,
-      url: request.url,
-      context: request.context,
-      onHijack: (callback) {
-        try {
-          request.hijack((raw) {
-            onOpen?.call();
-            callback(guardChannel(raw, limits, onClose: onClose, onRefused: onRefused));
-          });
-        } on HijackException {
-          // The original request hands its connection over by throwing this; expected.
-        }
-      },
-    );
+    _GuardedUpgrade(request, (raw) {
+      onOpen?.call();
+      return guardChannel(raw, limits, onClose: onClose, onRefused: onRefused);
+    });
+
+/// A request whose [hijack] hijacks the original request at once (shelf_io checks the original
+/// to know the connection was taken) and hands the handler the guarded connection.
+class _GuardedUpgrade extends Request {
+  _GuardedUpgrade(this._inner, this._guard)
+      : super(
+          _inner.method,
+          _inner.requestedUri,
+          protocolVersion: _inner.protocolVersion,
+          headers: _inner.headersAll,
+          handlerPath: _inner.handlerPath,
+          url: _inner.url,
+          context: _inner.context,
+        );
+
+  final Request _inner;
+  final StreamChannel<List<int>> Function(StreamChannel<List<int>> raw) _guard;
+
+  @override
+  bool get canHijack => _inner.canHijack;
+
+  @override
+  void hijack(void Function(StreamChannel<List<int>>) callback) => _inner.hijack((raw) => callback(_guard(raw)));
+}
