@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:pointycastle/ecc/ecdh.dart';
 import 'package:pointycastle/export.dart';
 
 /// P-256, the curve of Web Push's keys (RFC 8291) and of VAPID's ES256 (RFC 8292).

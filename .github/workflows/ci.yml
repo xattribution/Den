@@ -87,7 +87,11 @@ jobs:
           exit $status
       - name: Test
         working-directory: packages/${{ matrix.package }}
-        run: dart test --reporter github
+        run: |
+          dart test --reporter github --file-reporter json:test.jsonl && exit 0
+          status=$?
+          python ../../.github/scripts/test_failures.py test.jsonl
+          exit $status
       - name: Build the hub binary
         if: matrix.package == 'den_hub_cli'
         working-directory: packages/den_hub_cli
@@ -118,10 +122,18 @@ jobs:
       # test/flutter_test_config.dart renders every screen without comparing pixels. The app
       # icon's source (tagged golden) is skipped.
       - working-directory: app
-        run: flutter test --exclude-tags golden --reporter github
+        run: |
+          flutter test --exclude-tags golden --reporter github --file-reporter json:test.jsonl && exit 0
+          status=$?
+          python ../.github/scripts/test_failures.py test.jsonl
+          exit $status
       # The browser's own storage (IndexedDB), in Chrome.
       - working-directory: app
-        run: flutter test --platform chrome --reporter github test/web
+        run: |
+          flutter test --platform chrome --reporter github --file-reporter json:web-test.jsonl test/web && exit 0
+          status=$?
+          python ../.github/scripts/test_failures.py web-test.jsonl
+          exit $status
       # The service worker, against a fake build, in Node.
       - working-directory: app
         run: node test/web/sw_test.mjs web/sw.js

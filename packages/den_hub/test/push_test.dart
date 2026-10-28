@@ -11,7 +11,6 @@ import 'package:den_hub/src/push/web_push_crypto.dart';
 import 'package:den_net/den_net.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:pointycastle/ecc/ecdh.dart';
 import 'package:pointycastle/export.dart';
 import 'package:test/test.dart';
 
