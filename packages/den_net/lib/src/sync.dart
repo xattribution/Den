@@ -92,7 +92,8 @@ class PendingJoin {
   /// The three words both screens show. For a spoken code, approve only if they match.
   final List<String> matchingWords;
 
-  /// `qr`, `code`, or `resume` (a request made earlier, reconnecting).
+  /// `qr` or `code`. A device whose earlier request is still waiting asks again the same way,
+  /// with a new invite or code.
   final String via;
 
   /// When the request arrived.
@@ -182,7 +183,9 @@ class SyncNode {
     CodeBook? codes,
     this.handshakeTimeout = const Duration(seconds: 20),
     this.pairingTimeout = const Duration(minutes: 15),
+    this.unpairedTimeout = const Duration(seconds: 30),
     this.maxPeers = 256,
+    this.maxPairingPeers = 8,
   })  : invites = invites ?? InviteBook(),
         codes = codes ?? CodeBook() {
     _changes = den.onChange.listen((_) {
@@ -205,11 +208,20 @@ class SyncNode {
   /// How long a handshake may take.
   final Duration handshakeTimeout;
 
-  /// How long an unapproved peer may stay connected waiting for approval.
+  /// How long a peer that proved an invite or code may stay connected waiting for approval.
   final Duration pairingTimeout;
+
+  /// How long a peer that isn't an approved device may stay connected before it proves an
+  /// invite or code.
+  final Duration unpairedTimeout;
 
   /// Most simultaneous sessions accepted by [serve].
   final int maxPeers;
+
+  /// Most of those that may come from devices that aren't approved (pairing, or waiting for a
+  /// parent), counting handshakes in progress, so strangers can't take the approved devices'
+  /// places.
+  final int maxPairingPeers;
 
   final Set<SyncPeer> _peers = {};
   final List<PendingJoin> _pending = [];
@@ -225,6 +237,10 @@ class SyncNode {
   Map<String, String> _keyMarks = const {};
   late final Timer _keyWatch;
   int _keyPushHolds = 0;
+  int _pairingHandshakes = 0;
+
+  /// Devices turned away on this node: refused from then on, even with a new invite or code.
+  final Set<String> _declined = {};
 
   /// Connected peers.
   Iterable<SyncPeer> get peers => List.unmodifiable(_peers);
@@ -249,17 +265,27 @@ class SyncNode {
       return;
     }
     final Session session;
+    var pairing = false;
     try {
       session = await Session.accept(
         channel,
         keys: den.keys,
         familyId: den.familyId,
-        admit: _admit,
+        admit: (hello) {
+          if (!_admit(hello)) return false;
+          if (!_approvedHello(hello)) {
+            pairing = true;
+            _pairingHandshakes++;
+          }
+          return true;
+        },
         encoding: encoding,
         timeout: handshakeTimeout,
       );
     } on SessionException {
       return;
+    } finally {
+      if (pairing) _pairingHandshakes--;
     }
     final peer = _attach(session);
     peer._start();
@@ -444,16 +470,30 @@ class SyncNode {
   Future<void> approve(PendingJoin join, {String? member, DeviceMode? mode}) =>
       den.approveDevice(join.deviceId, member: member, mode: mode);
 
-  /// Turns a pending device away and closes its session. Revoking its record is up to the
-  /// caller (`den.revokeDevice`), which also refuses it on every other replica.
+  /// Turns a pending device away, closes its session, and refuses it from then on, even with a
+  /// new invite or code. Where this device may (a parent's own device), it also revokes the
+  /// request (`den.revokeDevice`), which refuses the device on every replica and survives
+  /// restarts.
   Future<void> decline(PendingJoin join) async {
+    _declined.add(join.deviceId);
     final peer = join._peer;
     _removePending(peer);
     if (!peer.session.isClosed) {
       await peer._send({'t': 'join_rejected', 'reason': 'declined'}).catchError((Object _) {});
       await peer.close();
     }
+    final d = den.device(join.deviceId);
+    if (d != null && !d.approved && !d.revoked) {
+      try {
+        await den.revokeDevice(join.deviceId);
+      } on Object {
+        // A hub nobody owns can't revoke; it still refuses the device itself.
+      }
+    }
   }
+
+  /// Whether [deviceId] was declined or removed: no invite or code brings it back.
+  bool _refused(String deviceId) => _declined.contains(deviceId) || (den.device(deviceId)?.revoked ?? false);
 
   // ------------------------------------------------------------------ ingest
 
@@ -529,10 +569,20 @@ class SyncNode {
 
   // ------------------------------------------------------------------ internals
 
-  FutureOr<bool> _admit(ClientHello hello) {
+  bool _admit(ClientHello hello) {
     if (_closed || !den.hasFamily) return false;
     if (hello.family != null && hello.family != den.familyId) return false;
-    return _peers.length < maxPeers;
+    if (_peers.length >= maxPeers) return false;
+    if (_approvedHello(hello)) return true;
+    final waiting = _peers.where((p) => !p.isClient && p._phase == PeerPhase.pairing).length;
+    return waiting + _pairingHandshakes < maxPairingPeers;
+  }
+
+  /// Whether a client hello comes from an approved, unrevoked device of this family with its key.
+  bool _approvedHello(ClientHello hello) {
+    if (hello.family == null) return false;
+    final d = den.device(hello.device);
+    return d != null && d.approved && !d.revoked && d.pubkey == hello.pubkey;
   }
 
   SyncPeer _attach(Session session) {
@@ -731,16 +781,26 @@ class SyncPeer {
       onError: (Object error) => _closeReason ??= error is SessionException ? error.message : 'session error',
     );
     if (isClient) {
-      _trusted = _join != null || _serverTrusted();
-      if (!_trusted) {
-        unawaited(_violation('unknown-peer'));
-        return;
+      final join = _join;
+      if (join == null) {
+        _trusted = _serverTrusted();
+        if (!_trusted) {
+          unawaited(_violation('unknown-peer'));
+          return;
+        }
+        if (_isApproved()) _beginSync();
+      } else {
+        // A QR joiner pinned the inviting device's key in the handshake. A spoken-code joiner
+        // pinned nothing: whatever answered is trusted only once it proves it knows the code
+        // (`pair_ok`), so a stranger on the network can't feed it changes or a finished join.
+        _trusted = join._code == null && session.pinned;
       }
-      if (_join == null && _isApproved()) _beginSync();
     } else if (session.peerFamily != null && _peerApproved()) {
       _beginSync();
     } else {
-      _pairingTimer = Timer(_node.pairingTimeout, () => unawaited(_violation('pairing-timeout')));
+      // Strangers get a short while to prove an invite or code; once they have, they may wait
+      // for a parent's approval for [SyncNode.pairingTimeout].
+      _pairingTimer = Timer(_node.unpairedTimeout, () => unawaited(_violation('pairing-timeout')));
       if (session.peerFamily != null) unawaited(_send({'t': 'unapproved'}).catchError((Object _) {}));
     }
   }
@@ -837,9 +897,9 @@ class SyncPeer {
           _join?._fail(JoinStage.rejected, _closeReason!);
           await session.close();
         case 'join_pending':
-          _join?._set(JoinStage.waitingForApproval);
+          if (isClient && _trusted) _join?._set(JoinStage.waitingForApproval);
         case 'unapproved':
-          if (isClient && !_syncing) _awaitingApproval = true;
+          if (isClient && _trusted && !_syncing) _awaitingApproval = true;
         case 'approved':
           if (isClient && _trusted && !_syncing) {
             _join?._set(JoinStage.syncing);
@@ -1183,6 +1243,12 @@ class SyncPeer {
     final kind = m['kind'];
     final proof = m['proof'];
     if (proof is! String) throw _Violation('bad-pair');
+    if (_node._refused(deviceId)) {
+      _closeReason = 'declined';
+      await _send({'t': 'pair_fail', 'reason': 'declined'});
+      await session.close();
+      return;
+    }
     String? hostProof;
     var ok = false;
     if (kind == 'qr') {
@@ -1201,6 +1267,8 @@ class SyncPeer {
       return;
     }
     _pairedVia = kind as String;
+    _pairingTimer?.cancel();
+    _pairingTimer = Timer(_node.pairingTimeout, () => unawaited(_violation('pairing-timeout')));
     final family = _den.family;
     final founderDevice = family?.founderDevice;
     final founder = founderDevice == null
@@ -1219,9 +1287,10 @@ class SyncPeer {
   Future<void> _onJoin(Map<String, Object?> m) async {
     if (isClient) throw _Violation('unexpected-join');
     if (_phase != PeerPhase.pairing) return;
-    final existing = _den.device(deviceId);
-    final resuming = existing != null && !existing.approved && !existing.revoked && existing.pubkey == pubkey;
-    if (_pairedVia == null && !resuming) return _reject('not-paired');
+    // Every request, a device's first or one it made before, comes with a fresh proof of an
+    // invite or code: a request already in the log proves nothing about who is asking now.
+    if (_pairedVia == null) return _reject('not-paired');
+    if (_node._refused(deviceId)) return _reject('declined');
     final raw = m['changes'];
     if (raw is! List || raw.isEmpty || raw.length > 16) return _reject('bad-request');
     final changes = <Change>[];
@@ -1252,7 +1321,7 @@ class SyncPeer {
       requestedMode: device.mode,
       requestedMember: device.member,
       matchingWords: session.matchingWords,
-      via: _pairedVia ?? 'resume',
+      via: _pairedVia!,
       since: DateTime.now().toUtc(),
       peer: this,
     ));
@@ -1319,6 +1388,7 @@ class SyncPeer {
       await session.close();
       return;
     }
+    _trusted = true;
     final request = attempt._request!;
     if (!_den.hasFamily) {
       await _den.requestJoin(

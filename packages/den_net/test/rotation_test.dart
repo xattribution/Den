@@ -159,6 +159,42 @@ void main() {
       expect(relay.blobs.containsKey(await mailboxId(oldKey, 1)), isFalse);
     });
 
+    test('a device whose inbox refuses a key never stops the round, and nobody gets a key twice', () async {
+      if (!await setUpFamily()) return;
+      final tablet = await fam.approvedDevice(member: fam.parent, name: 'Pat tablet');
+      final laptopInbox = await deviceInboxId(laptop.keys.xpub);
+      final tabletInbox = await deviceInboxId(tablet.keys.xpub);
+      int inbox(String id) => relay.blobs[id]?.length ?? 0;
+      final laptopBefore = inbox(laptopInbox);
+      relay.full.add(laptopInbox);
+
+      await fam.founder.revokeDevice(oldPhone.deviceId);
+      await fam.founder.addEvent(title: 'After the revocation', start: at(18), end: at(19));
+      final first = await phoneMail.syncOnce();
+      expect(first.keysDelivered, 3, reason: 'f, p and Pat\'s space, to the tablet');
+      expect(first.failed, 3, reason: 'the same three, refused for the laptop');
+      expect(first.posted, greaterThan(0), reason: 'a refused delivery doesn\'t hold up posting');
+      expect(inbox(tabletInbox), 3);
+
+      // The next round delivers nothing again, and waits before trying the laptop.
+      relay.full.remove(laptopInbox);
+      final second = await phoneMail.syncOnce();
+      expect((second.keysDelivered, second.failed), (0, 0));
+      expect(inbox(tabletInbox), 3);
+      expect(inbox(laptopInbox), laptopBefore);
+
+      clock += MailboxSync.retryAfter(1).inMilliseconds;
+      final third = await phoneMail.syncOnce();
+      expect(third.keysDelivered, 3);
+      expect(inbox(laptopInbox), laptopBefore + 3);
+      expect(inbox(tabletInbox), 3);
+      expect((await phoneMail.syncOnce()).keysDelivered, 0);
+      expect((await laptopMail.syncOnce()).keysStored, 3);
+      expect(laptop.spaceKeyEpoch(Space.family), 1);
+      expect(MailboxSync.retryAfter(4), const Duration(minutes: 8));
+      expect(MailboxSync.retryAfter(40), const Duration(hours: 6));
+    });
+
     test('nothing in flight is lost across an epoch change, and old mailboxes are drained for 30 days', () async {
       if (!await setUpFamily()) return;
       final oldF = (await fam.founder.spaceKey(Space.family))!;

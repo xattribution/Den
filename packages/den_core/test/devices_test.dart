@@ -94,8 +94,23 @@ void main() {
       display.actAs(dana);
       await expectLater(display.setThisDeviceMode(DeviceMode.personal), throwsA(isA<InvalidInput>()));
       await expectLater(parent.updateDevice(display.deviceId, {'mode': DeviceMode.personal}), throwsA(isA<InvalidInput>()));
-      await parent.updateDevice(display.deviceId, {'mode': DeviceMode.personal, 'member': leo});
-      expect(parent.device(display.deviceId)!.member, leo);
+    });
+
+    test('an approved device keeps the person it was approved for', () async {
+      final ipad = await joinDevice(parent, clock, member: dana, name: 'Dana iPad');
+      await expectLater(
+        parent.updateDevice(ipad.deviceId, {'member': leo}),
+        throwsA(isA<PermissionDenied>()),
+        reason: 'it holds the parents\' and Dana\'s private records, which handing it on wouldn\'t remove',
+      );
+      final display = await joinDevice(parent, clock, mode: DeviceMode.shared, name: 'Kitchen', kind: DeviceKind.display);
+      await expectLater(
+        parent.updateDevice(display.deviceId, {'mode': DeviceMode.personal, 'member': leo}),
+        throwsA(isA<PermissionDenied>()),
+      );
+      expect(parent.device(ipad.deviceId)!.member, dana);
+      await parent.updateDevice(ipad.deviceId, {'name': 'Old iPad'});
+      expect(parent.device(ipad.deviceId)!.name, 'Old iPad');
     });
 
     test('approving a shared display shows the week by default', () async {
@@ -201,6 +216,39 @@ void main() {
       expect(reopened.family!.name, 'Fresh start');
       expect(reopened.changesSince({}).first.counter, greaterThan(1), reason: 'change ids are never reused');
       await sub.cancel();
+    });
+
+    test('a device restored from an older backup never reuses a change id the family holds', () async {
+      final storage = MemoryStorage();
+      final keys = await DeviceKeys.generate();
+      final laptop = await openDen(clock, storage: storage, keys: keys);
+      await laptop.requestJoin(
+        familyId: parent.familyId!,
+        founderPubkey: parent.founderPubkey!,
+        deviceName: 'Dana laptop',
+        kind: DeviceKind.desktop,
+        memberId: dana,
+      );
+      await parent.ingest(laptop.changesSince(parent.versionVector));
+      await parent.approveDevice(laptop.deviceId, member: dana);
+      await sync(parent, laptop);
+      await laptop.addCategory(name: 'Backed up');
+      final backup = MemoryStorage();
+      await backup.appendChanges(await storage.loadChanges());
+      await backup.saveMeta((await storage.loadMeta())!);
+      await laptop.addCategory(name: 'After the backup');
+      await sync(laptop, parent);
+
+      final restored = await openDen(clock, storage: backup, keys: keys);
+      await sync(parent, restored);
+      expect(restored.categories.map((c) => c.name), containsAll(['Backed up', 'After the backup']));
+      final added = await restored.addCategory(name: 'After the restore');
+      expect(restored.category(added), isNotNull, reason: 'its change id was new, so it applied');
+      await sync(restored, parent);
+      expect(parent.categories.map((c) => c.name), containsAll(['Backed up', 'After the backup', 'After the restore']));
+      final reopened = await openDen(clock, storage: backup, keys: keys);
+      final next = await reopened.addCategory(name: 'After reopening');
+      expect(reopened.category(next), isNotNull, reason: 'the raised counter was saved');
     });
 
     test('a device leaving can join again with new keys', () async {

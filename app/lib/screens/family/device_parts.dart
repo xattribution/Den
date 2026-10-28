@@ -11,6 +11,7 @@ import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../net/pairing.dart';
 import '../../state/app_state.dart';
+import 'member_editor.dart';
 
 /// Devices waiting for approval: the synced join requests, with the matching words from the
 /// pairing session when this device holds it.
@@ -154,10 +155,17 @@ Future<DeviceOwner?> showWhoseDeviceSheet(BuildContext context, String deviceNam
   );
 }
 
+/// Approves a device as someone's, a shared display or the hub. A parent who just made a shared
+/// display and has no PIN is asked to set one, since without it they can't act there.
 Future<void> approveDevice(BuildContext context, String deviceId, String name) async {
   final owner = await showWhoseDeviceSheet(context, name);
   if (owner == null || !context.mounted) return;
-  await attempt(context, () => context.den.approveDevice(deviceId, member: owner.member, mode: owner.mode));
+  final den = DenScope.read(context).den;
+  // The request leaves the list once approved, so ask from somewhere that stays.
+  final keep = Navigator.of(context, rootNavigator: true).context;
+  final ok = await attempt(context, () => den.approveDevice(deviceId, member: owner.member, mode: owner.mode));
+  if (!ok || owner.mode != DeviceMode.shared || !keep.mounted) return;
+  await askParentForSignIn(keep, name);
 }
 
 /// Revoking is irreversible for that device: it has to join again. Confirms, naming it.
@@ -213,10 +221,14 @@ class DeviceRow extends StatelessWidget {
   }
 }
 
-/// The layout a shared display shows; the week grid unless a parent picked another.
+/// The layouts a parent can pick for a shared display.
+const List<DisplayLayout> wallLayouts = [DisplayLayout.today, DisplayLayout.week, DisplayLayout.month, DisplayLayout.lists];
+
+/// The layout a shared display shows; the week grid unless a parent picked another (a photos
+/// layout was never built, so a display set to it shows the week too).
 DisplayLayout wallLayoutOf(Device? device) {
   if (device == null || device.rec.map('display')['layout'] == null) return DisplayLayout.week;
-  return device.layout;
+  return wallLayouts.contains(device.layout) ? device.layout : DisplayLayout.week;
 }
 
 /// Devices grouped by person, then shared displays and hubs. Pending and revoked devices are

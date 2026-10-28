@@ -54,3 +54,7 @@ List<Member> possibleDrivers(AppState app) =>
 
 /// Whether this person could take a ride leg.
 bool canDrive(Member? me) => me != null && (me.role == Role.parent || me.role == Role.adult || me.tier == Tier.teen);
+
+/// Whether whoever is acting may take a ride leg themselves: someone who could drive, and whom
+/// the engine lets set a driver (that changes the event, so it needs [DenAction.editEvents]).
+bool canTakeRide(AppState app) => canDrive(app.me) && app.allows(DenAction.editEvents);

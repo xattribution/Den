@@ -193,11 +193,30 @@ void main() {
           reason: 'unowned chores are gaps only today');
     });
 
-    test('a family event overlapping someone\'s event is a gap for them', () async {
+    test('only people named on both events are in two places; an event for everyone isn\'t', () async {
       await den.addEvent(title: 'Dinner', start: at('2026-10-16', '18:00'), end: at('2026-10-16', '19:00'));
       await den.addEvent(title: 'Piano', start: at('2026-10-16', '18:30'), end: at('2026-10-16', '19:30'), assignees: [zoe]);
+      expect(den.today().gaps, isEmpty);
+      await den.addEvent(title: 'Art', start: at('2026-10-16', '19:00'), end: at('2026-10-16', '20:00'), assignees: [zoe, leo]);
       final gap = den.today().gaps.single;
-      expect(gap.message, 'Zoe has Dinner and Piano at the same time');
+      expect(gap.message, 'Zoe has Piano and Art at the same time');
+      expect(gap.members, [zoe]);
+    });
+
+    test('a ride gap names the leg nobody is driving', () async {
+      final soccer = await den.addEvent(
+        title: 'Soccer',
+        start: at('2026-10-16', '17:00'),
+        end: at('2026-10-16', '18:30'),
+        rrule: 'FREQ=WEEKLY',
+        assignees: [leo],
+        rides: const [Ride('to', null), Ride('from', null)],
+      );
+      await den.claimRide(soccer, occurrence: at('2026-10-16', '17:00'), leg: 'to', driver: priya);
+      final gap = den.today().gaps.single;
+      expect(gap.leg, 'from');
+      expect(gap.message, 'Nobody is picking up Leo from Soccer');
+      expect(den.event(soccer)!.rides.first.driver, isNull, reason: 'the series still has nobody driving');
     });
   });
 

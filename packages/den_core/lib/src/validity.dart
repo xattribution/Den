@@ -2,6 +2,7 @@ import 'package:collection/collection.dart';
 
 import 'change.dart';
 import 'chores.dart';
+import 'hlc.dart';
 import 'model.dart';
 import 'permissions.dart';
 import 'schema.dart';
@@ -32,6 +33,28 @@ class Rejection {
   String toString() => '${kind.name}: $message';
 }
 
+/// A revocation that names the last change the revoking device held from the revoked one: a
+/// change from that device numbered past [after] and clocked before [at] was signed after the
+/// revocation, whatever clock it claims.
+class Cutoff {
+  const Cutoff(this.after, this.at);
+
+  /// The `revokedAfter` counter.
+  final int after;
+
+  /// The revocation's clock.
+  final Hlc at;
+
+  bool excludes(int counter, Hlc hlc) => counter > after && hlc < at;
+
+  /// The cutoff a valid change sets, or null when it isn't a revocation naming one.
+  static Cutoff? of(Change c) {
+    if (c.type != RecordType.device || c.fields['revoked'] != true) return null;
+    final after = c.fields['revokedAfter'];
+    return after is int ? Cutoff(after, c.hlc) : null;
+  }
+}
+
 /// What every replica of a family learned out of band: the family id and the founder's key.
 class TrustRoot {
   TrustRoot({this.familyId, this.founderPubkey})
@@ -44,6 +67,9 @@ class TrustRoot {
 Rejection _trust(String m) => Rejection(RejectionKind.trust, m);
 Rejection _deny(String m) => Rejection(RejectionKind.permission, m);
 Rejection _schema(String m) => Rejection(RejectionKind.schema, m);
+
+const String _ownDeviceOnly =
+    'Only a parent on their own device can do that, not a shared screen or an app acting through the hub';
 
 final RegExp _ridRe = RegExp(r'^[A-Za-z0-9_\-:@.]{1,120}$');
 
@@ -58,6 +84,12 @@ class Validator {
   final RecordStore store;
   TrustRoot Function() root;
 
+  /// Device id -> the revocations of it that name the last change the revoking device held
+  /// (`revokedAfter`), with the revocation's clock. The materializer fills this from the whole
+  /// log, so a change the revoked device signed later counts for nothing even when it claims an
+  /// earlier clock.
+  final Map<String, List<Cutoff>> cutoffs = {};
+
   Rejection? check(Change c) {
     final colon = c.id.lastIndexOf(':');
     final counter = colon > 0 ? int.tryParse(c.id.substring(colon + 1)) : null;
@@ -65,6 +97,9 @@ class Validator {
       return _trust('The change id doesn\'t name its device');
     }
     if (c.hlc.device != c.device) return _trust('The change\'s clock belongs to another device');
+    for (final cut in cutoffs[c.device] ?? const <Cutoff>[]) {
+      if (cut.excludes(counter, c.hlc)) return _trust('This device was removed from the family');
+    }
     final spec = typeSpecs[c.type];
     if (spec == null) return _schema('Den doesn\'t know records of type "${c.type}"');
     if (!_validSpace(c.space)) return _schema('Unknown space "${c.space}"');
@@ -195,7 +230,7 @@ class Validator {
     }
     if (existing != null &&
         !c.isDelete &&
-        f.keys.any((k) => !const {'name', 'kind', 'xpub', 'revoked', 'approved'}.contains(k))) {
+        f.keys.any((k) => !const {'name', 'kind', 'xpub', 'revoked', 'revokedAfter', 'approved'}.contains(k))) {
       return _trust('A device can\'t change what it asked for while it waits for approval');
     }
     final pubkey = f['pubkey'];
@@ -220,6 +255,10 @@ class Validator {
       if (c.type == RecordType.adjustment) return 'Points adjustments can\'t be changed';
     }
     switch (c.type) {
+      case RecordType.device:
+        if (c.fields.containsKey('revokedAfter') && c.fields['revoked'] != true) {
+          return 'Only a removal says which of a device\'s changes came before it';
+        }
       case RecordType.event:
         final start = merged('start'), end = merged('end');
         if (start is int && end is int && end < start) return 'The end is before the start';
@@ -255,8 +294,19 @@ class Validator {
     switch (c.type) {
       case RecordType.family:
         if (x.creating || c.rid != trust.familyId) return _trust('The family already exists');
-        return x.has(DenAction.manageFamily) ? null : _deny('Only parents can change family settings');
+        if (!x.has(DenAction.manageFamily)) return _deny('Only parents can change family settings');
+        if (c.fields.keys.any((k) => k == 'oversight' || k.startsWith('oversight.')) && !x.ownDevice) {
+          return _deny(_ownDeviceOnly);
+        }
+        return null;
       case RecordType.member:
+        // A person's role, permissions and sign-in, and whether they are in the family at all,
+        // are trust decisions: never made by the hub (whoever it acts for) or on a shared screen.
+        // Adding someone isn't: nothing can act for them until a parent approves a device or an
+        // assistant for them, on their own device.
+        final trusted = c.fields.containsKey('_deleted') ||
+            (!x.creating && c.fields.keys.any(const {'role', 'grants', 'signIn'}.contains));
+        if (trusted && !x.ownDevice) return _deny(_ownDeviceOnly);
         if (!x.creating && x.only({'signIn'}) && c.actor == c.rid) return null;
         if (!x.has(DenAction.manageFamily)) return _deny('Only parents can add or change people');
         if (_leavesNoParent(c, x.existing)) return _deny('The family needs at least one parent');
@@ -274,7 +324,11 @@ class Validator {
         }
         return x.has(DenAction.editEvents) ? null : _deny('${x.who} can\'t add or change events');
       case RecordType.chore:
-        return x.has(DenAction.editChores) ? null : _deny('${x.who} can\'t add or change chores');
+        if (!x.has(DenAction.editChores)) return _deny('${x.who} can\'t add or change chores');
+        if (_setsPoints(c, x.existing) && !x.has(DenAction.managePoints)) {
+          return _deny('${x.who} can\'t set how many stars a chore is worth');
+        }
+        return null;
       case RecordType.completion:
         return _completion(x);
       case RecordType.adjustment:
@@ -283,6 +337,7 @@ class Validator {
           return _schema('That person isn\'t in the family');
         }
         if (c.fields['by'] != c.actor) return _schema('An adjustment must name who made it');
+        if (member == c.actor) return _deny('${x.who} can\'t give or take their own points');
         return x.has(DenAction.managePoints) ? null : _deny('${x.who} can\'t give or take points');
       case RecordType.goal:
       case RecordType.reward:
@@ -311,6 +366,22 @@ class Validator {
     return _schema('Den doesn\'t know records of type "${c.type}"');
   }
 
+  /// Whether a chore change sets what the chore or one of its steps is worth to anything but
+  /// what it was: a new chore or step worth stars, or a new price for one.
+  static bool _setsPoints(Change c, Entry? existing) {
+    if (c.isDelete) return false;
+    int worth(Object? v) => v is num ? v.toInt() : 0;
+    final f = c.fields;
+    if (f.containsKey('points') && worth(f['points']) != worth(existing?.fields['points'])) return true;
+    final steps = f['steps'];
+    if (steps is! List) return false;
+    final before = {
+      for (final s in (existing?.fields['steps'] as List?) ?? const <Object?>[])
+        if (s is Map) s['id']: worth(s['points']),
+    };
+    return steps.any((s) => s is Map && worth(s['points']) != (before[s['id']] ?? 0));
+  }
+
   bool _leavesNoParent(Change c, Entry? existing) {
     if (!c.fields.containsKey('role') && !c.isDelete) return false;
     final wasParent = existing != null && !existing.deleted && existing.fields['role'] == Role.parent.name;
@@ -326,11 +397,19 @@ class Validator {
   Rejection? _device(_Ctx x) {
     final c = x.c;
     if (x.creating) return _trust('A device joins by sending its own request');
+    // A hub acting for an API or MCP connection never touches device records, its own included:
+    // a connection could otherwise turn the hub into a personal device and act as its owner.
+    if (c.fields.containsKey('_via')) return _deny(_ownDeviceOnly);
     final target = Device(x.existing!.rec);
     final mode = c.fields.containsKey('mode') ? c.fields['mode'] : target.mode.name;
     final owner = c.fields.containsKey('member') ? c.fields['member'] : target.member;
     if (c.fields.containsKey('mode') && mode == DeviceMode.personal.name && owner == null) {
       return _schema('A personal device needs an owner');
+    }
+    // What a device holds follows its owner, and changing the owner would leave the old owner's
+    // records on it: to give a device to someone else, remove it and add it again.
+    if (c.fields.containsKey('member') && target.approved && !target.revoked && owner != target.member) {
+      return _deny('A device stays with the person it was approved for. Remove it and add it again instead');
     }
     if (c.rid == c.device) {
       final f = c.fields;
@@ -340,15 +419,16 @@ class Validator {
           (f.containsKey('revoked') && f['revoked'] != true)) {
         return _trust('A device can never approve itself or change who owns it');
       }
-      if (x.only({'revoked'}) || c.isDelete) return null;
+      if (x.only({'revoked', 'revokedAfter'}) || c.isDelete) return null;
       final parent = x.actor?.isParent ?? false;
       if (f.containsKey('mode') && !parent) return _deny('Only a parent can change what this device is for');
-      if (parent && x.only({'mode', 'name', 'display', 'kind', 'xpub', 'revoked'})) return null;
+      if (parent && x.only({'mode', 'name', 'display', 'kind', 'xpub', 'revoked', 'revokedAfter'})) return null;
     }
     if (!x.has(DenAction.manageFamily)) return _deny('Only parents can approve or change devices');
     if (c.fields['approved'] == true && !(x.actor?.isParent ?? false)) {
       return _deny('Only a parent can approve a device');
     }
+    if (!x.ownDevice) return _deny(_ownDeviceOnly);
     return null;
   }
 
@@ -358,6 +438,9 @@ class Validator {
     final date = (c.fields['date'] ?? x.existing?.fields['date']) as String?;
     final choreEntry = choreId == null ? null : store.at(c.space, RecordType.chore, choreId);
     if (choreEntry == null || date == null) return _schema('That chore doesn\'t exist');
+    // A removed chore takes no more check-offs: one moved to another space lives on there, and
+    // a device that hadn't heard of the move would otherwise be paid twice.
+    if (choreEntry.deleted && !c.isDelete) return _schema('That chore was removed');
     final chore = Chore(choreEntry.rec);
     final completion = x.existing == null ? null : Completion(x.existing!.rec);
     final ownerBefore = dayOwner(chore, date, completion, x.family?.weekStart ?? 0);
@@ -386,6 +469,25 @@ class Validator {
     }
     for (final e in c.fields.entries) {
       if (e.key.startsWith('steps.')) stepWrites[e.key.substring(6)] = e.value;
+    }
+    // What the chore and its steps were worth when done is kept with the completion, so a new
+    // price later doesn't change what was earned. Only someone who sets prices may record more
+    // than the price at the time.
+    final pricer = x.has(DenAction.managePoints);
+    final worth = c.fields['points'];
+    if (worth is int && worth > chore.points && !pricer) {
+      return _deny('${x.who} can\'t set how many stars a chore is worth');
+    }
+    final stepWorth = <String, Object?>{
+      ...?(c.fields['stepPoints'] as Map?)?.cast<String, Object?>(),
+      for (final e in c.fields.entries)
+        if (e.key.startsWith('stepPoints.')) e.key.substring(11): e.value,
+    };
+    for (final e in stepWorth.entries) {
+      final step = chore.steps.firstWhereOrNull((s) => s.id == e.key);
+      if (step == null) return _schema('That chore has no such step');
+      final v = e.value;
+      if (v is int && v > step.points && !pricer) return _deny('${x.who} can\'t set how many stars a chore is worth');
     }
     for (final e in stepWrites.entries) {
       final step = chore.steps.firstWhereOrNull((s) => s.id == e.key);
@@ -435,6 +537,9 @@ class Validator {
       if (status == RedemptionStatus.approved.name && reward.needsApproval && !manager) {
         return _deny('A parent needs to approve that reward');
       }
+      if (forSelf && reward.needsApproval && status != RedemptionStatus.requested.name) {
+        return _deny('Someone else needs to approve ${x.who}\'s reward');
+      }
       if (c.fields['decidedBy'] != null && c.fields['decidedBy'] != c.actor) {
         return _schema('A decision must name who made it');
       }
@@ -444,6 +549,9 @@ class Validator {
       return _schema('A reward request can only be approved or declined');
     }
     if (!x.has(DenAction.managePoints)) return _deny('${x.who} can\'t approve rewards');
+    if (c.actor != null && x.existing!.fields['member'] == c.actor) {
+      return _deny('Someone else needs to approve ${x.who}\'s reward');
+    }
     if (c.fields['decidedBy'] != null && c.fields['decidedBy'] != c.actor) {
       return _schema('A decision must name who made it');
     }
@@ -452,7 +560,9 @@ class Validator {
 
   Rejection? _connection(_Ctx x) {
     final c = x.c;
-    final parent = x.actor?.isParent ?? false;
+    // Only a parent on their own device grants access; the hub keeps its own narrow part (asking
+    // for OAuth access, issuing tokens for granted access, revoking).
+    final parent = (x.actor?.isParent ?? false) && x.ownDevice;
     const denied = 'Only a parent can create or approve AI and automation access';
     if (x.creating) {
       final status = c.fields['status'];
@@ -516,6 +626,17 @@ class _Ctx {
   }
 
   String get who => actor?.name ?? device.name;
+
+  /// Whether the change comes from someone's own device: trust decisions (approving and removing
+  /// devices, people's roles, permissions and sign-in, privacy, AI access) are made only there.
+  /// That is a personal device, or a parent's own device running as the family's hub with its
+  /// owner using it; never a shared screen, a hub nobody owns, or an app or assistant acting
+  /// through the hub (whose changes carry `_via`), whoever it acts for.
+  bool get ownDevice {
+    if (c.fields.containsKey('_via')) return false;
+    if (device.mode == DeviceMode.personal) return true;
+    return device.mode == DeviceMode.hub && actor != null && actor!.id == device.member;
+  }
 
   bool only(Set<String> names) => c.fields.keys.every((k) => k == '_via' || k == '_from' || names.contains(k));
 }

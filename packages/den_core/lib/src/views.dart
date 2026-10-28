@@ -185,6 +185,11 @@ class PointsSummary {
   final List<PointsLine> recent;
   final List<Reward> rewards;
   final List<Redemption> pending;
+
+  /// What [member] can still spend: their balance less what their requests waiting for a parent
+  /// would cost.
+  int available(String member) =>
+      (totals[member] ?? 0) - pending.where((r) => r.member == member).fold(0, (n, r) => n + r.cost);
 }
 
 class FieldDiff {
@@ -242,7 +247,7 @@ enum GapKind {
   /// An event with a ride leg that has no driver.
   noDriver,
 
-  /// Two events for the same person overlap.
+  /// Two timed events that name the same person overlap.
   overlap,
 
   /// A chore due today that nobody owns and nobody has done.
@@ -250,13 +255,16 @@ enum GapKind {
 }
 
 class Gap {
-  const Gap({required this.kind, required this.message, required this.occurrences, this.members = const []});
+  const Gap({required this.kind, required this.message, required this.occurrences, this.members = const [], this.leg});
   final GapKind kind;
 
   /// Written for people: "Nobody is driving Leo to soccer".
   final String message;
   final List<Occurrence> occurrences;
   final List<String> members;
+
+  /// For [GapKind.noDriver], the ride leg with no driver: `to` or `from`.
+  final String? leg;
 }
 
 class TodayView {

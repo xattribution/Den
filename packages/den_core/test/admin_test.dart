@@ -70,6 +70,22 @@ void main() {
       await expectLater(den.updateFamily({'timezone': 'Mars/Olympus'}), throwsA(isA<InvalidInput>()));
       await expectLater(den.updateFamily({'founderDevice': 'someone'}), throwsA(isA<InvalidInput>()));
     });
+
+    test('parents change one person\'s oversight at a time, so changes made at once both count', () async {
+      final leo = await den.addMember(name: 'Leo', role: Role.kid);
+      final maya = await den.addMember(name: 'Maya', role: Role.kid);
+      final sam = await den.addMember(name: 'Sam', role: Role.parent);
+      final samPhone = await joinDevice(den, clock, member: sam);
+      await den.updateFamily({'oversight.$leo': {'parentsSeePrivate': false}});
+      await samPhone.updateFamily({'oversight.$maya': {'parentsSeePrivate': false}});
+      await exchange(den, samPhone);
+      for (final d in [den, samPhone]) {
+        expect(d.family!.parentsSeePrivate(leo), isFalse);
+        expect(d.family!.parentsSeePrivate(maya), isFalse);
+        expect(d.family!.parentsSeePrivate(sam), isTrue);
+      }
+      await expectLater(den.updateFamily({'oversight.$leo': {'parentsSeePrivate': 'no'}}), throwsA(isA<InvalidInput>()));
+    });
   });
 
   group('sign-in on shared screens', () {
@@ -92,6 +108,18 @@ void main() {
       await expectLater(den.setSignIn(zoe, kind: 'pattern', secret: '9999'), throwsA(isA<InvalidInput>()));
       await den.setSignIn(zoe, kind: 'none');
       expect(await den.verifySignIn(zoe, ''), isTrue);
+    });
+
+    test('a parent with no sign-in never verifies on a shared screen', () async {
+      final leo = await den.addMember(name: 'Leo', role: Role.kid);
+      final display = await joinDevice(den, clock, mode: DeviceMode.shared, name: 'Kitchen', kind: DeviceKind.display);
+      expect(await display.verifySignIn(dana, ''), isFalse, reason: 'anyone at the screen could act as Dana');
+      expect(await display.verifySignIn(leo, ''), isTrue);
+      expect(await den.verifySignIn(dana, ''), isTrue, reason: 'her own phone is hers');
+      await den.setSignIn(dana, kind: 'pin', secret: '2468');
+      await sync(den, display);
+      expect(await display.verifySignIn(dana, '2468'), isTrue);
+      expect(await display.verifySignIn(dana, ''), isFalse);
     });
 
     test('a member sets their own sign-in; only parents set others\'', () async {

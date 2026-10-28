@@ -439,7 +439,11 @@ void showNote(BuildContext context, String message) {
   messenger.showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 5)));
 }
 
-/// Runs a write and turns permission or input errors into a note instead of a crash.
+/// What a failed write says when the reason isn't one written for people (storage, say).
+const String writeFailedMessage = 'Den couldn’t save that. Try again in a moment.';
+
+/// Runs a write and turns any failure into a note instead of a crash: permission and input
+/// errors say why, anything else that it didn't save.
 Future<bool> attempt(BuildContext context, Future<void> Function() write) async {
   try {
     await write();
@@ -448,6 +452,9 @@ Future<bool> attempt(BuildContext context, Future<void> Function() write) async 
     if (context.mounted) showNote(context, e.message);
   } on InvalidInput catch (e) {
     if (context.mounted) showNote(context, e.message);
+  } on Object catch (e, stack) {
+    debugPrint('A write failed: $e\n$stack');
+    if (context.mounted) showNote(context, writeFailedMessage);
   }
   return false;
 }

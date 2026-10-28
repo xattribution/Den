@@ -13,8 +13,8 @@ import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../routes/family_routes.dart';
 import '../../state/app_state.dart';
-import '../calendar/calendar_screen.dart';
 import '../calendar/family_week.dart';
+import '../calendar/month_view.dart';
 import '../family/device_parts.dart';
 
 /// The kitchen wall: the date and a large clock, the family week as the main region, and a strip
@@ -99,7 +99,7 @@ class _WallScreenState extends State<WallScreen> {
 
     final Widget main = switch (layout) {
       DisplayLayout.today => _TodayBoard(onAct: () => setState(() {})),
-      DisplayLayout.month => MonthViewSlot(anchor: today),
+      DisplayLayout.month => MonthView(anchor: today),
       DisplayLayout.lists => const _ListsBoard(),
       DisplayLayout.week || DisplayLayout.photos => FamilyWeek(startDate: today, showChores: false, fillHeight: true),
     };
@@ -434,7 +434,8 @@ class _WallChore extends StatelessWidget {
             Text('Late', style: context.type.meta(c.bad)),
             const SizedBox(width: Sp.s),
           ],
-          if (day.pointsAvailable > 0 && !compact) StarCount(day.pointsAvailable, size: 20),
+          if ((den.family?.pointsEnabled ?? true) && day.pointsAvailable > 0 && !compact)
+            StarCount(day.pointsAvailable, size: 20),
         ],
       ),
     );

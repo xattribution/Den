@@ -408,7 +408,7 @@ class _RideValue extends StatelessWidget {
     final c = context.colors;
     final me = app.me;
     final driver = app.memberById(ride.driver);
-    final canClaim = canDrive(me) && !occ.event.source.readOnly;
+    final canClaim = canTakeRide(app) && !occ.event.source.readOnly;
 
     Future<void> claim(String? who) => attempt(
       context,
@@ -434,7 +434,7 @@ class _RideValue extends StatelessWidget {
         children: [
           if (driver != null) ...[DenAvatar(driver, size: 22 * context.type.scale), const SizedBox(width: Sp.s - 2)],
           Expanded(child: Text(mine ? 'You' : (driver?.name ?? 'Someone'), style: context.type.body(c.ink))),
-          if (mine) TextButton(onPressed: () => claim(null), child: const Text('Release it')),
+          if (mine && canClaim) TextButton(onPressed: () => claim(null), child: const Text('Release it')),
         ],
       ),
     );
@@ -467,107 +467,37 @@ class _Provenance extends StatelessWidget {
   }
 }
 
-/// Deletes an occurrence, asking how far for a repeating event, then offers Undo. Someone
-/// else's private event can't be put back from here, so that one asks first instead.
+/// Deletes an occurrence, asking how far for a repeating event, then offers Undo, which puts
+/// back exactly what was removed.
 Future<void> deleteOccurrence(BuildContext context, Occurrence occ) async {
   final app = DenScope.read(context);
   final den = app.den;
   final f = app.formats;
   final event = occ.event;
-  final owner = Space.memberOf(event.space);
-  final restorable = owner == null || owner == app.me?.id;
   var scope = EditScope.all;
   if (occ.isRepeating) {
     final chosen = await askEditScope(context, title: 'Delete ${occ.title}');
     if (chosen == null || !context.mounted) return;
     scope = chosen;
   }
-  if (!restorable && scope != EditScope.one) {
-    final name = app.memberById(owner)?.name ?? 'someone';
-    final sure = await confirmDelete(
-      context,
-      title: 'Delete ${occ.title}?',
-      message: 'It’s in $name’s private calendar, so it can’t be brought back from here.',
-      action: 'Delete event',
-    );
-    if (!sure || !context.mounted) return;
-  }
   final messenger = ScaffoldMessenger.of(context);
-  final error = await tryWrite(
-    () => den.deleteEvent(event.id, scope: scope, occurrence: occ.isRepeating ? occ.seriesStart : null),
-  );
+  final occurrence = occ.isRepeating ? occ.seriesStart : null;
+  final error = await tryWrite(() => den.deleteEvent(event.id, scope: scope, occurrence: occurrence));
   if (!context.mounted) return;
   if (error != null) {
     showNote(context, error);
     return;
   }
   closePage(context);
-  if (!restorable && scope != EditScope.one) return;
   final message = switch (scope) {
     EditScope.one => 'Deleted ${occ.title} on ${f.short(f.localDate(occ.start))}.',
     EditScope.following => 'Deleted ${occ.title} from ${f.short(f.localDate(occ.start))} on.',
     EditScope.all => 'Deleted ${occ.title}.',
   };
-  showUndoOn(messenger, message, () => _restore(den, event, occ, scope));
-}
-
-/// Puts back what [deleteOccurrence] removed: the one day, the rest of the series, or the
-/// event itself (added again from its fields).
-Future<void> _restore(Den den, Event event, Occurrence occ, EditScope scope) async {
-  if (den.event(event.id) != null) {
-    if (scope == EditScope.one) {
-      // Any change to the one occurrence also lifts its cancellation.
-      await tryWrite(
-        () =>
-            den.updateEvent(event.id, {'reminders': occ.reminders}, scope: EditScope.one, occurrence: occ.seriesStart),
-      );
-    } else {
-      await tryWrite(() => den.updateEvent(event.id, {'rrule': event.rrule}));
-    }
-    return;
-  }
-  await tryWrite(
-    () => den.addEvent(
-      title: event.title,
-      start: event.start,
-      end: event.end,
-      allDay: event.allDay,
-      tz: event.tz,
-      rrule: event.rrule,
-      assignees: event.assignees,
-      category: event.category,
-      location: event.location,
-      notes: event.notes,
-      reminders: event.reminders,
-      rides: event.rides,
-      countdown: event.countdown,
-      audience: event.audience,
-    ),
-  );
-}
-
-/// Asks before something that can't be undone, naming it. Returns true to go ahead.
-Future<bool> confirmDelete(
-  BuildContext context, {
-  required String title,
-  required String message,
-  required String action,
-}) async {
-  final c = context.colors;
-  final sure = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(title),
-      content: Text(message),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Keep it')),
-        TextButton(
-          style: TextButton.styleFrom(foregroundColor: c.bad),
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: Text(action),
-        ),
-      ],
-    ),
-  );
-  return sure ?? false;
+  showUndoOn(messenger, message, () async {
+    final failed = await tryWrite(
+      () => den.restoreEvent(event.id, scope: scope, occurrence: occurrence, rrule: event.rrule),
+    );
+    if (failed != null) messenger.showSnackBar(SnackBar(content: Text(failed)));
+  });
 }

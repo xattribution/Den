@@ -1,4 +1,20 @@
+import 'dart:io';
+
 import 'config.dart';
+
+/// The key per-client limits and quotas use for a client [address]: an IPv4 address as it is,
+/// an IPv6 address by its /64 (one subscriber's whole allocation, so rotating through it buys
+/// nothing), an IPv4-mapped IPv6 address as its IPv4 address. Anything else is used as given.
+String clientKeyOf(String address) {
+  final parsed = InternetAddress.tryParse(address.trim());
+  if (parsed == null) return address;
+  if (parsed.type != InternetAddressType.IPv6) return parsed.address;
+  final b = parsed.rawAddress;
+  final mapped = b.sublist(0, 10).every((x) => x == 0) && b[10] == 0xff && b[11] == 0xff;
+  if (mapped) return '${b[12]}.${b[13]}.${b[14]}.${b[15]}';
+  final groups = [for (var i = 0; i < 8; i += 2) ((b[i] << 8) | b[i + 1]).toRadixString(16)];
+  return '${groups.join(':')}::/64';
+}
 
 /// A token bucket.
 class TokenBucket {

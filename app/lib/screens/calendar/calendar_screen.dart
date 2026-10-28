@@ -29,10 +29,12 @@ class CalendarScreen extends StatelessWidget {
     final weekStart = _weekStart(app, anchor);
 
     void goTo(CalendarView v, String d) => context.go('/calendar/${v.name}/$d');
-    final step = switch (view) {
-      CalendarView.family || CalendarView.agenda => 7,
-      CalendarView.month => 30,
-      CalendarView.day => 1,
+    // The month steps by calendar month (Oct 31 back to Sep 30, Jan 31 on to Feb 28); the others
+    // by a week or a day.
+    String step(int by) => switch (view) {
+      CalendarView.family || CalendarView.agenda => f.addDays(anchor, 7 * by),
+      CalendarView.month => f.addMonths(anchor, by),
+      CalendarView.day => f.addDays(anchor, by),
     };
 
     return Column(
@@ -54,13 +56,13 @@ class CalendarScreen extends StatelessWidget {
               ),
               IconButton(
                 tooltip: 'Earlier',
-                onPressed: () => goTo(view, f.addDays(anchor, -step)),
+                onPressed: () => goTo(view, step(-1)),
                 icon: const Icon(PhosphorIconsRegular.caretLeft),
               ),
               OutlinedButton(onPressed: () => goTo(view, app.today), child: const Text('Today')),
               IconButton(
                 tooltip: 'Later',
-                onPressed: () => goTo(view, f.addDays(anchor, step)),
+                onPressed: () => goTo(view, step(1)),
                 icon: const Icon(PhosphorIconsRegular.caretRight),
               ),
               Segmented<CalendarView>(
@@ -95,28 +97,4 @@ class CalendarScreen extends StatelessWidget {
     final start = app.den.family?.weekStart ?? 0;
     return f.addDays(date, -((weekday - start + 7) % 7));
   }
-}
-
-/// Month grid; the implementation is [MonthView] in month_view.dart.
-class MonthViewSlot extends StatelessWidget {
-  const MonthViewSlot({super.key, required this.anchor});
-  final String anchor;
-  @override
-  Widget build(BuildContext context) => MonthView(anchor: anchor);
-}
-
-/// Single day timeline; the implementation is [DayView] in day_view.dart.
-class DayViewSlot extends StatelessWidget {
-  const DayViewSlot({super.key, required this.date});
-  final String date;
-  @override
-  Widget build(BuildContext context) => DayView(date: date);
-}
-
-/// Agenda list; the implementation is [AgendaView] in agenda_view.dart.
-class AgendaViewSlot extends StatelessWidget {
-  const AgendaViewSlot({super.key, required this.start});
-  final String start;
-  @override
-  Widget build(BuildContext context) => AgendaView(start: start);
 }

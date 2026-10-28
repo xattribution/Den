@@ -238,12 +238,13 @@ class Den {
     _emit({actingChanged});
   }
 
-  /// Checks a PIN or picture pattern against the member's sign-in for shared screens.
+  /// Checks a PIN or picture pattern against the member's sign-in for shared screens. A parent
+  /// with no sign-in never verifies on a shared display: anyone there could act as them.
   Future<bool> verifySignIn(String memberId, String secret) async {
     final m = member(memberId);
     if (m == null) return false;
     final signIn = m.signIn;
-    if (signIn.kind == 'none') return true;
+    if (signIn.kind == 'none') return !(m.isParent && thisDevice?.mode == DeviceMode.shared);
     if (signIn.salt == null || signIn.hash == null) return false;
     if (!signInSecretValid(signIn.kind, secret)) return false;
     return verifySignInHash(secret, signIn.salt!, signIn.hash!);
@@ -455,7 +456,11 @@ class Den {
   Future<void> updateFamily(Map<String, Object?> patch) async {
     final id = familyId;
     if (id == null || family == null) throw const InvalidInput('There is no family yet');
-    final fields = _cleanPatch(patch, {'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'oversight'});
+    final fields = _cleanPatch(patch, {
+      'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'oversight',
+      // One person's entry, `oversight.<memberId>`, so parents changing different people merge.
+      for (final k in patch.keys) if (k.startsWith('oversight.')) k,
+    });
     final tz = fields['timezone'];
     if (tz is String && !isKnownZone(tz)) throw InvalidInput('Den doesn\'t know the time zone "$tz"');
     await _commit([_Draft(RecordType.family, id, Space.family, fields)]);
@@ -499,19 +504,19 @@ class Den {
 
   /// Removes a member and revokes the devices they own, rotating the keys of the spaces those
   /// devices held.
-  Future<void> removeMember(String id) async {
-    if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
-    final owned = [
-      for (final d in devices)
-        if (d.member == id && d.id != deviceId && !d.revoked) d.id,
-    ];
-    final held = {for (final d in owned) ...spacesForDevice(d)};
-    await _commit([
-      for (final d in owned) _Draft(RecordType.device, d, Space.family, {'revoked': true}),
-      _Draft(RecordType.member, id, Space.family, {'_deleted': true}),
-    ]);
-    await _locked(() => _rotateNow(held));
-  }
+  Future<void> removeMember(String id) => _locked(() async {
+        if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
+        final owned = [
+          for (final d in devices)
+            if (d.member == id && d.id != deviceId && !d.revoked) d.id,
+        ];
+        final held = {for (final d in owned) ...spacesForDevice(d)};
+        await _commitNow([
+          for (final d in owned) _revocation(d),
+          _Draft(RecordType.member, id, Space.family, {'_deleted': true}),
+        ]);
+        await _rotateNow(held);
+      });
 
   /// Sets how a member signs in on shared screens: `pin` (4 digits), `pattern` (4 animals as
   /// digits 0-8), or `none`. Secrets are salted and hashed before they're written.
@@ -554,11 +559,25 @@ class Den {
 
   /// Revokes a device. Revoking another device also rotates the keys of every space it held
   /// (a new random key, one epoch on), so it can't read what the family writes next.
-  Future<void> revokeDevice(String deviceId) async {
-    if (device(deviceId) == null) throw const InvalidInput('That device isn\'t in the family');
-    final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
-    await _commit([_Draft(RecordType.device, deviceId, Space.family, {'revoked': true})]);
-    await _locked(() => _rotateNow(held));
+  ///
+  /// The revocation records the last of the device's changes this one holds (`revokedAfter`):
+  /// anything it signs after that counts for nothing, whatever clock it claims.
+  Future<void> revokeDevice(String deviceId) => _locked(() async {
+        if (device(deviceId) == null) throw const InvalidInput('That device isn\'t in the family');
+        final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
+        await _commitNow([_revocation(deviceId)]);
+        await _rotateNow(held);
+      });
+
+  /// Revokes [device], naming the last of its changes this device holds: its counters held here,
+  /// and those a peer vouched for in spaces this device doesn't receive. Runs inside the lock,
+  /// so nothing arrives between counting and signing.
+  _Draft _revocation(String device) {
+    var last = device == deviceId ? _counter : _floor[device] ?? 0;
+    for (final n in _mat.counters[device] ?? const <int>{}) {
+      if (n > last) last = n;
+    }
+    return _Draft(RecordType.device, device, Space.family, {'revoked': true, 'revokedAfter': last});
   }
 
   /// Changes another device's settings (parents), or this device's own name, display settings or
@@ -608,11 +627,17 @@ class Den {
   /// Undoes a removal: the record comes back exactly as it was, with whatever belonged to it (an
   /// event's changed occurrences, a list's items, a chore's completions). Needs the same
   /// permission as editing it.
-  Future<void> restore(String type, String id) async {
-    final e = _mat.store.find(type, id);
-    if (e == null || !readableSpaces.contains(e.space)) throw const InvalidInput('That doesn\'t exist');
-    if (!e.deleted) return;
-    await _commit([_Draft(type, id, e.space, {'_deleted': false})]);
+  Future<void> restore(String type, String id) => restoreAll(type, [id]);
+
+  /// [restore] for several records of one type, in one commit: the items "Clear done" removed.
+  Future<void> restoreAll(String type, Iterable<String> ids) async {
+    final drafts = <_Draft>[];
+    for (final id in ids) {
+      final e = _mat.store.find(type, id);
+      if (e == null || !readableSpaces.contains(e.space)) throw const InvalidInput('That doesn\'t exist');
+      if (e.deleted) drafts.add(_Draft(type, id, e.space, {'_deleted': false}));
+    }
+    await _commit(drafts);
   }
 
   // ---------------------------------------------------------------- calendar
@@ -755,15 +780,19 @@ class Den {
     final out = Map<String, Object?>.of(fields);
     final zoneName = eventZone(event, _zone);
     final repeating = event.rrule != null;
-    final duration = event.end - event.start;
     if (fields['start'] is int) {
       final newStart = fields['start'] as int;
       final anchor = occurrence ?? event.start;
       final delta = wallDelta(zoneName, anchor, newStart);
-      final length = fields['end'] is int ? (fields['end'] as int) - newStart : duration;
       final seriesStart = repeating ? shiftWall(zoneName, event.start, delta) : newStart;
+      final newEnd = fields['end'] is int ? fields['end'] as int : null;
       out['start'] = seriesStart;
-      out['end'] = seriesStart + length;
+      // The length people see, on the wall clock (or in days), carries over to the series start.
+      out['end'] = newEnd == null
+          ? occurrenceEnd(event, seriesStart, _zone)
+          : seriesStart == newStart
+              ? newEnd
+              : shiftWall(zoneName, seriesStart, wallDelta(zoneName, newStart, newEnd));
       if (repeating && delta != Duration.zero) {
         for (final x in _exceptionsFor(event).values) {
           final moved = shiftWall(zoneName, x.occurrence, delta);
@@ -779,7 +808,7 @@ class Den {
         }
       }
     } else if (fields['end'] is int && repeating && occurrence != null) {
-      out['end'] = event.start + (fields['end'] as int) - occurrence;
+      out['end'] = shiftWall(zoneName, event.start, wallDelta(zoneName, occurrence, fields['end'] as int));
     }
     return [_Draft(RecordType.event, event.id, entry.space, out), ...drafts];
   }
@@ -790,10 +819,9 @@ class Den {
     final before = countBefore(event, _zone, occurrence);
     final oldRule = rule.count != null ? rule.copyWith(count: () => before) : rule.endingBefore(occurrence);
     final newRule = rule.count != null ? rule.copyWith(count: () => rule.count! - before) : rule;
-    final duration = event.end - event.start;
     final nextId = newId();
     final newStart = fields['start'] is int ? fields['start'] as int : occurrence;
-    final newEnd = fields['end'] is int ? fields['end'] as int : newStart + duration;
+    final newEnd = fields['end'] is int ? fields['end'] as int : occurrenceEnd(event, newStart, _zone);
     final next = <String, Object?>{
       for (final k in eventFields.keys)
         if (entry.fields.containsKey(k)) k: entry.fields[k],
@@ -857,6 +885,44 @@ class Den {
     ]);
   }
 
+  /// Undoes [deleteEvent] with the same [scope] and [occurrence], in one commit: the event with
+  /// its changed occurrences, the one occurrence, or every occurrence from [occurrence] on, where
+  /// [rrule] is the repeat rule the series had before.
+  Future<void> restoreEvent(String id, {EditScope scope = EditScope.all, int? occurrence, String? rrule}) async {
+    final entry = _mat.store.find(RecordType.event, id);
+    if (entry == null || !readableSpaces.contains(entry.space)) throw const InvalidInput('That event doesn\'t exist');
+    if (entry.deleted || scope == EditScope.all) {
+      await restore(RecordType.event, id);
+      return;
+    }
+    if (occurrence == null) throw const InvalidInput('Choose which occurrence to put back');
+    final exceptions = [
+      for (final x in _mat.store.ofType(RecordType.eventException))
+        if (x.space == entry.space && x.fields['event'] == id) x,
+    ];
+    if (scope == EditScope.one) {
+      final x = exceptions.firstWhereOrNull((x) => x.id == '$id@$occurrence' && !x.deleted);
+      if (x == null || x.fields['cancelled'] != true) return;
+      await _commit([_Draft(RecordType.eventException, x.id, entry.space, {'cancelled': false})]);
+      return;
+    }
+    if (rrule == null) throw const InvalidInput('Choose how the event repeated');
+    // The changed occurrences removed with the series' end: removed no earlier than its rule changed.
+    final from = occurrence;
+    final cut = entry.times['rrule'];
+    bool removedWithEnd(Entry x) {
+      final at = x.times['_deleted'];
+      final when = x.fields['occurrence'];
+      return x.deleted && cut != null && at != null && !(at < cut) && when is int && when >= from;
+    }
+
+    await _commit([
+      _Draft(RecordType.event, id, entry.space, {'rrule': _normalizeRule(rrule)}),
+      for (final x in exceptions)
+        if (removedWithEnd(x)) _Draft(RecordType.eventException, x.id, entry.space, {'_deleted': false}),
+    ]);
+  }
+
   /// Sets the driver of a ride leg for one occurrence (null releases it).
   Future<void> claimRide(String eventId, {required int occurrence, required String leg, String? driver}) async {
     if (leg != 'to' && leg != 'from') throw const InvalidInput('A ride leg is "to" or "from"');
@@ -873,7 +939,7 @@ class Den {
     final xid = '$eventId@$occurrence';
     final existing = _mat.store.liveAt(entry.space, RecordType.eventException, xid);
     final x = existing == null ? null : EventException(existing.rec);
-    final rides = buildOccurrence(event, occurrence, x).rides;
+    final rides = buildOccurrence(event, occurrence, x, familyZone: _zone).rides;
     await _commit([
       _Draft(RecordType.eventException, xid, entry.space, {
         'event': eventId,
@@ -940,6 +1006,22 @@ class Den {
       final t = a.chore.title.compareTo(b.chore.title);
       return t != 0 ? t : a.chore.id.compareTo(b.chore.id);
     });
+    return out;
+  }
+
+  /// Chores not done by their day, oldest first: every chore on the chart in the [days] days
+  /// before today that wasn't done (a repeating one too, which [choresOn] doesn't carry over),
+  /// one-off chores until they're done, and today's chores past their due time.
+  List<ChoreDay> lateChores({int days = 2}) {
+    final today = todayDate();
+    final seen = <String>{};
+    final out = <ChoreDay>[];
+    for (var i = days; i >= 0; i--) {
+      for (final cd in choresOn(addDays(today, -i))) {
+        if (cd.late && seen.add('${cd.chore.id}@${cd.date}')) out.add(cd);
+      }
+    }
+    mergeSort(out, compare: (a, b) => a.date.compareTo(b.date));
     return out;
   }
 
@@ -1010,12 +1092,62 @@ class Den {
     if (audience != null) {
       final target = _spaceFor(_audienceOf(audience));
       if (target != entry.space) {
-        await _commit(_moveDrafts(entry, target, fields, RecordType.completion, 'chore'));
+        final after = {...entry.fields, ...fields};
+        final prices = {
+          for (final s in (after['steps'] as List?) ?? const <Object?>[])
+            if (s is Map) '${s['id']}': (s['points'] as num?)?.toInt() ?? 0,
+        };
+        final price = (after['points'] as num?)?.toInt() ?? 0;
+        final pricer = _mayPrice;
+        await _commit([
+          for (final d in _moveDrafts(entry, target, fields, RecordType.completion, 'chore'))
+            d.type == RecordType.completion && d.space == target
+                ? _Draft(d.type, d.rid, d.space, _movedCompletion(d.fields, price, prices, pricer: pricer))
+                : d,
+        ]);
         return;
       }
     }
     if (fields.isEmpty) return;
     await _commit([_Draft(RecordType.chore, id, entry.space, fields)]);
+  }
+
+  /// Whether the actor may set what chores are worth: a points manager, or a hub acting for a
+  /// connection with no member.
+  bool get _mayPrice {
+    final a = actor;
+    if (a == null) return thisDevice?.mode == DeviceMode.hub;
+    return can(a, DenAction.managePoints);
+  }
+
+  /// A completion's fields as copied with its chore into another space: checks of steps the
+  /// chore no longer has are left behind, and someone who doesn't set prices carries over what
+  /// it was worth only up to what the chore is worth now.
+  static Map<String, Object?> _movedCompletion(
+    Map<String, Object?> fields,
+    int price,
+    Map<String, int> prices, {
+    required bool pricer,
+  }) {
+    int capped(int v, int max) => pricer || v <= max ? v : max;
+    final out = Map<String, Object?>.of(fields);
+    final steps = out['steps'];
+    if (steps is Map) {
+      out['steps'] = {
+        for (final e in steps.entries)
+          if (prices.containsKey(e.key)) '${e.key}': e.value,
+      };
+    }
+    final worth = out['stepPoints'];
+    if (worth is Map) {
+      out['stepPoints'] = {
+        for (final e in worth.entries)
+          if (prices.containsKey(e.key) && e.value is int) '${e.key}': capped(e.value as int, prices[e.key]!),
+      };
+    }
+    final points = out['points'];
+    if (points is int) out['points'] = capped(points, price);
+    return out;
   }
 
   Future<void> deleteChore(String id) async {
@@ -1048,10 +1180,12 @@ class Den {
         'date': date,
         'done': done,
         'doneBy': done ? me : null,
+        if (done) 'points': chore.points,
         for (final s in chore.steps)
-          if (done && checked[s.id] == null)
-            'steps.${s.id}': me ?? _anonymousChecker(s, owner)
-          else if (!done && checked[s.id] != null)
+          if (done && checked[s.id] == null) ...{
+            'steps.${s.id}': me ?? _anonymousChecker(s, owner),
+            'stepPoints.${s.id}': s.points,
+          } else if (!done && checked[s.id] != null)
             'steps.${s.id}': null,
       }),
     ]);
@@ -1082,6 +1216,7 @@ class Den {
         'chore': chore.id,
         'date': date,
         'steps.$stepId': value,
+        if (checked) ...{'stepPoints.$stepId': step.points, 'points': chore.points},
         if (checked && allChecked && !wasDone) ...{'done': true, 'doneBy': me},
         if (!checked && wasDone) ...{'done': false, 'doneBy': null},
       }),
@@ -1434,15 +1569,19 @@ class Den {
   }
 
   /// Asks to spend points on a reward for [member] (default: the actor). Rewards that don't
-  /// need approval are approved at once. Refused when the balance is short.
+  /// need approval are approved at once. Refused when the balance, less what requests still
+  /// waiting for a parent would spend, is short.
   Future<String> requestReward(String rewardId, {String? member}) async {
     final rewardEntry = _requireLive(RecordType.reward, rewardId, 'That reward doesn\'t exist');
     final reward = Reward(rewardEntry.rec);
     final who = member ?? actor?.id;
     if (who == null || this.member(who) == null) throw const InvalidInput('Choose who the reward is for');
-    final balance = points().totals[who] ?? 0;
-    if (balance < reward.cost) {
-      throw InvalidInput('${this.member(who)!.name} needs ${reward.cost - balance} more stars for ${reward.title}');
+    final summary = points();
+    final available = summary.available(who);
+    if (available < reward.cost) {
+      final waiting = (summary.totals[who] ?? 0) - available;
+      throw InvalidInput('${this.member(who)!.name} needs ${reward.cost - available} more stars for ${reward.title}'
+          '${waiting > 0 ? ', since $waiting are waiting on a request' : ''}');
     }
     final id = newId();
     await _commit([
@@ -1457,8 +1596,14 @@ class Den {
     return id;
   }
 
+  /// Approving is refused when the balance no longer covers the request, so approving several
+  /// requests made at once can't overdraw it.
   Future<void> decideRedemption(String id, {required bool approve}) async {
-    _requireLive(RecordType.redemption, id, 'That request doesn\'t exist');
+    final r = Redemption(_requireLive(RecordType.redemption, id, 'That request doesn\'t exist').rec);
+    final balance = points().totals[r.member] ?? 0;
+    if (approve && r.status == RedemptionStatus.requested && balance < r.cost) {
+      throw InvalidInput('${member(r.member)?.name ?? 'They'} has $balance stars, not the ${r.cost} this costs');
+    }
     await _commit([
       _Draft(RecordType.redemption, id, Space.family, {
         'status': approve ? RedemptionStatus.approved.name : RedemptionStatus.declined.name,
@@ -1830,18 +1975,17 @@ class Den {
         final message = r.leg == 'from'
             ? (who.isEmpty ? 'Nobody is picking up from ${o.title}' : 'Nobody is picking up $who from ${o.title}')
             : (who.isEmpty ? 'Nobody is driving to ${o.title}' : 'Nobody is driving $who to ${o.title}');
-        out.add(Gap(kind: GapKind.noDriver, message: message, occurrences: [o], members: o.assignees));
+        out.add(Gap(kind: GapKind.noDriver, message: message, occurrences: [o], members: o.assignees, leg: r.leg));
       }
     }
+    // Only people named on both events: an event for everyone would flag nearly everything.
     final everyoneIds = [for (final m in members) m.id];
-    final timed = occ.where((o) => !o.allDay && o.end > o.start).toList();
+    final timed = occ.where((o) => !o.allDay && o.end > o.start && o.assignees.isNotEmpty).toList();
     for (var i = 0; i < timed.length; i++) {
       for (var j = i + 1; j < timed.length; j++) {
         final a = timed[i], b = timed[j];
         if (!(a.start < b.end && b.start < a.end)) continue;
-        final pa = a.assignees.isEmpty ? everyoneIds : a.assignees;
-        final pb = b.assignees.isEmpty ? everyoneIds : b.assignees;
-        final both = [for (final id in everyoneIds) if (pa.contains(id) && pb.contains(id)) id];
+        final both = [for (final id in everyoneIds) if (a.assignees.contains(id) && b.assignees.contains(id)) id];
         if (both.isEmpty) continue;
         out.add(Gap(
           kind: GapKind.overlap,
@@ -1997,21 +2141,31 @@ class Den {
           _pending.remove(_pending.keys.first);
         }
         var invalid = const <String, String>{};
+        var metaMoved = false;
         if (accepted.isNotEmpty) {
           await _storage.appendChanges(accepted);
           invalid = _mat.add(accepted);
           _observeApplied();
+          // This device's own changes coming back from a peer (after a restore from an older
+          // backup, say): never number a new change with an id the family already holds.
+          for (final c in accepted) {
+            if (c.device != deviceId) continue;
+            _clock.observe(c.hlc);
+            if (c.counter > _counter) {
+              _counter = c.counter;
+              metaMoved = true;
+            }
+          }
         }
-        var floorMoved = false;
         if (through != null && rejected.isEmpty && _pending.isEmpty) {
           for (final e in through.entries) {
             if (e.value > (_floor[e.key] ?? 0)) {
               _floor[e.key] = e.value;
-              floorMoved = true;
+              metaMoved = true;
             }
           }
         }
-        if (floorMoved) await _saveMeta();
+        if (metaMoved) await _saveMeta();
         if (accepted.isNotEmpty) _emit({for (final c in accepted) c.type});
         if (accepted.isNotEmpty) await _afterKeyFacts();
         return IngestResult(
@@ -2398,6 +2552,9 @@ class Den {
     try {
       for (final d in drafts) {
         counter++;
+        while (_mat.contains('$deviceId:$counter')) {
+          counter++;
+        }
         final unsigned = Change(
           id: '$deviceId:$counter',
           space: d.space,

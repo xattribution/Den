@@ -4,10 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:den_core/den_core.dart' show b64e;
+import 'package:den_net/io.dart' show boundedWebSocketHandler;
 import 'package:den_net/relay_protocol.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
-import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'config.dart';
@@ -100,7 +100,8 @@ class RelayServer {
     if (segments.length == 1 && segments[0] == 'health' && request.method == 'GET') {
       return _json(200, {'ok': true, 'version': relayVersion});
     }
-    final wait = _ipLimiter.take(_clientAddress(request));
+    final client = clientKeyOf(_clientAddress(request));
+    final wait = _ipLimiter.take(client);
     if (wait != null) return _tooMany(wait);
     if (segments.length != 2) return _json(404, {'error': 'not found'});
     final kind = segments[0];
@@ -108,19 +109,21 @@ class RelayServer {
     switch (kind) {
       case 'tunnel' when request.method == 'GET':
         if (!deviceIdPattern.hasMatch(key)) return _json(400, {'error': 'bad hub id'});
-        if (!tunnels.canOpen(key)) return _json(503, {'error': 'relay full'});
-        return _upgrade(request, (ws) => unawaited(tunnels.serveHub(ws, key)));
+        if (!tunnels.canOpen(key, client: client)) return _json(503, {'error': 'relay full'});
+        // A hub's tunnel frames carry a 5-byte header around each client message.
+        return _upgrade(request, (ws) => unawaited(tunnels.serveHub(ws, key, client: client)), extra: 5);
       case 'connect' when request.method == 'GET':
         if (!deviceIdPattern.hasMatch(key)) return _json(400, {'error': 'bad hub id'});
         if (!tunnels.has(key)) return _json(404, {'error': 'hub not connected'});
-        return _upgrade(request, (ws) => tunnels.serveClient(ws, key));
+        if (!tunnels.canConnect(key, client: client)) return _json(503, {'error': 'hub full'});
+        return _upgrade(request, (ws) => tunnels.serveClient(ws, key, from: client));
       case 'rendezvous' when request.method == 'GET':
         if (!relayKeyPattern.hasMatch(key)) return _json(400, {'error': 'bad slot'});
         final role = request.url.queryParameters['role'];
         if (role == 'host') {
           if (slots.hasHost(key)) return _json(409, {'error': 'slot taken'});
-          if (!slots.canHost(key)) return _json(503, {'error': 'relay full'});
-          return _upgrade(request, (ws) => slots.host(ws, key));
+          if (!slots.canHost(key, client: client)) return _json(503, {'error': 'relay full'});
+          return _upgrade(request, (ws) => slots.host(ws, key, client: client));
         }
         if (role == 'guest') {
           if (!slots.hasHost(key)) return _json(404, {'error': 'nobody waiting'});
@@ -129,14 +132,14 @@ class RelayServer {
         return _json(400, {'error': 'role must be host or guest'});
       case 'mailbox':
         if (!relayKeyPattern.hasMatch(key)) return _json(400, {'error': 'bad mailbox id'});
-        if (request.method == 'POST') return _append(request, key);
+        if (request.method == 'POST') return _append(request, key, client);
         if (request.method == 'GET') return _read(request, key);
         return _json(405, {'error': 'method not allowed'});
     }
     return _json(404, {'error': 'not found'});
   }
 
-  Future<Response> _append(Request request, String id) async {
+  Future<Response> _append(Request request, String id, String client) async {
     final wait = _writeLimiter.take(id);
     if (wait != null) return _tooMany(wait);
     final declared = request.contentLength;
@@ -148,7 +151,7 @@ class RelayServer {
     }
     if (body.isEmpty) return _json(400, {'error': 'empty blob'});
     try {
-      final cursor = await mailboxes.append(id, body.takeBytes());
+      final cursor = await mailboxes.append(id, body.takeBytes(), client: client);
       return _json(200, {'cursor': cursor});
     } on StoreFull catch (e) {
       return _json(507, {'error': 'full', 'cap': e.reason});
@@ -174,9 +177,12 @@ class RelayServer {
     });
   }
 
-  Future<Response> _upgrade(Request request, void Function(WebSocketChannel socket) onSocket) async {
-    final handler = webSocketHandler(
-      (WebSocketChannel socket, String? _) => onSocket(socket),
+  /// Upgrades to a WebSocket whose messages are bounded by [RelayConfig.maxMessageBytes] (plus
+  /// [extra]) before they are buffered: a frame announcing more closes the connection.
+  Future<Response> _upgrade(Request request, void Function(WebSocketChannel socket) onSocket, {int extra = 0}) async {
+    final handler = boundedWebSocketHandler(
+      onSocket,
+      maxMessageBytes: config.maxMessageBytes + extra,
       pingInterval: config.pingInterval,
     );
     return await handler(request);

@@ -96,6 +96,7 @@ class _WhoSheetState extends State<_WhoSheet> {
       _error = switch (m.signIn.kind) {
         'pin' => "That's not ${FamilyWords.possessive(m.name)} PIN. Try again.",
         'pattern' => "That's not ${FamilyWords.possessive(m.name)} pattern. Try again.",
+        _ when m.isParent => '${m.name} needs a PIN or pattern to act on a shared screen. Add one in Family on your phone.',
         _ => '${m.name} has no sign-in for shared screens yet. A parent can add one in Family.',
       };
     });

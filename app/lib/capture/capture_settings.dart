@@ -2,8 +2,9 @@ import 'dart:async';
 
 import 'package:den_capture/den_capture.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../boot/device_keychain.dart';
 
 /// Who reads what this device shares, besides the device itself.
 enum ReaderChoice {
@@ -27,12 +28,12 @@ abstract interface class CaptureSecrets {
 class SecureCaptureSecrets implements CaptureSecrets {
   const SecureCaptureSecrets();
   static const _name = 'den.capture.claudeKey';
-  static const _storage = FlutterSecureStorage();
+  static const _storage = DeviceKeychain();
 
   @override
   Future<String?> readKey() async {
     try {
-      return await _storage.read(key: _name);
+      return await _storage.read(_name);
     } on Object {
       return null;
     }
@@ -40,8 +41,8 @@ class SecureCaptureSecrets implements CaptureSecrets {
 
   @override
   Future<void> writeKey(String? key) => key == null || key.trim().isEmpty
-      ? _storage.delete(key: _name)
-      : _storage.write(key: _name, value: key.trim());
+      ? _storage.delete(_name)
+      : _storage.write(_name, key.trim());
 }
 
 /// Holds a key in memory, for tests and the demo family.
