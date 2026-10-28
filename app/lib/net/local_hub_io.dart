@@ -14,7 +14,7 @@ import 'local_hub.dart';
 bool get localHubSupported => Platform.isAndroid || Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
 LocalHub createLocalHub({int port = defaultHubPort, bool mdns = true, String? dataDir, HubKeepAlive? keepAlive}) =>
-    _IoHub(port: port, mdns: mdns, dataDir: dataDir, keepAlive: keepAlive ?? HubKeepAlive.platform(android: Platform.isAndroid));
+    _IoHub(port: port, mdns: mdns, dataDir: dataDir, keepAlive: keepAlive ?? HubKeepAlive.platform(android: Platform.isAndroid, mac: Platform.isMacOS));
 
 class _IoHub extends LocalHub {
   _IoHub({required this.port, required this.mdns, required this.keepAlive, this.dataDir});
