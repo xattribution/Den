@@ -51,7 +51,10 @@ jobs:
           touch "$RUNNER_TEMP/start"
           sleep 1
           # shellcheck disable=SC2086
-          if ! flutter test --update-goldens --exclude-tags golden $TESTS; then
+          flutter test --update-goldens --exclude-tags golden $TESTS > "$RUNNER_TEMP/test.txt" 2>&1 && status=0 || status=$?
+          cat "$RUNNER_TEMP/test.txt"
+          if [ "$status" -ne 0 ]; then
+            python3 ../.github/scripts/annotate_failures.py test "$RUNNER_TEMP/test.txt" "flutter test"
             echo "failed=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Push to screenshots/<branch>

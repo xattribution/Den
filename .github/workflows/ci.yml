@@ -100,13 +100,26 @@ jobs:
           cache: true
       - working-directory: app
         run: flutter pub get
+      # Failures also become an annotation on the check, readable without the log.
       - working-directory: app
-        run: flutter analyze
+        run: |
+          flutter analyze > "$RUNNER_TEMP/analyze.txt" 2>&1 && status=0 || status=$?
+          cat "$RUNNER_TEMP/analyze.txt"
+          if [ "$status" -ne 0 ]; then
+            python3 ../.github/scripts/annotate_failures.py analyze "$RUNNER_TEMP/analyze.txt" "flutter analyze"
+          fi
+          exit "$status"
       # Golden images are rendered on Windows by the people reviewing them; elsewhere
       # test/flutter_test_config.dart renders every screen without comparing pixels. The app
       # icon's source (tagged golden) is skipped.
       - working-directory: app
-        run: flutter test --exclude-tags golden
+        run: |
+          flutter test --exclude-tags golden > "$RUNNER_TEMP/test.txt" 2>&1 && status=0 || status=$?
+          cat "$RUNNER_TEMP/test.txt"
+          if [ "$status" -ne 0 ]; then
+            python3 ../.github/scripts/annotate_failures.py test "$RUNNER_TEMP/test.txt" "flutter test"
+          fi
+          exit "$status"
 
   homeassistant:
     name: Home Assistant integration
