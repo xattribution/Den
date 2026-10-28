@@ -96,12 +96,16 @@ hub itself on an IP, `localhost`, `.local` name or the public URL (DNS-rebinding
 A missing token gets `401` with `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource"`.
 
 OAuth: `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`,
-`/oauth/register` (RFC 7591), `/oauth/authorize` (PKCE S256 required; creates a pending
-connection and shows "Approve <client> in the Den app: Settings → AI and automations" until a
-parent approves on their phone, which reaches the hub as a synced change; declined or 15 minutes
-without an answer redirects with `access_denied`), `/oauth/token` (authorization code with PKCE,
-refresh-token rotation with reuse detection). Access tokens last an hour and are stored only as
-hashes in the connection record; refresh tokens (90 days) only as hashes in `hub/oauth.json`.
+`/oauth/register` (RFC 7591; 10 an hour per address, unused registrations forgotten after a
+day), `/oauth/authorize` (PKCE S256 required; holds the request in the hub, writing nothing to
+the family's log, and shows "Approve the client in the Den app", the host its sign-in returns
+to and a code; a parent's app lists it with `GET /api/v1/connections/requests`, admits it with
+`POST /api/v1/connections/requests/{id}`, which writes the pending connection, then approves
+that as before ([docs/hub-api.md](../../docs/hub-api.md#apps-asking-to-connect-oauth)); declined
+or 15 minutes without an answer redirects with `access_denied`), `/oauth/token` (authorization
+code with PKCE, refresh-token rotation with reuse detection). Access tokens last an hour and are
+stored only as hashes in the connection record; refresh tokens (90 days) only as hashes in
+`hub/oauth.json`.
 
 ## Calendar feeds
 
@@ -110,7 +114,11 @@ In: every `subscription` is fetched every 30 minutes and when it changes (15 s, 
 dates, DURATION, RRULE, EXDATE, RECURRENCE-ID, STATUS:CANCELLED, X-WR-CALNAME), filtered
 (include and exclude words in titles, skip all-day, series that ended over 90 days ago), and
 written by the hub with `source {kind: ics, ref: UID, label}` into the subscription's space.
-Its `status` says how it went ("12 events, updated 3:42 PM").
+Its `status` says how it went ("12 events, updated 3:42 PM", or "12 events (2 Den couldn't
+read), updated 3:42 PM" when some events had dates Den can't place; those are skipped, never
+the whole feed). Which UID became which event is saved as a sync goes, and a sync that starts
+over finds the feed's events by `source.ref`, so a hub stopped mid-sync never adds an event
+twice (and removes copies an older hub left).
 
 Out: `GET /ics/<token>/family.ics` and `GET /ics/<token>/<memberId>.ics` (that member's events
 and everyone's; `?everyone=0` for only theirs), with RRULE, EXDATE, RECURRENCE-ID and VTIMEZONE.

@@ -1201,6 +1201,59 @@ produce two transcripts, so the two ends would show different words. This answer
 plain HTTP on the home network, so it backs up, and doesn't replace, comparing with the hub's log
 when the network itself isn't trusted.
 
+## Apps asking to connect (OAuth)
+
+A remote MCP client (claude.ai, ChatGPT) signs in with OAuth 2.1 (`/oauth/register`,
+`/oauth/authorize`, `/oauth/token`; see `packages/den_hub/README.md`). Those endpoints need no
+credentials, so a sign-in request stays in the hub's memory and nothing reaches the family's log
+until a parent acts. The sign-in page shows the app's name, the host its sign-in returns to
+(`claude.ai`), what it asked for, and a code (`K7QP-M4XD`). A parent's app lists the waiting
+requests with the same code and lets the right one in; the hub then writes a `pending` connection
+(labelled `"<client name> (<redirect host>)"`) that the parent approves with den_core's
+`approveConnection`, choosing scopes and whose permissions it uses, exactly as before. Requests
+expire after 15 minutes (the sign-in page then returns `access_denied`), at most 20 wait at once,
+one address can start 10 in 15 minutes, and the hub turns down pending connections nobody
+approved within 15 minutes.
+
+Both endpoints are signed by a parent's own device ([`DeviceRequest`](#capture-reading-for-every-device),
+not a shared display); anyone else gets `401` or `403 permission_denied`.
+
+### `GET /api/v1/connections/requests`
+
+The requests waiting for a parent, newest first:
+
+```json
+{
+  "requests": [
+    {
+      "id": "q7ZK3m1VbT0aYc2E",
+      "code": "K7QP-M4XD",
+      "client_name": "Claude",
+      "redirect_host": "claude.ai",
+      "scopes": ["read", "calendar", "chores", "lists", "points"],
+      "connection": null,
+      "requested": "2026-10-20T22:30:00.000Z",
+      "requested_ms": 1792535400000,
+      "expires": "2026-10-20T22:45:00.000Z",
+      "expires_ms": 1792536300000
+    }
+  ]
+}
+```
+
+`client_name` is whatever the app registered with; `redirect_host` is where its sign-in returns
+and can't be made up, so show both, and the `code`, which the person signing in sees on their
+screen. `connection` is the pending connection's id once a parent admitted it.
+
+### `POST /api/v1/connections/requests/{id}`
+
+Body `{"decision": "admit"}` or `{"decision": "decline"}`. Admitting writes the pending
+connection (or returns the one already written) and answers
+`{"connection": "<connection id>", "request": {...}}`; the parent's app then approves that
+connection once it has synced (`Den.approveConnection(id, scopes:, member:)`), or revokes it.
+Declining answers `{"ok": true}` and sends the app back with `access_denied`. `404 not_found` for
+an unknown or expired request, `409 declined` once it was declined.
+
 ## Capture: reading for every device
 
 A parent sets up one reader on the hub (Claude with an API key, or a model at home through

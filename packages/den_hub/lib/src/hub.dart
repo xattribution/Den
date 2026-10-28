@@ -114,6 +114,9 @@ class DenHub {
   /// Reading what devices share, with the reader a parent set up on the hub.
   HubCapture get capture => _capture;
 
+  /// OAuth for remote MCP clients; [OAuthServer.sweep] expires sign-in requests now.
+  OAuthServer get oauth => _oauth;
+
   /// Calendar feeds in; [FeedService.syncAll] refreshes them now.
   FeedService get feeds => _feeds;
 
@@ -142,13 +145,14 @@ class DenHub {
     _capture = HubCapture(_ctx, _auth);
     _mcp = McpServer(_ctx);
     _mcpHttp = McpHttp(_ctx, _mcp);
-    _oauth = OAuthServer(_ctx);
+    _oauth = OAuthServer(_ctx, _auth);
     _ics = IcsExport(_ctx);
     _feeds = FeedService(_ctx);
     _reminders = ReminderService(_ctx);
     _services
       ..add(_feeds)
-      ..add(_reminders);
+      ..add(_reminders)
+      ..add(_oauth);
     _web = webAppHandler(config.webDir, policy: _webPolicy);
     _ws = syncWebSocketHandler(node);
     _routes
@@ -174,6 +178,8 @@ class DenHub {
       ..add('GET', '/oauth/authorize/status', (r, _) => _oauth.status(r))
       ..add('POST', '/oauth/token', (r, _) => _oauth.token(r))
       ..add('OPTIONS', '/oauth/token', (r, _) => _mcpHttp.options(r))
+      ..add('GET', '/api/v1/connections/requests', (r, _) => _oauth.requests(r))
+      ..add('POST', '/api/v1/connections/requests/<id>', (r, p) => _oauth.decide(r, p['id']!))
       ..add('GET', '/ics/<token>/<file>', (r, p) => _ics.feed(r, p['token']!, p['file']!));
     _api.register(_routes);
     _capture.register(_routes);

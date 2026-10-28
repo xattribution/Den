@@ -86,13 +86,23 @@ class DeviceAuth {
     return verify(request, const []);
   }
 
-  /// [check], for a parent acting on their own device (not a shared display). Throws `403`
-  /// for anyone else.
-  Future<DeviceRequestCheck> parent(Request request, {String message = 'Only a parent\'s own phone can do that.'}) async {
-    final c = await check(request);
+  /// [precheck], a small body of at most [limit] bytes, and [verify]: who signed, and the body.
+  Future<({DeviceRequestCheck check, List<int> body})> withBody(Request request, {int limit = 16 * 1024}) async {
+    await precheck(request);
+    final body = await readBodyBytes(request, limit: limit);
+    return (check: await verify(request, body), body: body);
+  }
+
+  /// [c], when it is a parent acting on their own device (not a shared display); throws `403`
+  /// with [message] for anyone else.
+  static DeviceRequestCheck parentOf(DeviceRequestCheck c, {String message = 'Only a parent\'s own phone can do that.'}) {
     if (!(c.actor?.isParent ?? false) || c.device!.mode == DeviceMode.shared) throw ApiError.denied(message);
     return c;
   }
+
+  /// [check], for a parent acting on their own device. Throws `403` for anyone else.
+  Future<DeviceRequestCheck> parent(Request request, {String message = 'Only a parent\'s own phone can do that.'}) async =>
+      parentOf(await check(request), message: message);
 
   ApiError _refuse(Request request, String problem) {
     hub.failed(request);
