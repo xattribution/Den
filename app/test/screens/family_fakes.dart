@@ -104,6 +104,8 @@ class FakePairing extends PairingService {
 }
 
 /// Pumps [screen] the way `shoot` does, without comparing, so a test can act before the shot.
+/// [pushed] opens it over another page, as the app does, so its back button shows. The pairing
+/// service is above the navigator, where sheets the screen opens find it too.
 Future<void> pumpScreen(
   WidgetTester tester,
   Widget screen, {
@@ -111,21 +113,28 @@ Future<void> pumpScreen(
   Size size = phone,
   bool night = false,
   PairingService? pairing,
+  bool pushed = false,
 }) async {
   await loadFonts();
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final scale = state.wall ? DenType.wallScale : 1.0;
-  Widget child = Scaffold(body: SafeArea(child: screen));
-  if (pairing != null) child = PairingScope(service: pairing, child: child);
+  final child = Scaffold(body: SafeArea(child: screen));
   await tester.pumpWidget(
     DenScope(
       state: state,
       child: MaterialApp(
+        // A fresh navigator for each screen a test pumps: its first pages are made only once.
+        key: UniqueKey(),
         debugShowCheckedModeBanner: false,
         theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
-        home: child,
+        builder: pairing == null ? null : (context, navigator) => PairingScope(service: pairing, child: navigator!),
+        onGenerateRoute: (_) => MaterialPageRoute<void>(builder: (_) => child),
+        onGenerateInitialRoutes: (_) => [
+          if (pushed) MaterialPageRoute<void>(builder: (_) => const Scaffold()),
+          MaterialPageRoute<void>(builder: (_) => child),
+        ],
       ),
     ),
   );
@@ -145,8 +154,9 @@ Future<void> shootWith(
   Size size = phone,
   bool night = false,
   PairingService? pairing,
+  bool pushed = false,
 }) async {
-  await pumpScreen(tester, screen, state: state, size: size, night: night, pairing: pairing);
+  await pumpScreen(tester, screen, state: state, size: size, night: night, pairing: pairing, pushed: pushed);
   await matchShot(name);
 }
 
