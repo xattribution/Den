@@ -3,7 +3,9 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:multicast_dns/multicast_dns.dart';
 import 'package:shelf/shelf.dart';
@@ -163,9 +165,9 @@ Handler boundedWebSocketHandler(
   );
   return (Request request) async {
     if (!request.canHijack) return upgrade(request);
-    // shelf_web_socket checks and answers the handshake on a copy of the request whose socket
-    // comes through the guard. shelf hands a hijacked socket over later, so the copy waits for
-    // the real request's socket.
+    // shelf_web_socket checks and answers the handshake on a copy of the request, whose socket
+    // is the real one with its incoming bytes passed through the guard. shelf hands a hijacked
+    // socket over later, so the copy waits for the real request's.
     final raw = Completer<StreamChannel<List<int>>>();
     final guarded = Request(
       request.method,
@@ -175,9 +177,15 @@ Handler boundedWebSocketHandler(
       handlerPath: request.handlerPath,
       url: request.url,
       context: request.context,
-      onHijack: (callback) => unawaited(raw.future.then(
-            (channel) => callback(channel.changeStream((bytes) => _limitFrames(bytes, maxMessageBytes))),
-          )),
+      onHijack: (callback) => unawaited(raw.future.then((channel) {
+        final socket = channel.sink;
+        if (socket is! Socket) {
+          callback(channel);
+          return;
+        }
+        final bounded = _BoundedSocket(socket, maxMessageBytes);
+        callback(StreamChannel<List<int>>(bounded, bounded));
+      })),
     );
     try {
       return await upgrade(guarded);
@@ -189,32 +197,107 @@ Handler boundedWebSocketHandler(
   };
 }
 
-/// [input] (a WebSocket's raw incoming bytes) passed through unchanged until a frame is over
-/// the limit; then an error, and nothing more is read.
-Stream<List<int>> _limitFrames(Stream<List<int>> input, int maxMessageBytes) {
-  final guard = WebSocketFrameGuard(maxMessageBytes);
-  final out = StreamController<List<int>>(sync: true);
-  StreamSubscription<List<int>>? subscription;
-  out
-    ..onListen = () {
-      subscription = input.listen(
-        (chunk) {
-          if (guard.accept(chunk)) {
-            out.add(chunk);
-            return;
-          }
-          out.addError(const _MessageTooLarge());
-          unawaited(subscription?.cancel());
-          unawaited(out.close());
-        },
-        onError: out.addError,
-        onDone: out.close,
-      );
-    }
-    ..onPause = (() => subscription?.pause())
-    ..onResume = (() => subscription?.resume())
-    ..onCancel = (() => subscription?.cancel());
-  return out.stream;
+/// A server's socket whose incoming bytes pass through a [WebSocketFrameGuard]: unchanged up to
+/// the first frame over the limit, then an error, and nothing more is read. Everything else is
+/// the socket's own.
+class _BoundedSocket extends Stream<Uint8List> implements Socket {
+  _BoundedSocket(this._socket, int maxMessageBytes) : _guard = WebSocketFrameGuard(maxMessageBytes);
+
+  final Socket _socket;
+  final WebSocketFrameGuard _guard;
+
+  @override
+  StreamSubscription<Uint8List> listen(
+    void Function(Uint8List event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) {
+    final out = StreamController<Uint8List>(sync: true);
+    StreamSubscription<Uint8List>? input;
+    out
+      ..onListen = () {
+        input = _socket.listen(
+          (chunk) {
+            final fine = _guard.take(chunk);
+            if (fine == chunk.length) {
+              out.add(chunk);
+              return;
+            }
+            if (fine > 0) out.add(Uint8List.sublistView(chunk, 0, fine));
+            out.addError(const _MessageTooLarge());
+            unawaited(input?.cancel());
+            unawaited(out.close());
+          },
+          onError: out.addError,
+          onDone: out.close,
+        );
+      }
+      ..onPause = (() => input?.pause())
+      ..onResume = (() => input?.resume())
+      ..onCancel = (() => input?.cancel());
+    return out.stream.listen(onData, onError: onError, onDone: onDone, cancelOnError: cancelOnError);
+  }
+
+  @override
+  Encoding get encoding => _socket.encoding;
+
+  @override
+  set encoding(Encoding value) => _socket.encoding = value;
+
+  @override
+  void add(List<int> data) => _socket.add(data);
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) => _socket.addError(error, stackTrace);
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) => _socket.addStream(stream);
+
+  @override
+  Future<void> flush() => _socket.flush();
+
+  @override
+  Future<void> close() => _socket.close();
+
+  @override
+  Future<void> get done => _socket.done;
+
+  @override
+  void write(Object? object) => _socket.write(object);
+
+  @override
+  void writeAll(Iterable<Object?> objects, [String separator = '']) => _socket.writeAll(objects, separator);
+
+  @override
+  void writeln([Object? object = '']) => _socket.writeln(object);
+
+  @override
+  void writeCharCode(int charCode) => _socket.writeCharCode(charCode);
+
+  @override
+  void destroy() => _socket.destroy();
+
+  @override
+  bool setOption(SocketOption option, bool enabled) => _socket.setOption(option, enabled);
+
+  @override
+  Uint8List getRawOption(RawSocketOption option) => _socket.getRawOption(option);
+
+  @override
+  void setRawOption(RawSocketOption option) => _socket.setRawOption(option);
+
+  @override
+  int get port => _socket.port;
+
+  @override
+  int get remotePort => _socket.remotePort;
+
+  @override
+  InternetAddress get address => _socket.address;
+
+  @override
+  InternetAddress get remoteAddress => _socket.remoteAddress;
 }
 
 class _MessageTooLarge implements Exception {
@@ -242,9 +325,14 @@ class WebSocketFrameGuard {
   bool _over = false;
 
   /// Reads [chunk]; false once a frame is over the limit, and from then on.
-  bool accept(List<int> chunk) {
-    if (_over) return false;
+  bool accept(List<int> chunk) => take(chunk) == chunk.length;
+
+  /// Reads [chunk] and returns how many of its bytes come before the first frame over the limit:
+  /// all of them while every frame fits, and none once one hasn't.
+  int take(List<int> chunk) {
+    if (_over) return 0;
     var i = 0;
+    var frameStart = 0;
     while (i < chunk.length) {
       if (_payloadLeft > 0) {
         final n = chunk.length - i < _payloadLeft ? chunk.length - i : _payloadLeft;
@@ -252,6 +340,7 @@ class WebSocketFrameGuard {
         i += n;
         continue;
       }
+      if (_header.isEmpty) frameStart = i;
       _header.add(chunk[i++]);
       if (_header.length == 2) {
         final short = _header[1] & 0x7f;
@@ -264,18 +353,16 @@ class WebSocketFrameGuard {
       final fin = (_header[0] & 0x80) != 0;
       _header.clear();
       _headerLength = 2;
-      if (length == null) return _overLimit();
-      if (opcode >= 8) {
-        if (length > 125) return _overLimit();
-      } else {
-        if (opcode != 0) _message = 0;
-        _message += length;
-        if (_message > maxMessageBytes) return _overLimit();
-        if (fin) _message = 0;
+      final over = length == null ||
+          (opcode >= 8 ? length > 125 : (opcode != 0 ? 0 : _message) + length > maxMessageBytes);
+      if (over) {
+        _over = true;
+        return frameStart;
       }
+      if (opcode < 8) _message = fin ? 0 : (opcode != 0 ? 0 : _message) + length;
       _payloadLeft = length;
     }
-    return true;
+    return chunk.length;
   }
 
   /// The payload length in the header just read, or null when it is absurd (past 2^32).
@@ -287,11 +374,6 @@ class WebSocketFrameGuard {
       if (_header[k] != 0) return null;
     }
     return (_header[6] << 24) | (_header[7] << 16) | (_header[8] << 8) | _header[9];
-  }
-
-  bool _overLimit() {
-    _over = true;
-    return false;
   }
 }
 
