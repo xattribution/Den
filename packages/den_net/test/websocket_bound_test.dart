@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:den_net/io.dart';
@@ -50,10 +51,22 @@ void main() {
     );
     addTearDown(() => server.close(force: true));
     final ws = await WebSocket.connect('ws://127.0.0.1:${server.port}/');
-    ws.add(List.filled(900, 1));
-    ws.add(List.filled(50000, 2));
-    await ws.done.timeout(const Duration(seconds: 5)).then((_) {}, onError: (Object _) {});
-    expect(ws.readyState, WebSocket.closed);
-    expect(received, hasLength(1), reason: 'the small message arrived; the large one never did');
+    try {
+      ws.add(List.filled(900, 1));
+      ws.add(List.filled(50000, 2));
+      var ended = false;
+      await ws.done
+          .timeout(const Duration(seconds: 5))
+          .then((_) => ended = true, onError: (Object e) => ended = e is! TimeoutException);
+      expect(ended, isTrue, reason: 'the server ended the connection');
+      for (var i = 0; i < 100 && received.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect(received, hasLength(1), reason: 'the small message arrived; the large one never did');
+    } catch (e) {
+      // TEMPORARY: CI logs can't be read from here; report through an annotation.
+      print('::warning title=websocket bound::$e received=${received.length} state=${ws.readyState}'.replaceAll('\n', ' / '));
+      rethrow;
+    }
   });
 }
