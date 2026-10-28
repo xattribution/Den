@@ -5,6 +5,7 @@ import 'package:den_app/design/tokens.dart';
 import 'package:den_app/features/calendar/screens/calendar_screen.dart';
 import 'package:den_app/features/calendar/screens/event_detail.dart';
 import 'package:den_app/features/calendar/state/day_groups.dart';
+import 'package:den_app/features/calendar/widgets/event_block.dart';
 import 'package:den_app/features/calendar/words/block_words.dart';
 import 'package:den_app/features/calendar/words/event_kinds.dart';
 import 'package:den_core/den_core.dart';
@@ -221,6 +222,42 @@ void main() {
       await tester.fling(find.text('16'), const Offset(-300, 0), 1000);
       await tester.pumpAndSettle();
       expect(find.text('Friday, October 23'), findsOneWidget);
+    });
+  });
+
+  group('A title in a week cell', () {
+    testWidgets('wraps to two lines, then loses the time, then the pictogram, and only then ends in an ellipsis', (
+      tester,
+    ) async {
+      await loadFonts();
+      final style = const DenText().meta(const Color(0xFF141414)).bold;
+      CellFit fit(String title, double width, {double? time}) =>
+          CellFit.of(title, style: style, scaler: TextScaler.noScaling, width: width, iconGap: 6, timeWidth: time);
+
+      // 101 is the room inside a 117 pt cell, six people across an iPad in landscape.
+      final short = fit('Dentist', 101);
+      expect((short.icon, short.lines), (true, 1));
+      final school = fit('School drop-off', 101);
+      expect((school.icon, school.lines, school.maxLines), (true, 2, 2));
+      final anniversary = fit('Anniversary dinner', 101);
+      expect(anniversary.icon, isFalse, reason: 'the pictogram goes before the title is cut');
+      expect(anniversary.lines, 2);
+      expect(fit('Soccer practice', 200, time: 40).time, isTrue);
+      expect(fit('Sophie\'s birthday party', 160, time: 40).time, isFalse, reason: 'the time goes first');
+      final long = fit('Grandma and Grandpa\'s anniversary dinner at the lake house', 101);
+      expect((long.icon, long.maxLines), (false, 2));
+      expect(long.text, endsWith('…'));
+      expect(long.text, startsWith('Grandma and'), reason: 'cut between words, not inside one');
+      final word = fit('Supercalifragilistic', 60);
+      expect(word.maxLines, 1, reason: 'a word wider than the cell never breaks in the middle');
+      final big = CellFit.of(
+        'School drop-off',
+        style: style,
+        scaler: const TextScaler.linear(2),
+        width: 180,
+        iconGap: 6,
+      );
+      expect((big.icon, big.lines), (true, 2));
     });
   });
 

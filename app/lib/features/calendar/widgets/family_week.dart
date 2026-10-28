@@ -15,7 +15,9 @@ import 'event_block.dart';
 /// Den's signature view, the paper family organizer on the iPad: one card, a column per person
 /// under their face and name, a row per day. Each person's events are solid blocks in their
 /// color with the kind's pictogram; events for everyone run across the row as an ink block
-/// with the family's dots. Dense cells keep one line per event and show the rest on tap.
+/// with the family's dots. A cell grows to fit its titles, two lines each. Where the day
+/// column would squeeze the people (six people on an iPad in portrait), each day's date sits
+/// above its row instead and the people get the whole width.
 class FamilyWeek extends StatelessWidget {
   const FamilyWeek({
     super.key,
@@ -29,33 +31,38 @@ class FamilyWeek extends StatelessWidget {
   final int days;
   final bool showChores;
 
-  /// Stretch the day rows to fill the height instead of scrolling, as on the wall.
+  /// Share the height among the days, as on the wall. A day with more than its share takes the
+  /// room it needs and the week scrolls: a block is never cut.
   final bool fillHeight;
 
   static const double dayColumn = 96;
 
-  static double _widestWord(BuildContext context, List<Member> people) {
-    final style = context.text.rowTitle(context.colors.ink);
-    final scaler = MediaQuery.textScalerOf(context);
+  /// The widest word of [texts] in [style], as Text draws it: over the inherited style, whose
+  /// letter spacing counts.
+  static double _widestWord(BuildContext context, Iterable<String> texts, TextStyle style) {
+    final drawn = DefaultTextStyle.of(context).style.merge(style);
+    final painter = TextPainter(textDirection: TextDirection.ltr, textScaler: MediaQuery.textScalerOf(context));
     var widest = 0.0;
-    for (final m in people) {
-      for (final word in m.name.split(' ')) {
-        final painter = TextPainter(
-          text: TextSpan(text: word, style: style),
-          textDirection: TextDirection.ltr,
-          textScaler: scaler,
-        )..layout();
+    for (final text in texts) {
+      for (final word in text.split(' ')) {
+        if (word.isEmpty) continue;
+        painter.text = TextSpan(text: word, style: drawn);
+        painter.layout();
         widest = math.max(widest, painter.width);
-        painter.dispose();
       }
     }
+    painter.dispose();
     return widest;
   }
 
   static const double _minPersonColumn = 100;
 
-  /// Below this row height the wall's week scrolls instead of stretching to fill.
-  static const double _minFilledRow = 96;
+  /// A column widens for the longest word in the week's titles up to this, so a word doesn't
+  /// break or end in an ellipsis; a longer word ends in one.
+  static const double _maxWordColumn = 220;
+
+  /// A narrow cell's padding, both sides, and a hair for rounding.
+  static const double _cellPadding = 17;
   static const double _gap = 8;
   static const double _side = 14;
 
@@ -68,15 +75,27 @@ class FamilyWeek extends StatelessWidget {
       builder: (context, constraints) {
         final people = grid.people;
         final columns = math.max(1, people.length);
-        // A column is never narrower than the longest word of anyone's name at this text size:
-        // names wrap between words, never inside one. Past that the week scrolls sideways.
-        final minColumn = math.max(_minPersonColumn, _widestWord(context, people) + 4);
-        final natural = _side * 2 + dayColumn + columns * (minColumn + _gap);
+        // A column is never narrower than the longest word of anyone's name at this text size,
+        // nor (up to a point) of the week's titles: words wrap whole. Past that the week scrolls
+        // sideways.
+        final t = context.text;
+        final nameWord = _widestWord(context, [for (final m in people) m.name], t.rowTitle(c.ink));
+        final titleWord = _widestWord(context, [
+          for (final cell in grid.cells.values)
+            for (final occ in cell.events) occ.title,
+        ], t.meta(c.ink).bold);
+        final minColumn = math.max(
+          _minPersonColumn,
+          math.max(nameWord + 4, math.min(titleWord + _cellPadding, _maxWordColumn)),
+        );
+        // The day column gives its room to the people when they'd be squeezed: the date goes
+        // above each day's row.
+        final stacked = _side * 2 + dayColumn + columns * (minColumn + _gap) > constraints.maxWidth;
+        final lead = stacked ? -_gap : dayColumn;
+        final natural = _side * 2 + lead + columns * (minColumn + _gap);
         final width = math.max(natural, constraints.maxWidth);
-        final person = (width - _side * 2 - dayColumn - columns * _gap) / columns;
-        // Rows share the height only while each gets room for a block or two; on a short wall the
-        // week scrolls instead of cutting its blocks.
-        final fill = fillHeight && constraints.hasBoundedHeight && (constraints.maxHeight - 80) / grid.days.length >= _minFilledRow;
+        final person = (width - _side * 2 - lead - columns * _gap) / columns;
+        final fill = fillHeight && constraints.hasBoundedHeight;
 
         Widget row(int i) => _DayRow(
           date: grid.days[i],
@@ -84,7 +103,7 @@ class FamilyWeek extends StatelessWidget {
           grid: grid,
           personWidth: person,
           showChores: showChores,
-          fill: fill,
+          stacked: stacked,
         );
 
         final card = DecoratedBox(
@@ -97,16 +116,29 @@ class FamilyWeek extends StatelessWidget {
                 mainAxisSize: fill || constraints.hasBoundedHeight ? MainAxisSize.max : MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _HeaderRow(people: people, personWidth: person, beside: person - 44 >= minColumn && person >= 150),
+                  _HeaderRow(
+                    people: people,
+                    personWidth: person,
+                    beside: person - 44 >= minColumn && person >= 150,
+                    stacked: stacked,
+                  ),
                   if (fill)
-                    // On the wall each day gets an equal share of the height; a day with more than fits
-                    // shows what fits, as the old wall did.
-                    for (var i = 0; i < grid.days.length; i++)
-                      Expanded(
-                        child: ClipRect(
-                          child: SingleChildScrollView(physics: const NeverScrollableScrollPhysics(), child: row(i)),
-                        ),
-                      )
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, box) {
+                          final share = box.maxHeight / grid.days.length;
+                          return SingleChildScrollView(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                for (var i = 0; i < grid.days.length; i++)
+                                  ConstrainedBox(constraints: BoxConstraints(minHeight: share), child: row(i)),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    )
                   else if (constraints.hasBoundedHeight)
                     Expanded(
                       child: ListView.builder(
@@ -131,10 +163,13 @@ class FamilyWeek extends StatelessWidget {
 }
 
 class _HeaderRow extends StatelessWidget {
-  const _HeaderRow({required this.people, required this.personWidth, required this.beside});
+  const _HeaderRow({required this.people, required this.personWidth, required this.beside, required this.stacked});
 
   final List<Member> people;
   final double personWidth;
+
+  /// No day column: the dates sit above the rows.
+  final bool stacked;
 
   /// The name beside the face; otherwise under it.
   final bool beside;
@@ -150,9 +185,9 @@ class _HeaderRow extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(FamilyWeek._side, 14, FamilyWeek._side, 10),
         child: Row(
           children: [
-            const SizedBox(width: FamilyWeek.dayColumn),
-            for (final m in people) ...[
-              const SizedBox(width: FamilyWeek._gap),
+            if (!stacked) const SizedBox(width: FamilyWeek.dayColumn),
+            for (final (i, m) in people.indexed) ...[
+              if (i > 0 || !stacked) const SizedBox(width: FamilyWeek._gap),
               SizedBox(
                 width: personWidth,
                 // Names never truncate: with many people the name goes under the face, where it
@@ -189,7 +224,7 @@ class _DayRow extends StatelessWidget {
     required this.grid,
     required this.personWidth,
     required this.showChores,
-    required this.fill,
+    required this.stacked,
   });
 
   final String date;
@@ -197,7 +232,9 @@ class _DayRow extends StatelessWidget {
   final WeekGrid grid;
   final double personWidth;
   final bool showChores;
-  final bool fill;
+
+  /// The date above the row instead of beside it.
+  final bool stacked;
 
   @override
   Widget build(BuildContext context) {
@@ -209,52 +246,63 @@ class _DayRow extends StatelessWidget {
     final label = today ? c.ink : c.ink2;
     final canAdd = app.allows(DenAction.editEvents);
 
-    final cells = Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: FamilyWeek.dayColumn,
-          child: Semantics(
-            header: true,
-            label: today ? 'Today, ${f.long(date)}' : f.long(date),
-            excludeSemantics: true,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Wrap(
-                crossAxisAlignment: WrapCrossAlignment.end,
-                spacing: Sp.s,
-                children: [
-                  Text(
-                    '${f.dateTime(date).day}',
-                    style: context.text.section(label).copyWith(fontSize: 22 * context.text.scale),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 2),
-                    child: Text(
-                      today ? 'Today' : f.weekday(date),
-                      style: today ? context.text.meta(label).bold : context.text.meta(label),
-                    ),
-                  ),
-                ],
+    final day = Semantics(
+      header: true,
+      label: today ? 'Today, ${f.long(date)}' : f.long(date),
+      excludeSemantics: true,
+      child: Padding(
+        padding: EdgeInsets.only(top: stacked ? 2 : 6),
+        child: Wrap(
+          crossAxisAlignment: WrapCrossAlignment.end,
+          spacing: Sp.s,
+          children: [
+            Text(
+              '${f.dateTime(date).day}',
+              style: context.text.section(label).copyWith(fontSize: 22 * context.text.scale),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text(
+                today ? 'Today' : f.weekday(date),
+                style: today ? context.text.meta(label).bold : context.text.meta(label),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+
+    final people = <Widget>[
+      for (final (i, m) in grid.people.indexed) ...[
+        if (i > 0 || !stacked) const SizedBox(width: FamilyWeek._gap),
+        SizedBox(
+          width: personWidth,
+          child: _Cell(
+            date: date,
+            cell: grid.cells[(date, m.id)],
+            showChores: showChores,
+            onAdd: canAdd ? () => context.push('/event/new?date=$date&who=${m.id}') : null,
+            who: m,
           ),
         ),
-        for (final m in grid.people) ...[
-          const SizedBox(width: FamilyWeek._gap),
-          SizedBox(
-            width: personWidth,
-            child: _Cell(
-              date: date,
-              cell: grid.cells[(date, m.id)],
-              showChores: showChores,
-              onAdd: canAdd ? () => context.push('/event/new?date=$date&who=${m.id}') : null,
-              who: m,
-            ),
-          ),
-        ],
       ],
-    );
+    ];
+    final Widget cells = stacked
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              day,
+              const SizedBox(height: 6),
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: people),
+            ],
+          )
+        : Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: FamilyWeek.dayColumn, child: day),
+              ...people,
+            ],
+          );
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -270,7 +318,7 @@ class _DayRow extends StatelessWidget {
             for (final occ in everyone) ...[
               const SizedBox(height: 6),
               Padding(
-                padding: const EdgeInsets.only(left: FamilyWeek.dayColumn + FamilyWeek._gap),
+                padding: EdgeInsets.only(left: stacked ? 0 : FamilyWeek.dayColumn + FamilyWeek._gap),
                 child: EventCell(
                   occ: occ,
                   date: date,

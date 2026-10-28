@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../../app/app_state.dart';
 import '../../../design/avatar.dart';
 import '../../../design/motion.dart';
+import '../../../design/pictograms.dart';
 import '../../../design/tokens.dart';
 import '../state/calendar_models.dart';
 import '../words/block_words.dart';
@@ -152,8 +153,10 @@ class BlockFlight extends StatelessWidget {
   static const double heroRadius = 24;
 }
 
-/// Events at the same time as one ink block: a disc in each event's color with its pictogram,
-/// the titles together ("Soccer and Piano lesson") and who, from when. Tap to show them all.
+/// Events at the same time as one ink block, laid out like a single block: one neutral
+/// pictogram, the titles together ("Soccer and Piano lesson") and who, from when, and the
+/// faces of everyone in them (the family's dots when one is for everyone). Tap to show them
+/// all.
 class MergedBlock extends StatelessWidget {
   const MergedBlock({super.key, required this.items, required this.date, required this.onTap});
 
@@ -170,14 +173,20 @@ class MergedBlock extends StatelessWidget {
     final looks = [for (final occ in items) EventLook.of(app, occ, c)];
     final title = combinedTitle([for (final occ in items) occ.title]);
     final whoNames = <String>[];
+    final people = <Member>[];
     for (final look in looks) {
       final names = look.everyone ? ['Everyone'] : [for (final m in look.people) m.name];
       for (final n in names) {
         if (!whoNames.contains(n)) whoNames.add(n);
       }
+      for (final m in look.people) {
+        if (!people.any((p) => p.id == m.id)) people.add(m);
+      }
     }
+    final everyone = looks.any((look) => look.everyone);
     final start = blockTime(f, items.first, date);
     final detail = start == null ? joinNames(whoNames) : '${joinNames(whoNames)}, from $start';
+    final iconSize = MediaQuery.textScalerOf(context).scale(26.0).clamp(26.0, 34.0);
 
     return DenPressable(
       onTap: onTap,
@@ -189,19 +198,7 @@ class MergedBlock extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           child: Row(
             children: [
-              Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                children: [
-                  for (final look in looks.take(4))
-                    Container(
-                      width: 30,
-                      height: 30,
-                      decoration: BoxDecoration(color: look.everyone ? c.onPrimary : look.fill, shape: BoxShape.circle),
-                      child: Icon(look.icon, size: 18, color: look.everyone ? c.primary : look.ink),
-                    ),
-                ],
-              ),
+              Icon(Pictograms.event(null), size: iconSize, color: c.onPrimary),
               const SizedBox(width: Sp.m),
               Expanded(
                 child: Column(
@@ -213,6 +210,13 @@ class MergedBlock extends StatelessWidget {
                   ],
                 ),
               ),
+              if (everyone) ...[
+                const SizedBox(width: Sp.s),
+                FamilyDots(family: looks.first.family),
+              ] else if (people.isNotEmpty) ...[
+                const SizedBox(width: Sp.s),
+                BlockFaces(people: people, ring: c.primary),
+              ],
             ],
           ),
         ),
@@ -287,9 +291,133 @@ class FamilyDots extends StatelessWidget {
   }
 }
 
-/// An event in a dense board cell (the iPad week, the month): one line, its pictogram, the
-/// title with an ellipsis where the cell is narrow, and the time. The full words are on its
-/// page, one tap away, and in what a screen reader says.
+/// How an event's title sits in a board cell of a given width. The title wraps to two lines
+/// before anything gives way; then the time goes, then the pictogram; only a title that still
+/// doesn't fit (a very long one, or a word wider than the cell) ends in an ellipsis. Words never
+/// break in the middle.
+@immutable
+class CellFit {
+  const CellFit({
+    required this.text,
+    required this.icon,
+    required this.time,
+    required this.maxLines,
+    required this.lines,
+    required this.lineHeight,
+  });
+
+  /// The title as drawn (with its last two words kept together when that still fits).
+  final String text;
+  final bool icon;
+  final bool time;
+  final int maxLines;
+
+  /// How many lines the title takes.
+  final int lines;
+
+  /// The height of one line of the title, to set the pictogram against the first.
+  final double lineHeight;
+
+  /// The pictogram's size in a board cell.
+  static const double cellIcon = 18;
+
+  /// Lays [title] out in [width] (the room inside the block's padding) on at most [lines]
+  /// lines. [iconSize] and [iconGap] are the pictogram's; [timeWidth] is the time's width with
+  /// its gap, or null for no time. The time goes before the pictogram, and shows only beside
+  /// it. [style] is the title's style as drawn, over the inherited one.
+  static CellFit of(
+    String title, {
+    required TextStyle style,
+    required TextScaler scaler,
+    required double width,
+    required double iconGap,
+    double iconSize = cellIcon,
+    double? timeWidth,
+    bool icon = true,
+    int lines = 2,
+  }) {
+    final most = lines;
+    final tidy = tidyLine(title);
+    final texts = {tidy, title}.toList();
+    final painter = TextPainter(textDirection: TextDirection.ltr, textScaler: scaler, maxLines: most);
+    try {
+      painter.text = TextSpan(text: 'Ag', style: style);
+      painter.layout();
+      final lineHeight = painter.preferredLineHeight;
+
+      double widestWord(String text) {
+        var widest = 0.0;
+        for (final word in text.split(RegExp(r'[ \n]+'))) {
+          if (word.isEmpty) continue;
+          painter.text = TextSpan(text: word, style: style);
+          painter.layout();
+          widest = math.max(widest, painter.width);
+        }
+        return widest;
+      }
+
+      // The lines the text takes in [room], or null when it needs more than [most] or a word
+      // would break.
+      int? linesIn(String text, double room) {
+        if (room <= 0 || widestWord(text) > room) return null;
+        painter.text = TextSpan(text: text, style: style);
+        painter.layout(maxWidth: room);
+        if (painter.didExceedMaxLines) return null;
+        return painter.computeLineMetrics().length;
+      }
+
+      final options = [
+        if (icon && timeWidth != null) (true, true),
+        if (icon) (true, false),
+        (false, false),
+      ];
+      for (final (withIcon, withTime) in options) {
+        final room = width - (withIcon ? iconSize + iconGap : 0) - (withTime ? timeWidth! : 0);
+        for (final text in texts) {
+          final lines = linesIn(text, room);
+          if (lines != null) {
+            return CellFit(
+              text: text,
+              icon: withIcon,
+              time: withTime,
+              maxLines: most,
+              lines: lines,
+              lineHeight: lineHeight,
+            );
+          }
+        }
+      }
+      // The last resort. Whole words ending in an ellipsis ("Sophie's birthday…"); a word wider
+      // than the cell keeps to one line rather than breaking in the middle.
+      final wordsFit = widestWord(title) <= width;
+      if (wordsFit) {
+        final words = title.split(' ');
+        for (var n = words.length - 1; n > 0; n--) {
+          final text = '${words.take(n).join(' ').replaceAll(RegExp(r'[\s,;:.\-–—]+$'), '')}…';
+          final lines = linesIn(text, width);
+          if (lines != null) {
+            return CellFit(text: text, icon: false, time: false, maxLines: most, lines: lines, lineHeight: lineHeight);
+          }
+        }
+      }
+      return CellFit(
+        text: title,
+        icon: false,
+        time: false,
+        maxLines: wordsFit ? most : 1,
+        lines: wordsFit ? most : 1,
+        lineHeight: lineHeight,
+      );
+    } finally {
+      painter.dispose();
+    }
+  }
+}
+
+/// An event in a board cell (the iPad week, the day's all-day row): a block in the person's
+/// color with its pictogram, the title on up to two lines and, where there's room, the time.
+/// The block grows to fit its title ([CellFit] says what gives way first). The full words are
+/// on its page, one tap away, and in what a screen reader says.
 class EventCell extends StatelessWidget {
   const EventCell({
     super.key,
@@ -314,6 +442,9 @@ class EventCell extends StatelessWidget {
 
   static const double radius = 12;
 
+  /// Narrower than this, a cell has no room for the pictogram beside a word.
+  static const double dense = 92;
+
   @override
   Widget build(BuildContext context) {
     final app = context.watch(calendarReads);
@@ -322,13 +453,15 @@ class EventCell extends StatelessWidget {
     final t = context.text;
     final firstDay = f.localDate(occ.start) == date;
     final spoken = [occ.title, if (!occ.allDay && firstDay) f.time(occ.start), look.who].join(', ');
+    final time = !showTime || occ.allDay || !firstDay ? null : cellTime(f, occ.start);
+    final scaler = MediaQuery.textScalerOf(context);
+    // Measured as Text will draw it: over the inherited style (its letter spacing counts).
+    final base = DefaultTextStyle.of(context).style;
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // In a narrow cell the title keeps the room: the time goes first, then the pictogram.
         final narrow = constraints.maxWidth < 150 && !spanning;
-        final tiny = constraints.maxWidth < 92 && !spanning;
-        final time = !showTime || narrow || occ.allDay || !firstDay ? null : cellTime(f, occ.start);
+        final padding = narrow ? 8.0 : 10.0;
         return DenPressable(
           onTap: onTap,
           color: look.fill,
@@ -339,13 +472,10 @@ class EventCell extends StatelessWidget {
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 40),
               child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: narrow ? 8 : 10, vertical: 8),
-                child: Row(
-                  children: [
-                    if (!tiny) ...[Icon(look.icon, size: 18, color: look.ink), SizedBox(width: narrow ? 6 : Sp.s)],
-                    ..._words(t, look, time),
-                  ],
-                ),
+                padding: EdgeInsets.symmetric(horizontal: padding, vertical: 8),
+                child: spanning
+                    ? _spanning(t, look, time)
+                    : _cell(t, look, time, scaler, base, constraints.maxWidth, padding, narrow),
               ),
             ),
           ),
@@ -354,48 +484,97 @@ class EventCell extends StatelessWidget {
     );
   }
 
-  List<Widget> _words(DenText t, EventLook look, String? time) => [
-    if (spanning) ...[
-      Expanded(
-        child: Row(
-          children: [
-            Flexible(
-              child: Text(
-                occ.title,
-                style: t.meta(look.ink).bold,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                softWrap: false,
+  Widget _cell(
+    DenText t,
+    EventLook look,
+    String? time,
+    TextScaler scaler,
+    TextStyle base,
+    double cell,
+    double padding,
+    bool narrow,
+  ) {
+    final titleStyle = base.merge(t.meta(look.ink).bold);
+    final timeStyle = base.merge(t.caption(look.ink).copyWith(fontSize: 14 * t.scale));
+    final iconGap = narrow ? 6.0 : Sp.s;
+    double? timeWidth;
+    // A narrow cell gives its room to the title: no time there.
+    if (time != null && !narrow) {
+      final painter = TextPainter(
+        text: TextSpan(text: time, style: timeStyle),
+        textDirection: TextDirection.ltr,
+        textScaler: scaler,
+      )..layout();
+      timeWidth = painter.width + Sp.xs;
+      painter.dispose();
+    }
+    final fit = CellFit.of(
+      occ.title,
+      style: titleStyle,
+      scaler: scaler,
+      width: cell - padding * 2,
+      iconGap: iconGap,
+      timeWidth: timeWidth,
+      icon: cell >= dense,
+    );
+    final wrapped = fit.lines > 1;
+    return Row(
+      crossAxisAlignment: wrapped ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+      children: [
+        if (fit.icon) ...[
+          Padding(
+            // Beside the first line of a wrapped title.
+            padding: EdgeInsets.only(top: wrapped ? math.max(0, (fit.lineHeight - CellFit.cellIcon) / 2) : 0),
+            child: Icon(look.icon, size: CellFit.cellIcon, color: look.ink),
+          ),
+          SizedBox(width: iconGap),
+        ],
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Expanded(
+                child: Text(
+                  fit.text,
+                  style: titleStyle,
+                  maxLines: fit.maxLines,
+                  overflow: TextOverflow.ellipsis,
+                  softWrap: fit.maxLines > 1,
+                ),
               ),
-            ),
-            const SizedBox(width: Sp.s + 2),
+              if (fit.time && time != null) ...[
+                const SizedBox(width: Sp.xs),
+                Text(time, style: timeStyle, maxLines: 1, softWrap: false),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _spanning(DenText t, EventLook look, String? time) => Row(
+    children: [
+      Icon(look.icon, size: CellFit.cellIcon, color: look.ink),
+      const SizedBox(width: Sp.s),
+      Expanded(
+        child: Wrap(
+          spacing: Sp.s + 2,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(tidyLine(occ.title), style: t.meta(look.ink).bold),
             Text(
               time == null ? 'everyone' : '$time, everyone',
               style: t.caption(look.ink).copyWith(fontSize: 14 * t.scale),
-              maxLines: 1,
-              softWrap: false,
             ),
           ],
         ),
       ),
       const SizedBox(width: Sp.s),
       FamilyDots(family: look.family),
-    ] else ...[
-      Expanded(
-        child: Text(
-          occ.title,
-          style: t.meta(look.ink).bold,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          softWrap: false,
-        ),
-      ),
-      if (time != null) ...[
-        const SizedBox(width: Sp.xs),
-        Text(time, style: t.caption(look.ink).copyWith(fontSize: 14 * t.scale), maxLines: 1, softWrap: false),
-      ],
     ],
-  ];
+  );
 }
 
 /// The smallest a time column can be at the current text size: the longest time it shows.

@@ -683,8 +683,10 @@ class _Block extends StatelessWidget {
     final f = app.formats;
     final c = context.colors;
     final look = EventLook.of(app, occ, c, column: column);
-    final titleStyle = context.text.meta(look.ink).bold;
-    final timeStyle = context.text.caption(look.ink);
+    // Measured as Text draws them: over the inherited style (its letter spacing counts).
+    final base = DefaultTextStyle.of(context).style;
+    final titleStyle = base.merge(context.text.meta(look.ink).bold);
+    final timeStyle = base.merge(context.text.caption(look.ink));
     final scaler = MediaQuery.textScalerOf(context);
     final lineHeight = (scaler.scale(titleStyle.fontSize!) * 1.35).ceilToDouble();
     final span = '${f.clock(startMin)} to ${f.clock(endMin % (24 * 60))}';
@@ -697,17 +699,31 @@ class _Block extends StatelessWidget {
         final showTime = lines >= 2;
         final oneLine = lines == 1;
         final titleLines = math.min(2, showTime ? lines - 1 : lines);
-        final showIcon = constraints.maxWidth >= 96;
+        // The room inside the block's padding (8 and 4, as below).
+        final inside = constraints.maxWidth - Sp.s - Sp.xs;
+        TextPainter measure(String text) =>
+            TextPainter(text: TextSpan(text: text, style: timeStyle), textDirection: TextDirection.ltr, textScaler: scaler)
+              ..layout();
+        // On one line the start time sits after the title while there's room; it goes before
+        // the pictogram does, and the title is cut only between words, last.
+        final after = '  ${f.clock(startMin)}';
+        final afterPainter = measure(after);
+        final fit = CellFit.of(
+          occ.title,
+          style: titleStyle,
+          scaler: scaler,
+          width: inside,
+          iconGap: 6,
+          iconSize: 16,
+          timeWidth: oneLine ? afterPainter.width : null,
+          icon: constraints.maxWidth >= 96,
+          lines: titleLines,
+        );
+        afterPainter.dispose();
         // Times never truncate: the whole span where it fits, otherwise when it starts (the
         // block's height already shows how long).
-        final room = constraints.maxWidth - Sp.s - Sp.xs - (showIcon ? 22 : 0);
-        final spanPainter = TextPainter(
-          text: TextSpan(text: span, style: timeStyle),
-          textDirection: TextDirection.ltr,
-          textScaler: scaler,
-          maxLines: 1,
-        )..layout();
-        final timeText = spanPainter.width <= room ? span : f.clock(startMin);
+        final spanPainter = measure(span);
+        final timeText = spanPainter.width <= inside - (fit.icon ? 22 : 0) ? span : f.clock(startMin);
         spanPainter.dispose();
         final content = Container(
           decoration: BoxDecoration(
@@ -720,7 +736,7 @@ class _Block extends StatelessWidget {
           child: Row(
             crossAxisAlignment: oneLine ? CrossAxisAlignment.center : CrossAxisAlignment.start,
             children: [
-              if (showIcon) ...[
+              if (fit.icon) ...[
                 Padding(
                   padding: EdgeInsets.only(top: oneLine ? 0 : 2),
                   child: Icon(look.icon, size: 16, color: look.ink),
@@ -732,8 +748,8 @@ class _Block extends StatelessWidget {
                     ? Text.rich(
                         TextSpan(
                           children: [
-                            TextSpan(text: occ.title, style: titleStyle),
-                            TextSpan(text: '  ${f.clock(startMin)}', style: timeStyle),
+                            TextSpan(text: fit.text, style: titleStyle),
+                            if (fit.time) TextSpan(text: after, style: timeStyle),
                           ],
                         ),
                         maxLines: 1,
@@ -742,8 +758,8 @@ class _Block extends StatelessWidget {
                     : Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(occ.title, style: titleStyle, maxLines: titleLines, overflow: TextOverflow.ellipsis),
-                          if (showTime) Text(timeText, style: timeStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          Text(fit.text, style: titleStyle, maxLines: fit.maxLines, overflow: TextOverflow.ellipsis),
+                          if (showTime) Text(timeText, style: timeStyle, maxLines: 1, softWrap: false),
                         ],
                       ),
               ),

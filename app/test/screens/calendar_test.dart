@@ -2,6 +2,7 @@ import 'package:den_app/features/calendar/screens/calendar_screen.dart';
 import 'package:den_app/features/calendar/screens/day_view.dart';
 import 'package:den_app/features/calendar/widgets/family_week.dart';
 import 'package:den_app/features/calendar/widgets/month_view.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/shots.dart';
@@ -175,6 +176,16 @@ void main() {
     testWidgets('iPad, in the app, dark', (tester) async {
       final state = await busyDemo(tester);
       await shootAt(tester, 'calendar_week_pad_app_dark', state: state, location: '/calendar', size: pad, night: true);
+    });
+
+    testWidgets('iPad 1024 wide, six people, in the app', (tester) async {
+      final state = await busyDemo(tester);
+      await shootAt(tester, 'calendar_week_pad_1024', state: state, location: '/calendar', size: const Size(1024, 1366));
+    });
+
+    testWidgets('iPad, in the app, 200 % text', (tester) async {
+      final state = await busyDemo(tester);
+      await shootAt(tester, 'calendar_week_pad_app_text200', state: state, location: '/calendar', size: pad, text: 2);
     });
 
     testWidgets('on the wall', (tester) async {

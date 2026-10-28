@@ -361,7 +361,11 @@ From the canvas; phase 2 builds them in `app/lib/design/` on the pieces above.
   `Pictograms.event(kind)` (Phosphor bold line icons, keys in `Pictograms.events`); the
   calendar reads the kind from the title, then the place, then an imported category
   (`features/calendar/words/event_kinds.dart`). In a person's column (the family week, the
-  iPad day) or a list narrowed to one person, the block takes that person's color.
+  iPad day) or a list narrowed to one person, the block takes that person's color. In a board
+  cell (the iPad week) the title wraps to two lines and the block grows to fit; when it still
+  doesn't fit, the time goes, then the pictogram, and only then does it end in an ellipsis,
+  between words (`CellFit`). Events combined into one block show their people's faces, never
+  a pictogram in a colored disc.
 - **Sheets**: `bg` with 28 top corners, a 40 x 5 `handle`, the title and its Done at the top,
   primary action within reach of the thumb. On iPad, a centered form sheet. A route that opens
   as a sheet (`/event/new`, an event on iPad) uses `DenSheetPage` (`design/sheet_page.dart`)
