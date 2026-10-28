@@ -3,8 +3,8 @@ flutter_launcher_icons:
   android: true
   ios: true
   remove_alpha_ios: true
-  # web/manifest.json and web/icons are kept by hand: maskable icons with the mark inside the
-  # safe circle, an apple-touch-icon, and colors for both themes.
+  # web/icons and web/favicon.png come from test/icon/icon_test.dart (maskable icons with the
+  # mark inside the safe circle, an apple-touch-icon); web/manifest.json is kept by hand.
   web:
     generate: false
   windows:
