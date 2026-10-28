@@ -13,6 +13,8 @@ import 'screens/calendar/calendar_screen.dart';
 import 'screens/today/today_screen.dart';
 import 'shell/shell.dart';
 import 'state/app_state.dart';
+import 'web/web_app.dart';
+import 'web/web_insets.dart';
 
 GoRouter buildRouter(AppState state) => GoRouter(
       initialLocation: '/today',
@@ -75,6 +77,18 @@ class _DenAppState extends State<DenApp> {
       WidgetsBinding.instance.addPostFrameCallback((_) => _router.push(route));
       WidgetsBinding.instance.scheduleFrame();
     });
+    // In a browser, a tapped notification from the hub opens its event, chore or Today.
+    WebApp.listen((route) {
+      if (!mounted || !route.startsWith('/')) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (route == '/today') {
+          _router.go(route);
+        } else {
+          _router.push(route);
+        }
+      });
+      WidgetsBinding.instance.scheduleFrame();
+    });
     // Something shared from another app opens straight on what Den found in it.
     _shares = Capture.inbox.stream.listen((input) => _router.push('/capture', extra: input));
     if (Capture.waiting.isNotEmpty) {
@@ -107,6 +121,7 @@ class _DenAppState extends State<DenApp> {
             title: 'Den',
             debugShowCheckedModeBanner: false,
             routerConfig: _router,
+            builder: (context, child) => WebSafeArea(child: child),
             theme: denTheme(DenColors.day, typeScale: scale),
             darkTheme: denTheme(DenColors.night, typeScale: scale),
             themeMode: switch (widget.state.theme) {

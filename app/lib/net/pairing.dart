@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:den_core/den_core.dart';
 import 'package:flutter/widgets.dart';
+import 'package:intl/intl.dart';
 
 import 'hub_client.dart';
 
@@ -43,6 +44,46 @@ class SpokenCode {
   final int expires;
 }
 
+/// An invite the family's hub keeps for a parent, to send as a message: a link, the same code
+/// as four words for typing, and a `den://join` code for a phone with a camera. Whoever opens
+/// it asks to join; a parent approves them with one tap.
+class InviteMessage {
+  const InviteMessage({
+    required this.words,
+    required this.link,
+    required this.expires,
+    required this.familyName,
+    this.qr,
+    this.forName,
+  });
+
+  final List<String> words;
+  final Uri link;
+
+  /// UTC milliseconds.
+  final int expires;
+  final String familyName;
+
+  /// The `den://join` invite, for a QR code.
+  final String? qr;
+
+  /// Who it's for, when it names someone.
+  final String? forName;
+
+  String get code => words.join(' ');
+
+  /// The message to send, in plain words, ending with when it stops working (in this
+  /// device's time zone).
+  String get text {
+    final until = DateFormat('EEEE, MMMM d').format(DateTime.fromMillisecondsSinceEpoch(expires));
+    final greeting = forName == null ? 'Join' : '$forName, join';
+    return '$greeting $familyName on Den: $link\n\n'
+        'On an iPhone or iPad, open the link in Safari, add Den to your Home Screen, then open Den '
+        'from there. If it asks for a code, type: $code\n\n'
+        'This invite works until $until.';
+  }
+}
+
 /// A device asking to join, as the inviting device sees it, with the matching words to compare.
 class PendingJoin {
   const PendingJoin({required this.deviceId, required this.deviceName, required this.kind, this.words = const []});
@@ -55,8 +96,14 @@ class PendingJoin {
 
 /// A failure written for people: the cause and the way out.
 class PairingException implements Exception {
-  const PairingException(this.message);
+  const PairingException(this.message, {this.reason});
   final String message;
+
+  /// What went wrong, for code that decides what to try next: [unknownCode].
+  final String? reason;
+
+  /// The hub holds no invite with those words (wrong, or expired).
+  static const unknownCode = 'unknown-code';
   @override
   String toString() => message;
 }
@@ -117,6 +164,38 @@ abstract class PairingService {
   /// on this phone's behalf. Returns the hub's name; the browser's join request then arrives as a
   /// pending device to approve.
   Future<String> answerBrowserLink(String code) async => throw const PairingException(LocalOnlyPairing.message);
+
+  /// On a parent's own device: opens "Add a device" on the family's hub for 10 minutes, so a
+  /// browser can ask for a link code where the hub is reachable from the internet. Best effort:
+  /// a hub on the home network is always open.
+  Future<void> openLinking() async {}
+
+  /// In a browser: the hub that served this page, or null when there is none or it doesn't
+  /// answer.
+  Future<HubInfo?> servingHub() async => null;
+
+  /// In a browser the hub served: starts the family's hub with the setup code it printed,
+  /// right after this browser started the family. Approves the hub on its own once both ends
+  /// show the same words; the page came from that hub over its own address, so there is
+  /// nobody in between to compare against.
+  HubSetupSession adoptServingHub(HubInfo hub, String code) => throw const PairingException(LocalOnlyPairing.message);
+
+  // ------------------------------------------------------------------ invites by message
+
+  /// An invite the family's hub keeps for three days, for [memberId] when given. Needs a
+  /// parent's own device and a hub.
+  Future<InviteMessage> createInvite({String? memberId}) async => throw const PairingException(LocalOnlyPairing.message);
+
+  /// Joins with an invite's four [words] through the hub at [hubUrl], or the hub that served
+  /// this page. [deviceName] names this device from the name of the person the invite is for
+  /// (null when it names nobody).
+  Future<JoinTicket> joinWithInvite(
+    String words, {
+    String? hubUrl,
+    required String Function(String? forName) deviceName,
+    required DeviceKind kind,
+  }) async =>
+      throw const PairingException(LocalOnlyPairing.message);
 }
 
 /// Where adding a hub stands, on the parent's phone.
@@ -241,6 +320,9 @@ abstract final class Pairing {
 
   /// The join this device sent most recently, so the waiting screen can show its words.
   static JoinTicket? ticket;
+
+  /// The hub this browser is taking into the family it just started, while that runs.
+  static final ValueNotifier<HubSetupSession?> adoption = ValueNotifier(null);
 
   static PairingService of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<PairingScope>()?.service ?? service;

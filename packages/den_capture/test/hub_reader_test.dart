@@ -105,6 +105,36 @@ void main() {
     );
   });
 
+  test("the hub's limits say what to do: wait, or send something smaller", () async {
+    Future<ReaderException> refusal(int status, String code) async {
+      final hub = HubCaptureClient(
+        bases: () => [Uri.parse('http://192.168.1.20:47733')],
+        sign: sign,
+        client: MockClient((r) async => http.Response(
+              jsonEncode({
+                'error': {'code': code, 'message': 'That request is too large.'},
+              }),
+              status,
+            )),
+      );
+      try {
+        await hub.read(CaptureInput.typed('milk'));
+      } on ReaderException catch (e) {
+        return e;
+      }
+      fail('no refusal');
+    }
+
+    final big = await refusal(413, 'too_large');
+    expect((big.message, big.retry), ("That's too large for the hub to read. Share a smaller photo or file.", false));
+    final busy = await refusal(429, 'busy');
+    expect((busy.message, busy.retry), ('The hub is busy reading other things. Try again in a moment.', true));
+    final slow = await refusal(408, 'timeout');
+    expect(slow.message, contains('better connection'));
+    final many = await refusal(429, 'rate_limited');
+    expect(many.message, contains('Wait a few minutes'));
+  });
+
   test('the hub is asked what it reads with at most once a minute', () async {
     var calls = 0;
     var now = DateTime(2026, 10, 16, 8);

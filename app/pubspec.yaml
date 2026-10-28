@@ -63,6 +63,7 @@ dependencies:
   speech_to_text: ^7.4.0
   den_capture:
     path: ../packages/den_capture
+  web: ^1.1.1
 
 dev_dependencies:
   flutter_test:

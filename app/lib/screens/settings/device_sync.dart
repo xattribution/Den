@@ -1,5 +1,6 @@
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart' show SyncState;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -129,7 +130,8 @@ class _LiveState extends State<_Live> {
               top: 0,
             ),
         ],
-        if (widget.parent && !hubHere) ...[
+        // A browser syncs with the hub that served it, wherever it is: no addresses to manage.
+        if (widget.parent && !hubHere && !kIsWeb) ...[
           block(
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,

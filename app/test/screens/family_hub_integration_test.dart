@@ -109,7 +109,7 @@ void main() {
     final info = await pairing.hubStatus('127.0.0.1:${hub.port}');
     final session = pairing.setUpHub(info, 'AAAA-AAAA');
     await until(() => session.stage == HubSetupStage.failed, what: 'the refusal');
-    expect(session.error, "That setup code isn't right. 4 tries left before the hub makes a new one.");
+    expect(session.error, "That setup code isn't right. Check it in the hub's log: 4 more tries, then the hub makes you wait a minute.");
   });
 
   test('A browser links through the hub with a parent phone answering its code', () async {
@@ -138,6 +138,96 @@ void main() {
     await until(() => browser.isApproved, what: 'the browser to be approved');
     expect(browser.thisDevice!.kind, DeviceKind.browser);
     expect(browser.family!.name, 'The Testers');
+  });
+
+  test('A browser starts the family, takes in the hub that served it, and invites by message', () async {
+    final (hubDen, hub) = await startHub();
+    final served = Uri.parse('http://127.0.0.1:${hub.port}/');
+
+    // Mom's iPhone, from the Home Screen: starts the family, then the hub with its setup code.
+    final mom = await parentPhone();
+    final momNet = DenNetwork(mom, localHub: noHub());
+    addTearDown(momNet.dispose);
+    final momPairing = NetPairing(momNet, servedBy: served);
+    final fresh = await momPairing.servingHub();
+    expect(fresh!.paired, isFalse);
+    final adoption = momPairing.adoptServingHub(fresh, hub.setupCode!);
+    await until(() => adoption.stage == HubSetupStage.done || adoption.stage == HubSetupStage.failed, what: 'the hub to be taken in');
+    expect(adoption.error, isNull);
+    await until(() => hub.ready, what: 'the hub to be ready');
+    expect(isFamilyHub(mom, hubDen.deviceId), isTrue, reason: 'approved without a tap: both ends showed the same words');
+    await until(() => momNet.status.state.name == 'live', what: 'Mom to sync with the hub');
+
+    // An invite for Grandma, sent as a message.
+    final grandmaId = await mom.addMember(name: 'Grandma', role: Role.adult, marker: Marker.green, animal: Animal.bird);
+    final grandma = mom.member(grandmaId)!;
+    final message = await momPairing.createInvite(memberId: grandma.id);
+    expect(message.words, hasLength(4));
+    expect(message.link.fragment, '/join/${message.words.join('-')}');
+    expect(message.text, contains(message.code));
+
+    // Grandma's iPad, later, from the link: types the words and asks to join.
+    final ipad = await freshDen();
+    final ipadNet = DenNetwork(ipad, localHub: noHub());
+    final ticket = await NetPairing(ipadNet, servedBy: served).joinWithInvite(
+      message.code,
+      deviceName: (forName) => "$forName's iPad",
+      kind: DeviceKind.tablet,
+    );
+    expect(ticket.familyId, mom.familyId);
+    await until(() => mom.pendingDevices.any((d) => d.id == ipad.deviceId), what: 'the request to reach Mom');
+    final asking = mom.device(ipad.deviceId)!;
+    expect(asking.name, "Grandma's iPad");
+    expect(asking.member, grandma.id);
+
+    // Den closed on the iPad before anyone approved; it opens again and waits.
+    await ipadNet.close();
+    final reopened = await DenNetwork.load(ipad);
+    addTearDown(reopened.dispose);
+    await reopened.start();
+
+    // Mom approves with one tap, for the person the invite named.
+    await mom.approveDevice(ipad.deviceId);
+    await until(() => ipad.isApproved, what: 'the iPad to hear it was approved');
+    expect(ipad.family!.name, 'The Testers');
+  });
+
+  test('A device turned away while it waits hears it and stops asking, also after Den opens again', () async {
+    final (_, hub) = await startHub();
+    final served = Uri.parse('http://127.0.0.1:${hub.port}/');
+    final mom = await parentPhone();
+    final momNet = DenNetwork(mom, localHub: noHub());
+    addTearDown(momNet.dispose);
+    final momPairing = NetPairing(momNet, servedBy: served);
+    final adoption = momPairing.adoptServingHub((await momPairing.servingHub())!, hub.setupCode!);
+    await until(() => adoption.stage == HubSetupStage.done || adoption.stage == HubSetupStage.failed, what: 'the hub to be taken in');
+    await until(() => momNet.status.state.name == 'live', what: 'Mom to sync with the hub');
+    final message = await momPairing.createInvite();
+
+    final ipad = await freshDen();
+    final ipadNet = DenNetwork(ipad, localHub: noHub());
+    await NetPairing(ipadNet, servedBy: served).joinWithInvite(message.code, deviceName: (_) => 'iPad', kind: DeviceKind.tablet);
+    await until(() => mom.pendingDevices.any((d) => d.id == ipad.deviceId), what: 'the request to reach Mom');
+    await ipadNet.close();
+    final reopened = await DenNetwork.load(ipad);
+    addTearDown(reopened.dispose);
+    await reopened.start();
+    await until(() => reopened.status.awaitingApproval, what: 'the iPad to wait on the hub');
+
+    await mom.revokeDevice(ipad.deviceId);
+    await until(() => reopened.turnedAway, what: 'the iPad to hear it was turned away');
+    expect(reopened.connecting, isFalse, reason: 'it stops asking');
+    expect(ipad.isApproved, isFalse);
+
+    // Opened again later: it doesn't ask again, and says why.
+    final again = await DenNetwork.load(ipad);
+    addTearDown(again.dispose);
+    expect(again.turnedAway, isTrue);
+    await again.start();
+    expect(again.connecting, isFalse);
+    final status = await NetPairing(again, servedBy: served).joinStatus.first;
+    expect(status.state, JoinState.declined);
+    expect(status.message, contains('new invite'));
   });
 
   test("Keep the family online runs the hub in the app and a tablet joins through it", () async {

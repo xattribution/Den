@@ -10,6 +10,7 @@ import '../../design/tokens.dart';
 import '../../design/widgets.dart';
 import '../../state/app_state.dart';
 import '../family/device_parts.dart';
+import 'hub_adoption_panel.dart';
 
 /// The short step after creating a family: kids (name, age, look) and a partner with an invite
 /// for their phone. Everything here can also be done later in Family.
@@ -33,6 +34,7 @@ class AddPeopleScreen extends StatelessWidget {
             : FilledButton(onPressed: () => context.go('/today'), child: const Text('Go to Today')),
       ),
       children: [
+        const HubAdoptionPanel(),
         const SizedBox(height: Sp.s),
         for (final m in members)
           ListTile(
@@ -89,7 +91,7 @@ class AddPeopleScreen extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(Sp.l, 0, Sp.l, Sp.s),
               child: Text('Add ${FamilyWords.possessive(m.name)} phone', style: sheet.type.title(sheet.colors.ink)),
             ),
-            const InvitePanel(qrSize: 240),
+            InvitePanel(qrSize: 240, memberId: m.id),
           ],
         ),
       ),

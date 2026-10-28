@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:den_core/den_core.dart';
 import 'package:http/http.dart' as http;
 
+import 'hub_api.dart';
+
 /// What `GET /api/v1/hub/status` says about a hub.
 class HubInfo {
   const HubInfo({
@@ -60,16 +62,44 @@ class LinkSlot {
   final int expires;
 }
 
+/// An invite the hub keeps for a parent (`POST /api/v1/invites`).
+class HubInvite {
+  const HubInvite({required this.words, required this.link, required this.expires, this.member});
+  final List<String> words;
+
+  /// `https://<hub>/#/join/<word>-<word>-<word>-<word>`.
+  final Uri link;
+
+  /// UTC milliseconds.
+  final int expires;
+  final String? member;
+}
+
+/// What an invite's words opened (`POST /api/v1/invites/redeem`): the invite to join with, who
+/// it is for, and the family's name.
+class RedeemedInvite {
+  const RedeemedInvite({required this.invite, this.member, this.memberName, this.familyName});
+
+  /// A `den://join` invite naming the hub.
+  final String invite;
+  final String? member;
+  final String? memberName;
+  final String? familyName;
+}
+
 /// A hub turned a request down; [message] says why and what to do, for people.
 class HubException implements Exception {
-  const HubException(this.message, {this.code, this.triesLeft});
+  const HubException(this.message, {this.code, this.triesLeft, this.retryAfter});
   final String message;
 
   /// The API's error code (`permission_denied`, `already_set_up`, `busy`, ...).
   final String? code;
 
-  /// Setup codes left before the hub prints a new one.
+  /// Setup codes left before the hub makes this device wait.
   final int? triesLeft;
+
+  /// Seconds to wait before trying again, after `429`.
+  final int? retryAfter;
 
   @override
   String toString() => message;
@@ -167,6 +197,48 @@ class HubClient {
     );
   }
 
+  /// `POST /api/v1/invites` with a parent's signed invite grant.
+  Future<HubInvite> createInvite(Uri base, Map<String, Object?> grant) async {
+    final json = await _send(
+      () => _http.post(
+        base.replace(path: '/api/v1/invites'),
+        headers: const {'content-type': 'application/json'},
+        body: jsonEncode(grant),
+      ),
+      base,
+    );
+    return HubInvite(
+      words: [
+        if (json['words'] case final List<Object?> words)
+          for (final w in words)
+            if (w is String) w,
+      ],
+      link: Uri.parse(json['link'] as String? ?? base.toString()),
+      expires: (json['expires_ms'] as num?)?.toInt() ?? 0,
+      member: json['member'] as String?,
+    );
+  }
+
+  /// `POST /api/v1/invites/redeem` with the four words someone typed.
+  Future<RedeemedInvite> redeemInvite(Uri base, String code) async {
+    final json = await _send(
+      () => _http.post(
+        base.replace(path: '/api/v1/invites/redeem'),
+        headers: const {'content-type': 'application/json'},
+        body: jsonEncode({'code': code}),
+      ),
+      base,
+    );
+    final invite = json['invite'];
+    if (invite is! String) throw const HubException("The hub's answer had no invite in it. Try again.");
+    return RedeemedInvite(
+      invite: invite,
+      member: json['member'] as String?,
+      memberName: json['member_name'] as String?,
+      familyName: json['family'] as String?,
+    );
+  }
+
   void close() => _http.close();
 
   Future<Map<String, Object?>> _send(Future<http.Response> Function() request, Uri base) async {
@@ -176,23 +248,12 @@ class HubClient {
     } on Object {
       throw HubException(
         "Couldn't reach a hub at ${base.host}${base.hasPort ? ':${base.port}' : ''}. "
-        'Check the address and that the hub is on the same network.',
+        'Check the address and the connection, then try again.',
       );
     }
-    Map<String, Object?> body;
-    try {
-      body = Map<String, Object?>.from(jsonDecode(response.body) as Map);
-    } on Object {
-      body = const {};
-    }
+    final body = decodeHubJson(response.body);
     if (response.statusCode >= 200 && response.statusCode < 300) return body;
-    final error = body['error'] is Map ? Map<String, Object?>.from(body['error']! as Map) : body;
-    final details = error['details'] is Map ? Map<String, Object?>.from(error['details']! as Map) : const {};
-    throw HubException(
-      error['message'] as String? ?? 'The hub refused that (${response.statusCode}).',
-      code: error['code'] as String?,
-      triesLeft: (details['tries_left'] as num?)?.toInt(),
-    );
+    throw hubError(response, body);
   }
 }
 

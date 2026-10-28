@@ -349,6 +349,30 @@ receive; the session's limit then applies.
   until that side's proof checks out, so a stranger answering on the network can't pose as the
   family. Both screens then show 3 matching words derived from the session transcript; the
   parent approves only if they match. A relay that swapped keys would produce different words.
+- **Invite by message** (no camera, no simultaneous screens; the default where the family has a
+  hub): a parent's own device makes an invite naming the hub (`createHubInvite`) and signs it
+  as an `InviteGrant` with context `invite`, or `invite:<memberId>` for one person. The hub
+  keeps it, until it expires (3 days from the app, a week at most), under 4 random words from
+  the same list, and the parent sends a link (`https://<hub>/#/join/<word>-<word>-<word>-<word>`)
+  with the words through the share sheet. Whoever has the words gets the invite back
+  (`POST /api/v1/invites/redeem`), joins over the hub's `/ws` pinning the hub's key, and asks
+  to be that person's device; a parent approves with one tap on their own device. Wrong words count against every
+  invite: 10 in 10 minutes and the hub stops answering for a while. The hub drops an invite
+  whose parent device has since been revoked or no longer belongs to a parent.
+- **Waiting for approval** survives the app closing: the joining device remembers the device it
+  joined through and, while unapproved, connects to it again (pinned to that device id). It
+  asks nothing on those connections, so it needs no new invite: the device it waits on tells it
+  `approved` when a parent approves, or simply syncs with it once it is. A connection that
+  proves nothing lasts 30 seconds, so a waiting device reconnects with the client's backoff
+  (at most 2 minutes apart); the approval reaches it on the next connection at the latest. A
+  device turned away is told so (`join_rejected`, at once when it connects after the fact),
+  stops asking, and remembers it; a new invite on a fresh device id is the way back in.
+
+A device's keys and its log belong together. A device opens its keys only with a log that holds
+its family (`familyId` in the metadata); keys without one (storage cleared or evicted, a device
+that left its family) and a log without its keys are replaced by fresh keys and an empty log, and
+the device joins again. Reusing approved keys over a fresh log would restart the change counter
+under ids the family already holds. A background refresh never starts a device over.
 
 Every join request comes with a fresh proof of an invite or code, including a device asking
 again about a request already in the log. Declining a request revokes it where the declining
@@ -421,6 +445,9 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `GET /api/v1/stream` | read | Server-sent events: `changed {types}` after every applied change |
 | `GET`/`PUT /api/v1/capture/reader` | signed by a device (`PUT`: a parent's own device) | The family's capture reader, never with its key |
 | `POST /api/v1/capture/read` | signed by a device whose member may add things | Reads what was shared with the family's reader; returns den_capture's JSON |
+| `POST /api/v1/invites` | an `InviteGrant` from a parent's own device | Keeps the invite under four words; returns them and a link |
+| `POST /api/v1/invites/redeem` | the four words | The invite, who it is for, the family's name |
+| `GET`/`PUT`/`DELETE /api/v1/push`, `POST /api/v1/push/test` | signed by a personal device | The hub's VAPID key; this device's Web Push subscription; a test notification |
 | `GET /ics/<token>/family.ics` | read token in path | Read-only ICS feed for other calendar apps |
 | `GET /ws` | session handshake | Device sync |
 | `POST /mcp` | bearer or OAuth | MCP Streamable HTTP |
@@ -509,6 +536,49 @@ answering pings is taken over.
 
 The hub additionally sends pushes for live events (a message, an approval waiting) through a
 pluggable notifier: Home Assistant's `notify` service, ntfy, or the hosted push relay.
+
+Browsers can't schedule notifications, so there the hub sends them with **Web Push** (a Home
+Screen web app on iOS 16.4 and later, or any browser with Web Push). The hub makes a P-256 VAPID
+key pair once and keeps it with each device's subscription in `<data>/hub/push.json` (its
+user only). A personal device turns reminders on with one tap (the browser subscribes with the
+hub's public key, then `PUT /api/v1/push`, signed by the device like its other requests). Each
+reminder the hub's reminder service sends also goes to the subscribed devices of the people it is
+for who can read its space, encrypted for each browser (RFC 8291, `aes128gcm`) and authorized
+with an ES256 VAPID JWT (RFC 8292), so the push service carries only ciphertext. The hub also
+nudges: a device asking to join (parents), a reward asked for (whoever decides rewards), a chore
+given to someone for today or tomorrow (them). Pushes go only to known push services' hosts. The
+service worker shows each push and a tap opens its route (`/event/<id>?at=`, `/chore/<id>?date=`,
+`/today`, `/points`).
+
+## The web app
+
+The hub serves the app (Flutter, built with `--no-web-resources-cdn --csp`: CanvasKit and the
+fonts come from the hub). It is made to live on an iPhone's Home Screen, served over HTTPS by a
+proxy in front of the hub, where it has the hub as its own origin.
+
+- **Storage.** The change log and metadata live in IndexedDB (`den` database: `changes` keyed by
+  change id, `meta`), the device keys in the browser's keychain (flutter_secure_storage's web
+  backend; plain page storage where the page isn't a secure context). The app asks for persistent
+  storage. A Home Screen app on iOS has storage of its own, apart from Safari's, so Safari on an
+  iPhone or iPad shows how to add Den to the Home Screen before starting or joining a family.
+- **One engine per browser.** Tabs share the log; a Web Lock (`den.engine`) lets one tab write
+  it, and another tab waits until it closes.
+- **Opening and updating.** `web/sw.js`, registered by `web/den_web.js` as
+  `sw.js?v=<build>`, keeps every file the app needs to start in a cache named for its build and
+  answers the app shell from it, so Den opens at once and with no connection, from local data,
+  then syncs. Each opening (and coming back after a minute away) asks the hub which build it
+  serves; a different one installs whole beside the old one, checked to belong to that build,
+  and takes over when Den next opens with no window on the old one (or on coming back after ten
+  minutes away, with a fresh page), never under a page that runs the old one. The hub's own paths
+  (`/api`, `/ws`, `/mcp`, `/oauth`, `/ics`, `/health`, `/.well-known`) are never cached.
+- **Founding from a browser.** A browser served by a fresh hub starts the family itself and
+  takes the hub in with the setup code it printed (the same flow as from a phone,
+  `/api/v1/hub/setup`), approving it on its own when the hub reports the same matching words:
+  the page came from that hub, so there's nobody in between to compare against.
+- **What the browser can't do** is left out rather than offered: scanning, phone calendars, the
+  share extension and on-device speech. Photos and PDFs come through the browser's file picker
+  (which offers the camera), the share sheet goes through the Web Share API, reminders through
+  Web Push.
 
 ## Security fixes from Sett, by design
 

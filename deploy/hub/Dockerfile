@@ -7,12 +7,16 @@ FROM ghcr.io/cirruslabs/flutter:3.38.5 AS web
 WORKDIR /src
 COPY packages packages
 COPY app app
+COPY deploy/hub/fallback_fonts.sh /usr/local/bin/fallback_fonts.sh
 WORKDIR /src/app
 # The hub serves the web app under a Content-Security-Policy that allows nothing from a CDN:
-# --csp keeps dart2js from generating code at run time, and CanvasKit loads from the hub
-# (build/web/canvaskit/) instead of gstatic.com.
+# --csp keeps dart2js from generating code at run time, CanvasKit loads from the hub
+# (build/web/canvaskit/) instead of gstatic.com, and so do the fonts Flutter falls back to for
+# emoji and symbols (build/web/fonts/fallback/). DEN_FALLBACK_FONTS=. ships every script's.
+ARG DEN_FALLBACK_FONTS=
 RUN flutter pub get \
- && flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/
+ && flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ \
+ && sh /usr/local/bin/fallback_fonts.sh build/web "$DEN_FALLBACK_FONTS"
 
 FROM dart:3.10 AS hub
 WORKDIR /src

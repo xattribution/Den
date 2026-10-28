@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -38,7 +40,12 @@ class _LinkBrowserScreenState extends State<LinkBrowserScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_before.isEmpty) _before = {for (final d in context.den.devices) d.id};
+    if (_before.isEmpty) {
+      _before = {for (final d in context.den.devices) d.id};
+      // A hub reachable from the internet gives browsers link codes only while a parent has
+      // "Add a device" open.
+      unawaited(Pairing.of(context).openLinking());
+    }
   }
 
   @override

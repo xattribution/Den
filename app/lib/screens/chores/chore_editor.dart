@@ -74,7 +74,8 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
       _spec = ScheduleSpec(repeat: Repeat.daily, start: today, days: {app.formats.dateTime(today).weekday});
       final me = app.me;
       if (me != null && me.isKid) _person = me.id;
-      _points = (app.den.family?.pointsEnabled ?? true) ? 1 : 0;
+      // Only someone who may set prices gives a new chore points; for anyone else it's worth none.
+      _points = (app.den.family?.pointsEnabled ?? true) && app.allows(DenAction.managePoints) ? 1 : 0;
       _title.addListener(_suggestIcon);
       return;
     }
@@ -298,7 +299,8 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
         ),
       );
     }
-    final pointsOn = app.den.family?.pointsEnabled ?? true;
+    // What a chore or step is worth is set only by whoever may manage points.
+    final pointsOn = (app.den.family?.pointsEnabled ?? true) && app.allows(DenAction.managePoints);
 
     return Scaffold(
       appBar: AppBar(

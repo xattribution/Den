@@ -797,6 +797,10 @@ class SyncPeer {
       }
     } else if (session.peerFamily != null && _peerApproved()) {
       _beginSync();
+    } else if (session.peerFamily != null && _node._refused(deviceId)) {
+      // A device turned away (or removed) hears so at once: one still waiting for approval
+      // stops asking instead of being timed out over and over.
+      unawaited(_reject('declined'));
     } else {
       // Strangers get a short while to prove an invite or code; once they have, they may wait
       // for a parent's approval for [SyncNode.pairingTimeout].

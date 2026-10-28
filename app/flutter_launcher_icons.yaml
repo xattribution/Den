@@ -3,10 +3,10 @@ flutter_launcher_icons:
   android: true
   ios: true
   remove_alpha_ios: true
+  # web/manifest.json and web/icons are kept by hand: maskable icons with the mark inside the
+  # safe circle, an apple-touch-icon, and colors for both themes.
   web:
-    generate: true
-    background_color: "#FBFAF7"
-    theme_color: "#231E19"
+    generate: false
   windows:
     generate: true
     icon_size: 256

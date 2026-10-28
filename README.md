@@ -33,6 +33,22 @@ runs the extras: Home Assistant, AI access over MCP, calendar feeds, reminders.
   web app on their home screen (one hub per family; several families can share a server):
   [docs/hosting.md](docs/hosting.md).
 
+**Just the web app, on iPhones.** Put the hub behind an HTTPS reverse proxy (set
+`DEN_PUBLIC_URL` to its address; [docs/hosting.md](docs/hosting.md)) and open that address in
+Safari:
+
+1. Tap Share, then Add to Home Screen, and open Den from the Home Screen. (Safari shows these
+   steps first; the Home Screen app keeps its own storage, and only it gets reminders.)
+2. Start a family, with the hub's setup code from its log. That iPhone is the first parent's
+   device and the hub joins the family.
+3. Invite people from Add people, or Family → Devices → Add a device: Send invite shares a link
+   and four words. They open the link, add Den to their Home Screen the same way, type the words
+   if Den asks, and a parent taps Approve on Today.
+4. Settings → Notifications → Turn on reminders on this iPhone (iOS 16.4 or later).
+
+The web app opens from local data at once, works with no connection, and updates itself the next
+time it opens.
+
 **Add anything by sharing it.** Tap Add and type, snap or say it ("soccer every Wednesday at 5
 for Leo"), or share a flyer photo, a screenshot, an email, a link or a PDF to Den from any app.
 Den proposes the events, chores, list items and reminders it found; what needs no look is added
@@ -93,9 +109,9 @@ install, add that repository to HACS as a custom repository of type Integration.
 
 Known gaps:
 
-- Phones refresh reminders in the background about hourly, but desktops only while Den runs. iOS
-  can't read the device's keys while the phone is locked, so its background refresh waits for an
-  unlocked moment. Browsers get no reminders.
+- Phones refresh reminders in the background about hourly, but desktops only while Den runs.
+  Browsers get reminders from the hub by Web Push once someone turns them on; that has been
+  checked against RFC test vectors and a recorded push service, not yet on a real iPhone.
 - Capture's native parts have run only on an Android emulator, where Gemini Nano reports itself
   unavailable (the image has no AICore), so reading with the phone's own model is untested on a
   phone that has it. Apple Intelligence, Vision and the iOS share extension are written but not

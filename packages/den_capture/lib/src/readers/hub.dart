@@ -147,10 +147,15 @@ class HubCaptureClient {
       if (response.statusCode >= 200 && response.statusCode < 300) return json;
       final error = json['error'] is Map ? Map<String, Object?>.from(json['error']! as Map) : const <String, Object?>{};
       final details = error['details'] is Map ? Map<String, Object?>.from(error['details']! as Map) : const <String, Object?>{};
-      throw ReaderException(
-        error['message'] as String? ?? 'The hub refused that (${response.statusCode}).',
-        retry: details['retry'] == true,
-      );
+      // The hub's limits, in words that say what to do (docs/hub-api.md, "Errors").
+      final (message, retry) = switch ((response.statusCode, error['code'])) {
+        (429, 'rate_limited') => ('Too many tries from here. Wait a few minutes, then try again.', true),
+        (429, _) => ('The hub is busy reading other things. Try again in a moment.', true),
+        (408, _) => ('The connection was too slow to send that to the hub. Try again on a better connection.', true),
+        (413, _) => ("That's too large for the hub to read. Share a smaller photo or file.", false),
+        _ => (error['message'] as String? ?? 'The hub refused that (${response.statusCode}).', details['retry'] == true),
+      };
+      throw ReaderException(message, retry: retry);
     }
     return null;
   }
