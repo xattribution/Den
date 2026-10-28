@@ -14,20 +14,27 @@ class Added {
   final String? key;
 }
 
-/// What writing a draft did: what it added, in order, and what it couldn't add and why.
+/// What writing a draft did: what it added, in order, what it couldn't add and why, and the
+/// changes it wrote.
 class CaptureReceipt {
-  const CaptureReceipt({required this.added, required this.failed});
+  const CaptureReceipt({required this.added, required this.failed, this.changes = const []});
   final List<Added> added;
 
   /// Entry key to the reason, for people.
   final Map<String, String> failed;
 
+  /// The ids of the changes writing it made ([Den.recording]).
+  final List<String> changes;
+
   Set<String> get keys => {for (final a in added) ?a.key};
   bool get isEmpty => added.isEmpty;
 
-  /// Removes everything this capture added, newest first. Each removal is an ordinary change in
-  /// History, and can itself be restored.
-  Future<void> undo(Den den) async {
+  /// Takes back what this capture added with [Den.undo]: each record it made is removed (and can
+  /// be restored), as ordinary changes in History; what someone changed since is left alone and
+  /// reported in the result. A receipt made without its changes removes the records it added,
+  /// newest first.
+  Future<UndoResult> undo(Den den) async {
+    if (changes.isNotEmpty) return den.undo(changes);
     for (final a in added.reversed) {
       try {
         switch (a.type) {
@@ -44,6 +51,7 @@ class CaptureReceipt {
         // Already removed by someone else.
       }
     }
+    return const UndoResult(changes: [], skipped: []);
   }
 }
 
@@ -63,6 +71,18 @@ Future<CaptureReceipt> writeDraft(Den den, CaptureDraft draft, {Iterable<String>
   final failed = <String, String>{};
   final lists = <NewList, String>{};
 
+  final recorded = await den.recording(() => _writeEntries(den, checked, origin, added, failed, lists));
+  return CaptureReceipt(added: added, failed: failed, changes: recorded.changes);
+}
+
+Future<void> _writeEntries(
+  Den den,
+  CaptureDraft checked,
+  CaptureOrigin origin,
+  List<Added> added,
+  Map<String, String> failed,
+  Map<NewList, String> lists,
+) async {
   for (final e in checked.entries) {
     final blocking = e.issues.where((i) => i.blocking).firstOrNull;
     if (blocking != null) {
@@ -119,7 +139,6 @@ Future<CaptureReceipt> writeDraft(Den den, CaptureDraft draft, {Iterable<String>
       failed[e.key] = x.message;
     }
   }
-  return CaptureReceipt(added: added, failed: failed);
 }
 
 Future<String> _addChore(Den den, DraftChore e, CaptureOrigin origin) => den.addChore(

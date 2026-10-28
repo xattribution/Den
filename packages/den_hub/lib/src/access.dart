@@ -46,3 +46,9 @@ String? bearerToken(String? header) {
 
 /// The scope name as the API spells it.
 String scopeName(Scope scope) => scope.name;
+
+/// What an assistant gets when it asks for nothing in particular: everything but `admin`.
+const Set<Scope> defaultScopes = {Scope.read, Scope.calendar, Scope.chores, Scope.lists, Scope.points};
+
+/// [defaultScopes] by name, in order.
+final List<String> defaultScopeNames = [for (final s in Scope.values) if (defaultScopes.contains(s)) s.name];

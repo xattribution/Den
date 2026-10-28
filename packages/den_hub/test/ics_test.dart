@@ -103,7 +103,17 @@ void main() {
     late FeedServer feed;
     late String subId;
     setUp(() async {
-      f = await HubFixture.start();
+      // The feed server is on this machine, which the hub fetches from only when the operator
+      // allows it (DEN_FETCH_ALLOW), as for a calendar server at home.
+      f = await HubFixture.start(
+        configure: (c) => HubConfig(
+          port: 0,
+          host: InternetAddress.loopbackIPv4,
+          mdns: false,
+          log: c.log,
+          fetchAllow: [IpNetwork.parse('127.0.0.1')],
+        ),
+      );
       feed = await FeedServer.start();
       feed.body = fixture;
       subId = await f.phone.addSubscription(url: feed.url, exclude: ['board'], assignee: f.id('Maya'));
@@ -206,6 +216,22 @@ void main() {
       await f.hub.feeds.syncAll();
       expect(imported(), isEmpty);
     });
+  });
+
+  test('a feed on the hub\'s own machine or network is refused unless the operator allows it', () async {
+    final f = await HubFixture.start();
+    addTearDown(f.stop);
+    final feed = await FeedServer.start();
+    addTearDown(() => feed.server.close(force: true));
+    feed.body = fixture;
+    final id = await f.phone.addSubscription(url: feed.url);
+    final metadata = await f.phone.addSubscription(url: 'http://169.254.169.254/latest/meta-data/');
+    await f.toHub();
+    await f.hub.feeds.syncAll();
+    expect(f.hubDen.subscription(id)!.status, 'That link points inside a private network, so Den won\'t fetch it.');
+    expect(f.hubDen.subscription(metadata)!.status, 'That link points inside a private network, so Den won\'t fetch it.');
+    expect(feed.requests, 0);
+    expect(f.hubDen.events.where((e) => e.source.kind == 'ics'), isEmpty);
   });
 
   test('the family feed round-trips through the parser', () async {

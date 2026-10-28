@@ -34,6 +34,7 @@ const Map<String, String> notExposed = {
   'setSubscriptionStatus': 'Written by the hub after it fetches a subscribed calendar',
   'recording': 'The runner\'s own bookkeeping: every write runs inside a recording, which becomes its receipt',
   'fork': 'The runner\'s own bookkeeping: previews run on a fork',
+  'attributed': 'The assistant\'s own bookkeeping: what it changes is marked "from the assistant" in History',
   // Sync and keys.
   'ingest': 'Sync between the family\'s own devices',
   'spaceKey': _keys,

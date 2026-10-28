@@ -255,6 +255,12 @@ final Map<String, TypeSpec> typeSpecs = {
     'capture': oneOf(['direct', 'review']),
     'pointsEnabled': flag(),
     'oversight': dict(shape({'parentsSeePrivate': flag()})),
+    'assistant': shape({
+      'enabled': flag(),
+      'members': listOf(id(), max: 50, unique: true),
+      'kidDailyLimit': number(min: 0, max: 1000),
+      'budgetCents': number(min: 0, max: 100000),
+    }, required: {'enabled'}),
   }, required: {'name', 'timezone', 'founderDevice'}, space: Space.family, entries: {
     'oversight': (key, v) => shape({'parentsSeePrivate': flag()})('Oversight', v),
   }),

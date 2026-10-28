@@ -39,7 +39,17 @@ covers `/health`, everything under `/api/v1`, and the mDNS advertisement.
 - [Actions: everything MCP and the app can do](#actions-everything-mcp-and-the-app-can-do):
   [`GET /api/v1/actions`](#get-apiv1actions) ·
   [`POST /api/v1/actions/{name}`](#post-apiv1actionsname)
+- [Apps asking to connect (OAuth)](#apps-asking-to-connect-oauth):
+  [`GET /api/v1/connections/requests`](#get-apiv1connectionsrequests) ·
+  [`POST /api/v1/connections/requests/{id}`](#post-apiv1connectionsrequestsid) ·
+  [`GET /api/v1/connections/clients`](#get-apiv1connectionsclients) ·
+  [`POST /api/v1/connections/clients`](#post-apiv1connectionsclients) ·
+  [`DELETE /api/v1/connections/clients/{id}`](#delete-apiv1connectionsclientsid)
 - [Capture: reading for every device](#capture-reading-for-every-device)
+- [The assistant: the key stays on the hub](#the-assistant-the-key-stays-on-the-hub):
+  [`GET /api/v1/assistant`](#get-apiv1assistant) ·
+  [`PUT /api/v1/assistant`](#put-apiv1assistant) ·
+  [`POST /api/v1/assistant/model`](#post-apiv1assistantmodel)
 - [Invites by message](#invites-by-message)
 - [Web Push: reminders in browsers](#web-push-reminders-in-browsers)
 
@@ -1349,8 +1359,10 @@ when the network itself isn't trusted.
 
 ## Apps asking to connect (OAuth)
 
-A remote MCP client (claude.ai, ChatGPT) signs in with OAuth 2.1 (`/oauth/register`,
-`/oauth/authorize`, `/oauth/token`; see `packages/den_hub/README.md`). Those endpoints need no
+A remote MCP client (claude.ai, ChatGPT) signs in with OAuth 2.1 (`/oauth/authorize`,
+`/oauth/token`; see `packages/den_hub/README.md`). It is known to the hub by a client ID metadata
+document (an https `client_id` the hub reads), by registering (`/oauth/register`), or as a client
+a parent set up for it ([below](#post-apiv1connectionsclients)). Those endpoints need no
 credentials, so a sign-in request stays in the hub's memory and nothing reaches the family's log
 until a parent acts. The sign-in page shows the app's name, the host its sign-in returns to
 (`claude.ai`), what it asked for, and a code (`K7QP-M4XD`). A parent's app lists the waiting
@@ -1376,6 +1388,9 @@ The requests waiting for a parent, newest first:
       "code": "K7QP-M4XD",
       "client_name": "Claude",
       "redirect_host": "claude.ai",
+      "redirect_loopback": false,
+      "client_kind": "document",
+      "client_document_host": "claude.ai",
       "scopes": ["read", "calendar", "chores", "lists", "points"],
       "connection": null,
       "requested": "2026-10-20T22:30:00.000Z",
@@ -1387,9 +1402,13 @@ The requests waiting for a parent, newest first:
 }
 ```
 
-`client_name` is whatever the app registered with; `redirect_host` is where its sign-in returns
-and can't be made up, so show both, and the `code`, which the person signing in sees on their
-screen. `connection` is the pending connection's id once a parent admitted it.
+`client_name` is whatever the app registered with or its document says; `redirect_host` is where
+its sign-in returns and can't be made up, so show both, and the `code`, which the person signing
+in sees on their screen. `redirect_loopback` is true when the sign-in returns to the person's own
+computer (`localhost`), where any program could be listening: say so. `client_kind` is
+`document` (with `client_document_host`, where the app describes itself), `registered` or
+`static` (a client a parent set up). `connection` is the pending connection's id once a parent
+admitted it.
 
 ### `POST /api/v1/connections/requests/{id}`
 
@@ -1399,6 +1418,46 @@ connection (or returns the one already written) and answers
 connection once it has synced (`Den.approveConnection(id, scopes:, member:)`), or revokes it.
 Declining answers `{"ok": true}` and sends the app back with `access_denied`. `404 not_found` for
 an unknown or expired request, `409 declined` once it was declined.
+
+### `GET /api/v1/connections/clients`
+
+The clients parents set up, oldest first, never with their secrets:
+
+```json
+{"clients": [{"client_id": "Xb1...", "name": "Alexa", "redirect_uris": ["https://alexa.amazon.com/api/skill/link/M3IHEJ1OZMSGZ3"],
+              "created": "2026-10-28T15:00:00.000Z"}]}
+```
+
+### `POST /api/v1/connections/clients`
+
+For an assistant that can't register itself or publish a client document and takes a client id
+and secret instead (Alexa+). Body `{"name": "Alexa", "redirect_uris": ["https://..."]}`: the
+name (1 to 60 characters) and the addresses the assistant's console lists (https, at most 10).
+Answer `201`, the only time the secret is shown:
+
+```json
+{
+  "client_id": "Xb1...",
+  "name": "Alexa",
+  "redirect_uris": ["https://alexa.amazon.com/api/skill/link/M3IHEJ1OZMSGZ3"],
+  "created": "2026-10-28T15:00:00.000Z",
+  "client_secret": "den_...",
+  "authorization_endpoint": "https://den.example.com/oauth/authorize",
+  "token_endpoint": "https://den.example.com/oauth/token",
+  "token_endpoint_auth_methods": ["client_secret_basic", "client_secret_post"],
+  "resource": "https://den.example.com/mcp",
+  "scopes": ["read", "calendar", "chores", "lists", "points"]
+}
+```
+
+Signing in with it still needs PKCE and a parent's approval like any app. It isn't forgotten
+until a parent removes it. `400 invalid_input` for a bad name or address, `409 too_many` past 20.
+
+### `DELETE /api/v1/connections/clients/{id}`
+
+Removes a client a parent set up: its refresh tokens stop working and the hub ends the
+connections it made. Answer `{"ok": true, "connections_ended": 1}`; `404 not_found` for anything
+else.
 
 ## Capture: reading for every device
 
@@ -1489,6 +1548,83 @@ parent's private ones). Answer:
 Errors: `403 permission_denied` ("Sign in on this screen to add things", "Leo can't add anything
 Den reads"), `409 no_reader` when nothing is set up, `429 busy` (`details.retry`: true) when four
 reads are already running, `502 reader_failed` with the reader's own reason and `details.retry`.
+
+## The assistant: the key stays on the hub
+
+The in-app assistant (den_assistant) can send its model requests through the hub, so phones and
+the web app never hold a provider's key. A parent's own phone sets the provider and key here;
+the family's rules are in the log as `family.assistant` (`{"enabled", "members", "kidDailyLimit",
+"budgetCents"}`, written by a parent's own device with `Den.updateFamily`, never by a shared
+screen or anything acting through the hub). It is off until a parent turns it on there and sets a
+provider here. Requests are signed like capture's ([`DeviceRequest`](#capture-reading-for-every-device)).
+
+### `GET /api/v1/assistant`
+
+Any device in the family. The key is never in it.
+
+```json
+{
+  "provider": "anthropic",
+  "speaker": "Claude",
+  "data_goes_to": "Anthropic",
+  "models": [{"model": "claude-haiku-5-5", "label": "Claude Haiku 5.5", "size": "small", "images": true,
+              "context_tokens": 1000000}],
+  "key_saved": true,
+  "key_from": "own",
+  "policy": {"enabled": true, "members": ["<member id>"], "kidDailyLimit": 20, "budgetCents": 500},
+  "you": {"allowed": true, "used_today": 3, "daily_limit": 20},
+  "this_month": {"month": "2026-10", "spent_cents": 120, "budget_cents": 500, "warn": false, "stopped": false}
+}
+```
+
+`provider` is `anthropic`, `openai`, `gemini`, `xai`, `ollama` (a model at home, with
+`base_url`), or null. `key_from` is `own` or `capture` (the Claude key saved for the capture
+reader). `you` is for the person signing the request: whether they may use it and, for a kid,
+how many questions they asked today. `this_month.warn` is true from 80% of the budget and
+`stopped` at 100%; a model at home costs nothing.
+
+### `PUT /api/v1/assistant`
+
+A parent's own device. Body:
+
+```json
+{"provider": "anthropic", "key": "sk-ant-...", "models": ["claude-haiku-5-5", "claude-sonnet-5-5"]}
+{"provider": "anthropic", "use_capture_key": true}
+{"provider": "ollama", "base_url": "http://192.168.1.20:11434", "models": ["qwen3:8b"]}
+{"provider": null}
+```
+
+Without `key` the hub keeps the key it has for the same provider; `use_capture_key` reads the
+capture reader's Claude key whenever it is needed rather than copying it; `models` defaults to
+the provider's small and large models; `null` turns it off on the hub and forgets the key. The
+key is kept in `<data>/hub/assistant.json`, readable by the hub's user only, and is never in the
+family's log, an answer or the hub's log. Answers like `GET`. `403 permission_denied` for anyone
+else; `400 invalid_input` for a provider Den doesn't know, a key that isn't one, or no key.
+
+### `POST /api/v1/assistant/model`
+
+Any device whose person the family's rules allow. The body is one request in the provider's own
+format, exactly as den_assistant's adapter writes it (at most 12 MB), with headers
+`X-Den-Provider` (the provider it is written for) and `X-Den-Model`. The hub checks it with
+den_assistant's `ModelProxy` (the provider and models it runs), then:
+
+| Refusal | When |
+| --- | --- |
+| `403 assistant_off` | The family hasn't turned the assistant on |
+| `403 not_allowed` | Not for this person: a parent didn't switch it on for them, or they are a little kid or a pre-reader |
+| `403 not_set_up`, `403 no_key` | No provider, or no key, on the hub |
+| `403 refused` | Another provider or a model the hub doesn't offer ("update this device") |
+| `403 too_long` | No output cap, or more than 8,192 tokens (2,048 for a kid) |
+| `403 no_photos` | A kid's request with a photo |
+| `429 daily_limit` | A kid asked `kidDailyLimit` new questions today (a request carrying a tool's answer doesn't count) |
+| `402 budget_spent` | This month's estimated cost reached `budgetCents` |
+| `429 busy` | Six requests are already going to the provider |
+| `502 provider_unreachable` | The provider couldn't be reached (`details.retry`) |
+
+Otherwise it forwards the body unchanged with the key and answers the provider's status and body
+unchanged, with `X-Den-Budget-Spent-Cents` and `X-Den-Budget-Cents`. The cost is estimated from
+the provider's token counts and den_assistant's prices; the hub logs once when the month passes
+80%. It keeps no content and logs none.
 
 ## Invites by message
 

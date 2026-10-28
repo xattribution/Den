@@ -295,7 +295,9 @@ class Validator {
       case RecordType.family:
         if (x.creating || c.rid != trust.familyId) return _trust('The family already exists');
         if (!x.has(DenAction.manageFamily)) return _deny('Only parents can change family settings');
-        if (c.fields.keys.any((k) => k == 'oversight' || k.startsWith('oversight.')) && !x.ownDevice) {
+        // Privacy, and which AI may read the family's day and spend its money, are a parent's
+        // decisions on their own device: never a shared screen or an app acting through the hub.
+        if (c.fields.keys.any((k) => k == 'oversight' || k.startsWith('oversight.') || k == 'assistant') && !x.ownDevice) {
           return _deny(_ownDeviceOnly);
         }
         return null;

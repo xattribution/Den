@@ -5,6 +5,7 @@
 library;
 
 import 'package:den_assistant/den_assistant.dart' as assistant;
+import 'package:den_core/den_core.dart' show CaptureKind, CaptureOrigin;
 
 import 'den_actions.dart';
 
@@ -40,14 +41,21 @@ assistant.Receipt assistantReceipt(Receipt r) =>
     assistant.Receipt(id: r.id, summary: r.summary, undoable: r.undoable, tool: r.tool, changes: r.changes);
 
 /// Runs the assistant's tool calls through [runner], in a context from [context] (made per call,
-/// so it sees the engine as it is then; its surface should be [Surface.assistant]).
-assistant.ToolExecutor actionExecutor(ActionRunner runner, ActionContext Function() context) => (invocation) async {
+/// so it sees the engine as it is then; its surface should be [Surface.assistant]). What it
+/// changes is marked as coming from the assistant (`_from`), with [speaker] ("Claude") as its
+/// reader, so History says "from the assistant (Claude)".
+assistant.ToolExecutor actionExecutor(ActionRunner runner, ActionContext Function() context, {String? speaker}) =>
+    (invocation) async {
       final mode = switch (invocation.mode) {
         assistant.ToolMode.run => RunMode.run,
         assistant.ToolMode.preview => RunMode.preview,
         assistant.ToolMode.confirmed => RunMode.confirmed,
       };
-      final r = await runner.run(context(), invocation.call.name, invocation.input, mode: mode);
+      final c = context();
+      final r = await c.den.attributed(
+        CaptureOrigin(CaptureKind.assistant, reader: speaker),
+        () => runner.run(c, invocation.call.name, invocation.input, mode: mode),
+      );
       final preview = r.data['preview'];
       switch (r.status) {
         case ActionStatus.failed:
