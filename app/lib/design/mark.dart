@@ -1,9 +1,8 @@
-import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 
 import 'tokens.dart';
 
-/// Den's mark: a den doorway with the family standing in it, each person in their marker. It
+/// Den's mark: a den doorway with the family standing in it, each person in their color. It
 /// restates the app's two rules, people are the color and the family sits side by side in
 /// columns, and works from a 16 px favicon up to the 1024 px app icon.
 class DenMark extends StatelessWidget {
@@ -11,7 +10,7 @@ class DenMark extends StatelessWidget {
 
   final double size;
 
-  /// Paints the paper square behind the mark, as app icons need.
+  /// Paints the page-colored square behind the mark, as app icons need.
   final bool background;
 
   @override
@@ -32,16 +31,16 @@ class DenMarkPainter extends CustomPainter {
   static const doorway = Rect.fromLTRB(0.17, 0.18, 0.83, 0.86);
 
   static const _people = [
-    (Marker.blue, 0.86),
-    (Marker.orange, 0.52),
-    (Marker.green, 0.64),
-    (Marker.plum, 0.94),
+    (PersonColor.sky, 0.86),
+    (PersonColor.tangerine, 0.52),
+    (PersonColor.grass, 0.64),
+    (PersonColor.lavender, 0.94),
   ];
 
   @override
   void paint(Canvas canvas, Size size) {
     final s = size.width;
-    if (background) canvas.drawRect(Offset.zero & size, Paint()..color = colors.paper);
+    if (background) canvas.drawRect(Offset.zero & size, Paint()..color = colors.bg);
 
     final doorLeft = s * doorway.left;
     final doorWidth = s * doorway.width;
@@ -66,8 +65,8 @@ class DenMarkPainter extends CustomPainter {
     final head = barWidth * 0.86;
     final neck = barWidth * 0.14;
     for (var i = 0; i < _people.length; i++) {
-      final (marker, height) = _people[i];
-      final paint = Paint()..color = DenColors.night.marker(marker);
+      final (person, height) = _people[i];
+      final paint = Paint()..color = person.color;
       final left = innerLeft + i * (barWidth + gap);
       final top = floor - maxHeight * height;
       final bodyTop = top + head + neck;

@@ -3,52 +3,89 @@ import 'package:flutter/material.dart';
 import 'tokens.dart';
 
 /// Builds Material's theme from Den's tokens so platform widgets inherit the design system:
-/// solid ink selected states, flush regions, radius on controls only, one overlay shadow.
+/// ink pills for actions, inputs on the card color with 14 corners, no ripples (press feedback
+/// is a fill, see DenPressable), shadows only on true overlays, and the iOS page transition with
+/// its edge-swipe back on every platform.
 ThemeData denTheme(DenColors c, {double typeScale = 1}) {
   final type = DenType(typeScale);
+  final text = DenText(typeScale);
   final scheme = ColorScheme(
-    brightness: c == DenColors.night ? Brightness.dark : Brightness.light,
-    primary: c.ink,
-    onPrimary: c.onInk,
+    brightness: c.brightness,
+    primary: c.primary,
+    onPrimary: c.onPrimary,
     secondary: c.ink2,
-    onSecondary: c.onInk,
-    error: c.bad,
-    onError: c.paper,
-    surface: c.paper,
+    onSecondary: c.onPrimary,
+    tertiary: c.ink2,
+    onTertiary: c.onPrimary,
+    error: c.destructive,
+    onError: c.onPrimary,
+    surface: c.bg,
     onSurface: c.ink,
-    surfaceContainerLowest: c.paper,
-    surfaceContainerLow: c.paper,
-    surfaceContainer: c.well,
-    surfaceContainerHigh: c.well,
-    surfaceContainerHighest: c.well,
+    surfaceContainerLowest: c.card,
+    surfaceContainerLow: c.card,
+    surfaceContainer: c.card,
+    surfaceContainerHigh: c.raised,
+    surfaceContainerHighest: c.raised,
     onSurfaceVariant: c.ink2,
-    outline: c.rule,
-    outlineVariant: c.rule,
-    shadow: c.ink,
+    outline: c.line,
+    outlineVariant: c.line,
+    shadow: const Color(0xFF000000),
+    scrim: c.scrim,
+    surfaceTint: Colors.transparent,
     inverseSurface: c.ink,
-    onInverseSurface: c.onInk,
+    onInverseSurface: c.onPrimary,
+    inversePrimary: c.onPrimary,
   );
-  const controlShape = RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(Radii.control)));
+  const pill = StadiumBorder();
+  const inputRadius = BorderRadius.all(Radius.circular(Radii.input));
   final focusRing = BorderSide(color: c.ink, width: 2);
+
+  // Pressing shades the fill (6 %), hovering a little less; nothing ripples or flashes.
+  WidgetStateProperty<Color?> overlay(Color on) => WidgetStateProperty.resolveWith((s) {
+        if (s.contains(WidgetState.pressed)) return on.withValues(alpha: 0.08);
+        if (s.contains(WidgetState.focused)) return on.withValues(alpha: 0.08);
+        if (s.contains(WidgetState.hovered)) return on.withValues(alpha: 0.04);
+        return null;
+      });
+
+  // Overlays (menus) get a shadow by day; at night a shadow can't show on black, so they get
+  // a line edge instead. Never both.
+  final overlayShape = RoundedRectangleBorder(
+    borderRadius: inputRadius,
+    side: c.isDark ? BorderSide(color: c.line) : BorderSide.none,
+  );
 
   return ThemeData(
     useMaterial3: true,
+    brightness: c.brightness,
     colorScheme: scheme,
-    scaffoldBackgroundColor: c.paper,
-    canvasColor: c.paper,
+    scaffoldBackgroundColor: c.bg,
+    canvasColor: c.bg,
     fontFamily: DenType.family,
-    extensions: [c, type],
-    splashFactory: InkRipple.splashFactory,
-    highlightColor: c.well,
-    splashColor: c.rule,
-    hoverColor: c.well,
-    focusColor: c.well,
-    dividerTheme: DividerThemeData(color: c.rule, thickness: 1, space: 1),
+    extensions: [c, type, text],
+    splashFactory: NoSplash.splashFactory,
+    highlightColor: c.ink.withValues(alpha: 0.06),
+    splashColor: Colors.transparent,
+    hoverColor: c.ink.withValues(alpha: 0.04),
+    focusColor: c.ink.withValues(alpha: 0.08),
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.linux: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.fuchsia: CupertinoPageTransitionsBuilder(),
+      },
+    ),
+    dividerTheme: DividerThemeData(color: c.line, thickness: 1, space: 1),
+    // Material roles keep the sizes the current screens were laid out for, except fields, which
+    // are 17 (iOS zooms into anything under 16) like Den's body text.
     textTheme: TextTheme(
       displaySmall: type.display(c.ink),
       headlineSmall: type.heading(c.ink),
       titleMedium: type.title(c.ink),
-      bodyLarge: type.body(c.ink),
+      bodyLarge: text.body(c.ink),
       bodyMedium: type.body(c.ink),
       bodySmall: type.meta(c.ink2),
       labelLarge: type.bodyStrong(c.ink),
@@ -56,7 +93,7 @@ ThemeData denTheme(DenColors c, {double typeScale = 1}) {
     ),
     iconTheme: IconThemeData(color: c.ink, size: 22),
     appBarTheme: AppBarTheme(
-      backgroundColor: c.paper,
+      backgroundColor: c.bg,
       foregroundColor: c.ink,
       elevation: 0,
       scrolledUnderElevation: 0,
@@ -66,141 +103,160 @@ ThemeData denTheme(DenColors c, {double typeScale = 1}) {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: c.ink,
-        foregroundColor: c.onInk,
-        disabledBackgroundColor: c.well,
-        disabledForegroundColor: c.ink3,
-        minimumSize: const Size(64, Targets.adult),
-        padding: const EdgeInsets.symmetric(horizontal: Sp.l),
-        shape: controlShape,
-        textStyle: type.bodyStrong(c.onInk),
-      ),
+        backgroundColor: c.primary,
+        foregroundColor: c.onPrimary,
+        disabledBackgroundColor: c.line,
+        disabledForegroundColor: c.ink2,
+        minimumSize: const Size(Targets.adult, Targets.adult),
+        // Vertical padding lets the pill grow with large text; at 100 % the 44 minimum decides.
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        shape: pill,
+        elevation: 0,
+        textStyle: text.label(c.onPrimary),
+      ).copyWith(overlayColor: overlay(c.onPrimary)),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
+        backgroundColor: c.card,
         foregroundColor: c.ink,
-        side: BorderSide(color: c.rule),
-        minimumSize: const Size(64, Targets.adult),
-        padding: const EdgeInsets.symmetric(horizontal: Sp.l),
-        shape: controlShape,
-        textStyle: type.bodyStrong(c.ink),
-      ),
+        disabledForegroundColor: c.ink2,
+        side: BorderSide(color: c.line, width: 1.5),
+        minimumSize: const Size(Targets.adult, Targets.adult),
+        padding: const EdgeInsets.symmetric(horizontal: Sp.l, vertical: 10),
+        shape: pill,
+        textStyle: text.label(c.ink),
+      ).copyWith(overlayColor: overlay(c.ink)),
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
         foregroundColor: c.ink,
-        minimumSize: const Size(48, Targets.adult),
-        padding: const EdgeInsets.symmetric(horizontal: Sp.m),
-        shape: controlShape,
-        textStyle: type.bodyStrong(c.ink),
-      ),
+        disabledForegroundColor: c.ink2,
+        minimumSize: const Size(Targets.adult, Targets.adult),
+        padding: const EdgeInsets.symmetric(horizontal: Sp.m, vertical: 10),
+        shape: pill,
+        textStyle: text.label(c.ink),
+      ).copyWith(overlayColor: overlay(c.ink)),
     ),
     iconButtonTheme: IconButtonThemeData(
       style: IconButton.styleFrom(
         foregroundColor: c.ink,
         minimumSize: const Size(Targets.adult, Targets.adult),
-        shape: controlShape,
-      ),
+        shape: const CircleBorder(),
+      ).copyWith(overlayColor: overlay(c.ink)),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: c.well,
-      hintStyle: type.body(c.ink3),
-      labelStyle: type.meta(c.ink2),
+      fillColor: c.card,
+      hintStyle: text.body(c.ink2),
+      labelStyle: text.meta(c.ink2),
+      floatingLabelStyle: text.meta(c.ink2),
+      errorStyle: text.meta(c.destructive),
       floatingLabelBehavior: FloatingLabelBehavior.always,
-      contentPadding: const EdgeInsets.symmetric(horizontal: Sp.m, vertical: Sp.m),
-      border: const OutlineInputBorder(
-        borderRadius: BorderRadius.all(Radius.circular(Radii.control)),
-        borderSide: BorderSide.none,
+      contentPadding: const EdgeInsets.symmetric(horizontal: Sp.l, vertical: 14),
+      border: const OutlineInputBorder(borderRadius: inputRadius, borderSide: BorderSide.none),
+      enabledBorder: const OutlineInputBorder(borderRadius: inputRadius, borderSide: BorderSide.none),
+      disabledBorder: const OutlineInputBorder(borderRadius: inputRadius, borderSide: BorderSide.none),
+      focusedBorder: OutlineInputBorder(borderRadius: inputRadius, borderSide: focusRing),
+      errorBorder: OutlineInputBorder(borderRadius: inputRadius, borderSide: BorderSide(color: c.destructive, width: 2)),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: inputRadius,
+        borderSide: BorderSide(color: c.destructive, width: 2),
       ),
-      enabledBorder: const OutlineInputBorder(
-        borderRadius: BorderRadius.all(Radius.circular(Radii.control)),
-        borderSide: BorderSide.none,
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: const BorderRadius.all(Radius.circular(Radii.control)),
-        borderSide: focusRing,
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: const BorderRadius.all(Radius.circular(Radii.control)),
-        borderSide: BorderSide(color: c.bad, width: 2),
-      ),
+    ),
+    textSelectionTheme: TextSelectionThemeData(
+      cursorColor: c.ink,
+      selectionColor: c.ink.withValues(alpha: 0.2),
+      selectionHandleColor: c.ink,
     ),
     switchTheme: SwitchThemeData(
-      thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.onInk : c.ink2),
-      trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.ink : c.well),
-      trackOutlineColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.ink : c.rule),
+      thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.onPrimary : c.knob),
+      trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.primary : c.switchOff),
+      trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
     ),
     checkboxTheme: CheckboxThemeData(
-      fillColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.ink : Colors.transparent),
-      checkColor: WidgetStatePropertyAll(c.onInk),
+      fillColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.primary : Colors.transparent),
+      checkColor: WidgetStatePropertyAll(c.onPrimary),
       side: BorderSide(color: c.ink2, width: 1.5),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(4))),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(6))),
     ),
+    radioTheme: RadioThemeData(
+      fillColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.ink : c.ink2),
+    ),
+    progressIndicatorTheme: ProgressIndicatorThemeData(color: c.ink, linearTrackColor: c.track, circularTrackColor: c.track),
     navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: c.paper,
+      backgroundColor: c.bar,
       surfaceTintColor: Colors.transparent,
-      indicatorColor: c.ink,
-      indicatorShape: controlShape,
+      indicatorColor: Colors.transparent,
+      overlayColor: const WidgetStatePropertyAll(Colors.transparent),
       elevation: 0,
       height: 64,
       labelTextStyle: WidgetStateProperty.resolveWith(
-        (s) => s.contains(WidgetState.selected) ? type.meta(c.ink).copyWith(fontWeight: FontWeight.w700) : type.meta(c.ink2),
+        (s) => s.contains(WidgetState.selected) ? text.tab(c.ink, selected: true) : text.tab(c.ink3),
       ),
       iconTheme: WidgetStateProperty.resolveWith(
-        (s) => IconThemeData(color: s.contains(WidgetState.selected) ? c.onInk : c.ink2, size: 22),
+        (s) => IconThemeData(color: s.contains(WidgetState.selected) ? c.ink : c.ink3, size: 26),
       ),
     ),
     navigationRailTheme: NavigationRailThemeData(
-      backgroundColor: c.paper,
-      indicatorColor: c.ink,
-      indicatorShape: controlShape,
-      selectedIconTheme: IconThemeData(color: c.onInk),
-      unselectedIconTheme: IconThemeData(color: c.ink2),
-      selectedLabelTextStyle: type.meta(c.ink).copyWith(fontWeight: FontWeight.w700),
-      unselectedLabelTextStyle: type.meta(c.ink2),
+      backgroundColor: c.bar,
+      indicatorColor: c.fill,
+      indicatorShape: pill,
+      selectedIconTheme: IconThemeData(color: c.ink),
+      unselectedIconTheme: IconThemeData(color: c.ink3),
+      selectedLabelTextStyle: text.caption(c.ink).bold,
+      unselectedLabelTextStyle: text.caption(c.ink3),
     ),
     bottomSheetTheme: BottomSheetThemeData(
-      backgroundColor: c.paper,
+      backgroundColor: c.bg,
       surfaceTintColor: Colors.transparent,
-      modalBackgroundColor: c.paper,
-      elevation: 8,
-      shadowColor: c.ink.withValues(alpha: 0.18),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.card)),
-      ),
+      modalBackgroundColor: c.bg,
+      modalBarrierColor: c.scrim,
+      elevation: 0,
+      modalElevation: 0,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.sheet))),
       showDragHandle: true,
-      dragHandleColor: c.rule,
+      dragHandleColor: c.handle,
+      dragHandleSize: const Size(40, 5),
     ),
     dialogTheme: DialogThemeData(
-      backgroundColor: c.paper,
+      backgroundColor: c.raised,
       surfaceTintColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(Radii.control))),
-      titleTextStyle: type.title(c.ink),
-      contentTextStyle: type.body(c.ink),
+      barrierColor: c.scrim,
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.all(Radius.circular(Radii.section)),
+        side: c.isDark ? BorderSide(color: c.line) : BorderSide.none,
+      ),
+      titleTextStyle: text.section(c.ink),
+      contentTextStyle: text.body(c.ink),
     ),
     popupMenuTheme: PopupMenuThemeData(
-      color: c.paper,
+      color: c.raised,
       surfaceTintColor: Colors.transparent,
-      elevation: 8,
-      shadowColor: c.ink.withValues(alpha: 0.18),
-      shape: RoundedRectangleBorder(
-        borderRadius: const BorderRadius.all(Radius.circular(Radii.control)),
-        side: BorderSide(color: c.rule),
+      elevation: c.isDark ? 0 : 8,
+      shadowColor: const Color(0x29000000),
+      shape: overlayShape,
+      textStyle: text.body(c.ink),
+    ),
+    menuTheme: MenuThemeData(
+      style: MenuStyle(
+        backgroundColor: WidgetStatePropertyAll(c.raised),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        elevation: WidgetStatePropertyAll(c.isDark ? 0 : 8),
+        shadowColor: const WidgetStatePropertyAll(Color(0x29000000)),
+        shape: WidgetStatePropertyAll(overlayShape),
       ),
-      textStyle: type.body(c.ink),
     ),
     snackBarTheme: SnackBarThemeData(
       backgroundColor: c.ink,
-      contentTextStyle: type.body(c.onInk),
-      actionTextColor: c.onInk,
+      contentTextStyle: text.body(c.onPrimary),
+      actionTextColor: c.onPrimary,
       behavior: SnackBarBehavior.floating,
-      shape: controlShape,
+      shape: const RoundedRectangleBorder(borderRadius: inputRadius),
       elevation: 0,
     ),
     tooltipTheme: TooltipThemeData(
-      decoration: BoxDecoration(color: c.ink, borderRadius: BorderRadius.circular(Radii.control)),
-      textStyle: type.meta(c.onInk),
+      decoration: BoxDecoration(color: c.ink, borderRadius: BorderRadius.circular(8)),
+      textStyle: text.meta(c.onPrimary),
       waitDuration: const Duration(milliseconds: 400),
     ),
     listTileTheme: ListTileThemeData(

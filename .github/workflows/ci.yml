@@ -80,12 +80,23 @@ jobs:
       - name: Resolve
         working-directory: packages/${{ matrix.package }}
         run: dart pub get
+      # Failures also become annotations, so they show on the pull request and through the
+      # checks API without the full log.
       - name: Analyze
         working-directory: packages/${{ matrix.package }}
-        run: dart analyze --fatal-infos
+        run: |
+          dart analyze --fatal-infos > analyze.txt 2>&1 && { cat analyze.txt; exit 0; }
+          status=$?
+          cat analyze.txt
+          grep -E ' (error|warning|info) - ' analyze.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
       - name: Test
         working-directory: packages/${{ matrix.package }}
-        run: dart test
+        run: |
+          dart test --reporter github --file-reporter json:test.jsonl && exit 0
+          status=$?
+          python ../../.github/scripts/test_failures.py test.jsonl
+          exit $status
       - name: Build the hub binary
         if: matrix.package == 'den_hub_cli'
         working-directory: packages/den_hub_cli
@@ -105,13 +116,44 @@ jobs:
           cache: true
       - working-directory: app
         run: flutter pub get
+      # Failures also become an annotation on the check, readable without the log.
       - working-directory: app
-        run: flutter analyze
-      # Golden images are rendered on Windows by the people reviewing them; elsewhere
-      # test/flutter_test_config.dart renders every screen without comparing pixels. The app
-      # icon's source (tagged golden) is skipped.
+        run: |
+          flutter analyze > analyze.txt 2>&1 && { cat analyze.txt; exit 0; }
+          status=$?
+          cat analyze.txt
+          grep -E ' (error|warning|info) [-•] ' analyze.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
+      # Every screen renders (overflows and exceptions fail) but golden pixels aren't compared:
+      # the images are rendered on CI by the screenshots workflow and committed from there
+      # (test/flutter_test_config.dart, DESIGN.md "Screenshots"). The app icon's and Home
+      # Assistant brand sources (tagged golden) are skipped.
       - working-directory: app
-        run: flutter test --exclude-tags golden
+        run: |
+          flutter test --exclude-tags golden --reporter github --file-reporter json:test.jsonl && exit 0
+          status=$?
+          python ../.github/scripts/test_failures.py test.jsonl
+          exit $status
+      # The browser's own storage (IndexedDB), in Chrome.
+      - working-directory: app
+        run: |
+          flutter test --platform chrome --reporter github --file-reporter json:web-test.jsonl test/web && exit 0
+          status=$?
+          python ../.github/scripts/test_failures.py web-test.jsonl
+          exit $status
+      # The service worker, against a fake build, in Node.
+      - working-directory: app
+        run: node test/web/sw_test.mjs web/sw.js
+      # The web app as the hub serves it (deploy/hub/Dockerfile): CanvasKit and fonts from the
+      # hub, no CDN; and the fallback fonts the hub image ships are still where the build names
+      # them.
+      - working-directory: app
+        run: |
+          flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ > build.txt 2>&1 && { cat build.txt; sh ../deploy/hub/fallback_fonts.sh build/web '' --list; exit $?; }
+          status=$?
+          cat build.txt
+          grep -iE 'error' build.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
 
   homeassistant:
     name: Home Assistant integration
@@ -187,7 +229,7 @@ jobs:
             artifact: app/build/app/outputs/flutter-apk/app-release.apk
           - target: web
             os: ubuntu-latest
-            command: flutter build web --release
+            command: flutter build web --release --no-web-resources-cdn --csp
             artifact: app/build/web
           - target: linux
             os: ubuntu-latest

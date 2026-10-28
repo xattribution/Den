@@ -7,6 +7,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../pictograms.dart';
 import '../tokens.dart';
+import '../../web/web_app.dart';
 import '../widgets.dart';
 import 'family_words.dart';
 
@@ -310,7 +311,7 @@ const personalKinds = [DeviceKind.phone, DeviceKind.tablet, DeviceKind.desktop, 
 
 /// A sensible kind for the device the app is running on.
 DeviceKind guessDeviceKind(BuildContext context) {
-  if (kIsWeb) return DeviceKind.browser;
+  if (kIsWeb) return WebApp.info.kind;
   switch (defaultTargetPlatform) {
     case TargetPlatform.android:
     case TargetPlatform.iOS:
@@ -323,18 +324,20 @@ DeviceKind guessDeviceKind(BuildContext context) {
   }
 }
 
-/// "Sam's phone", from a person's name and the device kind.
+/// "Sam's phone", from a person's name and the device kind ("Sam's iPhone" in Safari on one).
 String suggestDeviceName(String personName, DeviceKind kind) {
+  final apple = kIsWeb && WebApp.info.ios;
   final word = switch (kind) {
-    DeviceKind.phone => 'phone',
-    DeviceKind.tablet => 'tablet',
+    DeviceKind.phone => apple ? 'iPhone' : 'phone',
+    DeviceKind.tablet => apple ? 'iPad' : 'tablet',
     DeviceKind.desktop => 'computer',
     DeviceKind.browser => 'browser',
     DeviceKind.hub => 'hub',
     DeviceKind.display => 'display',
   };
   final name = personName.trim();
-  return name.isEmpty ? FamilyWords.deviceKind(kind) : '${FamilyWords.possessive(name)} $word';
+  if (name.isEmpty) return apple && (kind == DeviceKind.phone || kind == DeviceKind.tablet) ? word : FamilyWords.deviceKind(kind);
+  return '${FamilyWords.possessive(name)} $word';
 }
 
 /// Whether this platform can scan a QR code with its camera.

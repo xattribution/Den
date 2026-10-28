@@ -37,10 +37,12 @@ Docker network (`172.30.73.0/24`):
   proxies to the hub ([`deploy/hosted/Caddyfile`](../deploy/hosted/Caddyfile)). WebSockets and the
   event stream pass straight through.
 
-Then, on a parent's iPhone, open `https://den.example.com` in Safari, choose **Start a family**,
-and add the hub with the setup code from the log (**Family and devices**, **Add a device**, the
-hub). The hub's log also prints three matching words while it joins; approve it on the phone only
-if the phone shows the same three.
+Then, on a parent's iPhone, open `https://den.example.com` in Safari, add Den to the Home Screen
+(Share, **Add to Home Screen**; Safari shows the steps) and open it from there. Choose **Start a
+family** and type the setup code from the log under **Your hub** in the same form: the iPhone
+takes the hub in once both show the same three matching words (they're in the hub's log too).
+Invite the others by message from **Add people** (**Send invite**): a link and four words; they
+open the link, add Den to their Home Screen the same way, and a parent taps **Approve** on Today.
 
 ### The public posture
 
@@ -52,6 +54,7 @@ A hub whose `DEN_PUBLIC_URL` is `https` (or with `DEN_PUBLIC=1`) assumes strange
 - A new browser can ask for a link code only while a parent has **Add a device** open in the app
   (which tells the hub), or for a few minutes after you run, on the server:
   `docker compose -f deploy/hosted/compose.yaml exec hub /app/bin/den_hub open-linking`.
+  Invites by message need neither: the invite is a parent's consent already.
 - Everything a stranger can reach is limited per address (docs/hub-api.md, "Limits per client"),
   OAuth sign-in requests from AI assistants stay in the hub until a parent lets them in, and every
   answer carries security headers: HSTS, a Content-Security-Policy for the web app that loads

@@ -1,0 +1,119 @@
+name: screenshots
+
+# Renders the golden screenshots on Linux with the real bundled fonts and pushes the images to
+# the branch screenshots/<branch>. These CI renders are the project's golden images: bring
+# them into the branch with
+#   git fetch origin screenshots/<branch>:refs/remotes/origin/screenshots/<branch>
+#   git checkout origin/screenshots/<branch> -- app/test
+# and commit. Tests never compare pixels (app/test/flutter_test_config.dart), so the images are
+# for review. It runs on a pull request labeled "screenshots" (and on every push to it while
+# the label is on), or by hand from the Actions tab once this file is on the default branch.
+# See DESIGN.md, "Screenshots".
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: Test files or folders under app/ to render, separated by spaces (empty renders every test)
+        required: false
+        default: ''
+      sources:
+        description: Also render the app icon and Home Assistant brand sources (tests tagged golden)
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: screenshots-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.38.5'
+
+jobs:
+  shots:
+    name: Render screenshots
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'screenshots')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - working-directory: app
+        run: flutter pub get
+      - name: Render
+        id: render
+        working-directory: app
+        env:
+          TESTS: ${{ inputs.tests }}
+          SOURCES: ${{ inputs.sources == true && 'yes' || 'no' }}
+        run: |
+          touch "$RUNNER_TEMP/start"
+          sleep 1
+          tags='--exclude-tags golden'
+          if [ "$SOURCES" = yes ]; then tags=''; fi
+          # shellcheck disable=SC2086
+          if ! flutter test --update-goldens $tags --reporter github --file-reporter json:"$RUNNER_TEMP/shots.jsonl" $TESTS; then
+            python ../.github/scripts/test_failures.py "$RUNNER_TEMP/shots.jsonl"
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Push to screenshots/<branch>
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          out="$RUNNER_TEMP/shots"
+          mkdir -p "$out/app"
+          find . -path ./.git -prune -o -path '*/build/*' -prune -o -name '*.png' -newer "$RUNNER_TEMP/start" -print0 |
+            while IFS= read -r -d '' f; do
+              f="${f#./}"
+              mkdir -p "$out/$(dirname "$f")"
+              cp "$f" "$out/$f"
+            done
+          # The lockfile this run resolved, for updating the branch's own after a dependency change.
+          cp app/pubspec.lock "$out/app/pubspec.lock"
+          cd "$out"
+          count=$(find . -name '*.png' | wc -l)
+          {
+            echo "# Screenshots of $BRANCH"
+            echo
+            echo "$count images rendered from $SHA in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            find . -name '*.png' | sed 's|^\./||' | sort | sed 's/^/- /'
+          } > README.md
+          target="screenshots/$BRANCH"
+          git init -q
+          git checkout -q -b "$target"
+          git add -A
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "Screenshots of $BRANCH at ${SHA:0:7}"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$target"
+          {
+            echo "### $count screenshots"
+            echo
+            echo "Branch \`$target\`: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$target"
+            echo
+            echo '```'
+            echo "git fetch origin $target:refs/remotes/origin/$target"
+            echo "git checkout origin/$target -- app/test"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: ${{ runner.temp }}/shots
+      - name: Fail if a test failed
+        if: steps.render.outputs.failed == 'true'
+        run: |
+          echo "Some tests failed while rendering; the images that did render were pushed."
+          exit 1

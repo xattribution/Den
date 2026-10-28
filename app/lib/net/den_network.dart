@@ -14,15 +14,19 @@ import 'local_stub.dart' if (dart.library.io) 'local_io.dart' as local;
 /// through the relay. Without a hub, devices still pair and sync directly. On desktops and
 /// Android a parent can make this device the hub itself ([keepOnline]).
 class DenNetwork extends ChangeNotifier {
-  DenNetwork(this.den, {List<Uri> hubs = const [], this.relay, LocalHub? localHub})
+  DenNetwork(this.den, {List<Uri> hubs = const [], this.relay, LocalHub? localHub, String? joinHub, String? turnedAway})
       : node = SyncNode(den),
         localHub = localHub ?? LocalHub.create(),
-        _hubs = [...hubs] {
+        _hubs = [...hubs],
+        _joinHub = joinHub,
+        _turnedAway = turnedAway {
     this.localHub.addListener(notifyListeners);
   }
 
   static const _hubsKey = 'den.hubs';
   static const _relayKey = 'den.relay';
+  static const _joinHubKey = 'den.joinHub';
+  static const _turnedAwayKey = 'den.turnedAway';
 
   /// Restores the saved hub addresses and relay for this device.
   static Future<DenNetwork> load(Den den) async {
@@ -32,6 +36,8 @@ class DenNetwork extends ChangeNotifier {
       den,
       hubs: [...?prefs.getStringList(_hubsKey)?.map(Uri.tryParse).whereType<Uri>()],
       relay: relay == null ? null : Uri.tryParse(relay),
+      joinHub: prefs.getString(_joinHubKey),
+      turnedAway: prefs.getString(_turnedAwayKey),
     );
   }
 
@@ -41,6 +47,14 @@ class DenNetwork extends ChangeNotifier {
   /// The hub this app runs in-process when this device is the family's hub.
   final LocalHub localHub;
   final List<Uri> _hubs;
+
+  /// The device this one asked to join through (the family's hub), so a device still waiting
+  /// for approval reconnects to it, and only to it, after Den was closed.
+  String? _joinHub;
+
+  /// The device id a parent turned away while it waited, so it stops asking (a new invite, with
+  /// new keys, is the way back in).
+  String? _turnedAway;
 
   /// The relay this family uses to reach the hub from outside the house, if any.
   Uri? relay;
@@ -76,8 +90,12 @@ class DenNetwork extends ChangeNotifier {
     if (_disposed) return;
     await _stopClient();
     if (_disposed) return;
-    if (!den.hasFamily || !den.isApproved) {
+    if (!den.hasFamily) {
       _setStatus(const SyncStatus(SyncState.offline));
+      return;
+    }
+    if (!den.isApproved) {
+      _awaitApproval();
       return;
     }
     if (isHub) {
@@ -96,11 +114,54 @@ class DenNetwork extends ChangeNotifier {
       _setStatus(const SyncStatus(SyncState.offline, lastError: 'no hub'));
       return;
     }
-    final client = SyncClient(node: node, endpoints: endpoints, expectDevice: hubDevice?.id);
+    _run(SyncClient(node: node, endpoints: endpoints, expectDevice: hubDevice?.id));
+  }
+
+  void _run(SyncClient client) {
     _client = client;
     _statusSub = client.statusChanges.listen(_setStatus);
     client.start();
   }
+
+  /// A device that asked to join waits connected to the device it asked through, so a parent's
+  /// approval reaches it whenever they give it, also after Den was closed and opened again. The
+  /// connection is pinned to that device: this one doesn't know the family's devices yet.
+  void _awaitApproval() {
+    if (turnedAway) {
+      _setStatus(const SyncStatus(SyncState.offline, lastError: 'declined'));
+      return;
+    }
+    final pin = _joinHub;
+    final me = den.thisDevice;
+    final endpoints = <Uri>{...?_servingHub(), ..._hubs}.toList();
+    if (pin == null || me == null || me.revoked || endpoints.isEmpty) {
+      _setStatus(const SyncStatus(SyncState.offline));
+      return;
+    }
+    _run(SyncClient(node: node, endpoints: endpoints, expectDevice: pin));
+  }
+
+  /// Remembers that this device asked to join through [device] at [sync], so it can wait for
+  /// approval there again later.
+  Future<void> rememberJoin(String device, Uri? sync) async {
+    _joinHub = device;
+    if (sync != null && !_hubs.contains(sync)) _hubs.add(sync);
+    await _save();
+  }
+
+  /// Whether a parent turned this device away while it waited for approval: the device it waits
+  /// on says so as soon as it connects, and this device stops asking.
+  bool get turnedAway => !den.isApproved && _turnedAway != null && _turnedAway == den.deviceId;
+
+  Future<void> _turnAway() async {
+    _turnedAway = den.deviceId;
+    await _stopClient();
+    _setStatus(const SyncStatus(SyncState.offline, lastError: 'declined'));
+    await _save();
+  }
+
+  /// Whether a device waiting for approval knows where to wait.
+  bool get canAwaitApproval => _joinHub != null && (_hubs.isNotEmpty || _servingHub() != null);
 
   /// "Keep the family online": makes this device the family's hub and runs the hub in-process,
   /// or turns it back into its owner's personal device. Parents only; the engine refuses others.
@@ -228,6 +289,10 @@ class DenNetwork extends ChangeNotifier {
     if (_disposed) return;
     _status = status;
     notifyListeners();
+    final error = status.lastError;
+    if ((error == 'declined' || error == 'revoked') && den.hasFamily && !den.isApproved && !turnedAway) {
+      unawaited(_turnAway());
+    }
   }
 
   @override
@@ -238,6 +303,18 @@ class DenNetwork extends ChangeNotifier {
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(_hubsKey, [for (final h in _hubs) h.toString()]);
+    final pin = _joinHub;
+    if (pin == null) {
+      await prefs.remove(_joinHubKey);
+    } else {
+      await prefs.setString(_joinHubKey, pin);
+    }
+    final away = _turnedAway;
+    if (away == null) {
+      await prefs.remove(_turnedAwayKey);
+    } else {
+      await prefs.setString(_turnedAwayKey, away);
+    }
     if (relay == null) {
       await prefs.remove(_relayKey);
     } else {

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -111,8 +112,16 @@ class _LinkThisBrowserScreenState extends State<LinkThisBrowserScreen> {
         ),
         if (_loading)
           FormBlock(top: 0, child: Text('Getting a code from the hub', style: context.type.body(c.ink2)))
-        else if (_error != null)
-          FormBlock(top: 0, child: AttentionLine(message: _error!, bad: true))
+        else if (_error != null) ...[
+          FormBlock(top: 0, child: AttentionLine(message: _error!, bad: true)),
+          FormBlock(
+            top: Sp.m,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton(onPressed: _open, child: const Text('Try again')),
+            ),
+          ),
+        ]
         else if (link != null) ...[
           FormBlock(
             top: 0,
@@ -135,6 +144,20 @@ class _LinkThisBrowserScreenState extends State<LinkThisBrowserScreen> {
                   semanticsLabel: 'Link code',
                 ),
               ),
+            ),
+          ),
+          // A parent at the same computer, or with Den in a browser, pastes the code instead.
+          FormBlock(
+            top: Sp.s,
+            child: Row(
+              children: [
+                Expanded(child: SelectableText(link.uri, maxLines: 2, style: context.type.meta(c.ink2))),
+                TextButton.icon(
+                  onPressed: () => Clipboard.setData(ClipboardData(text: link.uri)),
+                  icon: const Icon(PhosphorIconsRegular.copy, size: 18),
+                  label: const Text('Copy code'),
+                ),
+              ],
             ),
           ),
           FormBlock(

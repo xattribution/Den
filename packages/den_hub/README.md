@@ -41,8 +41,16 @@ beside it.
 | `restore --in FILE --passphrase-env VAR [--force]` | Refuses while a hub runs on the directory (stop it, then `docker compose run --rm hub restore ...`); `--force` first removes the hub that is there. Afterwards, let the family's devices connect before changing anything: what the hub wrote after the backup comes back from them, and the hub's change counter moves past it |
 
 Data directory: `keys.json` (device keys, owner-only), `log/` (change log), `hub/` (reminders
-sent, OAuth clients and refresh-token hashes, the capture reader, feed caches), `notify.json`
-(optional reminder targets), `hub.lock` (one process at a time).
+sent, OAuth clients and refresh-token hashes, the capture reader, feed caches, invites waiting in
+`invites.json`, the Web Push key and subscriptions in `push.json`), `notify.json` (optional
+reminder targets), `hub.lock` (one process at a time).
+
+## Invites and reminders for browsers
+
+A parent's device leaves the hub an invite to send as a message (`/api/v1/invites`): the hub
+keeps it under four words and admits whoever redeems them, for a parent to approve. Browsers get
+reminders and nudges by Web Push (`/api/v1/push`, RFC 8291 and 8292, P-256 through
+pointycastle). Both are specified in [docs/hub-api.md](../../docs/hub-api.md#invites-by-message).
 
 ## Adding a hub to a family
 

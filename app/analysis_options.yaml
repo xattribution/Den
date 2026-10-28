@@ -9,6 +9,13 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  errors:
+    # The redesign keeps the old token names (paper, well, rule, caution, Motion, the old type
+    # roles) as deprecated aliases while screens move to the new ones one at a time (DESIGN.md,
+    # "Migrating a screen"). Remove this line to list the uses that are left.
+    deprecated_member_use_from_same_package: ignore
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

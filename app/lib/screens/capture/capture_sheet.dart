@@ -133,7 +133,13 @@ class _AddSheetState extends State<AddSheet> {
                     onSubmitted: (_) => _send(),
                     style: context.type.body(c.ink),
                     decoration: InputDecoration(
-                      hintText: _listening ? 'Listening' : 'Type, snap or say',
+                      // Where Den can't listen or use the camera (a browser), the keyboard's own
+                      // mic still works, and the file picker offers Take Photo.
+                      hintText: _listening
+                          ? 'Listening'
+                          : sources.canSpeak
+                              ? 'Type, snap or say'
+                              : 'Type it, or use the keyboard mic',
                       suffixIcon: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -171,7 +177,7 @@ class _AddSheetState extends State<AddSheet> {
                       OutlinedButton.icon(
                         onPressed: () => _file(sources.pick),
                         icon: const Icon(PhosphorIconsRegular.filePlus, size: 18),
-                        label: const Text('Photo or PDF'),
+                        label: Text(sources.canSnap ? 'Photo or PDF' : 'Photo, camera or PDF'),
                       ),
                     ],
                   ),
