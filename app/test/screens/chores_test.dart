@@ -32,6 +32,28 @@ void main() {
     );
   });
 
+  testWidgets('Chores board at 200 % text: everything wraps, Give to… moves into the open row', (tester) async {
+    final state = await demo(tester);
+    withTextScale(tester, 2);
+    await shoot(tester, 'chores_board_phone_200', ChoresBoard(date: state.den.todayDate()), state: state, size: const Size(390, 2000));
+  });
+
+  testWidgets('Chores board on a day with nothing on it', (tester) async {
+    final state = (await tester.runAsync(() async {
+      final den = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate(), now: () => demoNow.millisecondsSinceEpoch);
+      await den.createFamily(
+        familyName: 'The Testers',
+        timezone: 'America/Chicago',
+        yourName: 'Sam',
+        deviceName: 'Sam\'s iPhone',
+        deviceKind: DeviceKind.phone,
+      );
+      return AppState(den);
+    }))!;
+    await shoot(tester, 'chores_board_empty_phone', ChoresBoard(date: state.den.todayDate()), state: state);
+    expect(find.text('Add chore'), findsOneWidget);
+  });
+
   testWidgets('Chores board, phone, night', (tester) async {
     final state = await demo(tester);
     await shoot(
