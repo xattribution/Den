@@ -134,9 +134,70 @@ Every error, at every status, has this body:
 | 404 | `not_found` | No such route, or no such record the token can read | `type` and `id` when a record was asked for |
 | 405 | `method_not_allowed` | Known path, wrong method. Also sends `Allow` | |
 | 409 | `read_only` | Editing or deleting an event imported from a subscribed calendar (`source.kind` is not `manual`) | |
-| 413 | `too_large` | Body over 256 KiB | |
+| 408 | `timeout` | The body took more than 60 seconds to arrive | |
+| 413 | `too_large` | Body over 256 KiB (refused by its `Content-Length` before it is read) | |
+| 429 | `rate_limited` | Too many requests from this client (below). Also sends `Retry-After` | `retry_after` (seconds) |
 | 500 | `internal` | Anything unexpected. The message carries no stack trace | |
 | 503 | `not_ready` | The hub hasn't joined or created a family yet, isn't approved yet, or is still loading its log | |
+
+### Limits per client
+
+The hub counts what each client does, by IP address (an IPv6 address by its /64), and answers
+`429 rate_limited` past these budgets:
+
+| What | Budget |
+| --- | --- |
+| Requests with neither a token nor a device signature (health, status, the web app's files, OAuth metadata and polling) | 600 a minute. Requests from this machine itself (loopback, not through a proxy) aren't counted |
+| Tokens or device signatures that don't work, link codes that don't match | 30 in 5 minutes; then every authenticated request from that client gets `429` until the budget refills |
+| Browser link slots and link grants | 20 in 10 minutes |
+| Wrong setup codes | 5, then that client waits a minute, doubling to an hour with each further wrong code |
+| OAuth: registrations, sign-in requests, token requests | 10 an hour, 10 in 15 minutes, 60 in 5 minutes |
+| WebSocket connections (`/ws`) | 120 new a minute, 64 open at once |
+
+### Behind a reverse proxy
+
+The hub believes `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` only from the
+proxies listed in `DEN_TRUSTED_PROXIES` (addresses or CIDR networks, comma separated). From those,
+the client is the right-most `X-Forwarded-For` address that isn't itself a trusted proxy, and the
+public URL (OAuth metadata, link codes, the web app's WebSocket origin) takes the forwarded scheme
+and host unless `DEN_PUBLIC_URL` is set. From anyone else the headers are ignored, so a client
+can't choose its own address or the hub's public URL; the hub logs a warning the first time an
+unlisted proxy sends them.
+
+### Security headers
+
+Every answer carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, and
+`Strict-Transport-Security: max-age=31536000` when the request came over HTTPS (through a trusted
+proxy, or by an `https` `DEN_PUBLIC_URL`). JSON answers carry
+`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`. Pages carry
+`X-Frame-Options: DENY` and `Cross-Origin-Opener-Policy: same-origin`.
+
+The web app (the Flutter build in `DEN_WEB`) is served with this policy, where `<ws origin>` is
+the hub's own `ws://` or `wss://` origin and the hashes are those of any inline `<script>` in
+`index.html`:
+
+```text
+default-src 'self'; script-src 'self' 'wasm-unsafe-eval' <inline script hashes>;
+style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;
+connect-src 'self' <ws origin>; media-src 'self' data: blob:; worker-src 'self' blob:;
+manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+```
+
+So the build must load nothing from a CDN: CanvasKit from the hub (`flutter build web --csp
+--dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/`), fonts bundled, and Flutter's fallback
+fonts (`fontFallbackBaseUrl`, by default `https://fonts.gstatic.com/s/`) self-hosted or left out.
+`DEN_CSP` replaces the whole policy for a build that needs more. Files whose names carry a content
+hash (`main.dart.3f2a9c1b.js`) are sent with `Cache-Control: public, max-age=31536000, immutable`;
+everything else, `index.html` and the service worker included, with `no-cache` (revalidated with
+`Last-Modified`, a `304` when unchanged).
+
+### Public posture
+
+A hub reachable from the internet runs in the public posture (`DEN_PUBLIC=1`, and by default
+whenever `DEN_PUBLIC_URL` is `https`): `/health` answers only `ok`, `api` and `ready`;
+`/api/v1/hub/status` of a hub already in a family answers only `{"paired": true, "setup_needed":
+false, "stage": "ready"}`; `POST /api/v1/link` works only while a parent has opened "Add a device"
+(`POST /api/v1/link/window`, below); and mDNS is off unless `DEN_MDNS=1`.
 
 ## Discovery (mDNS)
 
@@ -417,6 +478,8 @@ Scope: none (no `Authorization` needed). Never returns family data.
 | `device` | string | The hub's device id; the same value as mDNS TXT `id` |
 | `name` | string | The hub device's name |
 | `ready` | bool | The hub is in a family, approved, and its log is loaded. While `false`, `/api/v1` answers `503 not_ready` |
+
+In the public posture `version`, `device` and `name` are left out: `{"ok": true, "api": 1, "ready": true}`.
 
 ### `GET /api/v1/members`
 
@@ -1121,6 +1184,17 @@ No token. Where the hub is in joining a family, for the app's "Add a hub" screen
 | `stage` | `waiting_for_code`, `joining`, `waiting_for_approval`, `syncing` or `ready` |
 | `matching_words` | Present only while the pairing session with the inviting phone is up (`joining` through `syncing`): the three words both ends derive from that session's transcript (den_net's matching words). The phone shows its own three; a parent approves only if they're the same. The hub also logs them at info level and `den_hub status` prints them |
 | `last_error` | Why the last join didn't finish (`timed-out`, `unreachable`, or the phone's reason), until the hub is ready |
+
+In the public posture a hub already in a family answers only `paired`, `setup_needed` and
+`stage`.
+
+### `POST /api/v1/link/window`
+
+Signed by a parent's own device ([`DeviceRequest`](#capture-reading-for-every-device), not a
+shared display), no body. Opens "Add a device" for 10 minutes: in the public posture,
+`POST /api/v1/link` (a new browser asking for a link code) answers `403 link_closed` unless a
+parent opened it. Answer: `{"open_until": "<ISO 8601>", "open_until_ms": 1792535400000}`. On a
+home network linking is always open and this is harmless to call.
 
 The words are not a secret: a relay or anything else in the middle that ran two sessions would
 produce two transcripts, so the two ends would show different words. This answer travels over

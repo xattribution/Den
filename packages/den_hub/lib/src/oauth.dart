@@ -46,7 +46,7 @@ class OAuthServer {
   /// How long a parent has to approve.
   static const Duration approvalWindow = Duration(minutes: 15);
 
-  Uri _base(Request r) => requestBase(r, hub.config.publicUrl);
+  Uri _base(Request r) => hub.base(r);
 
   Response _json(Request r, Object body, {int status = 200}) => jsonResponse(body, status: status, headers: corsHeaders(r));
 

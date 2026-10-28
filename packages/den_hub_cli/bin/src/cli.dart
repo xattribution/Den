@@ -45,9 +45,16 @@ ArgParser cliParser() {
     ..addOption('ha-url', help: 'Home Assistant URL for notifications (env DEN_HA_URL)')
     ..addOption('ha-token', help: 'Home Assistant long-lived token (env DEN_HA_TOKEN)')
     ..addOption('public-url', help: 'Public base URL for OAuth and link codes (env DEN_PUBLIC_URL)')
+    ..addOption('trusted-proxies',
+        help: 'Reverse proxies whose X-Forwarded-* headers to believe, addresses or CIDRs (env DEN_TRUSTED_PROXIES)')
+    ..addOption('csp', help: 'Replace the web app\'s Content-Security-Policy (env DEN_CSP)')
     ..addOption('log-level', help: 'debug, info, warn or error (env DEN_LOG)')
+    ..addFlag('public',
+        help: 'Reachable from the internet: minimal unauthenticated answers, mDNS off (env DEN_PUBLIC=1; '
+            'default on for an https public URL)',
+        defaultsTo: null)
     ..addFlag('mailbox', help: 'Also sync through the relay mailbox (env DEN_MAILBOX=1)', defaultsTo: null)
-    ..addFlag('mdns', help: 'Advertise on the LAN (env DEN_MDNS=0 turns it off)', defaultsTo: null);
+    ..addFlag('mdns', help: 'Advertise on the LAN (env DEN_MDNS=0 turns it off; off by default when public)', defaultsTo: null);
   _common(root.addCommand('mcp'))
     ..addOption('token', help: 'A token from the Den app (env DEN_TOKEN)')
     ..addOption('hub', help: 'A running hub to bridge to (default http://127.0.0.1:<port>)');
@@ -140,12 +147,21 @@ bool? _envFlag(String? v) => v == null ? null : !(v == '0' || v.toLowerCase() ==
 Future<int> serve(ArgResults a, DataDir data, int port, CliIo io) async {
   final env = io.environment;
   String? opt(String name, String envName) => a[name] as String? ?? env[envName];
+  final List<IpNetwork> proxies;
+  try {
+    proxies = IpNetwork.parseList(opt('trusted-proxies', 'DEN_TRUSTED_PROXIES') ?? '');
+  } on FormatException catch (e) {
+    throw CliUsage('DEN_TRUSTED_PROXIES: ${e.message}');
+  }
+  final public = opt('public-url', 'DEN_PUBLIC_URL');
+  final publicUrl = public == null || public.isEmpty ? null : Uri.parse(public);
+  final exposed = a['public'] as bool? ?? _envFlag(env['DEN_PUBLIC']);
+  final publicPosture = exposed ?? (publicUrl?.scheme == 'https');
   await data.lock();
   final log = HubLog(level: _level(opt('log-level', 'DEN_LOG')), sink: io.err.writeln);
   final den = await data.open();
   final relay = opt('relay', 'DEN_RELAY');
   final ha = opt('ha-url', 'DEN_HA_URL');
-  final public = opt('public-url', 'DEN_PUBLIC_URL');
   final hub = await DenHub.start(den, HubConfig(
     port: port,
     host: opt('host', 'DEN_HOST'),
@@ -156,12 +172,19 @@ Future<int> serve(ArgResults a, DataDir data, int port, CliIo io) async {
     homeAssistantUrl: ha == null || ha.isEmpty ? null : Uri.parse(ha),
     homeAssistantToken: opt('ha-token', 'DEN_HA_TOKEN'),
     notify: _notify(data, env),
-    publicUrl: public == null || public.isEmpty ? null : Uri.parse(public),
+    publicUrl: publicUrl,
     allowedOrigins: [...?env['DEN_ALLOWED_ORIGINS']?.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty)],
+    trustedProxies: proxies,
+    public: exposed,
+    contentSecurityPolicy: opt('csp', 'DEN_CSP'),
     mailbox: a['mailbox'] as bool? ?? _envFlag(env['DEN_MAILBOX']) ?? false,
-    mdns: a['mdns'] as bool? ?? _envFlag(env['DEN_MDNS']) ?? true,
+    mdns: a['mdns'] as bool? ?? _envFlag(env['DEN_MDNS']) ?? !publicPosture,
     log: log,
   ));
+  if (publicPosture && proxies.isEmpty) {
+    log.warn('Running in the public posture with no DEN_TRUSTED_PROXIES: behind a reverse proxy, list it so '
+        'limits count each client and the hub knows requests came over HTTPS.');
+  }
   final done = Completer<void>();
   final signals = [ProcessSignal.sigint, if (!Platform.isWindows) ProcessSignal.sigterm];
   final subs = [for (final s in signals) s.watch().listen((_) => done.isCompleted ? null : done.complete())];

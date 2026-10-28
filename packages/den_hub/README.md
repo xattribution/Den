@@ -17,8 +17,11 @@ await hub.stop();
 CLI code, so the Den app can run a hub in-process on desktop and Android. `HubConfig`: `port`,
 `host`, `dataDir` (the hub's own state; the change log is the `Den`'s storage), `webDir`,
 `relay`, `name`, `homeAssistantUrl` and `homeAssistantToken`, `notify` (per member, by id or
-name: Home Assistant notify service and ntfy topic), `publicUrl`, `allowedOrigins`, `mailbox`,
-`mdns`, `log`, `onSetupCode`. Logs never carry tokens, PINs, invite secrets or change contents.
+name: Home Assistant notify service and ntfy topic), `publicUrl`, `allowedOrigins`,
+`trustedProxies`, `public`, `contentSecurityPolicy`, `mailbox`, `mdns`, `log`, `onSetupCode`,
+`localAdminToken` and `backup` (live backups for the command line). Logs never carry tokens,
+PINs, invite secrets or change contents. Hosting a hub on a server behind HTTPS is in
+[docs/hosting.md](../../docs/hosting.md).
 
 ## Command line
 
@@ -29,7 +32,7 @@ beside it.
 
 | Command | |
 | --- | --- |
-| `serve` (default) | Env `DEN_DATA` (default `./den-data`), `DEN_WEB`, `DEN_PORT`, `DEN_HOST`, `DEN_RELAY`, `DEN_NAME`, `DEN_HA_URL`, `DEN_HA_TOKEN`, `DEN_PUBLIC_URL`, `DEN_ALLOWED_ORIGINS`, `DEN_MAILBOX`, `DEN_MDNS`, `DEN_LOG`, `DEN_NOTIFY` (JSON, or `notify.json` in the data directory) |
+| `serve` (default) | Env `DEN_DATA` (default `./den-data`), `DEN_WEB`, `DEN_PORT`, `DEN_HOST`, `DEN_RELAY`, `DEN_NAME`, `DEN_HA_URL`, `DEN_HA_TOKEN`, `DEN_PUBLIC_URL`, `DEN_ALLOWED_ORIGINS`, `DEN_TRUSTED_PROXIES` (reverse proxies whose `X-Forwarded-*` headers count: addresses or CIDRs), `DEN_PUBLIC` (`1`: reachable from the internet; default on for an `https` `DEN_PUBLIC_URL`), `DEN_CSP` (replaces the web app's Content-Security-Policy), `DEN_MAILBOX`, `DEN_MDNS` (default off in the public posture), `DEN_LOG`, `DEN_NOTIFY` (JSON, or `notify.json` in the data directory) |
 | `mcp --token T` | MCP over stdio. Bridges to a running hub's `/mcp`, else serves from the data directory |
 | `import-sett coord.db --as NAME` | Imports Sett as that parent through the hub device (changes say "via Sett import") |
 | `setup-code` | A fresh hub's setup code |
@@ -75,6 +78,11 @@ Errors: `403 permission_denied` with `details.tries_left`, `409 already_set_up`,
 
 Slots last 10 minutes (32 at most). Errors: `404` (unknown, expired or wrong secret), `403`
 (grant refused), `409 already_linked`, `429 rate_limited`.
+
+In the public posture (a hub reachable from the internet, `DEN_PUBLIC=1` or an `https`
+`DEN_PUBLIC_URL`), step 1 works only while a parent has "Add a device" open: their phone sends a
+signed `POST /api/v1/link/window` ([docs/hub-api.md](../../docs/hub-api.md#post-apiv1linkwindow))
+first, and the browser otherwise gets `403 link_closed`.
 
 ## MCP and OAuth
 

@@ -95,11 +95,16 @@ class RestApi {
     }
   }
 
-  /// The caller's access for [request], requiring [scope]. Throws `503`, `401` or `403`.
+  /// The caller's access for [request], requiring [scope]. Throws `503`, `401` or `403`, and
+  /// `429` once a client has sent too many tokens that don't work.
   Access authenticate(Request request, Scope scope) {
     if (!hub.ready) throw ApiError.notReady();
+    hub.checkFailures(request);
     final access = accessForToken(hub.den, bearerToken(request.headers['authorization']));
-    if (access == null) throw ApiError.unauthorized();
+    if (access == null) {
+      hub.failed(request);
+      throw ApiError.unauthorized();
+    }
     if (!access.has(scope)) throw ApiError.scope(scope.name);
     return access;
   }

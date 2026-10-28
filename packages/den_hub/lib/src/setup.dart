@@ -12,6 +12,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'body.dart';
 import 'config.dart';
 import 'context.dart';
+import 'device_auth.dart';
+import 'edge.dart';
 import 'http_util.dart';
 import 'log.dart';
 
@@ -132,8 +134,11 @@ class HubSetup {
     onReady();
   }
 
-  /// `GET /api/v1/hub/status` (no token).
-  Response status(Request request) => jsonResponse({
+  /// `GET /api/v1/hub/status` (no token). In the public posture a hub that is already in a
+  /// family says only that.
+  Response status(Request request) => hub.config.publicPosture && hub.ready
+      ? jsonResponse({'paired': true, 'setup_needed': false, 'stage': 'ready'})
+      : jsonResponse({
         'paired': hub.ready,
         'device': hub.den.deviceId,
         'name': hub.name,
@@ -289,12 +294,19 @@ class LinkSlot {
 }
 
 /// WhatsApp-Web-style linking of browsers through the hub (`/api/v1/link`).
+///
+/// In the public posture a browser can ask for a slot only while "Add a device" is open: a
+/// parent's own device opens it for [windowLength] with a signed `POST /api/v1/link/window`,
+/// so nobody on the internet can collect link codes from the hub.
 class LinkSlots {
-  /// Creates the slots for [hub].
-  LinkSlots(this.hub);
+  /// Creates the slots for [hub]; [auth] checks the parent's signed request that opens them.
+  LinkSlots(this.hub, this.auth);
 
   /// Shared hub context.
   final HubContext hub;
+
+  /// Checks signed requests from the family's devices.
+  final DeviceAuth auth;
 
   /// Most slots alive at once.
   static const int maxSlots = 32;
@@ -302,8 +314,28 @@ class LinkSlots {
   /// How long a slot works.
   static const Duration lifetime = Duration(minutes: 10);
 
+  /// How long "Add a device" stays open.
+  static const Duration windowLength = Duration(minutes: 10);
+
   final Map<String, LinkSlot> _slots = {};
   final Random _random = Random.secure();
+  int _openUntil = 0;
+
+  /// Whether browsers may ask for a slot now: always on a home network, and in the public
+  /// posture only while a parent has "Add a device" open.
+  bool get open => !hub.config.publicPosture || hub.now() < _openUntil;
+
+  /// `POST /api/v1/link/window`, signed by a parent's own device: opens "Add a device" for
+  /// [windowLength]. Answers `{open_until, open_until_ms}`.
+  Future<Response> openWindow(Request request) async {
+    final c = await auth.parent(request, message: 'Only a parent\'s own phone can add a device.');
+    _openUntil = hub.now() + windowLength.inMilliseconds;
+    hub.log.info('${c.actor!.name} opened Add a device for ${windowLength.inMinutes} minutes');
+    return jsonResponse({
+      'open_until': DateTime.fromMillisecondsSinceEpoch(_openUntil, isUtc: true).toIso8601String(),
+      'open_until_ms': _openUntil,
+    });
+  }
 
   String _token(int bytes) => b64e(List.generate(bytes, (_) => _random.nextInt(256)));
 
@@ -315,13 +347,18 @@ class LinkSlots {
   /// `POST /api/v1/link`: a new slot and the `den://link` URI to show as a QR code.
   Response create(Request request) {
     if (!hub.ready) throw ApiError.notReady();
+    if (!open) {
+      throw ApiError(403, 'link_closed',
+          'A parent needs to open Add a device in Den first, on their phone. Then try again here.');
+    }
+    hub.limit(request, 'pairing', Limits.pairing);
     _prune();
     if (_slots.length >= maxSlots) {
       throw ApiError(429, 'rate_limited', 'Too many browsers are waiting to link. Try again in a few minutes.');
     }
     final slot = LinkSlot._(_token(16), _token(24), hub.now() + lifetime.inMilliseconds);
     _slots[slot.id] = slot;
-    final base = requestBase(request, hub.config.publicUrl);
+    final base = hub.base(request);
     final uri = 'den://link?hub=${hub.den.deviceId}&slot=${slot.id}&u=${Uri.encodeQueryComponent(base.toString())}';
     return jsonResponse({
       'slot': slot.id,
@@ -336,6 +373,7 @@ class LinkSlots {
   /// hub, signed by the phone's device key) for the slot.
   Future<Response> grant(Request request, String id) async {
     if (!hub.ready) throw ApiError.notReady();
+    hub.limit(request, 'pairing', Limits.pairing);
     _prune();
     final slot = _slots[id];
     if (slot == null) throw ApiError.notFound(type: 'link', message: 'That link code expired. Show a new one.');
@@ -349,6 +387,7 @@ class LinkSlots {
     }
     final problem = await hub.gate.asHub(() => hub.node.acceptInviteGrant(grant, context: 'link:$id'));
     if (problem != null) {
+      hub.failed(request);
       hub.log.warn('Refused a link grant: $problem');
       throw ApiError.denied('Only a parent\'s phone in this family can link a browser.');
     }
@@ -358,10 +397,12 @@ class LinkSlots {
 
   /// `GET /api/v1/link/{slot}` with `X-Den-Link-Secret`: `waiting`, or `ready` with the invite.
   Response poll(Request request, String id) {
+    hub.checkFailures(request);
     _prune();
     final slot = _slots[id];
     final secret = request.headers['x-den-link-secret'];
     if (slot == null || secret == null || !_same(secret, slot.secret)) {
+      hub.failed(request);
       throw ApiError.notFound(type: 'link', message: 'That link code expired. Show a new one.');
     }
     return jsonResponse({

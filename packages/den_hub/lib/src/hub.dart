@@ -13,6 +13,8 @@ import 'api.dart';
 import 'capture.dart';
 import 'config.dart';
 import 'context.dart';
+import 'device_auth.dart';
+import 'edge.dart';
 import 'feed.dart';
 import 'gate.dart';
 import 'http_util.dart';
@@ -58,6 +60,9 @@ class DenHub {
   late final FeedService _feeds;
   late final ReminderService _reminders;
   final Routes _routes = Routes();
+  late final DeviceAuth _auth;
+  final Map<String, int> _sockets = {};
+  final Set<String> _warnedProxies = {};
   Handler? _web;
   late final Handler _ws;
   HttpServer? _server;
@@ -129,8 +134,9 @@ class DenHub {
 
   Future<void> _start() async {
     final log = _ctx.log;
+    _auth = DeviceAuth(_ctx);
     _setup = HubSetup(_ctx, onReady: _onReady);
-    _links = LinkSlots(_ctx);
+    _links = LinkSlots(_ctx, _auth);
     _stream = EventStream(_ctx, _feed);
     _api = RestApi(_ctx);
     _capture = HubCapture(_ctx);
@@ -143,14 +149,15 @@ class DenHub {
     _services
       ..add(_feeds)
       ..add(_reminders);
-    _web = webAppHandler(config.webDir);
+    _web = webAppHandler(config.webDir, policy: _webPolicy);
     _ws = syncWebSocketHandler(node);
     _routes
       ..add('GET', '/health', (r, _) => _health())
       ..add('GET', '/api/v1/hub/status', (r, _) => _setup.status(r))
       ..add('POST', '/api/v1/hub/setup', (r, _) => _setup.setup(r))
-      ..add('GET', '/api/v1/hub/setup/ws', (r, _) => _setup.backChannel(r))
+      ..add('GET', '/api/v1/hub/setup/ws', (r, _) => _setup.backChannel(_upgrade(r)))
       ..add('POST', '/api/v1/link', (r, _) => _links.create(r))
+      ..add('POST', '/api/v1/link/window', (r, _) => _links.openWindow(r))
       ..add('POST', '/api/v1/link/<slot>', (r, p) => _links.grant(r, p['slot']!))
       ..add('GET', '/api/v1/link/<slot>', (r, p) => _links.poll(r, p['slot']!))
       ..add('GET', '/api/v1/stream', (r, _) => _openStream(r))
@@ -175,7 +182,7 @@ class DenHub {
       final m = _mdns;
       if (m != null && !_sameAdvert(m.advert, _advert())) unawaited(m.update(_advert()));
     });
-    final pipeline = const Pipeline().addMiddleware(_errors).addHandler(_route);
+    final pipeline = const Pipeline().addMiddleware(_headers).addMiddleware(_errors).addMiddleware(_admission).addHandler(_route);
     _server = await shelf_io.serve(pipeline, config.bindAddress, config.port);
     _server!.idleTimeout = const Duration(seconds: 120);
     log.info('Den hub ${den.deviceId} serving on port ${_server!.port}');
@@ -244,14 +251,90 @@ class DenHub {
   static bool _sameAdvert(MdnsAdvert a, MdnsAdvert b) =>
       a.instance == b.instance && a.port == b.port && a.txt.length == b.txt.length && a.txt.entries.every((e) => b.txt[e.key] == e.value);
 
+  /// `GET /health`. In the public posture it says only that the hub serves and whether it is
+  /// ready: nothing that tells a stranger which hub, which family or which version.
   Response _health() => jsonResponse({
         'ok': true,
-        'version': hubVersion,
         'api': 1,
-        'device': den.deviceId,
-        'name': _ctx.name,
         'ready': _ctx.ready,
+        if (!config.publicPosture) ...{'version': hubVersion, 'device': den.deviceId, 'name': _ctx.name},
       });
+
+  /// The web app's Content-Security-Policy for [request]: `DEN_CSP` when set, else
+  /// [webAppPolicy] allowing sync over the hub's own `ws:`/`wss:` origin.
+  String _webPolicy(Request request, List<String> scriptHashes) {
+    final custom = config.contentSecurityPolicy;
+    if (custom != null && custom.trim().isNotEmpty) return custom;
+    final base = _ctx.base(request);
+    return webAppPolicy(connect: '${base.scheme == 'https' ? 'wss' : 'ws'}://${base.authority}', scriptHashes: scriptHashes);
+  }
+
+  /// A WebSocket upgrade, limited per client (new connections a minute, connections open at
+  /// once) and with every frame the client sends checked against [FrameLimits]: a message
+  /// past the limit closes the connection as it arrives instead of being buffered whole.
+  Request _upgrade(Request request) {
+    _ctx.limit(request, 'sockets', Limits.sockets, message: 'Too many connections from here. Wait a minute.');
+    final key = _ctx.clientOf(request);
+    if ((_sockets[key] ?? 0) >= Limits.openSockets) {
+      throw ApiError.rateLimited(30, 'Too many connections from here. Close some and try again.');
+    }
+    return guardUpgrade(
+      request,
+      const FrameLimits(),
+      onOpen: () => _sockets[key] = (_sockets[key] ?? 0) + 1,
+      onClose: () {
+        final left = (_sockets[key] ?? 1) - 1;
+        if (left <= 0) {
+          _sockets.remove(key);
+        } else {
+          _sockets[key] = left;
+        }
+      },
+      onRefused: () => _ctx.log.warn('Closed a WebSocket that sent a message over the size limit'),
+    );
+  }
+
+  /// Security headers on every answer: no content sniffing, no referrer, HSTS when the request
+  /// came over HTTPS, no framing and same-origin opener isolation for pages, and a CSP that
+  /// allows nothing for JSON.
+  Handler _headers(Handler inner) => (Request request) async {
+        final response = await inner(request);
+        final type = response.headers['content-type'] ?? '';
+        final html = type.startsWith('text/html');
+        return response.change(headers: {
+          'x-content-type-options': 'nosniff',
+          'referrer-policy': 'no-referrer',
+          if (_ctx.secure(request)) 'strict-transport-security': 'max-age=31536000',
+          if (html) 'x-frame-options': 'DENY',
+          if (html) 'cross-origin-opener-policy': 'same-origin',
+          if (type.startsWith('application/json') && !response.headers.containsKey('content-security-policy'))
+            'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+        });
+      };
+
+  /// What every request passes before it is routed: a per-client budget for requests without
+  /// a token or a device signature (this machine itself excepted), and a body no larger than
+  /// the endpoint takes, refused by its declared length before a byte is read.
+  Handler _admission(Handler inner) => (Request request) {
+        final forwarded = request.headers.containsKey('x-forwarded-for');
+        if (forwarded && !viaTrustedProxy(request, config.trustedProxies)) _warnUntrustedProxy(request);
+        final peer = peerAddress(request);
+        final local = peer != null && peer.isLoopback && !forwarded;
+        final signed = request.headers.containsKey('authorization') || request.headers.containsKey(DeviceRequest.signature);
+        if (!signed && !local) _ctx.limit(request, 'anonymous', Limits.anonymous);
+        final declared = request.contentLength;
+        if (declared != null && declared > _bodyLimit(request)) throw ApiError.tooLarge();
+        return inner(request);
+      };
+
+  int _bodyLimit(Request request) => request.url.path == 'api/v1/capture/read' ? HubCapture.maxBody : maxBodyBytes;
+
+  void _warnUntrustedProxy(Request request) {
+    final peer = peerAddress(request)?.address;
+    if (peer == null || _warnedProxies.length >= 16 || !_warnedProxies.add(peer)) return;
+    _ctx.log.warn('Requests from $peer carry X-Forwarded-For, but DEN_TRUSTED_PROXIES doesn\'t list $peer, so the hub '
+        'ignores the header and limits everyone behind that proxy as one client. List the proxy to fix that.');
+  }
 
   Response _openStream(Request request) {
     final access = _api.authenticate(request, Scope.read);
@@ -289,7 +372,7 @@ class DenHub {
 
   FutureOr<Response> _route(Request request) {
     final path = request.url.path;
-    if (path == 'ws') return _ws(request);
+    if (path == 'ws') return _ws(_upgrade(request));
     final found = _routes.find(request);
     if (found != null) return found.$1.handler(request, found.$2);
     final web = _web;

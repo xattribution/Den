@@ -8,6 +8,7 @@ library;
 export 'src/access.dart' show Access, accessForToken, readableSpacesFor;
 export 'src/capture.dart' show HubCapture;
 export 'src/config.dart';
+export 'src/edge.dart' show IpNetwork;
 export 'src/hub.dart';
 export 'src/log.dart';
 export 'src/setup.dart' show SetupStage, setupAlphabet, setupTries, restrictToOwner;
