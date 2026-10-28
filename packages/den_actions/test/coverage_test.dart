@@ -31,12 +31,16 @@ class RecordingDen implements Den {
   final List<String> calls = [];
   bool active = false;
 
-  // Mirrors drop a generic method's type argument, so the one generic write is forwarded here.
+  // Mirrors drop a generic method's type argument, so the generic methods are forwarded here.
+  // They write nothing themselves (they only note or mark the writes made inside them, which
+  // count on their own), so an action may use them without declaring them; capture's
+  // writeDraft records its changes for its receipt.
   @override
-  Future<Recorded<T>> recording<T>(FutureOr<T> Function() body, {bool undoOnError = false}) {
-    if (active) calls.add('recording');
-    return real.recording<T>(body, undoOnError: undoOnError);
-  }
+  Future<Recorded<T>> recording<T>(FutureOr<T> Function() body, {bool undoOnError = false}) =>
+      real.recording<T>(body, undoOnError: undoOnError);
+
+  @override
+  Future<T> attributed<T>(CaptureOrigin origin, FutureOr<T> Function() body) => real.attributed<T>(origin, body);
 
   @override
   dynamic noSuchMethod(Invocation invocation) {

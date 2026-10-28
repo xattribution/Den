@@ -12,6 +12,8 @@ dependencies:
   cryptography: ^2.9.0
   den_actions:
     path: ../den_actions
+  den_assistant:
+    path: ../den_assistant
   den_capture:
     path: ../den_capture
   den_core:
@@ -30,8 +32,6 @@ dependencies:
   web_socket_channel: ^3.0.3
 
 dev_dependencies:
-  den_assistant:
-    path: ../den_assistant
   den_relay:
     path: ../den_relay
   lints: ^6.1.0

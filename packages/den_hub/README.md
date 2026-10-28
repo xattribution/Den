@@ -31,7 +31,7 @@ beside it.
 
 | Command | |
 | --- | --- |
-| `serve` (default) | Env `DEN_DATA` (default `./den-data`), `DEN_WEB`, `DEN_PORT`, `DEN_HOST`, `DEN_RELAY`, `DEN_NAME`, `DEN_HA_URL`, `DEN_HA_TOKEN`, `DEN_PUBLIC_URL`, `DEN_ALLOWED_ORIGINS`, `DEN_TRUSTED_PROXIES` (reverse proxies whose `X-Forwarded-*` headers count: addresses or CIDRs), `DEN_PUBLIC` (`1`: reachable from the internet; default on for an `https` `DEN_PUBLIC_URL`), `DEN_CSP` (replaces the web app's Content-Security-Policy), `DEN_MAILBOX`, `DEN_MDNS` (default off in the public posture), `DEN_LOG`, `DEN_NOTIFY` (JSON, or `notify.json` in the data directory) |
+| `serve` (default) | Env `DEN_DATA` (default `./den-data`), `DEN_WEB`, `DEN_PORT`, `DEN_HOST`, `DEN_RELAY`, `DEN_NAME`, `DEN_HA_URL`, `DEN_HA_TOKEN`, `DEN_PUBLIC_URL`, `DEN_ALLOWED_ORIGINS`, `DEN_TRUSTED_PROXIES` (reverse proxies whose `X-Forwarded-*` headers count: addresses or CIDRs), `DEN_PUBLIC` (`1`: reachable from the internet; default on for an `https` `DEN_PUBLIC_URL`), `DEN_CSP` (replaces the web app's Content-Security-Policy), `DEN_MAILBOX`, `DEN_MDNS` (default off in the public posture), `DEN_LOG`, `DEN_NOTIFY` (JSON, or `notify.json` in the data directory), `DEN_FETCH_ALLOW` (private networks calendar feeds may come from: addresses or CIDRs) |
 | `mcp --token T` | MCP over stdio. Bridges to a running hub's `/mcp`, else serves from the data directory |
 | `import-sett coord.db --as NAME` | Imports Sett as that parent through the hub device (changes say "via Sett import") |
 | `setup-code` | A fresh hub's setup code |
@@ -41,7 +41,8 @@ beside it.
 | `restore --in FILE --passphrase-env VAR [--force]` | Refuses while a hub runs on the directory (stop it, then `docker compose run --rm hub restore ...`); `--force` first removes the hub that is there. Afterwards, let the family's devices connect before changing anything: what the hub wrote after the backup comes back from them, and the hub's change counter moves past it |
 
 Data directory: `keys.json` (device keys, owner-only), `log/` (change log), `hub/` (reminders
-sent, OAuth clients and refresh-token hashes, the capture reader, feed caches, invites waiting in
+sent, OAuth clients and refresh-token hashes, the capture reader, the assistant's provider and key
+in `assistant.json` and its usage in `assistant_usage.json`, feed caches, invites waiting in
 `invites.json`, the Web Push key and subscriptions in `push.json`), `notify.json` (optional
 reminder targets), `hub.lock` (one process at a time).
 
@@ -100,26 +101,94 @@ first (or the owner runs `den_hub open-linking` on the server), and the browser 
 
 ## MCP and OAuth
 
-`/mcp` is Streamable HTTP with JSON responses: `initialize` (2025-11-25, 2025-06-18,
-2025-03-26, 2024-11-05), `ping`, `tools/list` (den_actions' specs the token may use: its scopes,
-and what its member is allowed), `tools/call`, sessions by `Mcp-Session-Id`, `GET` answers 405.
-The tools, their confirmations and receipts are in
-[docs/hub-api.md, "Actions"](../../docs/hub-api.md#actions-everything-mcp-and-the-app-can-do);
-REST's `/api/v1/actions` runs the same ones with the same runner. Browser `Origin`s must be listed, or be the
-hub itself on an IP, `localhost`, `.local` name or the public URL (DNS-rebinding protection).
-A missing token gets `401` with `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource"`.
+`/mcp` is Streamable HTTP, for both eras of MCP on one endpoint:
 
-OAuth: `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`,
-`/oauth/register` (RFC 7591; 10 an hour per address, unused registrations forgotten after a
-day), `/oauth/authorize` (PKCE S256 required; holds the request in the hub, writing nothing to
-the family's log, and shows "Approve the client in the Den app", the host its sign-in returns
-to and a code; a parent's app lists it with `GET /api/v1/connections/requests`, admits it with
-`POST /api/v1/connections/requests/{id}`, which writes the pending connection, then approves
-that as before ([docs/hub-api.md](../../docs/hub-api.md#apps-asking-to-connect-oauth)); declined
-or 15 minutes without an answer redirects with `access_denied`), `/oauth/token` (authorization
-code with PKCE, refresh-token rotation with reuse detection). Access tokens last an hour and are
-stored only as hashes in the connection record; refresh tokens (90 days) only as hashes in
-`hub/oauth.json`.
+- **2026-07-28**, stateless: every request carries `io.modelcontextprotocol/protocolVersion` and
+  `.../clientCapabilities` in `params._meta`, and the `MCP-Protocol-Version`, `Mcp-Method` and
+  `Mcp-Name` headers (Base64 `=?base64?...?=` form allowed) must match the body, else
+  `400` with `-32020`; a version Den doesn't speak is `400` with `-32022` and the supported list;
+  an unknown method is `404`; a notification is `202`. No sessions (an `Mcp-Session-Id` is
+  ignored). `server/discover`; `ttlMs` and `cacheScope` on `server/discover` (public, an hour),
+  `tools/list`, `resources/list`, `resources/templates/list`, `prompts/list` (private, five
+  minutes) and `resources/read` (private, 0); results carry `resultType` and the server's name
+  in `_meta`. `subscriptions/listen` holds a server-sent event stream open: it acknowledges the
+  `resourceSubscriptions` the token may read and sends `notifications/resources/updated` when one
+  changes (list-changed notifications aren't offered; Den's lists don't change while it runs).
+- **2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05**: `initialize` opens a session kept by
+  `Mcp-Session-Id` (`DELETE` ends it), as before.
+
+`tools/list` shows den_actions' specs the token may use (its scopes, and what its member is
+allowed); `tools/call` runs them. A change that needs a yes (deleting a list, a whole series)
+asks through the client when a 2026-07-28 request declares `elicitation` (form): the result is
+`input_required` with one yes-or-no form, and its `requestState` is the runner's confirmation
+token, which stays on the hub, bound to the connection, the tool and this exact input, for ten
+minutes and one use; the client's retry with `inputResponses` runs it or says nothing changed.
+Other clients get the question as the tool's result and call again with `"confirm": "<token>"`.
+The tools, confirmations and receipts are in
+[docs/hub-api.md, "Actions"](../../docs/hub-api.md#actions-everything-mcp-and-the-app-can-do);
+REST's `/api/v1/actions` runs the same ones with the same runner.
+
+Resources, answered by the read actions as the token's member sees them (JSON):
+`den://today`, `den://week`, `den://family`, `den://lists`, `den://chores`, `den://points`, and
+the templates `den://lists/{list}`, `den://days/{date}`, `den://people/{person}/today`. Prompts,
+offered when the token may use every tool they name: `whats_today`, `plan_week`,
+`shopping_list` (`meals`, `list`), `chores_left`, `add_from_message` (`text`).
+
+Browser `Origin`s must be listed, or be the hub itself on an IP, `localhost`, `.local` name or
+the public URL (DNS-rebinding protection). A missing token gets `401` with
+`WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp",
+scope="read calendar chores lists points"`.
+
+OAuth: `/.well-known/oauth-protected-resource` (and `/mcp` after it),
+`/.well-known/oauth-authorization-server` (with `client_id_metadata_document_supported` and
+`authorization_response_iss_parameter_supported`), three ways to be a client:
+
+- **A client ID metadata document**, which MCP prefers: a `client_id` that is an https address
+  with a path is fetched (through the guarded client below, no redirects, at most 5 KB, kept as
+  its `Cache-Control` says, five minutes to a day) and must name itself, a `client_name` and its
+  `redirect_uris`; only public clients (`token_endpoint_auth_method` `none`).
+- **Registration** (`/oauth/register`, RFC 7591, kept for clients without documents; 10 an hour
+  per address, unused registrations forgotten after a day).
+- **A client a parent sets up** in the Den app for an assistant that can do neither (Alexa+):
+  `POST /api/v1/connections/clients` from a parent's own phone answers a `client_id` and
+  `client_secret` (shown once) with the addresses to enter beside them
+  ([docs/hub-api.md](../../docs/hub-api.md#apps-asking-to-connect-oauth)).
+
+`/oauth/authorize` needs PKCE S256 and holds the request in the hub, writing nothing to the
+family's log. It shows "Approve the client in the Den app", the host its sign-in returns to (and,
+when that is this computer, says any program here could be asking) and a code; a parent's app
+lists it with `GET /api/v1/connections/requests`, admits it with
+`POST /api/v1/connections/requests/{id}`, which writes the pending connection, then approves that
+as before; declined or 15 minutes without an answer redirects with `access_denied`. Redirect
+addresses match exactly, except loopback `http` ones, which match on any port (RFC 8252). A
+`resource` (RFC 8707) must be the hub or its `/mcp`, at `/oauth/authorize` and `/oauth/token`
+(`invalid_target` otherwise), and every redirect carries `iss`. `/oauth/token` does the
+authorization code with PKCE and refresh-token rotation with reuse detection. Access tokens last
+an hour and are stored only as hashes in the connection record; refresh tokens (90 days) only as
+hashes in `hub/oauth.json`. Which paths must be public for each assistant is in
+[docs/hosting.md](../../docs/hosting.md#connecting-ai-assistants).
+
+## Fetching what callers give the hub
+
+Calendar feeds and client metadata documents are addresses someone else chose, so the hub
+fetches them through `NetGuard`: each connection looks its host up once, refuses it when any
+answer is loopback, private, link-local, carrier-grade NAT, unique local IPv6, a cloud metadata
+address, multicast or reserved (IPv4 inside IPv6 is judged as IPv4), and connects to the address
+it checked, so a name can't answer differently between the check and the connection. Redirects
+are new connections, checked again. `DEN_FETCH_ALLOW` (addresses or CIDRs) lets the operator
+admit a calendar server on the home network. What the operator configures (Home Assistant,
+ntfy, the capture reader, the assistant's provider) isn't guarded.
+
+## The assistant through the hub
+
+The in-app assistant's model requests can go through the hub, so phones and the web app never
+hold a provider's key: a parent sets the provider and key (`PUT /api/v1/assistant`, or "use the
+capture key"), devices POST requests in the provider's own format to
+`/api/v1/assistant/model`, and the hub holds them to the family's rules (`family.assistant`: on
+or off, who may use it, a kid's daily questions, no photos for kids) and the month's budget
+(warns at 80%, stops at 100%) before forwarding them with the key. The key is in
+`hub/assistant.json` (owner-only); no conversation is kept and none is logged. See
+[docs/hub-api.md](../../docs/hub-api.md#the-assistant-the-key-stays-on-the-hub).
 
 ## Siri Shortcuts
 

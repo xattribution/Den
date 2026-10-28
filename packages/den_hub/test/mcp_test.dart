@@ -45,10 +45,17 @@ void main() {
       final (r, _) = await rpc(token, {'id': 1, 'method': 'initialize', 'params': {'protocolVersion': v}});
       expect(result(r)['protocolVersion'], v);
       expect((result(r)['serverInfo'] as Map)['name'], 'den-hub');
-      expect(result(r)['capabilities'], {'tools': {'listChanged': false}});
+      expect(result(r)['capabilities'], {
+        'tools': {'listChanged': false},
+        'resources': {'subscribe': false, 'listChanged': false},
+        'prompts': {'listChanged': false},
+      });
+      expect(result(r).containsKey('resultType'), isFalse, reason: 'earlier versions keep their shapes');
     }
     final (old, _) = await rpc(token, {'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '1999-01-01'}});
     expect(result(old)['protocolVersion'], '2025-11-25');
+    final (asksNew, _) = await rpc(token, {'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '2026-07-28'}});
+    expect(result(asksNew)['protocolVersion'], '2025-11-25', reason: 'initialize always means the session-based protocol');
     final session = await initialize(token);
     final (note, _) = await rpc(token, {'method': 'notifications/initialized'}, session: session);
     expect(note.status, 202);
@@ -65,7 +72,11 @@ void main() {
     final r = await f.call('POST', '/mcp', body: {'jsonrpc': '2.0', 'id': 1, 'method': 'ping'});
     expect(r.status, 401);
     expect(r.headers['www-authenticate'],
-        'Bearer resource_metadata="http://127.0.0.1:${f.hub.port}/.well-known/oauth-protected-resource"');
+        'Bearer resource_metadata="http://127.0.0.1:${f.hub.port}/.well-known/oauth-protected-resource/mcp", '
+        'scope="read calendar chores lists points"');
+    final bad = await f.call('POST', '/mcp', token: 'den_not_a_token', body: {'jsonrpc': '2.0', 'id': 1, 'method': 'ping'});
+    expect(bad.status, 401);
+    expect(bad.headers['www-authenticate'], endsWith(', error="invalid_token"'));
     final token = await f.token(scopes: {Scope.read}, label: 'Origin test');
     expect((await rpc(token, {'id': 1, 'method': 'ping'}, headers: {'origin': 'http://evil.example'})).$1.status, 403);
     final port = f.hub.port;
@@ -184,6 +195,11 @@ void main() {
     expect(event['assignees'], [f.id('Zoe'), f.id('Priya')]);
     final (unknown, _) = await rpc(token, {'id': 6, 'method': 'tools/call', 'params': {'name': 'nope'}}, session: session);
     expect((unknown.body['error'] as Map)['code'], -32602);
+    final (resource, _) = await rpc(token, {'id': 7, 'method': 'resources/read', 'params': {'uri': 'den://nowhere'}}, session: session);
+    expect((resource.body['error'] as Map)['code'], -32002, reason: 'resource not found, as earlier versions say it');
+    final (lists, _) = await rpc(token, {'id': 8, 'method': 'resources/read', 'params': {'uri': 'den://lists'}}, session: session);
+    expect(((lists.body['result'] as Map)['contents'] as List).single, containsPair('uri', 'den://lists'));
+    expect((lists.body['result'] as Map).containsKey('ttlMs'), isFalse);
   });
 
   test('stdio carries the same protocol, one JSON message per line', () async {

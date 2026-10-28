@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import 'edge.dart';
 import 'log.dart';
+import 'net_guard.dart';
 
 /// The hub's default port, shared by HTTP, WebSocket sync and MCP.
 const int defaultHubPort = 47733;
@@ -51,6 +52,9 @@ class HubConfig {
     this.mdns = true,
     this.log,
     this.httpClient,
+    this.fetchAllow = const [],
+    this.resolver,
+    this.fetchClient,
     this.feedInterval = const Duration(minutes: 30),
     this.reminderInterval = const Duration(minutes: 1),
     this.accessTokenLifetime = const Duration(hours: 1),
@@ -122,8 +126,22 @@ class HubConfig {
   /// Where the hub logs; default info and above to standard error.
   final HubLog? log;
 
-  /// HTTP client for calendar feeds and notifiers (tests pass their own).
+  /// HTTP client for what the operator configured: notifiers, the capture reader, the
+  /// assistant's provider (tests pass their own). Addresses callers give the hub (calendar
+  /// feeds, OAuth client metadata) go through [NetGuard] instead.
   final http.Client? httpClient;
+
+  /// Networks the hub may fetch callers' addresses from although they aren't on the public
+  /// internet (`DEN_FETCH_ALLOW`, addresses or CIDRs): a calendar server at home. Empty by
+  /// default, so a feed or a redirect can't reach the hub's own machine or network.
+  final List<IpNetwork> fetchAllow;
+
+  /// Looks host names up for those fetches; null is the system's resolver (tests pass a fake).
+  final HostResolver? resolver;
+
+  /// Replaces the guarded client for those fetches altogether: for tests that serve a client
+  /// metadata document from a fake https address. Null in real use.
+  final http.Client? fetchClient;
 
   /// How often calendar feeds are fetched.
   final Duration feedInterval;
