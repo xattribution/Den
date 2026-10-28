@@ -464,7 +464,7 @@ class Den {
     final id = familyId;
     if (id == null || family == null) throw const InvalidInput('There is no family yet');
     final fields = _cleanPatch(patch, {
-      'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'oversight',
+      'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'oversight', 'assistant',
       // One person's entry, `oversight.<memberId>`, so parents changing different people merge.
       for (final k in patch.keys) if (k.startsWith('oversight.')) k,
     });
@@ -651,6 +651,16 @@ class Den {
 
   /// The zone value [recording] keeps its lists of change ids under.
   static final Object _recorders = Object();
+
+  /// The zone value [attributed] keeps its origin under.
+  static final Object _origins = Object();
+
+  /// Runs [body] with every change this device commits from its zone marked as coming from
+  /// [origin] (`_from`, which History shows): what the in-app assistant changes while someone
+  /// talks to it reads "from the assistant". A removal carries no `_from`, and a change that
+  /// names its own origin keeps it.
+  Future<T> attributed<T>(CaptureOrigin origin, FutureOr<T> Function() body) =>
+      runZoned(() => Future<T>.sync(body), zoneValues: {_origins: origin});
 
   /// Runs [body] and returns what it returned with the ids of the changes this device committed
   /// while it ran: the changes an action made, for its receipt. Only writes made from [body]'s own
@@ -2896,19 +2906,22 @@ class Den {
     var counter = _counter;
     final acting = actor?.id;
     final via = thisDevice?.mode == DeviceMode.hub ? actingVia : null;
+    final zoned = Zone.current[_origins];
+    final origin = zoned is CaptureOrigin ? zoned : null;
     try {
       for (final d in drafts) {
         counter++;
         while (_mat.contains('$deviceId:$counter')) {
           counter++;
         }
+        final from = origin != null && d.fields['_deleted'] != true && !d.fields.containsKey('_from') ? origin.toJson() : null;
         final unsigned = Change(
           id: '$deviceId:$counter',
           space: d.space,
           hlc: d.hlc ?? _clock.next(),
           type: d.type,
           rid: d.rid,
-          fields: {...d.fields, '_via': ?via},
+          fields: {...d.fields, '_from': ?from, '_via': ?via},
           device: deviceId,
           actor: d.setsActor ? d.actor : acting,
           sig: '',

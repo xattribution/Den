@@ -100,8 +100,9 @@ enum RedemptionStatus { requested, approved, declined }
 
 enum DisplayLayout { today, week, month, lists, photos }
 
-/// What a capture read: the thing someone photographed, shared, said or typed.
-enum CaptureKind { photo, screenshot, pdf, email, message, link, voice, typed }
+/// What a capture read: the thing someone photographed, shared, said or typed; or, for
+/// [assistant], that the in-app assistant made the change while someone talked to it.
+enum CaptureKind { photo, screenshot, pdf, email, message, link, voice, typed, assistant }
 
 /// Where a record added by capture came from, written as `_from` on the change that made it:
 /// what was read and, when a model read it, which one ("On this phone", "Claude").
@@ -203,6 +204,81 @@ class Family extends RecordView {
   /// Whether parents can read this member's "Just me" items. Defaults to true.
   bool parentsSeePrivate(String memberId) =>
       (rec.map('oversight')[memberId] as Map?)?['parentsSeePrivate'] as bool? ?? true;
+
+  /// Who may use the in-app assistant; off until a parent turns it on.
+  AssistantPolicy get assistant => AssistantPolicy.parse(rec.map('assistant'));
+}
+
+/// The family's rules for the in-app assistant (`family.assistant`), set by a parent on their
+/// own device. Off until a parent turns it on; then parents may use it, and anyone else only
+/// when a parent switched it on for them, never a little kid or a pre-reader. The hub's model
+/// proxy holds kids to [kidDailyLimit] requests a day and the family to [budgetCents] a month.
+@immutable
+class AssistantPolicy {
+  const AssistantPolicy({
+    this.enabled = false,
+    this.members = const {},
+    this.kidDailyLimit = defaultKidDailyLimit,
+    this.budgetCents = defaultBudgetCents,
+  });
+
+  /// Requests a day for a kid, unless a parent sets another number.
+  static const int defaultKidDailyLimit = 20;
+
+  /// A month's budget in US cents ($5), unless a parent sets another.
+  static const int defaultBudgetCents = 500;
+
+  /// The policy stored as [raw]; anything missing or malformed is its default.
+  static AssistantPolicy parse(Map<String, Object?> raw) {
+    final members = raw['members'];
+    final limit = raw['kidDailyLimit'];
+    final budget = raw['budgetCents'];
+    return AssistantPolicy(
+      enabled: raw['enabled'] == true,
+      members: {if (members is List) ...members.whereType<String>()},
+      kidDailyLimit: limit is int ? limit : defaultKidDailyLimit,
+      budgetCents: budget is int ? budget : defaultBudgetCents,
+    );
+  }
+
+  /// Whether a parent turned the assistant on.
+  final bool enabled;
+
+  /// Who besides parents may use it (member ids).
+  final Set<String> members;
+
+  /// Requests a kid may make in a day.
+  final int kidDailyLimit;
+
+  /// The family's monthly budget, in US cents.
+  final int budgetCents;
+
+  /// Whether [m] may use the assistant.
+  bool allows(Member m) {
+    if (!enabled) return false;
+    if (m.isParent) return true;
+    if (m.tier == Tier.preReader || m.tier == Tier.little) return false;
+    return members.contains(m.id);
+  }
+
+  /// As `family.assistant` stores it.
+  Map<String, Object?> toJson() => {
+        'enabled': enabled,
+        'members': [...members]..sort(),
+        'kidDailyLimit': kidDailyLimit,
+        'budgetCents': budgetCents,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      other is AssistantPolicy &&
+      other.enabled == enabled &&
+      other.kidDailyLimit == kidDailyLimit &&
+      other.budgetCents == budgetCents &&
+      const SetEquality<String>().equals(other.members, members);
+
+  @override
+  int get hashCode => Object.hash(enabled, kidDailyLimit, budgetCents, Object.hashAllUnordered(members));
 }
 
 class SignIn {

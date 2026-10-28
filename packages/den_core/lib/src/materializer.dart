@@ -182,7 +182,7 @@ String verbFor(Change c, Map<String, Object?> before, bool created) {
       ];
       if (steps.isNotEmpty) return steps.any((v) => v != null) ? 'checked' : 'unchecked';
     case RecordType.item:
-      if (!created && f.containsKey('checked') && f.keys.every((k) => const {'checked', 'checkedBy', '_via'}.contains(k))) {
+      if (!created && f.containsKey('checked') && f.keys.every((k) => const {'checked', 'checkedBy', '_via', '_from'}.contains(k))) {
         return f['checked'] == true ? 'checked' : 'unchecked';
       }
     case RecordType.device:
