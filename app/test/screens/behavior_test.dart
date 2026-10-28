@@ -98,7 +98,7 @@ String _id(Den den, String name) => den.members.firstWhere((m) => m.name == name
 
 void main() {
   group('Today', () {
-    testWidgets('Take it takes the leg nobody is driving, for that day (B2)', (tester) async {
+    testWidgets('I\'ll drive takes the leg nobody is driving, for that day (B2)', (tester) async {
       late int start;
       final state = await _family(tester, (den) async {
         start = den.dayStart(den.todayDate()) + 18 * _hour;
@@ -113,9 +113,9 @@ void main() {
         await den.claimRide(piano, occurrence: start, leg: 'to', driver: _id(den, 'Priya'));
       });
       await pumpScreen(tester, const TodayScreen(), state: state, size: _tall);
-      final line = find.widgetWithText(AttentionLine, 'Nobody is picking up Leo from Piano');
-      expect(line, findsOneWidget);
-      await _tapAndWait(tester, find.descendant(of: line, matching: find.text('Take it')));
+      final line = find.ancestor(of: findWords('Piano, 7:00 PM'), matching: find.byType(ActionRow));
+      expect(find.descendant(of: line, matching: findWords('Nobody is picking up Leo')), findsOneWidget);
+      await _tapAndWait(tester, find.descendant(of: line, matching: find.text('I\'ll drive')));
       final rides = state.den.occurrences(start, start + _hour).firstWhere((o) => o.title == 'Piano').rides;
       expect({for (final r in rides) r.leg: r.driver}, {'to': _id(state.den, 'Priya'), 'from': _id(state.den, 'Alex')});
       expect(state.den.events.firstWhere((e) => e.title == 'Piano').rides.every((r) => r.driver == null), isTrue,
@@ -127,8 +127,8 @@ void main() {
             'grants': [Grant.lists],
           }));
       await pumpScreen(tester, const TodayScreen(), state: noGrant, size: _tall);
-      expect(find.text('Nobody is driving Zoe to Swim lesson'), findsOneWidget);
-      expect(find.text('Take it'), findsNothing);
+      expect(findWords('Zoe, nobody driving yet'), findsOneWidget);
+      expect(find.text('I\'ll drive'), findsNothing);
       final swim = noGrant.den.today().events.firstWhere((o) => o.title == 'Swim lesson');
       await pumpScreen(tester, EventDetailScreen(eventId: swim.event.id, at: swim.start), state: noGrant, size: _tall);
       expect(find.text('Nobody is driving'), findsOneWidget);
@@ -136,7 +136,7 @@ void main() {
 
       final withGrant = await _kidPhone(tester, 'Maya');
       await pumpScreen(tester, const TodayScreen(), state: withGrant, size: _tall);
-      expect(find.text('Take it'), findsOneWidget, reason: 'a teen with the events grant may drive');
+      expect(find.text('I\'ll drive'), findsWidgets, reason: 'a teen with the events grant may drive');
     });
 
     testWidgets('two of one person\'s events at once warn once; an event for everyone doesn\'t (B13)', (tester) async {
@@ -148,17 +148,20 @@ void main() {
         await den.addEvent(title: 'Family dinner', start: six, end: six + _hour);
       });
       await pumpScreen(tester, const TodayScreen(), state: state, size: _tall);
-      expect(find.textContaining('at the same time'), findsOneWidget);
-      expect(find.text('Leo has Piano and Art at the same time'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate((w) => w is Text && (w.data ?? '').replaceAll(RegExp('[\u00a0\u202f]'), ' ').contains('at the same time')),
+        findsOneWidget,
+      );
+      expect(findWords('Leo has Piano and Art at the same time'), findsOneWidget);
     });
 
     testWidgets('with points off, chores show no stars and Add offers no Points (B12)', (tester) async {
       final state = await _family(tester, (den) => den.updateFamily({'pointsEnabled': false}));
       await pumpScreen(tester, const TodayScreen(), state: state, size: _tall);
       expect(find.text('Make bed'), findsWidgets);
-      expect(find.byType(StarCount), findsNothing);
+      expect(find.byType(Star), findsNothing);
       await _app(tester, state, '/today');
-      await tester.tap(find.text('Add'));
+      await tester.tap(find.byTooltip('Add'));
       await tester.pumpAndSettle();
       expect(find.text('Event'), findsOneWidget);
       expect(find.text('Points'), findsNothing);
@@ -175,7 +178,7 @@ void main() {
       expect(find.byType(AddItemRow), findsNothing);
       expect(find.byType(Dismissible), findsNothing);
       await _app(tester, state, '/today');
-      await tester.tap(find.text('Add'));
+      await tester.tap(find.byTooltip('Add'));
       await tester.pumpAndSettle();
       expect(find.text('Event'), findsOneWidget);
       expect(find.text('Grocery item'), findsNothing);

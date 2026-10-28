@@ -155,7 +155,10 @@ class _DenPressableState extends State<DenPressable> with SingleTickerProviderSt
   /// The platform's touch slop: past this a press becomes a scroll.
   static const double _slop = 18;
 
-  late final AnimationController _scale = AnimationController.unbounded(vsync: this, value: 1);
+  /// Made the first time something presses with [DenPressable.scale] on; rows that never scale
+  /// never make one.
+  AnimationController? _scaleController;
+  AnimationController get _scale => _scaleController ??= AnimationController.unbounded(vsync: this, value: 1);
   int? _pointer;
   Offset? _downAt;
   bool _pressed = false;
@@ -167,7 +170,7 @@ class _DenPressableState extends State<DenPressable> with SingleTickerProviderSt
 
   @override
   void dispose() {
-    _scale.dispose();
+    _scaleController?.dispose();
     super.dispose();
   }
 
@@ -175,7 +178,7 @@ class _DenPressableState extends State<DenPressable> with SingleTickerProviderSt
     if (_pressed == pressed) return;
     setState(() => _pressed = pressed);
     if (!widget.scale || _reduced) {
-      _scale.value = 1;
+      _scaleController?.value = 1;
     } else {
       _scale.springTo(pressed ? DenMotion.pressScale : 1);
     }

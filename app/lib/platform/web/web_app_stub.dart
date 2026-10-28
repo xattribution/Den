@@ -15,6 +15,8 @@ Future<void> unsubscribe() async {}
 
 Future<String> share(String text) async => 'failed';
 
+Future<String> paste() async => '{"kind":"none"}';
+
 Future<String> copy(String text) async => 'failed';
 
 void listen(void Function(String route) onOpen) {}

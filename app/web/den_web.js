@@ -270,6 +270,47 @@
     return copy(text);
   }
 
+  /**
+   * What's on the clipboard, for Add's Paste: an image (a screenshot of a flyer) or text, as
+   * JSON: {"kind":"image","type":"image/png","data":"<base64>"}, {"kind":"text","text":"..."},
+   * or {"kind":"none"} when there's nothing Den can read or the browser said no. Call it
+   * straight from a tap: browsers allow reading the clipboard only then.
+   */
+  function paste() {
+    var none = JSON.stringify({ kind: 'none' });
+    var clip = nav.clipboard;
+    if (!clip) return Promise.resolve(none);
+    function text() {
+      if (!clip.readText) return none;
+      return clip.readText().then(
+        function (t) { return t && t.trim() ? JSON.stringify({ kind: 'text', text: t }) : none; },
+        function () { return none; }
+      );
+    }
+    if (!clip.read) return Promise.resolve(text());
+    return clip.read().then(function (items) {
+      for (var i = 0; i < items.length; i++) {
+        var types = items[i].types || [];
+        for (var j = 0; j < types.length; j++) {
+          if (types[j].indexOf('image/') === 0) {
+            var type = types[j];
+            return items[i].getType(type).then(function (blob) {
+              return blob.arrayBuffer().then(function (buffer) {
+                var bytes = new Uint8Array(buffer);
+                var binary = '';
+                for (var k = 0; k < bytes.length; k += 0x8000) {
+                  binary += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000));
+                }
+                return JSON.stringify({ kind: 'image', type: type, data: btoa(binary) });
+              });
+            });
+          }
+        }
+      }
+      return text();
+    }, function () { return text(); });
+  }
+
   // ------------------------------------------------------------------ safe areas
 
   /** [top, right, bottom, left] in CSS pixels. */
@@ -317,6 +358,7 @@
     unsubscribe: unsubscribe,
     share: share,
     copy: copy,
+    paste: paste,
     insets: insets,
     reload: function () { window.location.reload(); },
   };

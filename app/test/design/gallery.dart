@@ -1,14 +1,14 @@
 /// The design gallery: the foundation drawn the way the approved canvas draws it, so golden
 /// screenshots can be checked against the canvas side by side (gallery_test.dart). Everything
-/// here uses only the tokens, the theme, the motion widgets and the picture pack.
+/// here uses only the tokens, the theme, the motion widgets, the picture pack and the shared
+/// pieces in design/widgets.
 library;
 
-import 'package:den_app/design/avatar.dart';
 import 'package:den_app/design/layout.dart';
 import 'package:den_app/design/motion.dart';
 import 'package:den_app/design/pictures.dart';
 import 'package:den_app/design/tokens.dart';
-import 'package:den_app/design/widgets.dart' show Star;
+import 'package:den_app/design/widgets.dart';
 import 'package:den_app/design/words.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
@@ -29,68 +29,9 @@ const leo = Person('Leo', PersonColor.grass);
 Widget face(Person p, double size) =>
     DenAvatar.initial(p.name, color: p.color.color, size: size, semanticLabel: p.name);
 
-/// A section: its heading, with a count or a quiet action on the right, over one grouped card.
-class Section extends StatelessWidget {
-  const Section({super.key, required this.title, this.trailing, required this.child, this.carded = true});
-
-  final String title;
-  final Widget? trailing;
-  final Widget child;
-  final bool carded;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: DenLayout.headingInset),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Expanded(child: Semantics(header: true, child: Text(title, style: context.text.section(c.ink)))),
-              ?trailing,
-            ],
-          ),
-        ),
-        const SizedBox(height: DenLayout.headingGap),
-        if (carded) GroupCard(child: child) else child,
-      ],
-    );
-  }
-}
-
-/// One grouped section's card: the card color, 20 corners, no border, no shadow.
-class GroupCard extends StatelessWidget {
-  const GroupCard({super.key, required this.child, this.padding = const EdgeInsets.symmetric(horizontal: 16)});
-
-  final Widget child;
-  final EdgeInsets padding;
-
-  @override
-  Widget build(BuildContext context) => DecoratedBox(
-        decoration: BoxDecoration(color: context.colors.card, borderRadius: BorderRadius.circular(Radii.section)),
-        child: Padding(padding: padding, child: child),
-      );
-}
-
-/// A divider inside a section, inset to the text.
-class Rule extends StatelessWidget {
-  const Rule({super.key, this.indent = 0});
-
-  final double indent;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: EdgeInsets.only(left: indent),
-        child: SizedBox(height: 1, child: ColoredBox(color: context.colors.line)),
-      );
-}
-
 /// Today, as Main.dc.html draws its top: the greeting, Needs you, today's events, chores and
-/// the grocery bar, over the tab bar.
+/// the grocery bar, over the tab bar. Built from the shared pieces in design/widgets, the same
+/// ones the app's screens use.
 class TodaySample extends StatelessWidget {
   const TodaySample({super.key, this.tabBar = true});
 
@@ -99,30 +40,12 @@ class TodaySample extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final t = context.text;
     final page = SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 24, DenLayout.gutter, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: DenLayout.headingInset),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(keepUnits('Wednesday, October 28'), style: t.meta(c.ink2)),
-                      const SizedBox(height: 2),
-                      Text('Good morning', style: t.screenTitle(c.ink)),
-                    ],
-                  ),
-                ),
-                face(mom, 44),
-              ],
-            ),
-          ),
+          PageHeader(overline: keepUnits('Wednesday, October 28'), title: 'Good morning', trailing: face(mom, 44)),
           const SizedBox(height: DenLayout.sectionGap),
           const NeedsYouSample(),
           const SizedBox(height: DenLayout.sectionGap),
@@ -146,84 +69,47 @@ class NeedsYouSample extends StatelessWidget {
   const NeedsYouSample({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Section(
-      title: 'Needs you',
-      trailing: Text('2 things', style: context.text.meta(c.ink2)),
-      child: const Column(
-        children: [
-          _Request(person: leo, title: 'Nobody is driving Leo', detail: 'Soccer, 3:30 PM at Field 4', action: 'I’ll drive'),
-          Rule(indent: 52),
-          _Request(person: mia, title: 'Mia wants movie night', detail: 'Costs 40 stars, she has 52', action: 'Approve'),
-        ],
-      ),
-    );
-  }
-}
-
-/// A "Needs you" row: their picture, one sentence, and the action under it.
-class _Request extends StatelessWidget {
-  const _Request({required this.person, required this.title, required this.detail, required this.action});
-
-  final Person person;
-  final String title;
-  final String detail;
-  final String action;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final t = context.text;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          face(person, 40),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(tidy(title), style: t.rowTitle(c.ink)),
-                const SizedBox(height: 2),
-                Text(tidy(detail), style: t.meta(c.ink2)),
-                const SizedBox(height: 12),
-                FilledButton(onPressed: () {}, child: Text(action)),
-              ],
+  Widget build(BuildContext context) => DenSection(
+        title: 'Needs you',
+        trailing: const SectionCount('2 things'),
+        child: Column(
+          children: ruled([
+            ActionRow(
+              leading: face(leo, 40),
+              title: 'Nobody is driving Leo',
+              detail: 'Soccer, 3:30 PM at Field 4',
+              action: FilledButton(onPressed: () {}, child: const Text('I’ll drive')),
             ),
-          ),
-        ],
-      ),
-    );
-  }
+            ActionRow(
+              leading: face(mia, 40),
+              title: 'Mia wants movie night',
+              detail: 'Costs 40 stars, she has 52',
+              action: FilledButton(onPressed: () {}, child: const Text('Approve')),
+            ),
+          ], indent: RowRule.afterFace),
+        ),
+      );
 }
 
 class EventsSample extends StatelessWidget {
   const EventsSample({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Section(
-      title: 'Today',
-      trailing: Text('Week', style: context.text.meta(c.ink2).bold),
-      child: const Column(
-        children: [
-          _EventRow(time: '7:30 AM', title: 'School drop-off', who: 'Dad', people: [dad]),
-          Rule(),
-          _EventRow(time: '9:00 AM', title: 'Dentist', who: 'Mia and Mom', people: [mia, mom]),
-          Rule(),
-          _EventRow(time: '3:30 PM', title: 'Soccer at Field 4', who: 'Leo, nobody driving yet', people: [leo]),
-          Rule(),
-          _EventRow(time: '6:00 PM', title: 'Dinner at Grandma’s', who: 'Everyone', people: [mom, dad, mia, leo]),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => DenSection(
+        title: 'Today',
+        trailing: SectionLink('Week', onTap: () {}),
+        child: Column(
+          children: ruled(const [
+            _EventRow(time: '7:30 AM', title: 'School drop-off', who: 'Dad', people: [dad]),
+            _EventRow(time: '9:00 AM', title: 'Dentist', who: 'Mia and Mom', people: [mia, mom]),
+            _EventRow(time: '3:30 PM', title: 'Soccer at Field 4', who: 'Leo, nobody driving yet', people: [leo]),
+            _EventRow(time: '6:00 PM', title: 'Dinner at Grandma’s', who: 'Everyone', people: [mom, dad, mia, leo]),
+          ]),
+        ),
+      );
 }
 
+/// The canvas's event row, from plain words (the app's EventLine reads an occurrence).
 class _EventRow extends StatelessWidget {
   const _EventRow({required this.time, required this.title, required this.who, required this.people});
 
@@ -246,8 +132,7 @@ class _EventRow extends StatelessWidget {
         Text(tidy(who), style: t.meta(c.ink2)),
       ],
     );
-    // Past 135 % text the time goes above the title instead of squeezing it; below that the
-    // time column fits the longest time at the current size.
+    // Past 135 % text the time goes above the title instead of squeezing it.
     final stacked = scaler.scale(1) > 1.35;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -267,44 +152,7 @@ class _EventRow extends StatelessWidget {
             Expanded(child: words),
           ],
           const SizedBox(width: 8),
-          _Faces(people),
-        ],
-      ),
-    );
-  }
-}
-
-/// Small overlapping faces, each separated by a ring of the card color.
-class _Faces extends StatelessWidget {
-  const _Faces(this.people);
-
-  final List<Person> people;
-
-  static const double _size = 26;
-  static const double _ring = 2;
-  static const double _step = _size - 6;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    const outer = _size + _ring * 2;
-    return SizedBox(
-      width: outer + _step * (people.length - 1),
-      height: outer,
-      child: Stack(
-        children: [
-          for (final (i, p) in people.indexed)
-            Positioned(
-              left: _step * i,
-              top: 0,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: c.card, width: _ring),
-                ),
-                child: Padding(padding: const EdgeInsets.all(_ring), child: face(p, _size)),
-              ),
-            ),
+          FaceStack(faces: [for (final p in people) face(p, 26)]),
         ],
       ),
     );
@@ -315,23 +163,19 @@ class ChoresSample extends StatelessWidget {
   const ChoresSample({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Section(
-      title: 'Chores',
-      trailing: Text('2 of 5 done', style: context.text.meta(c.ink2)),
-      child: const Padding(
-        padding: EdgeInsets.symmetric(vertical: 4),
-        child: Column(
-          children: [
-            _KidChores(person: mia, chores: [('Dishes', 2, false), ('Feed the cat', 1, true)]),
-            Rule(),
-            _KidChores(person: leo, chores: [('Make bed', 1, true), ('Trash out', 1, false), ('Read 20 min', 2, false)]),
-          ],
+  Widget build(BuildContext context) => DenSection(
+        title: 'Chores',
+        trailing: const SectionCount('2 of 5 done'),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Column(
+            children: ruled(const [
+              _KidChores(person: mia, chores: [('Dishes', 2, false), ('Feed the cat', 1, true)]),
+              _KidChores(person: leo, chores: [('Make bed', 1, true), ('Trash out', 1, false), ('Read 20 min', 2, false)]),
+            ]),
+          ),
         ),
-      ),
-    );
-  }
+      );
 }
 
 class _KidChores extends StatelessWidget {
@@ -354,7 +198,7 @@ class _KidChores extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   for (final (title, stars, done) in chores)
-                    ChoreChip(title: title, stars: stars, done: done, color: person.color.color),
+                    CheckPill(label: title, stars: stars, done: done, color: person.color.color, onCheck: () {}, onOpen: () {}),
                 ],
               ),
             ),
@@ -363,112 +207,15 @@ class _KidChores extends StatelessWidget {
       );
 }
 
-/// A chore on Today: a pill with a check ring in the person's color that fills when done.
-class ChoreChip extends StatelessWidget {
-  const ChoreChip({super.key, required this.title, required this.stars, required this.done, required this.color});
-
-  final String title;
-  final int stars;
-  final bool done;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final t = context.text;
-    return DenPressable(
-      onTap: () {},
-      haptic: true,
-      toggled: done,
-      color: c.card,
-      shape: StadiumBorder(side: BorderSide(color: c.line, width: 1.5)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: Targets.adult),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 4, 14, 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: done ? color : null,
-                  border: Border.all(color: color, width: 2),
-                ),
-                child: SizedBox.square(
-                  dimension: 26,
-                  child: done ? Icon(PhosphorIconsBold.check, size: 16, color: c.onMarker) : null,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  title,
-                  style: t.control(done ? c.ink2 : c.ink).copyWith(
-                        decoration: done ? TextDecoration.lineThrough : null,
-                        decorationColor: c.ink2,
-                      ),
-                ),
-              ),
-              if (stars > 0) ...[
-                const SizedBox(width: 6),
-                Text('$stars', style: t.meta(c.ink2)),
-                const SizedBox(width: 2),
-                const Star(size: 13),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class GrocerySample extends StatelessWidget {
   const GrocerySample({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Section(
-      title: 'Groceries',
-      trailing: Text(keepUnits('14 items'), style: context.text.meta(c.ink2).bold),
-      carded: false,
-      child: Row(
-        children: [
-          const Expanded(child: TextField(decoration: InputDecoration(hintText: 'Add to groceries'))),
-          const SizedBox(width: 8),
-          RoundButton(icon: PhosphorIconsBold.plus, label: 'Add to groceries', fill: c.primary, color: c.onPrimary),
-        ],
-      ),
-    );
-  }
-}
-
-/// A round icon button: Add (ink) or More (card).
-class RoundButton extends StatelessWidget {
-  const RoundButton({
-    super.key,
-    required this.icon,
-    required this.label,
-    required this.fill,
-    required this.color,
-    this.size = 52,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color fill;
-  final Color color;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) => DenPressable(
-        onTap: () {},
-        color: fill,
-        shape: const CircleBorder(),
-        semanticLabel: label,
-        child: SizedBox.square(dimension: size, child: Icon(icon, size: size * 0.45, color: color)),
+  Widget build(BuildContext context) => DenSection(
+        title: 'Groceries',
+        trailing: SectionLink('14 items', onTap: () {}),
+        carded: false,
+        child: InlineAdd(hint: 'Add to groceries', onAdd: (_) async => true),
       );
 }
 
@@ -477,53 +224,18 @@ class TabBarSample extends StatelessWidget {
   const TabBarSample({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return DecoratedBox(
-      decoration: BoxDecoration(color: c.bar, border: Border(top: BorderSide(color: c.line))),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 6, 8, 28),
-        child: MediaQuery.withClampedTextScaling(
-          maxScaleFactor: 1.35,
-          child: Row(
-            children: [
-              const Expanded(child: _Tab(icon: PhosphorIconsBold.house, label: 'Today', selected: true)),
-              const Expanded(child: _Tab(icon: PhosphorIconsRegular.calendarBlank, label: 'Calendar')),
-              Expanded(
-                child: Center(
-                  child: RoundButton(icon: PhosphorIconsBold.plus, label: 'Add', fill: c.primary, color: c.onPrimary),
-                ),
-              ),
-              const Expanded(child: _Tab(icon: PhosphorIconsRegular.checkCircle, label: 'Chores')),
-              const Expanded(child: _Tab(icon: PhosphorIconsRegular.listBullets, label: 'Lists')),
-            ],
-          ),
+  Widget build(BuildContext context) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(padding: const EdgeInsets.only(bottom: 28)),
+        child: DenTabBar(
+          onAdd: () {},
+          places: [
+            NavPlace(label: 'Today', icon: PhosphorIconsRegular.house, selectedIcon: PhosphorIconsBold.house, selected: true, onTap: () {}),
+            NavPlace(label: 'Calendar', icon: PhosphorIconsRegular.calendarBlank, selectedIcon: PhosphorIconsBold.calendarBlank, onTap: () {}),
+            NavPlace(label: 'Chores', icon: PhosphorIconsRegular.checkCircle, selectedIcon: PhosphorIconsBold.checkCircle, onTap: () {}),
+            NavPlace(label: 'Lists', icon: PhosphorIconsRegular.listBullets, selectedIcon: PhosphorIconsBold.listBullets, onTap: () {}),
+          ],
         ),
-      ),
-    );
-  }
-}
-
-class _Tab extends StatelessWidget {
-  const _Tab({required this.icon, required this.label, this.selected = false});
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final color = selected ? c.ink : c.ink3;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 26, color: color),
-        const SizedBox(height: 2),
-        Text(label, style: context.text.tab(color, selected: selected), maxLines: 1, softWrap: false),
-      ],
-    );
-  }
+      );
 }
 
 /// The type ramp, buttons, chips, fields and switches, each with its spec.
@@ -552,7 +264,7 @@ class ControlsSample extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Section(
+            DenSection(
               title: 'Type',
               child: Padding(
                 padding: const EdgeInsets.only(top: 14),
@@ -585,7 +297,7 @@ class ControlsSample extends StatelessWidget {
               ),
             ),
             const SizedBox(height: DenLayout.sectionGap),
-            Section(
+            DenSection(
               title: 'Buttons',
               carded: false,
               child: Column(
@@ -598,7 +310,7 @@ class ControlsSample extends StatelessWidget {
                     children: [
                       FilledButton(onPressed: () {}, child: const Text('I’ll drive')),
                       OutlinedButton(onPressed: () {}, child: const Text('Today')),
-                      TextButton(onPressed: () {}, child: const Text('Undo')),
+                      UndoButton(onTap: () {}),
                       const FilledButton(onPressed: null, child: Text('Add')),
                     ],
                   ),
@@ -608,10 +320,11 @@ class ControlsSample extends StatelessWidget {
                     runSpacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      RoundButton(icon: PhosphorIconsBold.plus, label: 'Add', fill: c.primary, color: c.onPrimary),
+                      RoundButton(icon: PhosphorIconsBold.plus, label: 'Add', onTap: () {}),
                       RoundButton(
                         icon: PhosphorIconsBold.dotsThree,
                         label: 'More',
+                        onTap: () {},
                         fill: c.card,
                         color: c.ink,
                         size: Targets.adult,
@@ -628,29 +341,28 @@ class ControlsSample extends StatelessWidget {
               ),
             ),
             const SizedBox(height: DenLayout.sectionGap),
-            Section(
+            DenSection(
               title: 'Chips',
               carded: false,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Wrap(
+                  Wrap(
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      CategoryChip(name: 'Animals', selected: true),
-                      CategoryChip(name: 'Critters'),
-                      CategoryChip(name: 'Snacks'),
+                      TagChip(label: 'Animals', selected: true, onTap: () {}),
+                      TagChip(label: 'Critters', selected: false, onTap: () {}),
+                      TagChip(label: 'Snacks', selected: false, onTap: () {}),
                     ],
                   ),
                   const SizedBox(height: 10),
-                  const Wrap(
+                  Wrap(
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      _PersonChip(person: mia, selected: true),
-                      _PersonChip(person: leo),
-                      _PersonChip(person: dad),
+                      for (final (p, chosen) in [(mia, true), (leo, false), (dad, false)])
+                        PersonPill(face: face(p, 32), name: p.name, selected: chosen, onTap: () {}),
                     ],
                   ),
                   const SizedBox(height: 10),
@@ -660,8 +372,8 @@ class ControlsSample extends StatelessWidget {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        ChoreChip(title: 'Dishes', stars: 2, done: false, color: mia.color.color),
-                        ChoreChip(title: 'Feed the cat', stars: 1, done: true, color: mia.color.color),
+                        CheckPill(label: 'Dishes', stars: 2, done: false, color: mia.color.color, onCheck: () {}),
+                        CheckPill(label: 'Feed the cat', stars: 1, done: true, color: mia.color.color, onCheck: () {}),
                       ],
                     ),
                   ),
@@ -669,91 +381,31 @@ class ControlsSample extends StatelessWidget {
               ),
             ),
             const SizedBox(height: DenLayout.sectionGap),
-            const Section(
+            DenSection(
               title: 'Fields and switches',
               carded: false,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  TextField(decoration: InputDecoration(hintText: 'Add to groceries')),
-                  SizedBox(height: 10),
+                  const TextField(decoration: InputDecoration(hintText: 'Add to groceries')),
+                  const SizedBox(height: 10),
                   GroupCard(
                     child: Column(
-                      children: [
+                      children: ruled(const [
                         _SwitchRow(label: 'Leo can add events', value: true),
-                        Rule(),
                         _SwitchRow(label: 'Mia asks before adding', value: false),
-                      ],
+                      ]),
                     ),
                   ),
-                  SizedBox(height: 10),
-                  Align(alignment: Alignment.centerLeft, child: _Segmented(options: ['Week', 'Day'], selected: 0)),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: DenSegmented<int>(options: const {0: 'Week', 1: 'Day'}, value: 0, onChanged: (_) {}),
+                  ),
                 ],
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The picker's category chip: ink when chosen, the card color otherwise.
-class CategoryChip extends StatelessWidget {
-  const CategoryChip({super.key, required this.name, this.selected = false});
-
-  final String name;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return DenPressable(
-      onTap: () {},
-      selected: selected,
-      color: selected ? c.primary : c.card,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 40),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Center(
-            widthFactor: 1,
-            child: Text(name, style: context.text.meta(selected ? c.onPrimary : c.ink).bold),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A calendar filter: their face and name; chosen has an ink outline and a bold name.
-class _PersonChip extends StatelessWidget {
-  const _PersonChip({required this.person, this.selected = false});
-
-  final Person person;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final t = context.text;
-    return DenPressable(
-      onTap: () {},
-      selected: selected,
-      color: c.card,
-      shape: StadiumBorder(side: BorderSide(color: selected ? c.ink : c.line, width: 1.5)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: Targets.adult),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(6, 4, 16, 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              face(person, 32),
-              const SizedBox(width: 8),
-              Text(person.name, style: selected ? t.control(c.ink).bold : t.control(c.ink)),
-            ],
-          ),
         ),
       ),
     );
@@ -776,49 +428,6 @@ class _SwitchRow extends StatelessWidget {
           Expanded(child: Text(label, style: context.text.rowTitle(c.ink))),
           Switch(value: value, onChanged: (_) {}),
         ],
-      ),
-    );
-  }
-}
-
-/// A segmented control: a fill-colored track with the chosen segment in ink.
-class _Segmented extends StatelessWidget {
-  const _Segmented({required this.options, required this.selected});
-
-  final List<String> options;
-  final int selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return DecoratedBox(
-      decoration: ShapeDecoration(shape: const StadiumBorder(), color: c.fill),
-      child: Padding(
-        padding: const EdgeInsets.all(4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final (i, o) in options.indexed)
-              DenPressable(
-                onTap: () {},
-                selected: i == selected,
-                color: i == selected ? c.primary : null,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 36, minWidth: 72),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Center(
-                      widthFactor: 1,
-                      child: Text(
-                        o,
-                        style: i == selected ? context.text.label(c.onPrimary) : context.text.control(c.ink2),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
       ),
     );
   }
@@ -1071,7 +680,7 @@ class PickerSheet extends StatelessWidget {
               children: [
                 for (final (i, g) in DenPictures.groups.indexed) ...[
                   if (i > 0) const SizedBox(width: 8),
-                  CategoryChip(name: g.name, selected: i == 0),
+                  TagChip(label: g.name, selected: i == 0, onTap: () {}),
                 ],
               ],
             ),

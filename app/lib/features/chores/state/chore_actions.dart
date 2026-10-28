@@ -3,6 +3,22 @@ import 'package:flutter/widgets.dart';
 
 import '../../../app/actions.dart';
 import '../../../app/den_scope.dart';
+import '../../../app/family_reads.dart';
+
+/// Whether whoever is acting may check off a chore that is [owner]'s that day (null: anyone's).
+bool canCheckChore(FamilyReads app, String? owner) {
+  final mine = owner == null || owner == app.me?.id;
+  return app.allows(mine ? DenAction.completeOwnChore : DenAction.completeAnyChore);
+}
+
+/// Whether whoever is acting may hand [day] to someone else: kids only their own chores.
+bool canSwap(FamilyReads app, ChoreDay day) {
+  if (!app.allows(DenAction.swapChore)) return false;
+  final me = app.me;
+  if (me == null) return false;
+  if (me.isKid || me.role == Role.guest) return day.owner == me.id;
+  return true;
+}
 
 /// Every change the chores screens make (and Today, the wall and the kids' screens make to
 /// chores), each one a den_actions action: the hub's API, MCP and the assistant offer the very
