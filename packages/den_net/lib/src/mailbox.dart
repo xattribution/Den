@@ -117,6 +117,7 @@ class MailboxRound {
     required this.skipped,
     this.keysStored = 0,
     this.keysDelivered = 0,
+    this.failed = 0,
   });
 
   /// Changes read from mailboxes that this device didn't have.
@@ -133,6 +134,10 @@ class MailboxRound {
 
   /// Sealed space keys left in other devices' inboxes.
   final int keysDelivered;
+
+  /// Key deliveries and posts the relay refused or that didn't get through (full, rate limited,
+  /// offline). Each is tried again in a later round; none stops the others.
+  final int failed;
 }
 
 /// Store-and-forward sync through a relay's mailboxes, for families with no hub online.
@@ -148,9 +153,11 @@ class MailboxRound {
 ///    until [drainWindow] after it first saw a newer one, so whatever devices posted before they
 ///    had the key in use is still read; changes are deduplicated by id;
 /// 3. on a device that makes keys, leaves the key in use in the inbox of every other device that
-///    may hold the space when this device made it (a rotation after a revocation);
+///    may hold the space when this device first delivers it (a rotation after a revocation):
+///    each recipient once, a refused or failed delivery retried for that recipient alone with
+///    backoff ([retryAfter]), never holding up the others or the posting;
 /// 4. posts to the mailbox of the key in use the changes from the last [window] that mailbox
-///    doesn't hold yet.
+///    doesn't hold yet; a post the relay refuses is tried again next round.
 ///
 /// Key pushes to live sessions are held during the round, so keys that arrived with a
 /// revocation are passed on only after the revocation itself has been ingested.
@@ -188,6 +195,15 @@ class MailboxSync {
   /// How long a held key is retried before it is dropped (the relay's blob lifetime).
   static const Duration holdKeysFor = Duration(days: 30);
 
+  /// How long to wait before delivering a key to a device again after [failures] failed tries:
+  /// a minute, doubling, at most six hours.
+  static Duration retryAfter(int failures) {
+    const most = Duration(hours: 6);
+    if (failures >= 10) return most;
+    final wait = const Duration(minutes: 1) * (1 << (failures < 1 ? 0 : failures - 1));
+    return wait > most ? most : wait;
+  }
+
   final int Function() _now;
   final SerialQueue _queue = SerialQueue();
   Timer? _timer;
@@ -216,6 +232,7 @@ class MailboxSync {
             var posted = 0;
             var skipped = 0;
             var delivered = 0;
+            var failed = 0;
             final Set<String> spaces;
             try {
               spaces = _den.spacesForDevice(_den.deviceId);
@@ -313,10 +330,14 @@ class MailboxSync {
               // one, so nothing goes into a mailbox only this device can read.
               final latest = _den.currentSpaceKey(space);
               var deliveredEpoch = meta['delivered'] as int? ?? -1;
-              if (latest != null && latest.epoch > deliveredEpoch) {
+              if (latest != null) {
                 final made = _den.makesSpaceKeys ? await _den.spaceKeyToShare(space) : null;
-                if (made != null && made.by == _den.deviceId) delivered += await _deliver(made);
-                deliveredEpoch = latest.epoch;
+                if (made != null && made.by == _den.deviceId) {
+                  final result = await _deliver(made, deliveredBefore: made.epoch <= deliveredEpoch);
+                  delivered += result.sent;
+                  failed += result.failed;
+                }
+                if (latest.epoch > deliveredEpoch) deliveredEpoch = latest.epoch;
               }
 
               final seen = currentSeen!;
@@ -326,12 +347,18 @@ class MailboxSync {
                   for (final c in _den.changesSince(const {}, spaces: {space}))
                     if (c.hlc.millis >= cutoff && !seen.contains(c.device, c.counter)) c,
                 ];
-                for (final batch in _batches(outgoing)) {
-                  await relay.append(currentId!, await sealChanges(currentKey, space: space, epoch: current, changes: batch));
-                  for (final c in batch) {
-                    seen.add(c.device, c.counter);
+                try {
+                  for (final batch in _batches(outgoing)) {
+                    await relay.append(currentId!, await sealChanges(currentKey, space: space, epoch: current, changes: batch));
+                    for (final c in batch) {
+                      seen.add(c.device, c.counter);
+                    }
+                    posted += batch.length;
                   }
-                  posted += batch.length;
+                } on Object {
+                  // Full, rate limited or offline: what was posted is remembered below, the rest
+                  // goes next round, and the other spaces still go now.
+                  failed++;
                 }
               }
               await state.write('mailbox:$currentId', {'cursor': currentCursor, 'seen': seen.toJson()});
@@ -349,6 +376,7 @@ class MailboxSync {
               skipped: skipped,
               keysStored: keysStored,
               keysDelivered: delivered,
+              failed: failed,
             );
           }));
 
@@ -375,15 +403,73 @@ class MailboxSync {
   /// for [holdKeysFor]) and retried next time. Returns how many keys were stored.
   Future<int> receiveKeys() => _queue.run(() => node.withKeyPushHeld(_receiveKeys));
 
-  Future<int> _deliver(SpaceKey key) async {
-    var count = 0;
-    for (final device in _den.devices) {
-      if (device.id == _den.deviceId || !device.approved || device.revoked || device.xpub.isEmpty) continue;
-      if (!_den.spacesForDevice(device.id).contains(key.space)) continue;
-      await _sealTo(device, key);
-      count++;
+  /// Whether [device] may be handed keys for [space] now.
+  bool _entitled(Device? device, String space) =>
+      device != null &&
+      device.id != _den.deviceId &&
+      device.approved &&
+      !device.revoked &&
+      device.xpub.isNotEmpty &&
+      _den.spacesForDevice(device.id).contains(space);
+
+  /// Leaves [key] in the inbox of each device that may hold its space, once per device. The
+  /// recipients are fixed the first time this key is delivered (a device approved later gets
+  /// keys from its sessions or [deliverKeys]); a recipient the relay refuses, or that can't be
+  /// reached, is tried again alone after [retryAfter], and one that is revoked or no longer
+  /// entitled meanwhile is dropped. Never throws. [deliveredBefore] marks a key delivered by a
+  /// version of Den that kept no per-device record, so it isn't delivered twice.
+  Future<({int sent, int failed})> _deliver(SpaceKey key, {required bool deliveredBefore}) async {
+    final stateKey = 'deliver:${_den.familyId}:${key.space}';
+    final saved = await state.read(stateKey);
+    final now = _now();
+    final List<String> recipients;
+    final retry = <String, List<int>>{};
+    if (saved != null && saved['epoch'] == key.epoch && saved['hash'] == key.hash) {
+      recipients = [for (final d in saved['to'] as List? ?? const []) '$d'];
+      for (final e in (asJsonObject(saved['retry']) ?? const {}).entries) {
+        final v = e.value;
+        if (v is List && v.length == 2 && v[0] is int && v[1] is int) retry[e.key] = [v[0] as int, v[1] as int];
+      }
+    } else if (saved == null && deliveredBefore) {
+      recipients = const [];
+    } else {
+      recipients = [
+        for (final device in _den.devices)
+          if (_entitled(device, key.space)) device.id,
+      ];
     }
-    return count;
+    var sent = 0;
+    var failed = 0;
+    final left = <String>[];
+    for (final id in recipients) {
+      final device = _den.device(id);
+      if (!_entitled(device, key.space)) {
+        retry.remove(id);
+        continue;
+      }
+      final tried = retry[id];
+      if (tried != null && tried[1] > now) {
+        left.add(id);
+        continue;
+      }
+      try {
+        await _sealTo(device!, key);
+        retry.remove(id);
+        sent++;
+      } on Object {
+        final failures = (tried?[0] ?? 0) + 1;
+        retry[id] = [failures, now + retryAfter(failures).inMilliseconds];
+        left.add(id);
+        failed++;
+      }
+    }
+    await state.write(stateKey, {
+      'epoch': key.epoch,
+      'hash': key.hash,
+      'to': left,
+      if (retry.isNotEmpty) 'retry': {for (final id in left) if (retry[id] != null) id: retry[id]},
+    });
+    return (sent: sent, failed: failed);
   }
 
   Future<void> _sealTo(Device device, SpaceKey key) async {

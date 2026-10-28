@@ -125,6 +125,21 @@ class AppState extends ChangeNotifier {
     return (device?.isShared ?? false) && can(null, action, openCheckoff: device?.openCheckoff ?? false);
   }
 
+  /// Like [allows], for the family's trust decisions: approving, declining or removing devices,
+  /// someone's role, permissions or sign-in, removing people, oversight. The engine takes those
+  /// only from a parent's own device (or a hub its owner is using), never from a shared screen.
+  bool allowsTrust(DenAction action) {
+    final device = den.thisDevice;
+    final actor = den.actor;
+    if (device == null || actor == null) return false;
+    final own = switch (device.mode) {
+      DeviceMode.personal => true,
+      DeviceMode.hub => device.member == actor.id,
+      DeviceMode.shared => false,
+    };
+    return own && can(actor, action);
+  }
+
   /// Whether whoever is acting may add, change or remove list items. The engine allows that to
   /// whoever may edit lists, whoever added the item; checking an item off is
   /// [DenAction.checkItems]. Every add-item and edit-item control asks this.

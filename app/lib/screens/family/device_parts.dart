@@ -27,7 +27,7 @@ class PendingApprovals extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final den = context.den;
-    if (!context.app.allows(DenAction.manageFamily)) return const SizedBox.shrink();
+    if (!context.app.allowsTrust(DenAction.manageFamily)) return const SizedBox.shrink();
     return StreamBuilder<List<PendingJoin>>(
       stream: Pairing.of(context).pendingJoins,
       builder: (context, snap) {
