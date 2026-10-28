@@ -102,6 +102,26 @@ void main() {
       }
     });
 
+    test('an occurrence the week after the clocks change is addressed by its own wall-clock start', () async {
+      final start = wallToUtc(ny, DateTime.utc(2026, 10, 27, 17));
+      final id = await den.addEvent(title: 'Soccer practice', start: start, end: start + hour, rrule: 'FREQ=WEEKLY');
+      List<Occurrence> threeWeeks() => den.occurrences(start, start + 15 * day);
+      final occ = threeWeeks();
+      expect(occ.map((o) => wall(ny, o.start)), ['2026-10-27T17:00', '2026-11-03T17:00', '2026-11-10T17:00']);
+      expect(occ[1].seriesStart - occ[0].seriesStart, 7 * day + hour, reason: 'the clocks fell back on Nov 1');
+      await den.updateEvent(id, {'location': 'Field 9', 'start': occ[0].start + hour}, scope: EditScope.one, occurrence: occ[0].seriesStart);
+      await expectLater(
+        den.deleteEvent(id, scope: EditScope.one, occurrence: occ[0].seriesStart + 7 * day),
+        throwsA(isA<InvalidInput>()),
+        reason: 'seven times 24 hours later is 4 PM, not an occurrence',
+      );
+      await den.deleteEvent(id, scope: EditScope.one, occurrence: occ[1].seriesStart);
+      final after = threeWeeks();
+      expect(after.map((o) => o.seriesStart), [occ[0].seriesStart, occ[2].seriesStart]);
+      expect(after.first.location, 'Field 9');
+      expect(wall(ny, after.first.start), '2026-10-27T18:00');
+    });
+
     test('splitting a series after the change keeps each day whole', () async {
       final first = dayStartIn(ny, '2026-03-01');
       final id = await den.addEvent(title: 'Garden', start: first, end: dayStartIn(ny, '2026-03-02'), allDay: true, rrule: 'FREQ=WEEKLY');
