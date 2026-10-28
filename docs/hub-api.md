@@ -63,8 +63,10 @@ Scopes gate what a token may *attempt*. Every write is then checked with den_cor
 token's member (`connection.member`); a token with no member acts with parent-level permissions
 and its changes are signed with `actor: null` and the token's label in `fields._via`. Reads are
 filtered to the spaces the token's member may read (`canRead`); a token with no member reads what
-a parent reads. A record in a space the token can't read does not exist as far as the API is
-concerned (`404`, never `403`).
+a parent reads, which honors the family's oversight policy: a member whose
+`oversight.parentsSeePrivate` is `false` keeps their "Just me" space from it, including the titles
+den_core puts in derived views (points lines, Today's gaps, store names). A record in a space the
+token can't read does not exist as far as the API is concerned (`404`, never `403`).
 
 **Bodies.** Requests with a body send `Content-Type: application/json` (UTF-8), at most 256 KiB.
 Responses are `application/json; charset=utf-8`, except the event stream. Unknown request fields
@@ -827,7 +829,8 @@ Scope: `read`. Every list the token can read, in display order, with items.
 }
 ```
 
-`stores` are store names used on items, most used first (den_core `stores`).
+`stores` are store names used on items of the returned lists, most used first (as den_core
+`stores` counts them).
 
 ### `POST /api/v1/lists/{id}/items`
 
@@ -926,7 +929,7 @@ Query: `recent` (int 0–200, default 50) limits `recent`.
 
 | Field | Type | |
 | --- | --- | --- |
-| `totals` | object | Member id → current balance (earned + adjustments − approved redemptions), for every member the token can see, including zeros |
+| `totals` | object | Member id → current balance (earned + adjustments − approved redemptions), for every member the token can see, including zeros. Balances count every point a member earned; `recent` leaves out lines from chores in spaces the token can't read, since their `reason` is the chore's title |
 | `goals[].members` | string[]? | `null` means every kid |
 | `goals[].window_start`, `window_end` | date, date? | The measured window (end exclusive, `null` when open-ended) |
 | `goals[].winner` | string? | Races: the first member to reach the target |

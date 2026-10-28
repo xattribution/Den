@@ -335,7 +335,10 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 
 The hub is a device in the family: it holds its own key and every space, signs the changes it
 makes for API and MCP callers with `actor` set to the token's member (or null with the token
-label recorded in `fields._via`).
+label recorded in `fields._via`). A token with no member reads at parent level, so it honors the
+oversight policy like a parent's device: nothing from a member's space whose `parentsSeePrivate`
+is false reaches it, not even in derived views (points lines, Today's gaps, store names), which
+the hub filters because it computes them over every space it holds.
 
 ## MCP
 

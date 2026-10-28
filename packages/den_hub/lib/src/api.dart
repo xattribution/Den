@@ -8,6 +8,7 @@ import 'api_writes.dart';
 import 'context.dart';
 import 'http_util.dart';
 import 'log.dart';
+import 'privacy.dart';
 import 'times.dart';
 import 'wire.dart';
 
@@ -146,7 +147,7 @@ class RestApi {
       'chore_summary': Wire.choreSummary(chores),
       'lists': [for (final l in view.lists) if (c.canSee(l.list.space)) Wire.list(l)],
       'gaps': [
-        for (final g in view.gaps)
+        for (final g in visibleGaps(c.den, view.gaps, c.readable))
           if (g.occurrences.every((o) => visible.contains(Wire.uidOf(o)))) c.wire.gap(g),
       ],
     });
@@ -209,14 +210,17 @@ class RestApi {
     });
   }
 
-  Response _lists(Call c) => jsonResponse({
-        'lists': [for (final l in c.den.lists) if (c.canSee(l.list.space)) Wire.list(l)],
-        'stores': c.den.stores,
-      });
+  Response _lists(Call c) {
+    final lists = [for (final l in c.den.lists) if (c.canSee(l.list.space)) l];
+    return jsonResponse({
+      'lists': [for (final l in lists) Wire.list(l)],
+      'stores': storesOf(lists),
+    });
+  }
 
   Response _points(Call c) {
     final recent = queryInt(c.request, 'recent', 50, min: 0, max: 200);
-    return jsonResponse(c.wire.points(c.den.points(), recent: recent));
+    return jsonResponse(c.wire.points(visiblePoints(c.den, c.den.points(), c.readable), recent: recent));
   }
 
   Response _history(Call c) {
