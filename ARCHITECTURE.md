@@ -316,9 +316,21 @@ approved gets only the pairing messages below.
 
 - **QR code** (default): `den://join?f=<familyId>&fk=<founderPubkey>&d=<inviterDevice>&k=<inviterPubkey>&s=<128-bit secret>&h=<hub URLs>&r=<relay URL>&x=<expiry>`. The joining device connects, presents `HMAC-SHA256(secret, its pubkey)`, and writes its join request. The inviting device shows "Approve <name>?" and a parent approves. The QR carries the key, so nothing in the middle can substitute it.
 - **Spoken code** (no camera, over the phone): 4 words from a 2048-word list (44 bits), valid 10
-  minutes, burned after 5 wrong tries. Both screens then show 3 matching words derived from the
-  session transcript; the parent approves only if they match. A relay that swapped keys would
-  produce different words.
+  minutes, burned after 5 wrong tries. Both sides first stretch the code with Argon2id (4 MiB,
+  3 passes, 1 lane, 32 bytes, fixed salt `den/spoken-code/v2`): the rendezvous slot is
+  HMAC-SHA256(stretched, `den/rendezvous/v2/code`), and each side proves the code with
+  HMAC-SHA256(stretched, label | transcript hash | its key), the joiner first. Every guess at a
+  code, by a relay holding its slot or by a device holding a proof, costs one Argon2id run, so
+  searching the 2^44 codes within a code's life is far beyond reach; a joiner stretches its code
+  once. The joiner trusts nothing the other side sends (no family, no changes, no "approved")
+  until that side's proof checks out, so a stranger answering on the network can't pose as the
+  family. Both screens then show 3 matching words derived from the session transcript; the
+  parent approves only if they match. A relay that swapped keys would produce different words.
+
+Every join request comes with a fresh proof of an invite or code, including a device asking
+again about a request already in the log. Declining a request revokes it where the declining
+device may (a parent's own device), and the device declining it refuses that device from then
+on, so a declined device can't keep asking.
 
 ### Relay
 
@@ -464,7 +476,7 @@ pluggable notifier: Home Assistant's `notify` service, ntfy, or the hosted push 
 | Sett finding | Den mechanism | Test |
 | --- | --- | --- |
 | A requester could approve itself | Approval valid only when signed by another approved parent device | `den_core` validity tests |
-| 2,700 connect codes, IP-keyed limit | QR with a 128-bit secret; spoken codes of 44 bits, 5 tries, 10 minutes | `den_net` pairing tests |
+| 2,700 connect codes, IP-keyed limit | QR with a 128-bit secret; spoken codes of 44 bits, 5 tries, 10 minutes, stretched with Argon2id | `den_net` pairing tests |
 | Relay could sit in the middle | QR carries the key; spoken codes confirmed by matching words | `den_net` SAS test |
 | No replay protection | Unique change ids, per-session counters, signed changes | `den_net` session tests |
 | One static key both ways, no forward secrecy | Per-session ephemeral X25519, separate keys per direction | `den_net` session tests |

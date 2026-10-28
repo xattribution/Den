@@ -103,15 +103,20 @@ lists both revocations, which settles it.
 
 - `pair {kind: "qr", proof}`: proof = base64url HMAC-SHA256(invite secret, raw Ed25519 key of
   the joiner). Invites are single-use.
-- `pair {kind: "code", proof}`: proof = HMAC-SHA256(key = the normalized code, `"den/pair/v1/joiner"
-  0x00 | transcript hash | joiner key`). The inviting side answers with its own proof under the
-  label `"den/pair/v1/host"`, so a joiner never pairs with a device that doesn't know the code.
-  Every wrong proof counts against every live code (a guess doesn't say which code it aimed at);
-  5 burn them. Codes last 10 minutes.
+- `pair {kind: "code", proof}`: proof = HMAC-SHA256(key = the stretched code, `"den/pair/v2/joiner"
+  0x00 | transcript hash | joiner key`), where the stretched code is Argon2id(normalized code,
+  salt `"den/spoken-code/v2"`, 4 MiB, 3 passes, 1 lane, 32 bytes) (`stretchCode`). The inviting
+  side answers with its own proof under the label `"den/pair/v2/host"`, so a joiner never pairs
+  with a device that doesn't know the code; until that proof checks out the joiner ignores
+  anything else the other side sends and closes on any sync message. Every wrong proof counts
+  against every live code (a guess doesn't say which code it aimed at); 5 burn them. Codes last
+  10 minutes.
 - `pair_ok {family, founder, proof?}` / `pair_fail {reason}`.
 - `join {changes}`: the joiner's own unapproved `device` record from `den.requestJoin`; refused
   if any change is not that record, sets `approved` true, `approvedBy`, `revoked`, or another
-  key. A device whose pending record already exists can resume with `join` alone.
+  key. It must follow a good `pair` on the same session, even for a device whose request is
+  already in the log (`not-paired` otherwise). A declined or removed device is refused
+  (`declined`).
 - `join_pending`, `join_rejected {reason}`, `approved`, and `unapproved` (to a known-family
   client the server doesn't consider approved).
 
@@ -125,7 +130,7 @@ those messages; any sync message from the joiner closes the session. Then it sen
   `{"t":"auth","pubkey","sig"}` signing `"den/relay-tunnel/v1|<hubId>|<nonce>"`; after
   `{"t":"ready"}` client streams arrive multiplexed (see `den_relay`'s README).
 - Rendezvous: `wss://relay/rendezvous/<slot>?role=host|guest`; slots are hex SHA-256 of
-  `"den/rendezvous/v1/qr|" | secret` or `"den/rendezvous/v1/code|<normalized code>"`.
+  `"den/rendezvous/v1/qr|" | secret`, or hex HMAC-SHA256(stretched code, `"den/rendezvous/v2/code"`).
 - Mailbox: id = hex HMAC-SHA256(space key, `"mailbox:<epoch>"`); blob = `0x01 | nonce (24) |
   XChaCha20-Poly1305(space key, {"v":1,"changes":[...]}, aad "den/mailbox/v1|<space>|<epoch>")`.
   Dedupe is by change id; only changes from the last 30 days are posted. Devices post under the

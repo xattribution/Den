@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
 import 'package:den_net/io.dart';
@@ -232,6 +234,37 @@ void main() {
       final transcript = randomBytes(32);
       expect(await book.redeemProof(await joinerCodeProof(code.text, transcript, joiner.pubkey), transcript, joiner.pubkey),
           isNull);
+    });
+
+    test('are stretched with Argon2id before they name a slot or key a proof', () async {
+      const code = 'zoo zone zero zebra';
+      expect(codeStretchMemoryKiB, greaterThanOrEqualTo(4096));
+      expect(codeStretchIterations, greaterThanOrEqualTo(3));
+      final kdf = Argon2id(parallelism: 1, memory: codeStretchMemoryKiB, iterations: codeStretchIterations, hashLength: 32);
+      final expected = await kdf.deriveKey(secretKey: SecretKey(utf8.encode(code)), nonce: utf8.encode('den/spoken-code/v2'));
+      final stretched = await stretchCode('Zoo  ZONE zero zebr');
+      expect(stretched, await expected.extractBytes());
+
+      // Neither the slot nor a proof is a fast hash of the code anymore.
+      String hex(List<int> bytes) => bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+      final fastSlot = hex((await Sha256().hash(utf8.encode('den/rendezvous/v1/code|$code'))).bytes);
+      final slot = await codeRendezvousSlot(code);
+      expect(slot, isNot(fastSlot));
+      final mac = await Hmac.sha256().calculateMac(utf8.encode('den/rendezvous/v2/code'), secretKey: SecretKey(stretched));
+      expect(slot, hex(mac.bytes));
+      final joiner = await DeviceKeys.generate();
+      final transcript = randomBytes(32);
+      final proof = b64d(await joinerCodeProof(code, transcript, joiner.pubkey));
+      final keyedByCode = await Hmac.sha256().calculateMac(
+        [...utf8.encode('den/pair/v2/joiner'), 0, ...transcript, ...b64d(joiner.pubkey)],
+        secretKey: SecretKey(utf8.encode(code)),
+      );
+      expect(proof, isNot(keyedByCode.bytes));
+      final keyedByStretch = await Hmac.sha256().calculateMac(
+        [...utf8.encode('den/pair/v2/joiner'), 0, ...transcript, ...b64d(joiner.pubkey)],
+        secretKey: SecretKey(stretched),
+      );
+      expect(proof, keyedByStretch.bytes);
     });
 
     test('rendezvous slots depend only on the normalized code', () async {
