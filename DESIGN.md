@@ -379,8 +379,12 @@ take plain values and den_core model types, never the app's state, so any featur
 | `DoneRow`, `DoneSwap` | What a row did, with Undo in place | `DoneSwap(done: …, child: row)` crossfades on the UI spring; pass a receipt's undo as `onUndo`. Never a toast. |
 | `NavRow` | A row that goes somewhere (menus, "Or add one thing") | Optional glyph or face, label, detail, chevron; 56 tall. |
 | `FaceStack` | Who something is for | `DenAvatar`s 26 across, each ringed in the card color. |
-| `CheckPill` | A chore (or anything checked off) as a pill | Ring in the person's color. Ring tap checks; label tap opens details (steps, Give to…). `stars: null` when points are off. |
-| `CheckRow`, `CheckRing` | The same as a full-width row (PadToday's chores); the ring alone (a step) | 32 pt ring in a 48 target, whose it is at the end; 60 tall. |
+| `CheckPill` | A chore (or anything checked off) as a pill | Ring in the person's color. Ring tap checks; label tap opens details (steps, Give to…). `stars: null` when points are off. With steps, the ring fills as an arc and "1 of 4" follows the name once a step is done. |
+| `CheckRow`, `CheckRing` | The same as a full-width row (PadToday's chores); the ring alone (a step) | 32 pt ring in a 48 target, whose it is at the end; 60 tall. `CheckRing(progress:)` draws steps as an arc of the person's color: never a digit in a ring (the slashed zero reads as a glitch at that size). |
+| `ChipRow` | Chips that may not fit (the lists, people to filter by) | Scrolls sideways edge to edge; the first chip lines up with the page. |
+| `ProgressBar` | Progress toward a goal | 8 pt, round ends, the person's color on a quiet track; say the words beside it and in `label`. |
+| `MoreOptions` | An editor's rarely used fields | A quiet "More options" row that reveals them; `initiallyOpen` when one is already set. |
+| `DayStepper` | Moving a page by days (Chores, a calendar day) | Back, Today (only when it isn't today), forward; the page's heading names the day. |
 | `TagChip` | One of a few choices (a category, a kind) | Ink when chosen. |
 | `PersonPill` | A person to filter by or pick | 32 pt face; ink edge when chosen. |
 | `ValueChip` | One thing Den understood, to adjust (When, Who, Repeats) | `missing: true` asks for it. |
