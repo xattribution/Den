@@ -1,0 +1,29 @@
+{
+  "id": "resp_68f0denfixture03",
+  "object": "response",
+  "status": "incomplete",
+  "error": null,
+  "incomplete_details": {
+    "reason": "max_output_tokens"
+  },
+  "model": "gpt-6-luna",
+  "output": [
+    {
+      "id": "rs_68f0denreasoning3",
+      "type": "reasoning",
+      "summary": [],
+      "encrypted_content": "gAAAAABoDenCutShort"
+    }
+  ],
+  "usage": {
+    "input_tokens": 1200,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 1000,
+    "output_tokens_details": {
+      "reasoning_tokens": 1000
+    },
+    "total_tokens": 2200
+  }
+}

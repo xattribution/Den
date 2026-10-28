@@ -1,0 +1,37 @@
+{
+  "id": "resp_68f0denfixture02",
+  "object": "response",
+  "created_at": 1793200005,
+  "status": "completed",
+  "error": null,
+  "incomplete_details": null,
+  "model": "gpt-6-luna",
+  "output": [
+    {
+      "id": "msg_68f0denmessage",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Added eggs to Groceries.",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "store": false,
+  "usage": {
+    "input_tokens": 5000,
+    "input_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 4000
+    },
+    "output_tokens": 9,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 5009
+  }
+}
