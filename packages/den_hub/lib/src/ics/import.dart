@@ -14,13 +14,17 @@ const int maxFeedSeries = 1500;
 /// What one feed should put on the calendar, by UID.
 class FeedPlan {
   /// Creates a plan.
-  FeedPlan(this.series, this.fields);
+  FeedPlan(this.series, this.fields, {this.skipped = 0});
 
   /// Series kept after filters.
   final Map<String, IcsSeries> series;
 
   /// Den event fields per UID.
   final Map<String, Map<String, Object?>> fields;
+
+  /// Series left out because Den couldn't read them (a start it can't place, a repeat it can't
+  /// expand).
+  final int skipped;
 }
 
 String _cut(String s, int max) => s.length <= max ? s : s.substring(0, max);
@@ -32,10 +36,12 @@ bool _matches(String text, List<String> words) {
 
 /// The events [calendar] should become under [sub]: cancelled series dropped, include and
 /// exclude words applied to titles, all-day events skipped when asked, and series that ended
-/// before [now] minus [feedHistory] left out.
+/// before [now] minus [feedHistory] left out. A series Den can't read is skipped and counted,
+/// never thrown: one bad event must not stop the rest of the feed.
 FeedPlan planFeed(IcsCalendar calendar, Subscription sub, {required int now, required String label}) {
   final kept = <String, IcsSeries>{};
   final fields = <String, Map<String, Object?>>{};
+  var skipped = calendar.skipped;
   for (final s in groupSeries(calendar).values) {
     final m = s.master;
     if (m.cancelled || m.start == null) continue;
@@ -43,26 +49,37 @@ FeedPlan planFeed(IcsCalendar calendar, Subscription sub, {required int now, req
     if (sub.include.any((w) => w.trim().isNotEmpty) && !_matches(title, sub.include)) continue;
     if (_matches(title, sub.exclude)) continue;
     if (sub.skipAllDay && m.allDay) continue;
-    final length = m.endUtc - m.start!.utc;
-    if (s.starts(notBefore: now - feedHistory.inMilliseconds - length).isEmpty) continue;
     if (kept.length >= maxFeedSeries) break;
+    final Map<String, Object?> want;
+    try {
+      final length = m.endUtc - m.start!.utc;
+      if (s.starts(notBefore: now - feedHistory.inMilliseconds - length).isEmpty) continue;
+      want = {
+        'title': _cut(title, 200),
+        'notes': _cut(m.description, 5000),
+        'location': _cut(m.location, 300),
+        'category': sub.category,
+        'start': m.start!.utc,
+        'end': m.endUtc,
+        'allDay': m.allDay,
+        'tz': m.start!.zone,
+        'rrule': s.rule == null ? null : RecurrenceRule.parse(s.rule!).toString(),
+        'assignees': [?sub.assignee],
+        'source': {'kind': 'ics', 'ref': feedRef(m.uid), 'label': _cut(label, 200)},
+      };
+    } on Object {
+      skipped++;
+      continue;
+    }
     kept[m.uid] = s;
-    fields[m.uid] = {
-      'title': _cut(title, 200),
-      'notes': _cut(m.description, 5000),
-      'location': _cut(m.location, 300),
-      'category': sub.category,
-      'start': m.start!.utc,
-      'end': m.endUtc,
-      'allDay': m.allDay,
-      'tz': m.start!.zone,
-      'rrule': s.rule == null ? null : RecurrenceRule.parse(s.rule!).toString(),
-      'assignees': [?sub.assignee],
-      'source': {'kind': 'ics', 'ref': _cut(m.uid, 1000), 'label': _cut(label, 200)},
-    };
+    fields[m.uid] = want;
   }
-  return FeedPlan(kept, fields);
+  return FeedPlan(kept, fields, skipped: skipped);
 }
+
+/// The `source.ref` an imported event carries for the feed event with [uid]: how the hub finds
+/// the events a feed already wrote.
+String feedRef(String uid) => _cut(uid, 1000);
 
 /// The fields of [event] that differ from [want].
 Map<String, Object?> eventChanges(Event event, Map<String, Object?> want) {
