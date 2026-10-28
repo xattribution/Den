@@ -3,14 +3,34 @@ import 'dart:io';
 
 const HtmlEscape _html = HtmlEscape();
 
+/// The Content-Security-Policy for the hub's own sign-in pages: nothing but the page's own
+/// inline style and script (by [nonce]), fonts from the hub, and polling the hub.
+String oauthPagePolicy(String nonce) => [
+      "default-src 'none'",
+      "script-src 'nonce-$nonce'",
+      "style-src 'nonce-$nonce'",
+      "font-src 'self'",
+      "connect-src 'self'",
+      "img-src 'self'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-ancestors 'none'",
+    ].join('; ');
+
 /// The page a person sees while an OAuth client waits for a parent's approval, in Den's design
-/// tokens (paper and ink, Atkinson Hyperlegible Next when the web app ships it). With [failed]
-/// it explains that the sign-in link doesn't work instead.
+/// tokens (paper and ink, Atkinson Hyperlegible Next when the web app ships it). It names the
+/// app by what it calls itself and, so a made-up name can't pass for another app, by [host],
+/// where its sign-in returns to; and shows [code], which the parent's app shows beside the same
+/// request. With [failed] it explains that the sign-in link doesn't work instead. [nonce] is
+/// the CSP nonce of its inline style and script ([oauthPagePolicy]).
 String authorizePage({
   required String client,
   required List<String> scopes,
   required String? requestId,
   required String status,
+  required String nonce,
+  String host = '',
+  String code = '',
   String? webDir,
   bool failed = false,
 }) {
@@ -26,17 +46,19 @@ String authorizePage({
   final intro = failed
       ? '<h1>This sign-in link doesn\'t work</h1>'
       : '<h1>Approve $name in the Den app</h1>\n'
+          '${host.isEmpty ? '' : '<p class="from">It signs in for <strong>${_html.convert(host)}</strong>. Only approve it if that is where you started.</p>\n'}'
           '<p>A parent needs to say yes on their phone before $name can use your family\'s Den.</p>\n'
-          '<p class="where">Settings &rarr; AI and automations</p>'
-          '${scopes.isEmpty ? '' : '\n<p class="meta">It asked to: ${_html.convert(_scopeWords(scopes))}.</p>'}';
-  final poll = requestId == null ? '' : _pollScript(requestId);
+          '<p class="where">Settings &rarr; AI and automations</p>\n'
+          '${code.isEmpty ? '' : '<p>Den shows this request with the code <strong class="code">${_html.convert(code)}</strong>. Approve the one with the same code.</p>\n'}'
+          '${scopes.isEmpty ? '' : '<p class="meta">It asked to: ${_html.convert(_scopeWords(scopes))}.</p>'}';
+  final poll = requestId == null ? '' : _pollScript(requestId, nonce);
   return '''<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>$title</title>
-<style>
+<style nonce="$nonce">
 $font
 :root{--paper:#FBFAF7;--well:#F2F0EC;--rule:#DCD9D3;--ink:#231E19;--ink2:#5F5A54;color-scheme:light dark;}
 @media (prefers-color-scheme: dark){:root{--paper:#15120F;--well:#211D1A;--rule:#393530;--ink:#F0EEEA;--ink2:#AFAAA4;}}
@@ -46,6 +68,8 @@ main{max-width:480px;margin:0 auto;padding:48px 16px;}
 h1{font-size:24px;font-weight:700;margin:0 0 16px;}
 p{margin:0 0 12px;}
 .meta{font-size:13px;color:var(--ink2);}
+.from{background:var(--well);border-radius:6px;padding:12px 16px;}
+.code{font-size:18px;letter-spacing:1px;}
 .where{background:var(--well);border-radius:6px;padding:12px 16px;margin:24px 0;font-weight:700;}
 #status{border-top:1px solid var(--rule);padding-top:16px;margin-top:24px;color:var(--ink2);}
 </style>
@@ -60,8 +84,8 @@ $poll
 </html>''';
 }
 
-String _pollScript(String requestId) => '''
-<script>
+String _pollScript(String requestId, String nonce) => '''
+<script nonce="$nonce">
 (function () {
   var id = ${jsonEncode(requestId)};
   var line = document.getElementById('status');
@@ -95,5 +119,5 @@ String _scopeWords(List<String> scopes) {
 }
 
 /// A plain page for an OAuth request that can't go on (bad client, bad redirect address).
-String oauthErrorPage(String message, {String? webDir}) =>
-    authorizePage(client: '', scopes: const [], requestId: null, status: message, webDir: webDir, failed: true);
+String oauthErrorPage(String message, {required String nonce, String? webDir}) =>
+    authorizePage(client: '', scopes: const [], requestId: null, status: message, nonce: nonce, webDir: webDir, failed: true);

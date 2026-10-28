@@ -8,7 +8,11 @@ WORKDIR /src
 COPY packages packages
 COPY app app
 WORKDIR /src/app
-RUN flutter pub get && flutter build web --release
+# The hub serves the web app under a Content-Security-Policy that allows nothing from a CDN:
+# --csp keeps dart2js from generating code at run time, and CanvasKit loads from the hub
+# (build/web/canvaskit/) instead of gstatic.com.
+RUN flutter pub get \
+ && flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/
 
 FROM dart:3.10 AS hub
 WORKDIR /src
@@ -43,6 +47,6 @@ EXPOSE 47733
 ENV DEN_DATA=/data \
     DEN_WEB=/app/web \
     DEN_PORT=47733
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD curl -fsS http://127.0.0.1:47733/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD curl -fsS "http://127.0.0.1:${DEN_PORT:-47733}/health" || exit 1
 ENTRYPOINT ["/app/bin/den_hub"]
 CMD ["serve"]

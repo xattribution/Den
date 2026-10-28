@@ -1,0 +1,82 @@
+# One family's hub on a server, reachable over HTTPS from anywhere, so phones can use the web
+# app from their home screen. docs/hosting.md walks through it.
+#
+#   cp deploy/hosted/env.example deploy/hosted/.env      # then set DEN_DOMAIN
+#   docker compose -f deploy/hosted/compose.yaml --profile caddy up -d
+#   docker compose -f deploy/hosted/compose.yaml logs hub     # the setup code
+#
+# With the caddy profile, Caddy answers on ports 80 and 443 and gets the certificate for
+# DEN_DOMAIN by itself. Without it, the hub listens only on this machine's 127.0.0.1:DEN_PORT,
+# for a proxy you run yourself (Tailscale Serve or Funnel, nginx) or a Cloudflare Tunnel.
+name: den
+
+services:
+  hub:
+    build:
+      context: ../..
+      dockerfile: deploy/hub/Dockerfile
+    image: ghcr.io/xattribution/den-hub:latest
+    restart: unless-stopped
+    environment:
+      DEN_NAME: ${DEN_NAME:-Den hub}
+      DEN_PORT: ${DEN_PORT:-47733}
+      DEN_PUBLIC_URL: https://${DEN_DOMAIN:?set DEN_DOMAIN in deploy/hosted/.env, like den.example.com}
+      # Caddy, and proxies on this machine (through the network's gateway), reach the hub from
+      # this network: their X-Forwarded-* headers count; anyone else's are ignored.
+      DEN_TRUSTED_PROXIES: 172.30.73.0/24
+      # The https public URL turns on the public posture; nobody on the internet needs mDNS.
+      DEN_MDNS: "0"
+      DEN_LOG: ${DEN_LOG:-info}
+    ports:
+      # Loopback only, for a proxy on this machine. The internet comes in through Caddy.
+      - "127.0.0.1:${DEN_PORT:-47733}:${DEN_PORT:-47733}"
+    volumes:
+      - den-hub:/data
+    networks: [den, models]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  caddy:
+    profiles: [caddy]
+    image: caddy:2.10.0
+    restart: unless-stopped
+    environment:
+      DEN_DOMAIN: ${DEN_DOMAIN}
+      DEN_PORT: ${DEN_PORT:-47733}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [den]
+    depends_on: [hub]
+
+  # A model that reads what the family shares, on a network only the hub reaches (no ports).
+  #   docker compose -f deploy/hosted/compose.yaml --profile model up -d model
+  #   docker compose -f deploy/hosted/compose.yaml exec model ollama pull llama3.2
+  # Then on a parent's phone: Settings, AI and automations, A model at home, on the hub,
+  # address model:11434.
+  model:
+    profiles: [model]
+    image: ollama/ollama:0.9.0
+    restart: unless-stopped
+    volumes:
+      - den-model:/root/.ollama
+    networks: [models]
+
+networks:
+  den:
+    ipam:
+      config:
+        - subnet: 172.30.73.0/24
+  models:
+    internal: true
+
+volumes:
+  den-hub:
+  den-model:
+  caddy-data:
+  caddy-config:

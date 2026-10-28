@@ -20,8 +20,12 @@ class IcsExport {
   /// Answers one feed request.
   Future<Response> feed(Request request, String token, String file) async {
     if (!hub.ready) throw ApiError.notReady();
+    hub.checkFailures(request);
     final access = accessForToken(hub.den, token);
-    if (access == null) throw ApiError.unauthorized('That calendar link no longer works.');
+    if (access == null) {
+      hub.failed(request);
+      throw ApiError.unauthorized('That calendar link no longer works.');
+    }
     if (!access.has(Scope.read)) throw ApiError.scope('read');
     if (!file.endsWith('.ics')) throw ApiError.notFound();
     final name = file.substring(0, file.length - 4);
