@@ -14,7 +14,7 @@ import 'app_state.dart';
 
 /// The adult app's frame. On a phone: the screen over a tab bar with Today, Calendar, Add in the
 /// middle, Chores and Lists. From 700 pt: the 248 pt sidebar with the family's name, Add, the
-/// places and Family, and the person at the bottom. Family, points, history and settings open
+/// places and Family, and the person at the bottom. Family, points, search and settings open
 /// from the person: their face on Today (phone) or at the foot of the sidebar.
 ///
 /// Keyboard: ⌘N adds, ⌘1 to ⌘4 go to the places, ⌘F searches.
@@ -138,8 +138,32 @@ class DenTopBar extends StatelessWidget {
           Expanded(
             child: Text(app.den.family?.name ?? 'Den', style: context.text.meta(c.ink2).bold, overflow: TextOverflow.ellipsis),
           ),
+          const SearchButton(),
           PersonButton(member: me, size: 36),
         ],
+      ),
+    );
+  }
+}
+
+/// Search, in the top bar: a magnifying glass that opens it (⌘F does too).
+class SearchButton extends StatelessWidget {
+  const SearchButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Tooltip(
+      message: 'Search',
+      excludeFromSemantics: true,
+      child: DenPressable(
+        onTap: () => context.push('/search'),
+        shape: const CircleBorder(),
+        semanticLabel: 'Search',
+        child: SizedBox.square(
+          dimension: Targets.adult,
+          child: Icon(PhosphorIconsRegular.magnifyingGlass, size: 22, color: c.ink),
+        ),
       ),
     );
   }
@@ -175,7 +199,7 @@ class PersonButton extends StatelessWidget {
   }
 }
 
-/// What opens from the person: Family, Points and rewards (when stars are on), History and
+/// What opens from the person: Family, Points and rewards (when stars are on), Search and
 /// Settings.
 Future<void> showPersonMenu(BuildContext context) {
   final app = DenScope.read(context);
@@ -192,9 +216,9 @@ Future<void> showPersonMenu(BuildContext context) {
     builder: (sheet) {
       final c = sheet.colors;
       final rows = [
-        NavRow(icon: PhosphorIconsRegular.usersThree, label: 'Family and devices', onTap: () => open(sheet, '/family')),
+        NavRow(icon: PhosphorIconsRegular.usersThree, label: 'Family', onTap: () => open(sheet, '/family')),
         if (pointsOn) NavRow(icon: PhosphorIconsRegular.star, label: 'Points and rewards', onTap: () => open(sheet, '/points')),
-        NavRow(icon: PhosphorIconsRegular.clockCounterClockwise, label: 'History', onTap: () => open(sheet, '/history')),
+        NavRow(icon: PhosphorIconsRegular.magnifyingGlass, label: 'Search', onTap: () => open(sheet, '/search')),
         NavRow(icon: PhosphorIconsRegular.gearSix, label: 'Settings', onTap: () => open(sheet, '/settings')),
       ];
       return Padding(
