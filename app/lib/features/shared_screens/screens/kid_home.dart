@@ -137,7 +137,8 @@ class _Header extends StatelessWidget {
   }
 }
 
-/// The pill at the end of a kid's header: "Done", "Grown-ups". 72 tall to tap, quiet to look at.
+/// The pill at the end of a kid's header: "Done", "Grown-ups". Taps anywhere in the header's
+/// 72-tall strip, quiet to look at.
 class KidHeaderPill extends StatelessWidget {
   const KidHeaderPill({super.key, required this.label, required this.onTap});
 
@@ -147,18 +148,24 @@ class KidHeaderPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return SizedBox(
-      height: Targets.kid,
-      child: Center(
-        child: DenPressable(
-          onTap: onTap,
-          color: c.card,
-          semanticLabel: label,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 48, minWidth: 72),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: Sp.l),
-              child: Center(widthFactor: 1, child: Text(label, style: context.text.meta(c.ink2).bold)),
+    // The whole 72-tall strip takes the tap; the pill itself stays small.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      excludeFromSemantics: true,
+      onTap: onTap,
+      child: SizedBox(
+        height: Targets.kid,
+        child: Center(
+          child: DenPressable(
+            onTap: onTap,
+            color: c.card,
+            semanticLabel: label,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48, minWidth: 72),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: Sp.l),
+                child: Center(widthFactor: 1, child: Text(label, style: context.text.meta(c.ink2).bold)),
+              ),
             ),
           ),
         ),
