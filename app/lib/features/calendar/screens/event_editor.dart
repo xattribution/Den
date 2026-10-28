@@ -130,10 +130,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
     final me = app.me;
     final date = f.localDate(_start);
 
-    Widget rule() => Padding(
-      padding: const EdgeInsets.only(left: 36),
-      child: Container(height: 1, color: c.line),
-    );
+    Widget rule() => const RowRule(indent: 36);
     Widget row(IconData icon, String label, Widget child) => Padding(
       padding: const EdgeInsets.symmetric(vertical: Sp.m),
       child: Row(
@@ -252,11 +249,8 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
           decoration: InputDecoration(hintText: 'What’s happening', errorText: _titleError, errorMaxLines: 3),
         ),
         const SizedBox(height: Sp.l),
-        DecoratedBox(
-          decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(Radii.section)),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: DenLayout.cardPadding),
-            child: Column(
+        GroupCard(
+          child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 row(
@@ -319,7 +313,6 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
                   child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [rule(), ...more]),
                 ),
               ],
-            ),
           ),
         ),
       ],

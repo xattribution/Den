@@ -53,6 +53,9 @@ class FamilyWeek extends StatelessWidget {
   }
 
   static const double _minPersonColumn = 100;
+
+  /// Below this row height the wall's week scrolls instead of stretching to fill.
+  static const double _minFilledRow = 96;
   static const double _gap = 8;
   static const double _side = 14;
 
@@ -71,7 +74,9 @@ class FamilyWeek extends StatelessWidget {
         final natural = _side * 2 + dayColumn + columns * (minColumn + _gap);
         final width = math.max(natural, constraints.maxWidth);
         final person = (width - _side * 2 - dayColumn - columns * _gap) / columns;
-        final fill = fillHeight && constraints.hasBoundedHeight;
+        // Rows share the height only while each gets room for a block or two; on a short wall the
+        // week scrolls instead of cutting its blocks.
+        final fill = fillHeight && constraints.hasBoundedHeight && (constraints.maxHeight - 80) / grid.days.length >= _minFilledRow;
 
         Widget row(int i) => _DayRow(
           date: grid.days[i],

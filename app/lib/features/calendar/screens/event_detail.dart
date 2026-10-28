@@ -322,24 +322,15 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                 padding: const EdgeInsets.fromLTRB(4, Sp.xs, 4, Sp.l),
                 child: Semantics(header: true, child: Text(tidyLine(occ.title), style: sheet.text.sheetTitle(c.ink))),
               ),
-              DecoratedBox(
-                decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(Radii.section)),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: DenLayout.cardPadding),
-                  child: Column(
-                    children: occ.isRepeating
-                        ? [
-                            row('Delete just this one', EditScope.one),
-                            Container(height: 1, color: c.line, margin: const EdgeInsets.only(left: 36)),
-                            row('Delete this one and the rest', EditScope.following),
-                            Container(height: 1, color: c.line, margin: const EdgeInsets.only(left: 36)),
-                            row(
-                              all == 'All of them' ? 'Delete all of them' : 'Delete e${all.substring(1)}',
-                              EditScope.all,
-                            ),
-                          ]
-                        : [row('Delete ${occ.title}', EditScope.all)],
-                  ),
+              GroupCard(
+                child: Column(
+                  children: occ.isRepeating
+                      ? ruled([
+                          row('Delete just this one', EditScope.one),
+                          row('Delete this one and the rest', EditScope.following),
+                          row(all == 'All of them' ? 'Delete all of them' : 'Delete e${all.substring(1)}', EditScope.all),
+                        ], indent: 36)
+                      : [row('Delete ${occ.title}', EditScope.all)],
                 ),
               ),
             ],
@@ -799,7 +790,7 @@ class _Details extends StatelessWidget {
 
     final rows = <Widget>[];
     void add(Widget row) {
-      if (rows.isNotEmpty) rows.add(const _Rule());
+      if (rows.isNotEmpty) rows.add(const RowRule(indent: 36));
       rows.add(row);
     }
 
@@ -1032,13 +1023,15 @@ class _Details extends StatelessWidget {
     // More options: what isn't set yet.
     final missing = <Widget>[
       if (shown.location.isEmpty && open != DetailField.place)
-        _AddRow(
+        NavRow(
+          chevron: false,
           icon: PhosphorIconsBold.mapPin,
           label: 'Add a place',
           onTap: () => state._toggle(DetailField.place, occ),
         ),
       if (!occ.rides.any((r) => r.leg == 'to'))
-        _AddRow(
+        NavRow(
+          chevron: false,
           icon: PhosphorIconsBold.car,
           label: 'Someone drives there',
           onTap: () => state._propose(occ, {
@@ -1046,7 +1039,8 @@ class _Details extends StatelessWidget {
           }, 'Added a ride there'),
         ),
       if (!occ.rides.any((r) => r.leg == 'from'))
-        _AddRow(
+        NavRow(
+          chevron: false,
           icon: PhosphorIconsBold.car,
           label: 'Someone picks up',
           onTap: () => state._propose(occ, {
@@ -1054,13 +1048,15 @@ class _Details extends StatelessWidget {
           }, 'Added a ride home'),
         ),
       if (reminders.isEmpty && open != DetailField.remind)
-        _AddRow(
+        NavRow(
+          chevron: false,
           icon: PhosphorIconsBold.bellSimple,
           label: 'Add a reminder',
           onTap: () => state._toggle(DetailField.remind, occ),
         ),
       if (shown.notes.isEmpty && open != DetailField.notes)
-        _AddRow(
+        NavRow(
+          chevron: false,
           icon: PhosphorIconsBold.notepad,
           label: 'Add notes',
           onTap: () => state._toggle(DetailField.notes, occ),
@@ -1084,7 +1080,7 @@ class _Details extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (final row in missing) ...[const _Rule(), row],
+                  for (final row in missing) ...[const RowRule(indent: 36), row],
                 ],
               ),
             ),
@@ -1093,24 +1089,8 @@ class _Details extends StatelessWidget {
       );
     }
 
-    return DecoratedBox(
-      decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(Radii.section)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: DenLayout.cardPadding),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows),
-      ),
-    );
+    return GroupCard(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows));
   }
-}
-
-class _Rule extends StatelessWidget {
-  const _Rule();
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(left: 36),
-    child: Container(height: 1, color: context.colors.line),
-  );
 }
 
 /// A detail row: an ink glyph, a bold line and a quiet one. Tap to open it in place.
@@ -1170,39 +1150,6 @@ class _Row extends StatelessWidget {
       toggled: open,
       semanticLabel: [title, ?detail].join(', '),
       child: ExcludeSemantics(child: content),
-    );
-  }
-}
-
-/// Something not set yet, under More options: an ink glyph and what tapping it adds.
-class _AddRow extends StatelessWidget {
-  const _AddRow({required this.icon, required this.label, required this.onTap});
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return DenPressable(
-      onTap: onTap,
-      scale: false,
-      shape: const RoundedRectangleBorder(),
-      semanticLabel: label,
-      child: ExcludeSemantics(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 56),
-          child: Row(
-            children: [
-              RowGlyph(icon, color: c.ink2),
-              const SizedBox(width: 14),
-              Expanded(child: Text(label, style: context.text.body(c.ink))),
-              Icon(PhosphorIconsBold.plus, size: 18, color: c.ink2),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

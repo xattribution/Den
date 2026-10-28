@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../../app/app_state.dart';
 import '../../../design/tokens.dart';
+import '../../../design/widgets.dart';
 import '../words/block_words.dart';
 import 'calendar_parts.dart';
 
@@ -27,11 +28,9 @@ class ScopeCard extends StatelessWidget {
     final (question, all) = scopeQuestion(f, occ, verb: verb);
     return Semantics(
       liveRegion: true,
-      child: DecoratedBox(
-        decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(Radii.section)),
-        child: Padding(
-          padding: const EdgeInsets.all(Sp.l),
-          child: Column(
+      child: GroupCard(
+        padding: const EdgeInsets.all(Sp.l),
+        child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(tidyLine(question), style: context.text.rowTitle(c.ink)),
@@ -53,7 +52,6 @@ class ScopeCard extends StatelessWidget {
                 ],
               ),
             ],
-          ),
         ),
       ),
     );

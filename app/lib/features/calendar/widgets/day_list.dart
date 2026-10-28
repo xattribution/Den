@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/app_state.dart';
-import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../design/words.dart';
@@ -61,39 +60,33 @@ class DaySection extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.watch(calendarReads);
     final f = app.formats;
-    final c = context.colors;
     final heading = dayHeading(f, date, app.today);
     final groups = groupDay(occurrences, f, date);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: DenLayout.headingInset),
-          child: Semantics(header: true, child: Text(heading, style: context.text.section(c.ink))),
-        ),
-        const SizedBox(height: DenLayout.headingGap),
-        if (groups.isEmpty)
-          _EmptyDay(date: date, person: person, action: emptyAction)
-        else
-          ListenableBuilder(
-            listenable: combined,
-            builder: (context, _) => Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final (i, group) in groups.indexed) ...[
-                  if (i > 0) const SizedBox(height: 10),
-                  GroupRow(
-                    group: group,
-                    person: person,
-                    combined: combined.contains(group.key),
-                    onToggle: () => combined.toggle(group.key),
-                  ),
+    // The shared section heading over the day's blocks, which sit on the page: blocks are their
+    // own cards, never in one.
+    return DenSection(
+      title: heading,
+      carded: false,
+      child: groups.isEmpty
+          ? _EmptyDay(date: date, person: person, action: emptyAction)
+          : ListenableBuilder(
+              listenable: combined,
+              builder: (context, _) => Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final (i, group) in groups.indexed) ...[
+                    if (i > 0) const SizedBox(height: 10),
+                    GroupRow(
+                      group: group,
+                      person: person,
+                      combined: combined.contains(group.key),
+                      onToggle: () => combined.toggle(group.key),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-      ],
     );
   }
 }

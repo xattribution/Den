@@ -23,6 +23,16 @@ void main() {
       await shootCalendar(tester, 'calendar_list_phone_dark', const CalendarScreen(), state: state, night: true);
     });
 
+    testWidgets('phone, in the app', (tester) async {
+      final state = await busyDemo(tester);
+      await shootAt(tester, 'calendar_list_phone_app', state: state, location: '/calendar');
+    });
+
+    testWidgets('phone, in the app, dark', (tester) async {
+      final state = await busyDemo(tester);
+      await shootAt(tester, 'calendar_list_phone_app_dark', state: state, location: '/calendar', night: true);
+    });
+
     testWidgets('phone, 200 % text', (tester) async {
       final state = await busyDemo(tester);
       await shootCalendar(
@@ -160,6 +170,11 @@ void main() {
     testWidgets('iPad, in the app', (tester) async {
       final state = await busyDemo(tester);
       await shootAt(tester, 'calendar_week_pad_app', state: state, location: '/calendar', size: pad);
+    });
+
+    testWidgets('iPad, in the app, dark', (tester) async {
+      final state = await busyDemo(tester);
+      await shootAt(tester, 'calendar_week_pad_app_dark', state: state, location: '/calendar', size: pad, night: true);
     });
 
     testWidgets('on the wall', (tester) async {
