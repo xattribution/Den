@@ -78,9 +78,86 @@ enum Role { parent, adult, kid, guest }
 
 enum Tier { preReader, little, big, teen }
 
-enum Marker { blue, green, orange, pink, teal, plum, brown, olive, sky, slate }
+/// A person's color: the family pack, in the order new people get them. The app draws each
+/// as a validated hex; color is never the only clue, since every person also has a picture or
+/// initial and a name. Records written before the pack carry one of ten older names, which
+/// [parse] reads as the nearest color.
+enum Marker {
+  sky,
+  grass,
+  lavender,
+  tangerine,
+  aqua,
+  coral,
+  sunshine,
+  bubblegum;
 
+  /// The names earlier versions wrote, read as the nearest family color. `sky` kept its name.
+  static const Map<String, Marker> legacyNames = {
+    'blue': sky,
+    'green': grass,
+    'plum': lavender,
+    'orange': tangerine,
+    'teal': aqua,
+    'pink': bubblegum,
+    'brown': coral,
+    'olive': sunshine,
+    'slate': lavender,
+  };
+
+  /// Every name a record may carry: today's eight and the older ones.
+  static List<String> get allNames => [for (final m in values) m.name, ...legacyNames.keys];
+
+  /// The color [raw] names, older names included; null for anything else.
+  static Marker? parse(Object? raw) {
+    if (raw is! String) return null;
+    for (final m in values) {
+      if (m.name == raw) return m;
+    }
+    return legacyNames[raw];
+  }
+
+  /// The color a new person gets: the first in order nobody has yet or, once all eight are
+  /// taken, the one the fewest people share.
+  static Marker next(Iterable<Marker> taken) {
+    final counts = {for (final m in values) m: 0};
+    for (final m in taken) {
+      counts[m] = counts[m]! + 1;
+    }
+    var best = values.first;
+    for (final m in values) {
+      if (counts[m]! < counts[best]!) best = m;
+    }
+    return best;
+  }
+}
+
+/// The animals earlier versions offered as a person's look. Members now have a [Picture]; an
+/// older member's animal is read as the matching picture.
 enum Animal { cat, dog, rabbit, bird, butterfly, fish, horse, cow, bug }
+
+/// What stands for a person: the id of a picture from the app's pack (`fox`, `dinosaur`), or
+/// [initial] for the first letter of their name. Other forms (a small photo, `photo:<id>`) can
+/// come later without a schema change.
+abstract final class Picture {
+  static const initial = 'initial';
+
+  static final RegExp _key = RegExp(r'^[a-z][a-z0-9:_-]{0,63}$');
+
+  static bool valid(Object? raw) => raw is String && _key.hasMatch(raw);
+
+  /// The picture an older member's animal reads as; the pack has no horse or cow.
+  static String forAnimal(Animal animal) => switch (animal) {
+        Animal.cat => 'cat',
+        Animal.dog => 'dog',
+        Animal.rabbit => 'bunny',
+        Animal.bird => 'owl',
+        Animal.butterfly => 'butterfly',
+        Animal.fish => 'whale',
+        Animal.bug => 'ladybug',
+        Animal.horse || Animal.cow => initial,
+      };
+}
 
 enum DeviceKind { phone, tablet, desktop, browser, hub, display }
 
@@ -217,8 +294,18 @@ class Member extends RecordView {
   String get name => rec.str('name');
   Role get role => _enum(Role.values, rec.fields['role']) ?? Role.kid;
   Tier? get tier => _enum(Tier.values, rec.fields['tier']);
-  Marker get marker => _enum(Marker.values, rec.fields['marker']) ?? Marker.slate;
+  Marker get marker => Marker.parse(rec.fields['marker']) ?? Marker.lavender;
   Animal get animal => _enum(Animal.values, rec.fields['animal']) ?? Animal.cat;
+
+  /// Their [Picture]: the one chosen for them or, for a member written before pictures, the
+  /// picture their animal reads as.
+  String get picture {
+    final raw = rec.fields['picture'];
+    if (Picture.valid(raw)) return raw as String;
+    final animal = _enum(Animal.values, rec.fields['animal']);
+    return animal == null ? Picture.initial : Picture.forAnimal(animal);
+  }
+
   String? get birthday => rec.strOrNull('birthday');
   Set<Grant> get grants =>
       rec.strings('grants').map((g) => _enum(Grant.values, g)).whereType<Grant>().toSet();

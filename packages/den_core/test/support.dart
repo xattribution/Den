@@ -25,7 +25,7 @@ Future<Den> foundFamily(
     familyName: 'Rivera family',
     timezone: timezone,
     yourName: name,
-    marker: Marker.blue,
+    marker: Marker.sky,
     animal: Animal.cat,
     deviceName: '$name\'s phone',
     deviceKind: DeviceKind.phone,

@@ -20,7 +20,7 @@ void main() {
       familyName: 'Rivera',
       timezone: 'America/Chicago',
       yourName: 'Sam',
-      marker: Marker.blue,
+      marker: Marker.sky,
       animal: Animal.cat,
       deviceName: "Sam's phone",
       deviceKind: DeviceKind.phone,
