@@ -29,13 +29,13 @@ import 'web_push_crypto.dart';
 ///   rewards), and a chore given to someone for today or tomorrow (to them: their turn).
 class WebPushService implements HubService, ReminderSink {
   /// Creates the service for [hub], checking device requests with [auth].
-  WebPushService(this.hub, this.auth);
+  WebPushService(this.hub, this.deviceAuth);
 
   /// Shared hub context.
   final HubContext hub;
 
   /// Checks signed device requests (and counts failed ones against the client).
-  final DeviceAuth auth;
+  final DeviceAuth deviceAuth;
 
   @override
   String get name => 'Web Push';
@@ -105,7 +105,7 @@ class WebPushService implements HubService, ReminderSink {
       ..add('POST', '/api/v1/push/test', (r, _) => test(r));
   }
 
-  Future<Device> _check(Request request) async => (await auth.check(request)).device!;
+  Future<Device> _check(Request request) async => (await deviceAuth.check(request)).device!;
 
   Response _answer(String deviceId) =>
       jsonResponse({'key': b64url(keys.publicKey), 'subscribed': _devices.containsKey(deviceId)});
@@ -115,7 +115,7 @@ class WebPushService implements HubService, ReminderSink {
 
   /// `PUT /api/v1/push`: this device's push subscription, as the browser gives it.
   Future<Response> subscribe(Request request) async {
-    final signed = await auth.withBody(request);
+    final signed = await deviceAuth.withBody(request);
     final bytes = signed.body;
     final device = signed.check.device!;
     if (device.mode != DeviceMode.personal || device.member == null) {

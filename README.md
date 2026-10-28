@@ -34,7 +34,8 @@ runs the extras: Home Assistant, AI access over MCP, calendar feeds, reminders.
   [docs/hosting.md](docs/hosting.md).
 
 **Just the web app, on iPhones.** Put the hub behind an HTTPS reverse proxy (set
-`DEN_PUBLIC_URL` to its address) and open that address in Safari:
+`DEN_PUBLIC_URL` to its address; [docs/hosting.md](docs/hosting.md)) and open that address in
+Safari:
 
 1. Tap Share, then Add to Home Screen, and open Den from the Home Screen. (Safari shows these
    steps first; the Home Screen app keeps its own storage, and only it gets reminders.)
