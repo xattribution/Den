@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:den_actions/den_actions.dart';
 import 'package:den_actions/times.dart';
+import 'package:den_capture/den_capture.dart' show CaptureReader;
 import 'package:den_core/den_core.dart';
 import 'package:shelf/shelf.dart';
 
@@ -45,18 +47,88 @@ class Call {
   bool canSee(String space) => readable.contains(space);
 }
 
-/// The `/api/v1` REST API from docs/hub-api.md.
+class _Replay {
+  _Replay(this.action, this.body, this.status, this.json, this.at);
+  final String action;
+  final String body;
+  final int status;
+  final Object? json;
+  final int at;
+}
+
+/// The `/api/v1` REST API from docs/hub-api.md. Its writes run through den_actions, the same
+/// actions MCP offers: `/api/v1/actions` lists and runs every one, and the older routes are
+/// adapters over them that answer as they always have.
 class RestApi {
-  /// Creates the API over [hub].
-  RestApi(this.hub);
+  /// Creates the API over [hub], running actions with [runner]; [reader] supplies what reads
+  /// text for `add_from_text`.
+  RestApi(this.hub, {ActionRunner? runner, this.reader}) : runner = runner ?? standardRunner();
 
   /// Shared hub context.
   final HubContext hub;
+
+  /// Runs the actions, and keeps their receipts and confirmation tokens.
+  final ActionRunner runner;
+
+  /// The family's capture reader, when the hub has one.
+  final CaptureReader? Function()? reader;
+
+  /// Answers kept by `Idempotency-Key`, per connection.
+  final Map<String, _Replay> _replays = {};
+
+  /// Most answers kept for `Idempotency-Key`.
+  static const int maxReplays = 1000;
+
+  /// How long an `Idempotency-Key` answer is kept.
+  static const Duration replayFor = Duration(hours: 24);
+
+  /// The context an action from [access] runs in.
+  ActionContext actionContext(Access access) => ActionContext(
+        hub.den,
+        member: access.member,
+        scopes: access.scopes,
+        surface: Surface.rest,
+        caller: access.connection.id,
+        readable: access.readable(hub.den),
+        reader: reader?.call(),
+        via: access.label,
+      );
+
+  /// The REST error for a failed action.
+  static ApiError errorOf(ActionResult r) {
+    final code = r.code ?? 'invalid_input';
+    final status = switch (code) {
+      'permission_denied' || 'insufficient_scope' => 403,
+      'not_found' || 'unknown_action' => 404,
+      'read_only' => 409,
+      _ => 400,
+    };
+    final details = <String, Object?>{
+      ...?(r.data['details'] as Map?)?.cast<String, Object?>(),
+      if (r.data['field'] != null) 'field': r.data['field'],
+    };
+    return ApiError(status, code, r.message ?? r.text, details: details.isEmpty ? null : details);
+  }
+
+  /// The `POST /api/v1/actions/{name}` body for [r].
+  static Map<String, Object?> actionJson(ActionResult r) => {
+        'status': switch (r.status) {
+          ActionStatus.done => 'done',
+          ActionStatus.preview => 'preview',
+          ActionStatus.needsConfirmation => 'needs_confirmation',
+          ActionStatus.failed => 'failed',
+        },
+        'text': r.text,
+        'result': r.structured,
+        if (r.receipt != null) 'receipt': r.receipt!.toJson(),
+      };
 
   /// Adds every `/api/v1` route except hub setup and linking.
   void register(Routes routes) {
     final writes = RestWrites(this);
     routes
+      ..add('GET', '/api/v1/actions', (r, _) => _listActions(r))
+      ..add('POST', '/api/v1/actions/<name>', (r, p) => _runAction(r, p['name']!))
       ..add('GET', '/api/v1/members', (r, _) => _call(r, Scope.read, _members))
       ..add('GET', '/api/v1/today', (r, _) => _call(r, Scope.read, _today))
       ..add('GET', '/api/v1/events', (r, _) => _call(r, Scope.read, _events))
@@ -95,9 +167,9 @@ class RestApi {
     }
   }
 
-  /// The caller's access for [request], requiring [scope]. Throws `503`, `401` or `403`, and
-  /// `429` once a client has sent too many tokens that don't work.
-  Access authenticate(Request request, Scope scope) {
+  /// The caller's access for [request], requiring [scope] when given. Throws `503`, `401` or
+  /// `403`, and `429` once a client has sent too many tokens that don't work.
+  Access authenticate(Request request, Scope? scope) {
     if (!hub.ready) throw ApiError.notReady();
     hub.checkFailures(request);
     final access = accessForToken(hub.den, bearerToken(request.headers['authorization']));
@@ -105,8 +177,64 @@ class RestApi {
       hub.failed(request);
       throw ApiError.unauthorized();
     }
-    if (!access.has(scope)) throw ApiError.scope(scope.name);
+    if (scope != null && !access.has(scope)) throw ApiError.scope(scope.name);
     return access;
+  }
+
+  // ------------------------------------------------------------------ actions
+
+  /// `GET /api/v1/actions`: what this token may run.
+  Future<Response> _listActions(Request request) async {
+    final access = authenticate(request, null);
+    final available = await hub.gate.run(access.member, access.label, () => runner.available(actionContext(access)));
+    return jsonResponse({'actions': [for (final s in available) s.restJson()]});
+  }
+
+  /// `POST /api/v1/actions/{name}`: runs an action. `?preview=1` only shows what would change;
+  /// an `Idempotency-Key` header makes a retry answer as the first try did.
+  Future<Response> _runAction(Request request, String name) async {
+    final access = authenticate(request, null);
+    if (runner.spec(name) == null) {
+      throw ApiError.notFound(type: 'action', id: name, message: 'Den has no action called "$name".');
+    }
+    final bytes = await readBodyBytes(request);
+    final Map<String, Object?> body;
+    try {
+      final decoded = bytes.isEmpty ? <String, Object?>{} : jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map) throw ApiError.invalid('The body must be a JSON object of the action\'s input.');
+      body = decoded.cast<String, Object?>();
+    } on FormatException {
+      throw ApiError.invalid('The body isn\'t valid JSON.');
+    }
+    final preview = queryBool(request, 'preview', false);
+    final key = request.headers['idempotency-key']?.trim();
+    final replayKey = key == null || key.isEmpty ? null : '${access.connection.id} ${key.length > 200 ? key.substring(0, 200) : key}';
+    final bodyText = jsonEncode(body);
+    if (replayKey != null) {
+      final now = hub.now();
+      _replays.removeWhere((_, r) => now - r.at > replayFor.inMilliseconds);
+      final kept = _replays[replayKey];
+      if (kept != null) {
+        if (kept.action != name || kept.body != bodyText) {
+          throw ApiError(409, 'idempotency_conflict', 'That Idempotency-Key was used for a different request.');
+        }
+        return jsonResponse(kept.json, status: kept.status, headers: const {'idempotent-replayed': 'true'});
+      }
+    }
+    final result = await hub.gate.run(
+      access.member,
+      access.label,
+      () => runner.run(actionContext(access), name, body, mode: preview ? RunMode.preview : RunMode.run),
+    );
+    if (result.isError) throw errorOf(result);
+    final json = actionJson(result);
+    if (replayKey != null && result.status == ActionStatus.done) {
+      while (_replays.length >= maxReplays) {
+        _replays.remove(_replays.keys.first);
+      }
+      _replays[replayKey] = _Replay(name, bodyText, 200, json, hub.now());
+    }
+    return jsonResponse(json);
   }
 
   // ------------------------------------------------------------------ reads

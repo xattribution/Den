@@ -8,6 +8,7 @@ import '../schema.dart';
 import '../shapes.dart';
 import '../spec.dart';
 import '../times.dart';
+import '../wire.dart';
 
 final Map<String, Object?> _eventFields = {
   'title': S.string('What it is.', maxLength: 200),
@@ -64,6 +65,7 @@ List<ActionSpec> eventActions() => [
           'occurrence': S.time('Which occurrence of a repeating event: its start, or its date.'),
           'scope': S.string('How far the change reaches on a repeating event (default all).', oneOf: ['one', 'following', 'all']),
           ..._eventFields,
+          'who_can_see': S.string('Move the whole event: "everyone", "parents" or "just me".'),
         }, required: ['event']),
         output: S.output({
           ...eventOutput,
@@ -75,8 +77,9 @@ List<ActionSpec> eventActions() => [
         needs: const [DenAction.editEvents],
         effect: Effect.destructive,
         idempotent: true,
-        confirm: Confirm.client,
+        confirm: Confirm.server,
         confirmWhen: _touchesSeries,
+        ask: _askUpdate,
         engine: const {'updateEvent'},
         example: const {'event': 'Dentist', 'location': 'Bright Smiles Dental, Suite 2'},
         run: _update,
@@ -101,11 +104,91 @@ List<ActionSpec> eventActions() => [
         needs: const [DenAction.editEvents],
         effect: Effect.destructive,
         idempotent: true,
+        confirm: Confirm.server,
+        confirmWhen: _touchesSeries,
+        ask: _askDelete,
         engine: const {'deleteEvent'},
         example: const {'event': 'Dinner at Grandma\'s'},
         run: _delete,
       ),
+      ActionSpec(
+        name: 'events.ride',
+        mcpName: 'set_ride',
+        title: 'Drive or pick someone up',
+        description: 'Says who drives to an event or picks up from it, for one occurrence ("I\'ll drive Leo to '
+            'soccer Tuesday"), or that nobody does yet.',
+        input: S.input({
+          'event': S.string('The event\'s title or id.'),
+          'occurrence': S.time('Which occurrence of a repeating event: its start, or its date (default the next one).'),
+          'leg': S.string('Driving there (to) or picking up (from).', oneOf: ['to', 'from']),
+          'driver': S.person('Who drives, or "nobody".'),
+        }, required: ['event', 'leg', 'driver']),
+        output: S.output({'occurrence': occurrenceShape}),
+        scopes: const {Scope.calendar},
+        needs: const [DenAction.editEvents],
+        effect: Effect.write,
+        idempotent: true,
+        engine: const {'claimRide'},
+        example: const {'event': 'Swim lesson', 'leg': 'to', 'driver': 'Alex'},
+        run: _ride,
+      ),
     ];
+
+String _askUpdate(ActionContext c, ActionInput a) {
+  final e = c.event(a.str('event', required: true)!);
+  return a.str('scope') == 'following'
+      ? 'Change this and every later occurrence of ${e.title}?'
+      : 'Change every occurrence of ${e.title}?';
+}
+
+String _askDelete(ActionContext c, ActionInput a) {
+  final e = c.event(a.str('event', required: true)!);
+  return a.str('scope') == 'following'
+      ? 'Remove this and every later occurrence of ${e.title}?'
+      : 'Remove ${e.title} and every one of its occurrences?';
+}
+
+Future<ActionResult> _ride(ActionContext c, ActionInput a) async {
+  final e = editableEvent(c, a, 'change');
+  final int occurrence;
+  if (e.rrule == null) {
+    occurrence = e.start;
+  } else if (a.has('occurrence')) {
+    occurrence = c.occurrenceOf(e, a.raw['occurrence']);
+  } else {
+    final now = c.den.now();
+    final next = c
+        .occurrences(now - 6 * Duration.millisecondsPerHour, now + 400 * Duration.millisecondsPerDay)
+        .where((o) => o.event.id == e.id)
+        .firstOrNull;
+    if (next == null) throw ActionError('${e.title} doesn\'t happen again; say which occurrence.', field: 'occurrence');
+    occurrence = Wire.occurrenceKey(next);
+  }
+  final leg = a.str('leg', required: true)!;
+  final name = a.str('driver', required: true)!;
+  final nobody = const {'nobody', 'no one', 'none', 'noone'}.contains(name.trim().toLowerCase());
+  final driver = nobody ? null : c.people.one(name);
+  await c.den.claimRide(e.id, occurrence: occurrence, leg: leg, driver: driver);
+  final o = c.den
+      .occurrences(occurrence - 2 * Duration.millisecondsPerDay, occurrence + 2 * Duration.millisecondsPerDay)
+      .firstWhere((o) => o.event.id == e.id && Wire.occurrenceKey(o) == occurrence);
+  final who = o.assignees.isEmpty ? '' : ' ${c.people.names(o.assignees)}';
+  final what = leg == 'to' ? 'driving$who to ${o.title}' : 'picking up$who from ${o.title}';
+  return ActionResult(
+    driver == null ? 'Nobody is $what on ${c.when(o)} yet.' : '${c.people.name(driver)} is $what on ${c.when(o)}.',
+    {'occurrence': c.wire.occurrence(o)},
+  );
+}
+
+/// The audience a "who can see it" input moves a record to: everyone, parents, or the caller
+/// alone. The engine doesn't move things into someone else's private space.
+String audienceFor(ActionContext c, Object? value) {
+  final space = c.space(value);
+  if (space == Space.family) return Audience.everyone.name;
+  if (space == Space.parents) return Audience.parents.name;
+  if (c.member != null && space == Space.member(c.member!)) return Audience.justMe.name;
+  throw ActionError('Den can move it to everyone, parents, or just you; not into someone else\'s own space.', field: 'who_can_see');
+}
 
 /// Whether an update or removal reaches more than one occurrence of a repeating event.
 bool _touchesSeries(ActionContext c, ActionInput a) {
@@ -255,6 +338,7 @@ Future<ActionResult> _update(ActionContext c, ActionInput a) async {
     if (scope == EditScope.one) throw ActionError('A repeat rule can\'t change for one occurrence.', field: 'repeat');
     patch['rrule'] = rule.isEmpty ? null : rule;
   }
+  if (a.has('who_can_see')) patch['audience'] = audienceFor(c, a.raw['who_can_see']);
   if (patch.isEmpty) throw ActionError('Nothing to change: give a field such as title, start or location.');
   await c.den.updateEvent(e.id, patch, scope: scope, occurrence: occurrence);
   final after = c.den.event(e.id);

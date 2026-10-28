@@ -8,6 +8,8 @@ environment:
 
 dependencies:
   collection: ^1.19.1
+  den_assistant:
+    path: ../den_assistant
   den_capture:
     path: ../den_capture
   den_core:

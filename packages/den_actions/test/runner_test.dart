@@ -63,7 +63,7 @@ void main() {
     expect(bad.isError, isTrue);
     expect(bad.text, '"delta" must be a whole number.');
     expect(bad.data['field'], 'delta');
-    final extra = await runner.run(parentOn(den), 'get_points', {'person': 'Leo'});
+    final extra = await runner.run(parentOn(den), 'get_family', {'person': 'Leo'});
     expect(extra.text, contains('doesn\'t take "person"'));
     final ambiguous = await runner.run(parentOn(den), 'complete_chore', {'chore': 'Make bed'});
     expect(ambiguous.isError, isTrue);

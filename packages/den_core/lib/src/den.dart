@@ -1813,6 +1813,21 @@ class Den {
 
   PointsSummary points() => pointsSummary(_pointsInput());
 
+  /// Every reward the actor may see, retired ones too ([PointsSummary.rewards] has only those
+  /// that can be asked for), cheapest first.
+  List<Reward> get rewards => _memo('rewards', () {
+        return [for (final e in _visibleLive(RecordType.reward)) Reward(e.rec)]
+          ..sort((a, b) {
+            final c = a.cost.compareTo(b.cost);
+            return c != 0 ? c : a.title.compareTo(b.title);
+          });
+      });
+
+  /// Every goal the actor may see, by title.
+  List<Goal> get goals => _memo('goals', () {
+        return [for (final e in _visibleLive(RecordType.goal)) Goal(e.rec)]..sort((a, b) => a.title.compareTo(b.title));
+      });
+
   Future<void> adjustPoints(String memberId, int delta, String reason) async {
     if (member(memberId) == null) throw const InvalidInput('That person isn\'t in the family');
     await _commit([

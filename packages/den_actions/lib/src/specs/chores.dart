@@ -7,6 +7,7 @@ import '../schema.dart';
 import '../shapes.dart';
 import '../spec.dart';
 import '../times.dart';
+import 'events.dart' show audienceFor;
 
 final Map<String, Object?> _choreFields = {
   'title': S.string('What to do.', maxLength: 200),
@@ -78,7 +79,8 @@ List<ActionSpec> choreActions() => [
         input: S.input({
           'chore': S.string('The chore\'s title or id.'),
           ..._choreFields,
-          'active': S.boolean('Whether it is scheduled.'),
+          'active': S.boolean('Whether it is scheduled; false pauses it.'),
+          'who_can_see': S.string('Move it: "everyone", "parents" or "just me".'),
         }, required: ['chore']),
         output: S.output({'ok': Out.flag('It worked.'), 'chore_id': Out.str('The chore.')}),
         scopes: const {Scope.chores},
@@ -86,51 +88,52 @@ List<ActionSpec> choreActions() => [
         effect: Effect.destructive,
         idempotent: true,
         confirm: Confirm.client,
+        confirmWhen: _notOwn,
         engine: const {'updateChore'},
         example: const {'chore': 'Bring in the mail', 'due_time': '16:00'},
         prepare: stepsAsObjects,
         run: _update,
       ),
       ActionSpec(
+        name: 'chores.delete',
+        mcpName: 'delete_chore',
+        title: 'Remove a chore',
+        description: 'Removes a chore with its history of being done (undo or a parent can bring it back). To stop '
+            'it for a while, update_chore with "active": false pauses it instead.',
+        input: S.input({'chore': S.string('The chore\'s title or id.')}, required: ['chore']),
+        output: S.output({'ok': Out.flag('It worked.'), 'chore_id': Out.str('The chore.')}),
+        scopes: const {Scope.chores},
+        needs: const [DenAction.editChores],
+        effect: Effect.destructive,
+        idempotent: true,
+        confirm: Confirm.server,
+        ask: (c, a) => 'Remove the chore ${c.chore(a.str('chore', required: true)!).title}?',
+        engine: const {'deleteChore'},
+        example: const {'chore': 'Return library books'},
+        run: _delete,
+      ),
+      ActionSpec(
         name: 'chores.complete',
         mcpName: 'complete_chore',
         title: 'Mark a chore done',
-        description: 'Marks a chore done (or not done) on a day. Done also checks every step.',
+        description: 'Marks a chore done (or not done) on a day; done also checks every step. With "step", checks '
+            'or unchecks just that step (checking the last one completes the chore).',
         input: S.input({
           'chore': S.string('The chore\'s title or id.'),
+          'step': S.string('Just this step (its text or id).'),
           'date': S.date('The day (default today).'),
-          'done': S.boolean('Done (default true) or not done.'),
-          'person': S.person('Who did it (default this connection\'s person); also picks between chores with the same title.'),
+          'done': S.boolean('Done or checked (default true), or not.'),
+          'person': S.person('Who did it (default this connection\'s person, "nobody" for no one in particular); also '
+              'picks between chores with the same title.'),
         }, required: ['chore']),
         output: S.output(choreDayOutput),
         scopes: const {Scope.chores},
         needs: const [DenAction.completeOwnChore],
         effect: Effect.write,
         idempotent: true,
-        engine: const {'setChoreDone', 'setChoreDoneBy'},
+        engine: const {'setChoreDone', 'setChoreDoneBy', 'setStep', 'setStepBy'},
         example: const {'chore': 'Bring in the mail'},
         run: _complete,
-      ),
-      ActionSpec(
-        name: 'chores.step',
-        mcpName: 'check_step',
-        title: 'Check a chore step',
-        description: 'Checks or unchecks one step of a chore; checking the last step completes the chore.',
-        input: S.input({
-          'chore': S.string('The chore\'s title or id.'),
-          'step': S.string('The step\'s text or id.'),
-          'date': S.date('The day (default today).'),
-          'checked': S.boolean('Checked (default true).'),
-          'person': S.person('Who checked it (default this connection\'s person).'),
-        }, required: ['chore', 'step']),
-        output: S.output(choreDayOutput),
-        scopes: const {Scope.chores},
-        needs: const [DenAction.completeOwnChore],
-        effect: Effect.write,
-        idempotent: true,
-        engine: const {'setStep', 'setStepBy'},
-        example: const {'chore': 'Dishes', 'step': 'Clear the table'},
-        run: _step,
       ),
       ActionSpec(
         name: 'chores.swap',
@@ -232,13 +235,20 @@ Future<ActionResult> _update(ActionContext c, ActionInput a) async {
     'steps': ?steps,
     if (a.has('reminders')) 'reminders': a.ints('reminders'),
     if (a.has('active')) 'active': a.flag('active'),
+    if (a.has('who_can_see')) 'audience': audienceFor(c, a.raw['who_can_see']),
   };
   if (patch.isEmpty) throw ActionError('Nothing to change: give a field such as title, owner or points.');
   await c.den.updateChore(chore.id, patch);
   return ActionResult('Changed the chore ${chore.title} [chore ${chore.id}].', {'ok': true, 'chore_id': chore.id});
 }
 
-String? _credit(ActionContext c, ActionInput a) => a.has('person') ? c.people.one(a.str('person')!) : c.member;
+/// Who did it: the person named, nobody in particular for "nobody", else the caller's person.
+String? _credit(ActionContext c, ActionInput a) {
+  if (!a.has('person')) return c.member;
+  final name = a.str('person')!;
+  if (const {'nobody', 'no one', 'noone'}.contains(name.trim().toLowerCase())) return null;
+  return c.people.one(name);
+}
 
 /// [chore] as it stands on [date], or an [ActionError] when it isn't on that day.
 ChoreDay choreOnDay(ActionContext c, Chore chore, String date) {
@@ -247,7 +257,30 @@ ChoreDay choreOnDay(ActionContext c, Chore chore, String date) {
   return day;
 }
 
+/// Older chore tools.
+List<ActionAlias> choreAliases() => [
+      ActionAlias('check_step', 'complete_chore', (args) {
+        final out = Map<String, Object?>.of(args);
+        final checked = out.remove('checked');
+        if (checked != null) out['done'] = checked;
+        return out;
+      }),
+    ];
+
+/// Whether a change to a chore touches someone else's: a chore that isn't only the caller's.
+bool _notOwn(ActionContext c, ActionInput a) {
+  final chore = c.chore(a.str('chore', required: true)!);
+  return !(chore.owner is OwnerMember && (chore.owner as OwnerMember).id == c.member);
+}
+
+Future<ActionResult> _delete(ActionContext c, ActionInput a) async {
+  final chore = c.chore(a.str('chore', required: true)!);
+  await c.den.deleteChore(chore.id);
+  return ActionResult('Removed the chore ${chore.title}.', {'ok': true, 'chore_id': chore.id});
+}
+
 Future<ActionResult> _complete(ActionContext c, ActionInput a) async {
+  if (a.has('step')) return _step(c, a);
   final date = a.has('date') ? toolDate(a.raw['date'], c.zone, 'date') : c.today;
   final who = _credit(c, a);
   final chore = c.chore(a.str('chore', required: true)!, owner: who, date: date);
@@ -271,7 +304,7 @@ Future<ActionResult> _step(ActionContext c, ActionInput a) async {
   final chore = c.chore(a.str('chore', required: true)!, owner: who, date: date);
   final step = pick(a.str('step', required: true)!, chore.steps, id: (s) => s.id, name: (s) => s.text, kind: 'step');
   choreOnDay(c, chore, date);
-  final checked = a.flag('checked') ?? true;
+  final checked = a.flag('done') ?? true;
   if (who == c.member) {
     await c.den.setStep(chore.id, date, step.id, checked);
   } else {

@@ -30,12 +30,20 @@ void test(Object? description, FutureOr<void> Function() body, {base.Timeout? ti
   );
 }
 
-/// The demo family on Alex's phone, as the actions' examples expect it: everyone has 100 more
-/// stars, and Maya has a request for a reward waiting for a parent.
+/// The demo family on Alex's phone, as the actions' examples expect it ([prepareDemo]).
 Future<Den> demoFamily() async {
   final den = await createDemoFamily();
+  await prepareDemo(den);
+  return den;
+}
+
+/// What the actions' examples expect of the demo family besides what [createDemoFamily] makes:
+/// everyone has 100 more stars, Maya has one request for a reward waiting for a parent, and the
+/// family subscribes to a "School calendar". [den] is a parent's own device.
+Future<void> prepareDemo(Den den) async {
+  final me = den.actor!.id;
   for (final m in den.members) {
-    if (m.id != den.actor!.id) await den.adjustPoints(m.id, 100, 'Demo stars');
+    if (m.id != me) await den.adjustPoints(m.id, 100, 'Demo stars');
   }
   final maya = idOf(den, 'Maya');
   final points = den.points();
@@ -43,7 +51,7 @@ Future<Den> demoFamily() async {
     final five = points.rewards.firstWhere((r) => r.needsApproval);
     await den.requestReward(five.id, member: maya);
   }
-  return den;
+  await den.addSubscription(url: 'https://calendar.invalid/school.ics', label: 'School calendar');
 }
 
 /// A member id by name.

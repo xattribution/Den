@@ -229,6 +229,12 @@ class ActionRunner {
       final entries = fork.historyOf(r.changes);
       final warnings = [..._newGaps(c, fc), ..._duplicates(c, fork, entries)];
       final summary = _firstLine(result.text);
+      String question;
+      try {
+        question = s.ask?.call(c, input) ?? 'Go ahead? $summary';
+      } on Object {
+        question = 'Go ahead? $summary';
+      }
       return ActionResult(
         [
           'Nothing changed yet. This would: $summary',
@@ -237,6 +243,7 @@ class ActionRunner {
         {
           'preview': {
             'summary': summary,
+            'question': question,
             'changes': [
               for (final h in entries)
                 {'type': h.type, 'id': h.rid, 'title': h.title, 'verb': h.verb, 'fields': [for (final d in h.diffs) d.field]},
@@ -300,13 +307,17 @@ class ActionRunner {
 
   static String _key(ActionSpec s, ActionInput input) => '${s.mcpName} ${canonicalJson(input.raw)}';
 
+  /// Uses up [token] when [c]'s caller got it for exactly this call and it hasn't run out.
   bool _consume(String token, ActionContext c, ActionSpec s, ActionInput input) {
-    final pending = _tokens.remove(token);
-    return pending != null &&
-        pending.caller == c.caller &&
-        pending.tool == s.mcpName &&
-        pending.key == _key(s, input) &&
-        pending.expires > c.den.now();
+    final pending = _tokens[token];
+    if (pending == null || pending.caller != c.caller) return false;
+    if (pending.expires <= c.den.now()) {
+      _tokens.remove(token);
+      return false;
+    }
+    if (pending.tool != s.mcpName || pending.key != _key(s, input)) return false;
+    _tokens.remove(token);
+    return true;
   }
 
   Future<ActionResult> _needsYes(ActionContext c, ActionSpec s, ActionInput input, {required bool stale}) async {
@@ -320,13 +331,7 @@ class ActionRunner {
     final token = _newId('c');
     final expires = now + confirmFor.inMilliseconds;
     _tokens[token] = _Pending(c.caller, s.mcpName, _key(s, input), expires);
-    final summary = (preview.data['preview'] as Map)['summary'] as String;
-    String question;
-    try {
-      question = s.ask?.call(c, input) ?? 'Go ahead? $summary';
-    } on Object {
-      question = 'Go ahead? $summary';
-    }
+    final question = (preview.data['preview'] as Map)['question'] as String;
     return ActionResult(
       [
         if (stale) 'That confirmation didn\'t match or had run out, so nothing changed.',

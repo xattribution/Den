@@ -112,6 +112,13 @@ packages:
       relative: true
     source: path
     version: "0.1.0"
+  den_assistant:
+    dependency: transitive
+    description:
+      path: "../den_assistant"
+      relative: true
+    source: path
+    version: "0.1.0"
   den_capture:
     dependency: transitive
     description:

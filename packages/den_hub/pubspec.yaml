@@ -29,6 +29,8 @@ dependencies:
   web_socket_channel: ^3.0.3
 
 dev_dependencies:
+  den_assistant:
+    path: ../den_assistant
   den_relay:
     path: ../den_relay
   lints: ^6.1.0

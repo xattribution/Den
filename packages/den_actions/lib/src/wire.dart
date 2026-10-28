@@ -282,32 +282,32 @@ class Wire {
         ...instant('requested', r.rec.created.millis),
       };
 
+  /// A goal with its standings.
+  Map<String, Object?> goal(GoalStanding g) => {
+        'id': g.goal.id,
+        'title': g.goal.title,
+        'mode': g.goal.mode.name,
+        'target': g.goal.target,
+        'members': g.goal.members,
+        'start': g.goal.start,
+        'end': g.goal.end,
+        'repeat': g.goal.repeat.name,
+        'reward': g.goal.reward,
+        'window_start': g.windowStart,
+        'window_end': g.windowEnd,
+        'winner': g.goal.mode == GoalMode.race ? g.winner : null,
+        'standings': [
+          for (final s in g.standings) {'member': s.member, 'earned': s.earned, ...instant('reached', s.reachedAt)},
+        ],
+      };
+
   /// The points summary.
   Map<String, Object?> points(PointsSummary p, {int recent = 50}) {
     final totals = {for (final m in den.members) m.id: p.totals[m.id] ?? 0};
     return {
       'enabled': den.family?.pointsEnabled ?? true,
       'totals': totals,
-      'goals': [
-        for (final g in p.goals)
-          {
-            'id': g.goal.id,
-            'title': g.goal.title,
-            'mode': g.goal.mode.name,
-            'target': g.goal.target,
-            'members': g.goal.members,
-            'start': g.goal.start,
-            'end': g.goal.end,
-            'repeat': g.goal.repeat.name,
-            'reward': g.goal.reward,
-            'window_start': g.windowStart,
-            'window_end': g.windowEnd,
-            'winner': g.goal.mode == GoalMode.race ? g.winner : null,
-            'standings': [
-              for (final s in g.standings) {'member': s.member, 'earned': s.earned, ...instant('reached', s.reachedAt)},
-            ],
-          },
-      ],
+      'goals': [for (final g in p.goals) goal(g)],
       'recent': [
         for (final l in p.recent.take(recent))
           {

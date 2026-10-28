@@ -163,6 +163,28 @@ class ActionSpec {
   /// Whether it changes nothing.
   bool get readOnly => effect == Effect.read;
 
+  /// This spec running [run] instead (to watch what it does, in tests).
+  ActionSpec withRun(ActionBody run) => ActionSpec(
+        name: name,
+        mcpName: mcpName,
+        title: title,
+        description: description,
+        input: inputSchema,
+        output: outputSchema,
+        scopes: scopes,
+        needs: needs,
+        effect: effect,
+        idempotent: idempotent,
+        confirm: confirm,
+        confirmWhen: confirmWhen,
+        ask: ask,
+        surfaces: surfaces,
+        engine: engine,
+        example: example,
+        prepare: prepare,
+        run: run,
+      );
+
   /// The MCP `tools/list` entry.
   Map<String, Object?> toolJson() => {
         'name': mcpName,
@@ -334,6 +356,7 @@ final Map<String, Object?> receiptSchema = S.object({
 /// What a preview would change.
 final Map<String, Object?> previewSchema = S.object({
   'summary': S.string('What it would do.'),
+  'question': S.string('What to ask the person before doing it.'),
   'changes': S.array(
     S.object({
       'type': S.string('What kind of record.'),
