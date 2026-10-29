@@ -5,17 +5,28 @@ import 'layout.dart';
 import 'motion.dart';
 import 'tokens.dart';
 
-/// Opens [builder] in a Den sheet and completes with what the sheet pops.
+/// Opens [builder] in a Den sheet and completes with what the sheet pops. A sheet opened from
+/// a part of the app drawn in another theme than the app's (the calendar kept light at night)
+/// takes that theme: its surface, handle, scrim and everything in it.
 Future<T?> showDenSheet<T>(
   BuildContext context, {
   required WidgetBuilder builder,
   bool dismissible = true,
   String closeLabel = 'Close',
   RouteSettings? settings,
-}) =>
-    Navigator.of(context).push<T>(
-      DenSheetRoute<T>(builder: builder, dismissible: dismissible, closeLabel: closeLabel, settings: settings),
-    );
+}) {
+  final navigator = Navigator.of(context);
+  final theme = Theme.of(context);
+  return navigator.push<T>(
+    DenSheetRoute<T>(
+      builder: builder,
+      dismissible: dismissible,
+      closeLabel: closeLabel,
+      settings: settings,
+      theme: identical(theme, Theme.of(navigator.context)) ? null : theme,
+    ),
+  );
+}
 
 /// A sheet: from the bottom edge on phones, a centered form sheet at most 560 wide on iPad, with
 /// 28 corners on the page's background and the page behind dimmed. It moves on the critically
@@ -24,9 +35,13 @@ Future<T?> showDenSheet<T>(
 /// it settles back. Every movement can be grabbed mid-flight. Under Reduce Motion it fades in
 /// and out in 100 ms and never slides.
 class DenSheetRoute<T> extends PopupRoute<T> {
-  DenSheetRoute({required this.builder, this.dismissible = true, this.closeLabel = 'Close', super.settings});
+  DenSheetRoute({required this.builder, this.dismissible = true, this.closeLabel = 'Close', this.theme, super.settings});
 
   final WidgetBuilder builder;
+
+  /// The theme of the whole sheet (surface, handle, scrim and content) when it isn't the app's:
+  /// a sheet opened from the calendar kept light in a dark app. Null follows the app.
+  final ThemeData? theme;
 
   /// Whether a drag, a tap outside or the back gesture closes it.
   final bool dismissible;
@@ -63,8 +78,10 @@ class DenSheetRoute<T> extends PopupRoute<T> {
   Duration get reverseTransitionDuration => transitionDuration;
 
   @override
-  Widget buildPage(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation) =>
-      _DenSheetPage<T>(route: this);
+  Widget buildPage(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation) {
+    final page = _DenSheetPage<T>(route: this);
+    return theme == null ? page : Theme(data: theme!, child: page);
+  }
 }
 
 class _DenSheetPage<T> extends StatefulWidget {
