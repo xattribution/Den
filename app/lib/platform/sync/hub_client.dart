@@ -87,6 +87,27 @@ class RedeemedInvite {
   final String? familyName;
 }
 
+/// What a recovery code from whoever runs the hub opened (`POST /api/v1/recovery/redeem`):
+/// the invite to join over, the hub's recovery proof for this device, and whose it is.
+class RedeemedRecovery {
+  const RedeemedRecovery({
+    required this.invite,
+    required this.proof,
+    required this.member,
+    required this.memberName,
+    this.familyName,
+  });
+
+  /// A `den://join` invite naming the hub.
+  final String invite;
+
+  /// The hub's signed recovery proof (den_core's `RecoveryProof` as JSON).
+  final Map<String, Object?> proof;
+  final String member;
+  final String memberName;
+  final String? familyName;
+}
+
 /// A hub turned a request down; [message] says why and what to do, for people.
 class HubException implements Exception {
   const HubException(this.message, {this.code, this.triesLeft, this.retryAfter});
@@ -235,6 +256,30 @@ class HubClient {
       invite: invite,
       member: json['member'] as String?,
       memberName: json['member_name'] as String?,
+      familyName: json['family'] as String?,
+    );
+  }
+
+  /// `POST /api/v1/recovery/redeem` with the four words from whoever runs the hub and this
+  /// device's key.
+  Future<RedeemedRecovery> redeemRecovery(Uri base, String code, String pubkey) async {
+    final json = await _send(
+      () => _http.post(
+        base.replace(path: '/api/v1/recovery/redeem'),
+        headers: const {'content-type': 'application/json'},
+        body: jsonEncode({'code': code, 'pubkey': pubkey}),
+      ),
+      base,
+    );
+    final invite = json['invite'], proof = json['proof'], member = json['member'], name = json['member_name'];
+    if (invite is! String || proof is! Map || member is! String || name is! String) {
+      throw const HubException("The hub's answer was missing something. Try again.");
+    }
+    return RedeemedRecovery(
+      invite: invite,
+      proof: proof.cast<String, Object?>(),
+      member: member,
+      memberName: name,
       familyName: json['family'] as String?,
     );
   }

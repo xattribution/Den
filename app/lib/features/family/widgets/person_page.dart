@@ -18,6 +18,7 @@ import '../words/sitter.dart';
 import 'family_parts.dart';
 import 'invite_sheet.dart';
 import 'person_sheets.dart';
+import 'recovery_section.dart';
 import 'sitter_sheet.dart';
 
 /// Everything about one person, written as sentences (Family.dc.html's card, then the rest of
@@ -101,6 +102,7 @@ class _PersonPageState extends State<PersonPage> {
           if (ended && trust) ...[sectionGap, AccessEndedNotice(member: m)],
           sectionGap,
           _devices(context, app, m, trust: trust && !ended),
+          if (trust && isMe && m.isParent) ...[sectionGap, RecoverySection(member: m)],
           if (trust && !isMe && !_lastParent(den, m)) ...[sectionGap, _remove(context, m)],
         ],
       ],

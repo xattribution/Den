@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:den_core/den_core.dart';
 import 'package:den_core/src/materializer.dart';
+import 'package:den_core/src/recovery.dart';
 import 'package:den_core/src/snapshot.dart';
 import 'package:den_core/src/validity.dart';
 import 'package:test/test.dart';
@@ -176,7 +177,63 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildPool(int seed) async {
     }
   }
 
+  // Recovery: Dana's words, the hub's key, phones they let in, a reused proof, keys replaced
+  // (one phone kept, one not), and a phone signing with the old words clocked before.
+  final words = await RecoveryKey.fromSeed(List.generate(32, (i) => i + seed));
+  final server = await RecoveryKey.generate();
+  final recovered = <Den>[];
+  Future<Change> recoverWith(RecoveryKey key, RecoveryKind kind, {RecoveryProof? reuse, int? millis}) async {
+    clock.advance(const Duration(seconds: 2));
+    final phoneKeys = await DeviceKeys.generate();
+    final phone = await Den.open(storage: MemoryStorage(), keys: phoneKeys, now: () => millis ?? clock.now);
+    final proof = reuse ??
+        await key.prove(
+          family: a.familyId!,
+          kind: kind,
+          member: dana,
+          devicePubkey: phoneKeys.pubkey,
+          expires: (millis ?? clock.now) + 600000,
+        );
+    await phone.requestRecovery(
+      familyId: a.familyId!,
+      founderPubkey: a.founderPubkey!,
+      deviceName: 'Recovered',
+      kind: DeviceKind.phone,
+      proof: proof,
+    );
+    final change = phone.changesSince({}).single;
+    forged.add(change);
+    await a.ingest([change]);
+    recovered.add(phone);
+    return change;
+  }
+
+  late Change keptPhone;
+  late int wordsReplacedAt;
   for (var round = 0; round < 160; round++) {
+    switch (round) {
+      case 20:
+        await a.setRecoveryKey(dana, words.publicKey);
+      case 40:
+        keptPhone = await recoverWith(words, RecoveryKind.words);
+        // The same proof again, from another phone: its nonce is used.
+        await recoverWith(words, RecoveryKind.words, reuse: RecoveryProof.parse(keptPhone.fields['recovery']));
+      case 60:
+        await a.setServerRecoveryKey(server.publicKey);
+      case 70:
+        await recoverWith(server, RecoveryKind.hub);
+      case 90:
+        // New words, naming the phone the old ones let in.
+        clock.advance(const Duration(minutes: 1));
+        wordsReplacedAt = clock.now;
+        await a.setRecoveryKey(dana, (await RecoveryKey.generate()).publicKey);
+      case 100:
+        // Old words, clocked before they were replaced: counts for nothing.
+        await recoverWith(words, RecoveryKind.words, millis: wordsReplacedAt - 30000);
+        // Server help off, knowing of no phone it let in.
+        clock.advance(const Duration(minutes: 1));
+        await a.setServerRecoveryKey(null);
+    }
     // The kid's tablet less often: most of what it tries isn't allowed.
     await op(random.nextInt(7) == 0 ? 2 : const [0, 1, 3][random.nextInt(3)]);
     if (random.nextInt(4) == 0) {
@@ -249,6 +306,7 @@ String stateOf(Materializer m) => canonicalJson({
       'cutoffs': {
         for (final e in m.validator.cutoffs.entries) e.key: [for (final k in e.value) [k.after, '${k.at}']],
       },
+      'retired': m.validator.retiredRecoveryKeys.toJson(),
     });
 
 /// What [Den.open] does with a snapshot: restore it over everything stored, then add the rest.
@@ -280,6 +338,9 @@ void main() {
         expect(reference.rejected, isNotEmpty, reason: 'the pool has changes that don\'t count');
         expect(reference.validator.cutoffs, isNotEmpty, reason: 'the pool has a revocation with a cutoff');
         expect(reference.store.liveOfType(RecordType.photo), isNotEmpty, reason: 'the pool has photos');
+        expect(reference.validator.retiredRecoveryKeys.isEmpty, isFalse, reason: 'and replaced recovery keys');
+        expect(reference.rejected.values.where((r) => r.contains('replaced')), isNotEmpty);
+        expect(reference.rejected.values.where((r) => r.contains('already used')), isNotEmpty);
         expect(pool.where((c) => c.type == RecordType.redemption), isNotEmpty, reason: 'and rewards asked for');
       });
 
@@ -299,14 +360,15 @@ void main() {
         }
       });
 
-      test('with no revocation to decide, a late change only ever rewinds', () {
+      test('with no revocation or replaced recovery key to decide, a late change only ever rewinds', () {
         final random = Random(seed * 17);
-        final reference = Materializer(() => root)..add(beforeRevocation);
+        final plain = [for (final c in beforeRevocation) if (!setsRecoveryKey(c)) c];
+        final reference = Materializer(() => root)..add(plain);
         reference.replay();
         final want = stateOf(reference);
         for (var trial = 0; trial < 20; trial++) {
           final m = Materializer(() => root);
-          final order = [...beforeRevocation]..shuffle(random);
+          final order = [...plain]..shuffle(random);
           var i = 0;
           while (i < order.length) {
             final n = 1 + random.nextInt(3);
@@ -349,6 +411,15 @@ void main() {
             i += n;
           }
           expect(stateOf(reopened), expected, reason: 'trial $trial (cut $cut, stored $stored, window from $windowFrom)');
+        }
+      });
+
+      test('a snapshot of everything restores everything, the validator\'s cutoffs and replaced keys included', () async {
+        final m = Materializer(() => root)..add(pool);
+        for (final windowFrom in [0, clocks[clocks.length ~/ 2], clocks.last + 1]) {
+          final reopened = reopen(root, await snapshotOf(m, root, windowFrom), pool);
+          expect(reopened.fullReplays, 0, reason: 'nothing to replay');
+          expect(stateOf(reopened), expected);
         }
       });
 

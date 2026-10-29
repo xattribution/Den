@@ -11,6 +11,100 @@ import 'local_stub.dart' if (dart.library.io) 'local_io.dart' as local;
 import 'pairing.dart';
 import '../capabilities.dart';
 
+/// The parent's own 12 recovery words, checked by the family's hub: confirming signs this
+/// device's recovery proof with them and asks with it.
+class _WordsRecovery extends RecoverySession {
+  _WordsRecovery(this._pairing, this._attempt, this._who, this._sync, this._name);
+
+  final NetPairing _pairing;
+  final net.JoinAttempt _attempt;
+  final net.RecoveringAs _who;
+  final Uri _sync;
+  final String _name;
+
+  @override
+  String get memberName => _who.name;
+
+  @override
+  Marker? get marker => Marker.parse(_who.marker);
+
+  @override
+  String? get picture => _who.picture;
+
+  @override
+  String? get familyName => _who.familyName;
+
+  @override
+  bool get byHub => false;
+
+  @override
+  Future<JoinTicket> confirm() async {
+    try {
+      await _attempt.confirmRecovery(deviceName: _name);
+    } on Object {
+      throw const PairingException("Lost touch with the family's hub. Try again.");
+    }
+    return _pairing._joined(_attempt, _sync, _who.familyId, _who.familyName);
+  }
+
+  @override
+  Future<void> cancel() => _attempt.cancel();
+}
+
+/// Four words from whoever runs the hub: the hub signed this device's recovery proof already;
+/// confirming joins with it.
+class _HubRecovery extends RecoverySession {
+  _HubRecovery(this._pairing, this._redeemed, this._proof, this._sync, this._name, this._kind);
+
+  final NetPairing _pairing;
+  final RedeemedRecovery _redeemed;
+  final RecoveryProof _proof;
+  final Uri _sync;
+  final String _name;
+  final DeviceKind _kind;
+
+  @override
+  String get memberName => _redeemed.memberName;
+
+  @override
+  String? get familyName => _redeemed.familyName;
+
+  @override
+  bool get byHub => true;
+
+  @override
+  Future<JoinTicket> confirm() async {
+    final net.Invite invite;
+    try {
+      invite = await net.Invite.parse(_redeemed.invite);
+    } on FormatException {
+      throw const PairingException('These words have expired. Ask whoever runs your hub for new ones.');
+    }
+    final channel = await _pairing._open(() => net.connectWebSocket(_sync));
+    final attempt = await _pairing._node.joinWithRecoveryProof(channel, invite, _proof, deviceName: _name, kind: _kind);
+    return _pairing._joined(attempt, _sync, invite.familyId, _redeemed.familyName);
+  }
+
+  @override
+  Future<void> cancel() async {}
+}
+
+/// What someone typed or pasted on "I lost my phone": their 12 recovery words, or the four
+/// words (or the whole link, `https://<hub>/#/recover/<w>-<w>-<w>-<w>`) from whoever runs the
+/// hub, with the hub's address when the link carried it.
+({List<String>? words, String? code, Uri? hub}) recoveryInput(String text) {
+  var rest = text.trim();
+  Uri? hub;
+  final at = rest.indexOf('#/recover/');
+  if (at >= 0) {
+    final base = Uri.tryParse(rest.substring(0, at));
+    if (base != null && base.host.isNotEmpty) hub = Uri(scheme: base.scheme, host: base.host, port: base.port);
+    rest = Uri.decodeComponent(rest.substring(at + '#/recover/'.length));
+  }
+  final words = net.RecoveryWords.parse(rest);
+  return (words: words, code: words == null ? net.normalizeCode(rest) : null, hub: hub);
+}
+
 /// [PairingService] on den_net: QR invites and spoken codes over the hub, the relay's
 /// rendezvous, or (with neither) a direct connection on the same Wi-Fi.
 class NetPairing extends PairingService {
@@ -325,6 +419,75 @@ class NetPairing extends PairingService {
     await network.rememberJoin(invite.inviterDevice, sync);
     _follow(attempt, hubs: [sync]);
     return JoinTicket(familyId: invite.familyId, familyName: redeemed.familyName);
+  }
+
+  // ------------------------------------------------------------------ recovery
+
+  @override
+  Future<String> hubRecoveryKey() async {
+    if (network.hubDevice == null && !network.isHub) {
+      throw const PairingException("Getting back in with the hub's help needs the family's hub. Add it first.");
+    }
+    final api = HubApi(network);
+    try {
+      final json = await api.send('GET', '/api/v1/recovery/key', missing: "The family's hub can't help yet. Update it, then try again.");
+      final key = json['key'];
+      if (key is! String) throw const PairingException("The hub's answer had no key in it. Try again.");
+      return key;
+    } on HubException catch (e) {
+      throw PairingException(e.message);
+    } finally {
+      api.close();
+    }
+  }
+
+  @override
+  Future<RecoverySession> startRecovery(
+    String text, {
+    String? hubUrl,
+    required String Function(String name) deviceName,
+    required DeviceKind kind,
+  }) async {
+    final typed = recoveryInput(text);
+    final base = (hubUrl == null || hubUrl.trim().isEmpty ? null : HubClient.baseFor(hubUrl)) ?? typed.hub ?? _servedBase;
+    if (base == null) throw const PairingException("Type your hub's address too. Whoever runs it knows it.");
+    final sync = HubClient.syncUri(base);
+    final words = typed.words;
+    if (words != null) {
+      final channel = await _open(() => net.connectWebSocket(sync));
+      final attempt = await _node.joinWithRecoveryWords(channel, words, deviceName: deviceName(''), kind: kind);
+      final net.RecoveringAs who;
+      try {
+        who = await attempt.recoveringAs.timeout(const Duration(seconds: 30));
+      } on net.JoinException catch (e) {
+        throw PairingException(e.reason == 'bad-proof'
+            ? "Those words don't belong to anyone in this family. Check them against where you saved them."
+            : "Couldn't check the words with the family's hub. Try again.");
+      } on TimeoutException {
+        await attempt.cancel();
+        throw const PairingException("The family's hub didn't answer. Check the connection, then try again.");
+      }
+      return _WordsRecovery(this, attempt, who, sync, deviceName(who.name));
+    }
+    final code = typed.code;
+    if (code == null) throw const PairingException('Type your 12 recovery words, or the 4 words from whoever runs your hub.');
+    final RedeemedRecovery redeemed;
+    try {
+      redeemed = await _client.redeemRecovery(base, code, network.den.keys.pubkey);
+    } on HubException catch (e) {
+      throw PairingException(e.code == 'not_found'
+          ? "Those words aren't right, or they've been used or expired. Ask whoever runs your hub for new ones."
+          : e.message);
+    }
+    final proof = RecoveryProof.parse(redeemed.proof);
+    if (proof == null) throw const PairingException("The hub's answer was missing something. Try again.");
+    return _HubRecovery(this, redeemed, proof, sync, deviceName(redeemed.memberName), kind);
+  }
+
+  Future<JoinTicket> _joined(net.JoinAttempt attempt, Uri sync, String familyId, String? familyName) async {
+    await network.rememberJoin(attempt.peer.deviceId, sync);
+    _follow(attempt, hubs: [sync]);
+    return JoinTicket(familyId: familyId, familyName: familyName);
   }
 
   List<PendingJoin> _convert(List<net.PendingJoin> joins) => [

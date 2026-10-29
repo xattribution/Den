@@ -8,6 +8,8 @@ import 'dart:io';
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
+import 'package:den_net/den_net.dart';
+import 'package:http/http.dart' as http;
 import 'package:test/test.dart';
 
 import '../../den_sett_import/test/sett_fixture.dart';
@@ -161,6 +163,76 @@ void main() {
     expect(until, greaterThan(DateTime.now().millisecondsSinceEpoch + 4 * 60000));
     expect((await run(['open-linking', '--data', dataPath, '--minutes', '600'])).$1, 64);
     expect((await DataDir(dataPath).readBackup()).keys, isNot(contains('hub/link-open')));
+  });
+
+  test('recover: a link and four words for a parent, only once the family turned server help on', () async {
+    final hubDir = DataDir(dataPath);
+    await hubDir.lock();
+    final den = await hubDir.open();
+    final hub = await DenHub.start(den, HubConfig(
+      port: 0,
+      host: InternetAddress.loopbackIPv4,
+      mdns: false,
+      dataDir: dataPath,
+      publicUrl: Uri.parse('https://den.example.com'),
+      public: false,
+      log: HubLog(level: LogLevel.error),
+    ));
+    try {
+      final port = '${hub.port}';
+      final (off, _, offErr) = await run(['recover', '--person', 'Alex', '--data', dataPath, '--port', port]);
+      expect(off, 1);
+      expect(offErr, contains('hasn\'t turned on server help'));
+      expect(offErr, contains('Settings, Family, "Let the hub help us get back in"'));
+      expect(offErr, contains('12 recovery words'));
+
+      // Alex's phone asks the hub for its key and turns server help on.
+      final url = hub.localUrl.resolve('/api/v1/recovery/key');
+      final headers = await DeviceRequest.sign(
+        keys: phone.keys,
+        method: 'GET',
+        url: url,
+        body: const [],
+        hub: den.deviceId,
+        actorId: phone.actor!.id,
+      );
+      final key = (jsonDecode((await http.get(url, headers: headers)).body) as Map)['key'] as String;
+      await phone.setServerRecoveryKey(key);
+      await den.ingest(phone.changesSince(den.versionVector));
+
+      final (code, out, err) = await run(['recover', '--person', 'Alex', '--data', dataPath, '--port', port]);
+      expect(code, 0, reason: err);
+      final link = RegExp(r'https://den\.example\.com/#/recover/([a-z]+)-([a-z]+)-([a-z]+)-([a-z]+)').firstMatch(out);
+      expect(link, isNotNull, reason: out);
+      expect(out, contains('  ${link!.group(1)} ${link.group(2)} ${link.group(3)} ${link.group(4)}'));
+      expect(out, contains('30 minutes'));
+      expect(out, contains('"I lost my phone"'));
+      expect(out, contains("Alex's new phone was let in by the hub"));
+
+      final (kid, _, kidErr) = await run(['recover', '--person', 'Maya', '--data', dataPath, '--port', port]);
+      expect(kid, 1);
+      expect(kidErr, contains('isn\'t a parent'));
+      final (none, _, noneErr) = await run(['recover', '--person', 'Mallory', '--data', dataPath, '--port', port]);
+      expect(none, 1);
+      expect(noneErr, contains('Parents: Alex'));
+      expect((await run(['recover', '--data', dataPath, '--port', port])).$1, 64);
+
+      // The key is in backups; the command's secret and the codes, which last minutes, aren't.
+      final files = (await hubDir.readBackup()).keys;
+      expect(files, contains('hub/recovery.json'));
+      expect(files, isNot(contains('hub/$recoveryCliFile')));
+      expect(files, isNot(contains('hub/$recoveryTicketsDoc.json')));
+    } finally {
+      await hub.stop();
+      await den.close();
+      await hubDir.unlock();
+    }
+
+    // With no hub running, the command makes the code in the data directory.
+    final (offline, offlineOut, offlineErr) =
+        await run(['recover', '--person', 'Alex', '--data', dataPath, '--port', '9'], env: {'DEN_PUBLIC_URL': 'https://den.example.com'});
+    expect(offline, 0, reason: offlineErr);
+    expect(offlineOut, contains('https://den.example.com/#/recover/'));
   });
 
   test('a backup taken while the hub runs and writes is consistent, and holds notify.json', () async {

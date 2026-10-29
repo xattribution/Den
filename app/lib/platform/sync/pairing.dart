@@ -180,6 +180,24 @@ abstract class PairingService {
   /// nobody in between to compare against.
   HubSetupSession adoptServingHub(HubInfo hub, String code) => throw const PairingException(LocalOnlyPairing.message);
 
+  // ------------------------------------------------------------------ recovery
+
+  /// On a parent's own device: the family hub's server recovery key, for "Let the hub help us
+  /// get back in" to write into the family record.
+  Future<String> hubRecoveryKey() async => throw const PairingException(LocalOnlyPairing.message);
+
+  /// On a new phone, "I lost my phone": [text] holds the parent's 12 recovery words, or the four
+  /// words (or the link) from whoever runs the hub. Reaches the hub at [hubUrl], or the hub that
+  /// served this page, and says whose they are before anything is written. [deviceName] names
+  /// this device from that parent's name.
+  Future<RecoverySession> startRecovery(
+    String text, {
+    String? hubUrl,
+    required String Function(String name) deviceName,
+    required DeviceKind kind,
+  }) async =>
+      throw const PairingException(LocalOnlyPairing.message);
+
   // ------------------------------------------------------------------ invites by message
 
   /// An invite the family's hub keeps for three days, for [memberId] when given. Needs a
@@ -196,6 +214,30 @@ abstract class PairingService {
     required DeviceKind kind,
   }) async =>
       throw const PairingException(LocalOnlyPairing.message);
+}
+
+/// Getting back in on a new phone ("I lost my phone"), once Den knows whose words they are: the
+/// parent's 12 recovery words, or the four words whoever runs the hub made with
+/// `den_hub recover`. [confirm] lets this device in as theirs; [cancel] lets the words go.
+abstract class RecoverySession {
+  /// The parent the words belong to.
+  String get memberName;
+
+  /// Their color and picture, to show their face before this device holds the family.
+  Marker? get marker => null;
+  String? get picture => null;
+
+  /// The family's name, when the hub said.
+  String? get familyName;
+
+  /// Whether the hub's recovery made this (not the parent's own words).
+  bool get byHub;
+
+  /// Lets this device in as [memberName]'s own; the family's device does so at once.
+  Future<JoinTicket> confirm();
+
+  /// Lets the words go without asking to be let in.
+  Future<void> cancel();
 }
 
 /// Where adding a hub stands, on the parent's phone.

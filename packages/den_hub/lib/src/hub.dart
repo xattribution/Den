@@ -29,6 +29,7 @@ import 'mdns/responder.dart';
 import 'mcp/server.dart';
 import 'oauth.dart';
 import 'push/push_service.dart';
+import 'recovery.dart';
 import 'relay_watch.dart';
 import 'reminders.dart';
 import 'setup.dart';
@@ -66,6 +67,7 @@ class DenHub {
   late final FeedService _feeds;
   late final ReminderService _reminders;
   late final WebPushService _push;
+  late final HubRecovery _recovery;
   final Routes _routes = Routes();
   late final DeviceAuth _auth;
   final Map<String, int> _sockets = {};
@@ -136,6 +138,9 @@ class DenHub {
 
   /// Reminders and nudges to browsers through Web Push.
   WebPushService get push => _push;
+
+  /// Server-assisted recovery, for a family that turned it on.
+  HubRecovery get recovery => _recovery;
 
   /// Where setup stands.
   SetupStage get setupStage => _setup.stage;
@@ -209,6 +214,7 @@ class DenHub {
     _capture.register(_routes);
     _assistant = HubAssistant(_ctx, _auth)..register(_routes);
     HubInvites(_ctx).register(_routes);
+    _recovery = HubRecovery(_ctx, _auth)..register(_routes);
     _push.register(_routes);
     _changes = den.onChange.listen((_) {
       _setup.refresh();

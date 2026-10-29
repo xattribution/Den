@@ -8,6 +8,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../family/family.dart';
 import '../../rewards/rewards.dart' show PointsSwitch;
+import '../widgets/hub_help_switch.dart';
 
 /// Settings → Family: the family's name, time zone and first day of the week, whether it uses
 /// points (the rewards' [PointsSwitch]), and whether what Den reads from a photo or a message is
@@ -110,6 +111,7 @@ class _FamilySettingsScreenState extends State<FamilySettingsScreen> {
             onChanged: (review) => _write(() => actions.setCaptureReview(review)),
           ),
         ),
+        const Ungapped(HubHelpSwitch()),
       ],
     );
   }

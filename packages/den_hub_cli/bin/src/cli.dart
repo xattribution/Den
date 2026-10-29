@@ -64,6 +64,8 @@ ArgParser cliParser() {
   _common(root.addCommand('setup-code'));
   _common(root.addCommand('open-linking')).addOption('minutes', help: 'How long browsers may ask to link (default 10)');
   _common(root.addCommand('status'));
+  _common(root.addCommand('recover'))
+      .addOption('person', help: 'The parent who lost their phone, by their name in Den (in quotes if it has a space)');
   _common(root.addCommand('backup'))
     ..addOption('out', help: 'Backup file to write')
     ..addOption('passphrase-env', help: 'Environment variable holding the passphrase');
@@ -102,6 +104,7 @@ Future<int> runCli(List<String> args, {CliIo? io}) async {
       'setup-code' => await setupCode(data, port, cli),
       'open-linking' => await openLinking(command, data, cli),
       'status' => await status(data, port, cli),
+      'recover' => await recover(command, data, port, cli),
       'backup' => await backup(command, data, cli),
       'restore' => await restore(command, data, cli),
       _ => 64,
@@ -125,6 +128,8 @@ String _usage(ArgParser parser) => [
       '  setup-code        Print a fresh hub\'s setup code',
       '  open-linking      Let browsers ask to link to a public hub for 10 minutes',
       '  status            Say what the hub is doing',
+      '  recover --person NAME   A one-time link and four words that let a parent\'s new phone in',
+      '                    (only if the family turned on "Let the hub help us get back in")',
       '  backup --out FILE --passphrase-env VAR',
       '  restore --in FILE --passphrase-env VAR [--force]',
       '',

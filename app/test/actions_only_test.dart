@@ -31,6 +31,7 @@ const Map<String, String> deviceLocal = {
   'leaveFamily': 'Forgetting the family is done on the device that leaves',
   'actAs': 'Who is acting on a shared screen',
   'verifySignIn': 'Checking a PIN or pattern on a shared screen',
+  'requestRecovery': 'A new phone lets itself in with a parent\'s recovery words or the hub\'s proof',
 };
 
 /// Trust decisions: only a parent on their own device makes them, never anything acting
@@ -46,6 +47,8 @@ const Set<String> trust = {
   'revokeConnection',
   'endExpiredAccess',
   'endAccessNow',
+  'setRecoveryKey',
+  'setServerRecoveryKey',
 };
 
 /// Writes in one file each, with why.

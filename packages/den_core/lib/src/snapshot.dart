@@ -6,6 +6,7 @@ import 'package:cryptography/dart.dart';
 import 'change.dart';
 import 'hlc.dart';
 import 'materializer.dart';
+import 'recovery.dart';
 import 'store.dart';
 import 'validity.dart';
 
@@ -44,6 +45,7 @@ class SnapshotCapture {
     required this.log,
     required this.digest,
     required this.cutoffs,
+    required this.retired,
     required this.newest,
     required this.windowStart,
     required this.records,
@@ -62,6 +64,9 @@ class SnapshotCapture {
   final List<Change> log;
   final List<int> digest;
   final Map<String, List<Cutoff>> cutoffs;
+
+  /// Recovery keys replaced later in the log ([Validator.retiredRecoveryKeys]).
+  final RetiredRecoveryKeys retired;
   final Hlc? newest;
   final int windowStart;
 
@@ -122,6 +127,8 @@ class SnapshotCapture {
       ..write(jsonEncode({
         for (final e in cutoffs.entries) e.key: [for (final k in e.value) [k.after, k.at.toString()]],
       }))
+      ..write(',"retired":')
+      ..write(jsonEncode(retired.toJson()))
       ..write(',"rejected":')
       ..write(jsonEncode(rejected))
       ..write(',"records":[');

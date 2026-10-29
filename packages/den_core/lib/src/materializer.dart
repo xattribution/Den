@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'change.dart';
 import 'hlc.dart';
 import 'model.dart';
+import 'recovery.dart';
 import 'snapshot.dart';
 import 'store.dart';
 import 'validity.dart';
@@ -44,9 +45,10 @@ const Object _rejectedStep = Object();
 /// from before its revocation. A revocation therefore names the last change the revoking device
 /// held from it (`revokedAfter`), and a replay runs in two passes: the first finds the valid
 /// revocations, the second replays with their cutoffs (see [Cutoff]) applied from the start.
-/// Both passes depend only on the log, so every replica still agrees. Which revocations count
-/// can turn on any change before them, so a change landing at or before one (or naming one)
-/// replays everything too.
+/// Both passes depend only on the log, so every replica still agrees. A replaced recovery key
+/// works the same way ([RetiredRecoveryKeys]). Which revocations and replacements count can turn
+/// on any change before them, so a change landing at or before one (or making one) replays
+/// everything too.
 class Materializer {
   Materializer(TrustRoot Function() root) {
     validator = Validator(store, root);
@@ -149,7 +151,7 @@ class Materializer {
     if (fresh.isEmpty) return const {};
     fresh.sort(changeOrder);
     final at = _positionOf(fresh.first);
-    if (_canRewindTo(at) && !fresh.any(_namesCutoff)) {
+    if (_canRewindTo(at) && !fresh.any(_decidesVerdicts)) {
       if (at < _log.length) {
         replays++;
         _rewindTo(at);
@@ -218,6 +220,9 @@ class Materializer {
     validator.cutoffs
       ..clear()
       ..addAll({for (final e in other.validator.cutoffs.entries) e.key: List.of(e.value)});
+    validator.retiredRecoveryKeys
+      ..clear()
+      ..addAll(other.validator.retiredRecoveryKeys);
     _log
       ..clear()
       ..addAll(other._log);
@@ -252,20 +257,23 @@ class Materializer {
     replays++;
     fullReplays++;
     validator.cutoffs.clear();
+    validator.retiredRecoveryKeys.clear();
     _replayOnce();
     final cutoffs = <String, List<Cutoff>>{};
     for (final a in _applied) {
       final cut = Cutoff.of(a.change);
       if (cut != null) (cutoffs[a.change.rid] ??= []).add(cut);
     }
-    if (cutoffs.isEmpty) return;
+    final retired = RetiredRecoveryKeys.of(_applied);
+    if (cutoffs.isEmpty && retired.isEmpty) return;
     validator.cutoffs.addAll(cutoffs);
+    validator.retiredRecoveryKeys.addAll(retired);
     bool excluded(Change c) {
       final n = _counterIn(c.id);
       return n != null && (cutoffs[c.device]?.any((k) => k.excludes(n, c.hlc)) ?? false);
     }
 
-    if (_log.any(excluded)) _replayOnce();
+    if (_log.any(excluded) || _log.any(retired.excludes)) _replayOnce();
   }
 
   void _replayOnce() {
@@ -301,7 +309,7 @@ class Materializer {
   bool _canRewindTo(int at) {
     if (at < _windowStart) return false;
     for (var i = at; i < _log.length; i++) {
-      if (_namesCutoff(_log[i])) return false;
+      if (_decidesVerdicts(_log[i])) return false;
     }
     return true;
   }
@@ -342,6 +350,10 @@ class Materializer {
   }
 
   static bool _namesCutoff(Change c) => c.type == RecordType.device && c.fields.containsKey('revokedAfter');
+
+  /// Whether [c] can make changes before it count for nothing on a second pass: a revocation
+  /// naming a cutoff, or a replaced recovery key ([RetiredRecoveryKeys]).
+  static bool _decidesVerdicts(Change c) => _namesCutoff(c) || setsRecoveryKey(c);
 
   static int? _counterIn(String id) {
     final colon = id.lastIndexOf(':');
@@ -390,6 +402,7 @@ class Materializer {
       log: List.of(_log),
       digest: digest,
       cutoffs: {for (final e in validator.cutoffs.entries) e.key: List.of(e.value)},
+      retired: RetiredRecoveryKeys()..addAll(validator.retiredRecoveryKeys),
       newest: newestApplied,
       windowStart: w,
       records: records,
@@ -424,6 +437,7 @@ class Materializer {
     _byId.clear();
     _counters.clear();
     validator.cutoffs.clear();
+    validator.retiredRecoveryKeys.clear();
     _replayOnce();
     return null;
   }
@@ -488,6 +502,9 @@ class Materializer {
     for (final e in (state['rejected']! as Map).entries) {
       rejected[e.key as String] = e.value as String;
     }
+    validator.retiredRecoveryKeys
+      ..clear()
+      ..addAll(RetiredRecoveryKeys.fromJson(state['retired']! as List));
     for (final e in (state['cutoffs']! as Map).entries) {
       validator.cutoffs[e.key as String] = [
         for (final k in e.value as List) Cutoff((k as List)[0] as int, Hlc.parse(k[1] as String)),
