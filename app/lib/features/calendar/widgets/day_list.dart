@@ -223,7 +223,9 @@ class _EmptyDay extends StatelessWidget {
           compact: true,
           message: 'Nothing on the calendar for $who.',
           actionLabel: canAdd ? 'Add event' : null,
-          onAction: canAdd ? () => context.push('/event/new?date=$date${person == null ? '' : '&who=$person'}') : null,
+          onAction: canAdd
+              ? () => context.push('/event/new?date=$date${person == null ? '' : '&who=$person'}&from=calendar')
+              : null,
         ),
       ),
     );

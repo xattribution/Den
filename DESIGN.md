@@ -69,7 +69,7 @@ Elevation is a step in gray, never a shadow (shadows only on true overlays).
 | `ink2` | `#595959` | Secondary text: times, places, counts | 6.3 / 7.0 |
 | `ink3` | `#6B6B6B` | Unselected tab labels and quiet text | 4.8 / 5.3 |
 | `onPrimary` | `#FFFFFF` | Text and icons on ink | 18.4 on ink |
-| `onMarker` | `#141414` | Text and icons on a person's color | 5.4 or better |
+| `onMarker` | `#141414` | Text and icons on a person's color | 4.8 or better (5.4 in Bright) |
 | `destructive` | `#BE241F` | Destructive and failed, as text plus icon, never a background | 5.4 / 6.1 |
 | `star` / `starEdge` | `#F2B705` / `#8A6200` | The star shape, and nothing else | edge 4.9 / 5.5 |
 | `scrim` | black at 48 % | Behind sheets | |
@@ -95,7 +95,7 @@ glows; secondary text is checked on both black and the card.
 | `ink2` | `#A6A6A6` | 8.6 / 7.6 / 6.8 |
 | `ink3` | `#8C8C8C` | 6.2 / 5.5 / 4.9 |
 | `onPrimary` | `#000000` | 18.8 on ink |
-| `onMarker` | `#141414` | 5.4 or better |
+| `onMarker` | `#141414` | 4.8 or better (5.4 in Bright) |
 | `destructive` | `#F9786A` | 7.9 / 7.0 / 6.2 |
 | `star` / `starEdge` | `#FFC83D` / `#FFC83D` | 11.9 on card |
 | `scrim` | `#1A1A1A` at 85 %: a black page can't be dimmed, so the page behind a sheet goes flat dark gray and the black sheet stands out | |
@@ -108,7 +108,8 @@ glows; secondary text is checked on both black and the card.
 ### Family colors
 
 Eight bright colors, one per person, validated for color-blind separation: the same hex in
-light and dark, always with `#141414` text on top. They are assigned in this order; every
+light and dark, always with `#141414` text on top. These are the Bright pack, the default; a
+family can pick another pack of the same eight places (see "Color packs" below). They are assigned in this order; every
 neighbor in it passes the color-blind (deltaE 15.9 worst) and normal-vision (deltaE 25.8 worst)
 checks in both themes. Never pick one by hand and never add a ninth by eye: run the validator.
 
@@ -128,21 +129,76 @@ In code: `PersonColor` in assignment order (`PersonColor.assignmentOrder` for pi
 their picture or initial and their name, which is why a light color like Sunshine may sit on the
 light page without 3:1 against it.
 
-den_core's `Marker` still has the ten old values; until it moves to these names (reading the
-old ones as aliases), `context.colors.marker(m)` maps them: blue and sky to Sky, green to Grass,
-plum and slate to Lavender, orange to Tangerine, teal to Aqua, brown to Coral, olive to
-Sunshine, pink to Bubblegum.
+den_core's `Marker` names the eight places (sky to bubblegum) and reads the ten older names as
+aliases: blue and sky to Sky, green to Grass, plum and slate to Lavender, orange to Tangerine,
+teal to Aqua, brown to Coral, olive to Sunshine, pink to Bubblegum.
+
+#### Color packs
+
+The eight colors above are the **Bright** pack. A family can pick another in Settings, Family,
+"Family colors" (`family.colors`: `bright`, `deep`, `soft` or `bold`; any parent, through
+`update_family_settings`, so MCP and the assistant can set it too). It is the family's setting:
+every device in the family draws the same pack, and each person keeps their place, so Mia's
+Bubblegum becomes Mia's Raspberry in Deep. Every pack keeps each place's family of hue (blue,
+green, purple, orange, aqua, red, yellow, pink), the same hex by day and at night, and `#141414`
+text on every color. Only the person colors change: grays, ink, the star and red stay.
+
+| Place | Bright | Deep | Soft | Bold |
+| --- | --- | --- | --- | --- |
+| 1 | Sky `#339FEE` | Ocean `#2682FF` | Bluebell `#71C8FF` | Blue `#477FFF` |
+| 2 | Grass `#4CC157` | Emerald `#009D4F` | Mint `#7CE695` | Green `#30C532` |
+| 3 | Lavender `#AD87ED` | Grape `#9D64F6` | Lilac `#C7A8FF` | Purple `#B853FF` |
+| 4 | Tangerine `#F88B1C` | Pumpkin `#E97200` | Apricot `#FFB072` | Orange `#FF7902` |
+| 5 | Aqua `#10CACA` | Teal `#009EA4` | Lagoon `#5DE9E9` | Turquoise `#06C1EC` |
+| 6 | Coral `#F05653` | Cherry `#F33A3F` | Watermelon `#FF8482` | Red `#FF2920` |
+| 7 | Sunshine `#F4CE23` | Gold `#ECC906` | Lemon `#FEE657` | Yellow `#F5DA04` |
+| 8 | Bubblegum `#F075AA` | Raspberry `#EC3F94` | Blossom `#FA96C3` | Pink `#F33BBF` |
+
+- **Deep** is as dark as dark text allows (4.8 to 6.0:1), so it stays readable without white
+  text; its yellow is a clear gold, never amber or mustard.
+- **Soft** is light sorbet shades that keep their color (OKLCH chroma 0.11 or more): cheerful,
+  never cream, beige or a wash.
+- **Bold** is the crayon box: each hue as strong as the screen draws it.
+
+Validated with the data-viz palette validator (`validate_palette.js`), adjacent pairs in
+assignment order, in both modes against Den's surfaces (light card `#FFFFFF` and page `#F2F2F2`;
+dark card `#141414` and page `#000000`). The same hexes in both modes give the same separations:
+
+| Pack | Worst color-blind neighbors (ΔE, bar 8) | Worst normal-vision neighbors (ΔE, bar 15) | `#141414` on the palest-for-it color | Chroma floor 0.10 |
+| --- | --- | --- | --- | --- |
+| Bright | 15.9, Coral and Aqua (deutan) | 25.8, Grass and Sky | 5.4, Coral | pass |
+| Deep | 15.5, Cherry and Teal (deutan) | 27.6, Teal and Pumpkin | 4.8, Cherry | pass |
+| Soft | 14.2, Watermelon and Lagoon (deutan) | 19.1, Mint and Bluebell | 7.7, Watermelon | pass |
+| Bold | 23.6, Yellow and Red (deutan) | 32.8, Turquoise and Orange | 4.9, Red | pass |
+
+The validator's lightness band and contrast against the surface are chart rules for lines on a
+page: like Bright, the packs sit lighter than that band because they carry dark text, and a
+person's color is never the only clue. No 8-color set separates every pair for color-blind
+eyes, so the order puts the clearest pairs side by side. `tokens_test.dart` pins the hexes and
+checks contrast and neighbor separation with the validator's math.
+
+In code: `ColorPack` (den_core) and its look (`pack.colors`, `pack.of(m)`, tokens.dart).
+`context.colors.marker(m)` draws the family's pack: `FamilyColors` (app/family_colors.dart)
+puts it over the whole app from the family record, and `PackTheme(pack:)` shows another pack
+(the Family colors preview).
 
 ### What may carry color
 
 | Color | Appears on | Never on |
 | --- | --- | --- |
-| A person's color, at full strength | Their avatar disc or ring, their filled check and check ring, their dot, the solid block of their events (`#141414` text), their goal bar | Text, a tinted card, row or chip, a 10 to 20 % wash, a side stripe, a category |
+| A person's color, at full strength | Their avatar disc or ring, their filled check and check ring, their dot, the solid block of their events (`#141414` text), their goal bar, a calendar day they have something on when the month shows days as colors | Text, a tinted card, row or chip, a 10 to 20 % wash, a side stripe, a category |
+| A calendar source's color (the family's own calendar, a subscription, a group shared with other families) | Its small source tag (the source's initial in a rounded square) and the outline of its event blocks | Anything a person's color is on: it never takes the place of a person's color on a block, dot, face or day |
 | `ink` | Text, primary buttons, selected chips and segments, list checks, events for everyone (a solid ink block with the family's dots), focus ring | |
 | `destructive` | Destructive and failed: text plus icon | Any background, decoration, counts |
 | `star` | The star shape | Anything else |
 
 Done is readable without color: the check mark and the strike-through.
+
+A calendar source's color is data of its own, apart from people's: `CalendarSource`
+(`features/calendar/state/calendar_sources.dart`) has a kind (the family, a subscription, the
+phone, a group), a label for its tag and filter chip, and a color, one of the eight places drawn
+in the family's pack, null until someone picks one (then its tag is ink). Nothing draws source
+tags yet; sources from other families will read it.
 
 ### Old names
 
@@ -426,7 +482,8 @@ take plain values and den_core model types, never the app's state, so any featur
 | `NumberedSteps` | Steps to follow in another app (a connector, a Shortcut) | Bold numbers in their own column, reading text beside them; a step may be a widget (an address to copy). |
 | `DenTabBar`, `DenSidebar`, `NavPlace` | The app's navigation | The shell owns them; screens never draw their own. |
 | `showPeoplePicker` | Choosing a person (Give to…, Who?, Who's driving?) | A sheet of faces; `anyoneLabel` adds "Anyone". |
-| `showDenSheet` | Every sheet | Springs, drag to close, centered form sheet on iPad. |
+| `showDenSheet` | Every sheet | Springs, drag to close, centered form sheet on iPad. A sheet opened from a part drawn in another theme (the calendar kept light) takes that theme, scrim and all; `DenSheetRoute(theme:)` and `DenSheetPage(theme:)` say it outright. |
+| `DayTheme`, `PackTheme` | Part of the app in the day tokens whatever the app's theme (the calendar kept light); people in another pack (a pack's preview) | Each theme is made once, so nothing animates or rebuilds for nothing. |
 | `SpringValue` | A small state change that moves | See Motion, "Small state changes". |
 
 Writes from these pieces go through the feature's actions (ARCHITECTURE.md, "The app"); an
@@ -456,6 +513,24 @@ tap happened, and shows it in a `DoneRow`.
 - **Calendar**: the month as the title and a Today button; a week strip in a card (selected day
   in ink, people's dots); person filters; the day's events as solid blocks by time; on iPad the
   family week (a column per person, a row per day, everyone's events across the row).
+  - **Show days as: Dots or Colors** (the month's view options, a 44 card circle beside the
+    views, and Settings, Appearance; kept on the device; Dots by default). With Colors, a day of
+    the month someone has something on is their color at full strength with `#141414` numbers;
+    two or three people split it into equal side-by-side parts, like the paper organizer's
+    columns; four or more show the first two and "+2" in dark ink. A day with something for
+    everyone is ink with the family's dots, as their events are. The chosen day keeps an ink ring
+    with a gap of the card's color, and today's number sits in a disc (ink, or the page color on
+    an ink day), as on the iPad month. Days of the months around keep their dots, so the month's
+    edge stays plain. On iPad each day of the month is its colors and its events are lines of dark
+    ink on them (light on an ink day). Screen readers hear who: "Saturday, October 24, Alex,
+    Maya, Leo and Zoe".
+  - **Calendar: Match the app or Always light** (Settings, Appearance; kept on the device; Match
+    the app by default). Always light draws the calendar's content (list, day, week, month, the
+    event page and the sheets opened from it) in the day tokens on a light panel with 20 corners
+    set into the app's frame, while the tab bar, the sidebar, the status bar's strip, the safe
+    areas and the other screens follow the app. `CalendarSurface` scopes a `DayTheme` around the
+    calendar; nothing is forked. The panel doesn't depend on the app's brightness, so it never
+    flashes when Auto turns to night, and pages opened from it carry `from=calendar`.
 - **Chores** (Chores.dc.html): the day with back, Today and forward, and how many are done;
   a section per person with their stars and goal bar in their color (while points are on),
   then their chores in one card. A row's ring checks it (steps fill the ring as an arc); its
@@ -582,7 +657,10 @@ why.
 | Element | Encodes | Source |
 | --- | --- | --- |
 | Eight family colors, full strength | Who something belongs to; nothing else is chromatic | The fridge chart; validated for color-blind separation |
-| Dark text on every person color | One rule in both themes, 5.4:1 or better | Palette validation |
+| Color packs (Bright, Deep, Soft, Bold), one per family | The same people in shades the family likes; a person keeps their place | Owner: "a couple more color schemes", cheerful, never muted or earthy |
+| Days as colors in the month | Who is busy which day, at a glance, across a room | Owner: "whole day highlighted, not just dots" |
+| The calendar kept light | Paper-like reading of the busiest screen at night, chrome still dark | Owner: "not everything has to be dark" |
+| Dark text on every person color | One rule in both themes and every pack, 4.8:1 or better | Palette validation |
 | Ink actions, no accent | "You can press this" without competing with people's colors | One meaning per hue |
 | Neutral grays, white cards on `#F2F2F2` | Groups visible without lines or shadows | iOS grouped lists; owner: clean light theme |
 | True black at night | OLED pixels off, calm at bedtime and on the counter | Owner: true-black OLED theme |

@@ -56,15 +56,21 @@ List<ActionSpec> familyActions() => [
         name: 'family.update_settings',
         mcpName: 'update_family_settings',
         title: 'Change family settings',
-        description: 'Changes the family\'s name, time zone, the first day of its week, whether stars are on, and '
-            'whether what Den reads from photos and messages is added at once or waits for review. Who sees '
-            'whose private things is set only in the Den app.',
+        description: 'Changes the family\'s name, time zone, the first day of its week, whether stars are on, '
+            'whether what Den reads from photos and messages is added at once or waits for review, and the family\'s '
+            'colors (the shades everyone sees; each person keeps their color). Who sees whose private things is set '
+            'only in the Den app.',
         input: S.input({
           'name': S.string('The family\'s name.', maxLength: 100),
           'timezone': S.string('An IANA time zone, such as America/Chicago.', maxLength: 64),
           'week_start': S.string('The first day of the week.', oneOf: _weekdays),
           'points_enabled': S.boolean('Whether stars are on.'),
           'capture': S.string('direct: what Den reads is added at once; review: it waits for a look.', oneOf: ['direct', 'review']),
+          'colors': S.string(
+            'The family\'s colors: bright (the default), deep, soft or bold. Everyone keeps their own color; only its '
+            'shade changes, for the whole family.',
+            oneOf: [for (final p in ColorPack.values) p.name],
+          ),
         }),
         output: S.output({'family': familyShape, 'settings': S.object({'capture': Out.str('direct or review.')})}),
         scopes: const {Scope.admin},
@@ -222,6 +228,7 @@ Future<ActionResult> _updateFamily(ActionContext c, ActionInput a) async {
     if (a.has('week_start')) 'weekStart': _weekdays.indexOf(a.str('week_start')!),
     if (a.has('points_enabled')) 'pointsEnabled': a.flag('points_enabled'),
     if (a.has('capture')) 'capture': a.str('capture'),
+    if (a.has('colors')) 'colors': a.str('colors'),
   };
   if (patch.isEmpty) throw ActionError('Nothing to change: give a setting such as name or week_start.');
   await c.den.updateFamily(patch);
@@ -232,6 +239,7 @@ Future<ActionResult> _updateFamily(ActionContext c, ActionInput a) async {
     if (a.has('week_start')) 'the first day of the week to ${a.str('week_start')}',
     if (a.has('points_enabled')) f.pointsEnabled ? 'stars on' : 'stars off',
     if (a.has('capture')) f.captureNeedsReview ? 'what Den reads to wait for a look' : 'what Den reads to be added at once',
+    if (a.has('colors')) 'the family\'s colors to ${f.colors.name}',
   ];
   return ActionResult('Set ${joinNames(said)}.', {
     'family': c.wire.family(),

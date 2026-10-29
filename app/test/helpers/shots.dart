@@ -4,6 +4,7 @@ import 'package:den_app/design/layout.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
 import 'package:den_app/app/app_state.dart';
+import 'package:den_app/app/family_colors.dart';
 import 'package:den_core/demo.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -118,15 +119,16 @@ Finder findWords(String words) => find.byWidgetPredicate(
     );
 
 /// The person's own text size ([AppState.textSize]) on top of the system's, held to 200 %,
-/// following the setting when it changes, the way the app's root does.
+/// following the setting when it changes, and the family's colors, the way the app's root does.
 class TextSizeFromState extends StatelessWidget {
   const TextSizeFromState({super.key, required this.child});
 
   final Widget child;
 
   @override
-  Widget build(BuildContext context) =>
-      DenTextScale(size: DenScope.watch(context, const {Changes.prefs}).textSize, child: child);
+  Widget build(BuildContext context) => FamilyColors(
+        child: DenTextScale(size: DenScope.watch(context, const {Changes.prefs}).textSize, child: child),
+      );
 }
 
 /// Sets the system text size to [scale] (2.0 is 200 %) for the rest of the test.

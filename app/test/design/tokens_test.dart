@@ -118,6 +118,61 @@ void main() {
     }
   });
 
+  group('color packs', () {
+    test('the validated hexes, in assignment order (DESIGN.md, "Family colors"; never by eye)', () {
+      String hex(Color c) => (c.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase();
+      expect({for (final p in ColorPack.values) p.name: [for (final c in p.colors) hex(c.color)].join(',')}, {
+        'bright': '339FEE,4CC157,AD87ED,F88B1C,10CACA,F05653,F4CE23,F075AA',
+        'deep': '2682FF,009D4F,9D64F6,E97200,009EA4,F33A3F,ECC906,EC3F94',
+        'soft': '71C8FF,7CE695,C7A8FF,FFB072,5DE9E9,FF8482,FEE657,FA96C3',
+        'bold': '477FFF,30C532,B853FF,FF7902,06C1EC,FF2920,F5DA04,F33BBF',
+      });
+      expect(
+        [for (final c in ColorPack.bright.colors) (c.label, c.color)],
+        [for (final p in PersonColor.values) (p.label, p.color)],
+        reason: 'Bright is the first pack',
+      );
+    });
+
+    test('eight colors each, one per place, every name its own', () {
+      for (final p in ColorPack.values) {
+        expect(p.colors, hasLength(Marker.values.length), reason: p.name);
+        expect(p.colors.map((c) => c.label).toSet(), hasLength(8), reason: p.name);
+      }
+    });
+
+    test('dark text reads at 4.8:1 or better on every color of every pack, in both themes', () {
+      for (final p in ColorPack.values) {
+        for (final theme in [DenColors.day, DenColors.night]) {
+          final c = theme.withPack(p);
+          for (final m in Marker.values) {
+            expect(contrast(c.onMarker, c.marker(m)), greaterThanOrEqualTo(4.8), reason: '${p.name} ${p.of(m).label}');
+            expect(c.marker(m), DenColors.day.withPack(p).marker(m), reason: 'the same hex by day and at night');
+          }
+        }
+      }
+    });
+
+    test('neighbors stay apart: deltaE 15 for everyone, 8 under protan and deutan', () {
+      for (final p in ColorPack.values) {
+        for (var i = 0; i + 1 < p.colors.length; i++) {
+          final (a, b) = (p.colors[i].color, p.colors[i + 1].color);
+          final why = '${p.name}: ${p.colors[i].label} and ${p.colors[i + 1].label}';
+          expect(_deltaE(a, b), greaterThanOrEqualTo(15), reason: why);
+          expect(_deltaE(a, b, _protan), greaterThanOrEqualTo(8), reason: '$why, protan');
+          expect(_deltaE(a, b, _deutan), greaterThanOrEqualTo(8), reason: '$why, deutan');
+        }
+      }
+    });
+
+    test('a pack changes the people and nothing else', () {
+      final deep = DenColors.night.withPack(ColorPack.deep);
+      expect(deep.marker(Marker.sky), ColorPack.deep.color(Marker.sky));
+      expect((deep.bg, deep.ink, deep.onMarker, deep.card), (DenColors.night.bg, DenColors.night.ink, DenColors.night.onMarker, DenColors.night.card));
+      expect(DenColors.day.withPack(ColorPack.bright), same(DenColors.day));
+    });
+  });
+
   test('the engine names the same eight colors in the same order', () {
     expect(Marker.values.map((m) => m.name), PersonColor.values.map((p) => p.name));
     for (final m in Marker.values) {
@@ -261,6 +316,49 @@ void main() {
       expect(noOrphan(long), long);
     });
   });
+}
+
+// The palette validator's measures (dataviz validate_palette.js): OKLab distance x100, with the
+// Machado, Oliveira and Fernandes (2009) color-blindness matrices at full severity.
+const _protan = [
+  [0.152286, 1.052583, -0.204868],
+  [0.114503, 0.786281, 0.099216],
+  [-0.003882, -0.048116, 1.051998],
+];
+const _deutan = [
+  [0.367322, 0.860646, -0.227968],
+  [0.280085, 0.672501, 0.047413],
+  [-0.011820, 0.042940, 0.968881],
+];
+
+List<double> _linear(Color c) => [
+      for (final v in [c.r, c.g, c.b]) v <= 0.04045 ? v / 12.92 : math.pow((v + 0.055) / 1.055, 2.4).toDouble(),
+    ];
+
+List<double> _oklab(List<double> rgb) {
+  double cbrt(double v) => math.pow(v, 1 / 3).toDouble();
+  final [r, g, b] = rgb;
+  final l = cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  final m = cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  final s = cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+  ];
+}
+
+double _deltaE(Color a, Color b, [List<List<double>>? sim]) {
+  List<double> see(Color c) {
+    final rgb = _linear(c);
+    if (sim == null) return _oklab(rgb);
+    return _oklab([
+      for (final row in sim) (row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2]).clamp(0.0, 1.0),
+    ]);
+  }
+
+  final (x, y) = (see(a), see(b));
+  return 100 * math.sqrt(math.pow(x[0] - y[0], 2) + math.pow(x[1] - y[1], 2) + math.pow(x[2] - y[2], 2));
 }
 
 Widget _record(List<DenWidth> seen, DenWidth w) {

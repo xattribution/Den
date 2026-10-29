@@ -265,11 +265,14 @@ These objects appear in several responses. Field types: `string`, `int` (JSON in
   "name": "The Kotvas",
   "timezone": "America/Chicago",
   "week_start": 0,
-  "points_enabled": true
+  "points_enabled": true,
+  "colors": "bright"
 }
 ```
 
-`timezone` is IANA; `week_start` is 0 for Sunday, 1 for Monday.
+`timezone` is IANA; `week_start` is 0 for Sunday, 1 for Monday. `colors` is the family's color
+pack (`bright`, `deep`, `soft` or `bold`): the shades of people's colors everyone sees, while each
+member keeps their `marker`.
 
 ### Member
 
@@ -527,7 +530,7 @@ names to ids.
 ```json
 {
   "hub": {"device": "D7HUB2QK4MXN3T5W", "name": "Kitchen hub", "version": "0.1.0"},
-  "family": {"id": "FKQ2M4X7B3N5C6TW", "name": "The Kotvas", "timezone": "America/Chicago", "week_start": 0, "points_enabled": true},
+  "family": {"id": "FKQ2M4X7B3N5C6TW", "name": "The Kotvas", "timezone": "America/Chicago", "week_start": 0, "points_enabled": true, "colors": "bright"},
   "token": {
     "label": "Home Assistant",
     "member": null,

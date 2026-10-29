@@ -26,6 +26,9 @@ class FamilyActions {
   /// Whether what Den reads from photos and messages waits for a look first.
   Future<ActionResult> setCaptureReview(bool review) => _settings({'capture': review ? 'review' : 'direct'});
 
+  /// The shades of people's colors the whole family sees; everyone keeps their color.
+  Future<ActionResult> setColors(ColorPack pack) => _settings({'colors': pack.name});
+
   /// Adds someone. A kid's [tier] counts only for a kid; their own permissions ([Grant]s) are a
   /// trust decision, given after with [TrustActions.setGrants].
   Future<ActionResult> addPerson({

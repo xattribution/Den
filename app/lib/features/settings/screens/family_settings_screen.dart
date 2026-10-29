@@ -8,11 +8,13 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../family/family.dart';
 import '../../rewards/rewards.dart' show PointsSwitch;
+import '../widgets/family_colors_choice.dart';
 import '../widgets/hub_help_switch.dart';
 
-/// Settings → Family: the family's name, time zone and first day of the week, whether it uses
-/// points (the rewards' [PointsSwitch]), and whether what Den reads from a photo or a message is
-/// added right away or shown first. Each saves as it changes.
+/// Settings → Family: the family's name, time zone and first day of the week, the family's
+/// colors (each pack shown with the family's own people), whether it uses points (the rewards'
+/// [PointsSwitch]), and whether what Den reads from a photo or a message is added right away or
+/// shown first. Each saves as it changes.
 class FamilySettingsScreen extends StatefulWidget {
   const FamilySettingsScreen({super.key});
 
@@ -97,6 +99,14 @@ class _FamilySettingsScreenState extends State<FamilySettingsScreen> {
             choices: const [Choice(0, 'Sunday'), Choice(1, 'Monday')],
             value: family.weekStart,
             onChanged: (d) => _write(() => actions.setWeekStart(d)),
+          ),
+        ),
+        DenSection(
+          title: 'Family colors',
+          child: FamilyColorsChoice(
+            people: app.den.members,
+            value: family.colors,
+            onChanged: (pack) => _write(() => actions.setColors(pack)),
           ),
         ),
         const GroupCard(child: PointsSwitch()),

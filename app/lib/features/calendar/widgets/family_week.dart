@@ -281,7 +281,7 @@ class _DayRow extends StatelessWidget {
             date: date,
             cell: grid.cells[(date, m.id)],
             showChores: showChores,
-            onAdd: canAdd ? () => context.push('/event/new?date=$date&who=${m.id}') : null,
+            onAdd: canAdd ? () => context.push('/event/new?date=$date&who=${m.id}&from=calendar') : null,
             who: m,
           ),
         ),
