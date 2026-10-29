@@ -432,6 +432,34 @@ void main() {
     });
   });
 
+  group('Undo', () {
+    testWidgets('when the helper takes a change back itself, its row says so', (tester) async {
+      final state = await demoIn(tester);
+      await helperOnFor(tester, state.den);
+      final chat = ScriptedChatModel([
+        ScriptedChatModel.calls([
+          ScriptedChatModel.toolCall('a', 'add_items', {
+            'list': 'Groceries',
+            'items': [
+              {'text': 'Lemons'},
+            ],
+          }),
+        ]),
+        ScriptedChatModel.text('Added lemons.'),
+        ScriptedChatModel.calls([ScriptedChatModel.toolCall('b', 'undo')]),
+        ScriptedChatModel.text('I took the lemons back off.'),
+      ]);
+      final session = AskSession(app: state, link: FakeLink(chat));
+      addTearDown(session.dispose);
+      await tester.runAsync(() => session.ask('add lemons'));
+      expect(hasLemons(state.den), isTrue);
+      await tester.runAsync(() => session.ask('actually take them off again'));
+      expect(hasLemons(state.den), isFalse);
+      expect(session.exchanges.first.changes.single.undone, isTrue);
+      expect(session.exchanges.first.changes.single.canUndo, isFalse);
+    });
+  });
+
   group('Session only', () {
     testWidgets('closing Ask stops the helper: a turn still running changes nothing more', (tester) async {
       final state = await demoIn(tester);

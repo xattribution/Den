@@ -267,6 +267,13 @@ class AskSession extends ChangeNotifier {
       if (x.changes.any((c) => c.receipt.id == receipt.id)) continue;
       x.changes.add(ChangeLine(receipt, changeWords(app, receipt.changes, fallback: receipt.summary)));
     }
+    // The helper may have taken a change back itself (its undo tool): that row says so too.
+    final c = _context();
+    for (final e in exchanges) {
+      for (final line in e.changes) {
+        if (!line.undone && _runner.receipt(c, line.receipt.id) == null) line.undone = true;
+      }
+    }
     x.pending = r.pending;
     final said = r.text.trim();
     switch (r.end) {
