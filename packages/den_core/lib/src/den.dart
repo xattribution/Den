@@ -3102,7 +3102,10 @@ class Den {
         if (ar >= 0 && (r < 0 || ar + 4 < r)) r = ar + 4;
       }
       if (r < 0 && words.isNotEmpty) {
-        final hay = searchWords([text, ...also, ...people].join(' ').toLowerCase());
+        // People's names count from three letters on: "ma" typed on the way to "Maya" shouldn't
+        // list everything of hers yet.
+        final named = words.every((w) => w.length >= 3) ? people : const <String>[];
+        final hay = searchWords([text, ...also, ...named].join(' ').toLowerCase());
         final exact = words.every((w) => hay.any((h) => h.startsWith(w) || (w.length >= 3 && h.contains(w))));
         if (exact) {
           r = 8;
