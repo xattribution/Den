@@ -190,6 +190,42 @@ class Materializer {
     }
   }
 
+  /// Becomes a copy of [other], which holds the same log: for an engine that tries changes out
+  /// (a preview). It keeps nothing to rewind with, so a late change to it replays from scratch.
+  void copyFrom(Materializer other) {
+    store.clear();
+    for (final e in other.store.all) {
+      store.put(Entry(e.type, e.id, e.space, e.created, e.createdBy, e.createdDevice,
+          fields: Map.of(e.fields), times: Map.of(e.times))
+        ..updated = e.updated
+        ..updatedBy = e.updatedBy);
+    }
+    rejected
+      ..clear()
+      ..addAll(other.rejected);
+    validator.cutoffs
+      ..clear()
+      ..addAll({for (final e in other.validator.cutoffs.entries) e.key: List.of(e.value)});
+    _log
+      ..clear()
+      ..addAll(other._log);
+    _byId
+      ..clear()
+      ..addAll(other._byId);
+    _counters
+      ..clear()
+      ..addAll({for (final e in other._counters.entries) e.key: Set.of(e.value)});
+    _applied
+      ..clear()
+      ..addAll(other.applied);
+    _lazyApplied = null;
+    _lazyNewest = null;
+    _steps
+      ..clear()
+      ..addAll(List<Object?>.filled(_log.length, null));
+    _windowStart = _log.length;
+  }
+
   /// Forgets every change.
   void clear() {
     _log.clear();
@@ -375,11 +411,18 @@ class Materializer {
 
   List<Change>? _restore(SnapshotHeader s, List<Change> held, TrustRoot root) {
     if (s.familyId != root.familyId || s.founderPubkey != root.founderPubkey) return null;
+    _log.clear();
+    _byId.clear();
+    _counters.clear();
     final covered = <Change>[], rest = <Change>[];
-    final seen = <String>{};
     for (final c in held) {
-      if (!seen.add(c.id)) continue;
-      (s.covers(c.id) ? covered : rest).add(c);
+      if (_byId.containsKey(c.id)) continue; // A second copy of one it covers.
+      if (s.covers(c.id)) {
+        _register(c);
+        covered.add(c);
+      } else {
+        rest.add(c);
+      }
     }
     if (covered.length != s.count) return null;
     covered.sort(changeOrder);
@@ -402,9 +445,6 @@ class Materializer {
     _applied.clear();
     _steps.clear();
     validator.cutoffs.clear();
-    _log.clear();
-    _byId.clear();
-    _counters.clear();
     final devices = (state['devices']! as List).cast<String>();
     Hlc clock(List r, int at) => Hlc(r[at] as int, r[at + 1] as int, devices[r[at + 2] as int]);
     for (final row in state['records']! as List) {
@@ -433,9 +473,6 @@ class Materializer {
       validator.cutoffs[e.key as String] = [
         for (final k in e.value as List) Cutoff((k as List)[0] as int, Hlc.parse(k[1] as String)),
       ];
-    }
-    for (final c in covered) {
-      _register(c);
     }
     _log.addAll(covered);
     _steps.addAll(List<Object?>.filled(w, null));

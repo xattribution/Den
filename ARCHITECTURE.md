@@ -81,11 +81,36 @@ removes the old one.
 4. Its fields pass the type's schema (types, lengths, enums).
 
 Invalid changes stay in the log so every replica agrees on what was rejected, but they never
-affect state. The materializer re-sorts and replays from scratch when a change arrives older than
-the newest one applied; family-sized logs make that cheap.
+affect state. Each applied change keeps what it overwrote (the field values and field times it
+replaced, or that it created the record), so when a change arrives older than the newest one
+applied (a partner's week of offline edits, say) the materializer takes back the changes after
+its place, newest first, and applies from there: the result is the one a replay from scratch
+gives. It does replay from scratch when a revocation with a cutoff lies at or after that place
+(see below: which revocations count can turn on any earlier change), and when the place is
+before the window a snapshot kept.
 
-Signatures are checked when a change arrives, before it is stored. A change whose signature fails
-is refused and never stored, so a forged copy can't occupy the genuine change's id. A device's key
+**Snapshots.** Storage that can (files on phones and the hub, IndexedDB in browsers) keeps a
+snapshot of what the log materializes to: every record, the rejected changes, the revocation
+cutoffs, and what each change of the last 30 days overwrote, with the set of changes it covers
+and a digest of them (SHA-256 over each covered change's hash, in log order). A device opens
+from it and adds the changes it doesn't cover as if they had just arrived; History of the older
+changes is read from it only when asked for. The snapshot never changes an outcome: one that
+covers changes the log lacks, was written for another family, is damaged, or has another format
+(`snapshotFormat`, bumped whenever validation or merging changes) is ignored and the log
+replayed; a stored change older than its window (arriving after it was written) makes the open
+replay from scratch too, and the snapshot is written again. Den writes one every 256 changes and
+whenever a change lands before the stored one's window, encoding it off the write lock.
+
+Signatures are checked when a change arrives, before it is stored, a batch at a time: in worker
+isolates on phones and the hub, in slices that let the page draw (the browser's Web Crypto
+checking a slice at once) in browsers. A change whose signature fails is refused and never
+stored, so a forged copy can't occupy the genuine change's id. After opening from a snapshot,
+off the critical path, the changes stored since it was written have their signatures checked,
+and the ones it covers must still give its digest, so a stored change altered since is caught
+without checking every signature again (when the digest doesn't match, every signature is checked
+and the state is replayed from what is stored). A change that fails is dropped as if it had never
+arrived. A log from before snapshots is trusted as it was, every change having been checked when
+it arrived. A device's key
 is learned from any `device` record whose `pubkey` hashes to the record's id (ids are hashes of
 keys); a change from a device whose key isn't known yet waits in memory until it is. A device's
 clock moves past valid changes only, so a device nobody approved can't push the family's clocks
@@ -128,9 +153,9 @@ before its revocation, and post them to an old epoch's mailbox the relay still k
 revocation also records `revokedAfter`: the highest counter of that device's changes the revoking
 device held (in its log, or vouched for by a peer's `completeVector`). A change from the revoked
 device numbered past `revokedAfter` and clocked before the revocation is invalid, whatever clock
-it claims. The materializer replays in two passes, both determined by the log alone: the first
-finds the valid revocations, the second applies their cutoffs from the start, so a backdated
-change already applied is dropped when the revocation arrives. Changes of the revoked device that
+it claims. A replay runs in two passes, both determined by the log alone: the first finds the
+valid revocations, the second applies their cutoffs from the start, so a backdated change already
+applied is dropped when the revocation arrives. Changes of the revoked device that
 the revoker never held are lost with it; a device re-approved later writes normally after its
 re-approval.
 
@@ -682,10 +707,11 @@ fonts come from the hub). It is made to live on an iPhone's Home Screen, served 
 proxy in front of the hub, where it has the hub as its own origin.
 
 - **Storage.** The change log and metadata live in IndexedDB (`den` database: `changes` keyed by
-  change id, `meta`), the device keys in the browser's keychain (flutter_secure_storage's web
-  backend; plain page storage where the page isn't a secure context). The app asks for persistent
-  storage. A Home Screen app on iOS has storage of its own, apart from Safari's, so Safari on an
-  iPhone or iPad shows how to add Den to the Home Screen before starting or joining a family.
+  change id, `meta` holding the metadata and the engine's snapshot), the device keys in the
+  browser's keychain (flutter_secure_storage's web backend; plain page storage where the page
+  isn't a secure context). The app asks for persistent storage. A Home Screen app on iOS has
+  storage of its own, apart from Safari's, so Safari on an iPhone or iPad shows how to add Den to
+  the Home Screen before starting or joining a family.
 - **One engine per browser.** Tabs share the log; a Web Lock (`den.engine`) lets one tab write
   it, and another tab waits until it closes.
 - **Opening and updating.** `web/sw.js`, registered by `web/den_web.js` as

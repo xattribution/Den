@@ -99,6 +99,13 @@ void main() {
     expect(reopened.debugOpenedFromSnapshot, isTrue);
     expect(reopened.debugFullReplays, 0);
     expect(seen(reopened), expected);
+    // A preview copies the state rather than replaying it, and then goes its own way.
+    final preview = await reopened.fork();
+    expect(seen(preview), expected);
+    await preview.addItem(groceries, text: 'Only in the preview');
+    expect(reopened.list(groceries)!.items.map((i) => i.text), isNot(contains('Only in the preview')));
+    expect(seen(reopened), expected);
+    await preview.close();
     final plain = MemoryStorage();
     await plain.appendChanges(den.changesSince({}));
     await plain.saveMeta((await storage.loadMeta())!);

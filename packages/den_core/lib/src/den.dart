@@ -134,7 +134,12 @@ class Den {
     required DenStorage storage,
     required DeviceKeys keys,
     int Function()? now,
-  }) async {
+  }) =>
+      _open(storage, keys, now);
+
+  /// [open]; with [copying], the state is copied from that engine's (whose log [storage] holds)
+  /// instead of replayed.
+  static Future<Den> _open(DenStorage storage, DeviceKeys keys, int Function()? now, {Materializer? copying}) async {
     final den = Den._(
       storage,
       keys,
@@ -147,7 +152,7 @@ class Den {
     final changes = await storage.loadChanges();
     changes.forEach(den._learnKey);
     SnapshotHeader? snapshot;
-    if (storage is SnapshotStorage) {
+    if (storage is SnapshotStorage && copying == null) {
       try {
         final text = await (storage as SnapshotStorage).loadSnapshot();
         if (text != null) snapshot = SnapshotHeader.parse(text);
@@ -161,7 +166,11 @@ class Den {
     // From the snapshot, with the changes it doesn't cover on top; else the whole log.
     final rest = snapshot == null ? null : den._mat.restore(snapshot, changes, root: den._root);
     den._fromSnapshot = rest != null;
-    den._mat.add(rest ?? changes);
+    if (copying != null) {
+      den._mat.copyFrom(copying);
+    } else {
+      den._mat.add(rest ?? changes);
+    }
     den._observeApplied();
     var own = 0;
     for (final c in changes) {
@@ -170,7 +179,7 @@ class Den {
       own = math.max(own, c.counter);
     }
     den._counter = math.max(den._counter, own);
-    if (den._snapshots) {
+    if (den._snapshots && copying == null) {
       den._settled = false;
       den._settling = den._settle(changes, snapshot, restored: rest != null);
     }
@@ -969,7 +978,7 @@ class Den {
       'floor': Map<String, Object?>.of(_floor),
       'spaceKeys': _keyringJson(),
     });
-    final copy = await Den.open(storage: storage, keys: _keys, now: _now);
+    final copy = await Den._open(storage, _keys, _now, copying: _mat);
     copy
       .._actingMember = _actingMember
       .._actingUntil = _actingUntil

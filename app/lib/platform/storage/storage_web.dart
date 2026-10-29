@@ -18,11 +18,12 @@ Future<DenStorage> openDeviceStorage() async {
 }
 
 /// [DenStorage] on IndexedDB: database `den`, object store `changes` (each change's JSON keyed
-/// by its id, so storing one twice keeps one) and `meta` (one JSON document under `meta`).
+/// by its id, so storing one twice keeps one) and `meta` (one JSON document under `meta`, and the
+/// engine's snapshot, which Den opens from instead of replaying the log, under `snapshot`).
 /// Every write waits for its transaction to complete, which is IndexedDB's durability promise.
 /// Transactions over the same stores run in the order they were made, so reads see every write
 /// made before them without a lock of our own.
-class IndexedDbStorage implements DenStorage {
+class IndexedDbStorage implements DenStorage, SnapshotStorage {
   IndexedDbStorage._(this._db);
 
   final web.IDBDatabase _db;
@@ -30,6 +31,7 @@ class IndexedDbStorage implements DenStorage {
   static const _changes = 'changes';
   static const _meta = 'meta';
   static const _metaKey = 'meta';
+  static const _snapshotKey = 'snapshot';
 
   /// Opens (creating on first use) the database [name]. Safari's first open on a fresh
   /// install has been seen to never answer, so a slow open is tried once more.
@@ -105,6 +107,22 @@ class IndexedDbStorage implements DenStorage {
   Future<void> saveMeta(Map<String, Object?> meta) async {
     final tx = _db.transaction(_meta.toJS, 'readwrite', web.IDBTransactionOptions(durability: 'strict'));
     tx.objectStore(_meta).put(jsonEncode(meta).toJS, _metaKey.toJS);
+    await _complete(tx);
+  }
+
+  @override
+  Future<String?> loadSnapshot() async {
+    final tx = _db.transaction(_meta.toJS, 'readonly');
+    final raw = (await _result(tx.objectStore(_meta).get(_snapshotKey.toJS))).dartify();
+    return raw is String ? raw : null;
+  }
+
+  /// One put, so a write cut short leaves the old snapshot. Not `strict`: a snapshot lost to a
+  /// crash only means the next open replays more of the log.
+  @override
+  Future<void> saveSnapshot(String snapshot) async {
+    final tx = _db.transaction(_meta.toJS, 'readwrite');
+    tx.objectStore(_meta).put(snapshot.toJS, _snapshotKey.toJS);
     await _complete(tx);
   }
 

@@ -67,4 +67,17 @@ void main() {
     expect(await storage.loadChanges(), hasLength(changes.length));
     storage.close();
   });
+
+  test('a snapshot is kept beside the metadata, replaced whole, and cleared with it', () async {
+    final storage = await IndexedDbStorage.open(name: 'den-test-snapshot-${DateTime.now().microsecondsSinceEpoch}');
+    expect(await storage.loadSnapshot(), isNull);
+    await storage.saveMeta({'familyId': 'f'});
+    await storage.saveSnapshot('first');
+    await storage.saveSnapshot('second\nline');
+    expect(await storage.loadSnapshot(), 'second\nline');
+    expect(await storage.loadMeta(), {'familyId': 'f'});
+    await storage.clear();
+    expect(await storage.loadSnapshot(), isNull);
+    storage.close();
+  });
 }
