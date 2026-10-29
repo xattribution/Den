@@ -205,7 +205,12 @@ Future<int> status(DataDir data, int port, CliIo io) async {
   final health = await _getJson(base.resolve('/health'));
   if (health != null) {
     final setup = await _getJson(base.resolve('/api/v1/hub/status'));
-    io.out.writeln('Running: ${health['name']} (${health['device']}), den_hub ${health['version']}');
+    // In the public posture /health leaves out the name, device and version, and a hub in a
+    // family says even less in its status: print what it does say.
+    final name = health['name'] ?? setup?['name'];
+    final device = health['device'] ?? setup?['device'];
+    final who = [if (name != null) '$name', if (device != null) '($device)'].join(' ');
+    io.out.writeln('Running: ${who.isEmpty ? '' : '$who, '}den_hub ${health['version'] ?? setup?['version'] ?? hubVersion}');
     io.out.writeln(health['ready'] == true ? 'In a family and serving.' : 'Setup: ${setup?['stage'] ?? 'unknown'}');
     final words = setup?['matching_words'];
     if (words is List && words.isNotEmpty) {

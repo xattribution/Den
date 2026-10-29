@@ -44,6 +44,8 @@ const Set<String> trust = {
   'addTokenConnection',
   'approveConnection',
   'revokeConnection',
+  'endExpiredAccess',
+  'endAccessNow',
 };
 
 /// Writes in one file each, with why.
@@ -51,6 +53,8 @@ const Map<String, Set<String>> perFile = {
   // Someone's role and permissions, and whether parents see a kid's private items: trust
   // decisions made through methods whose other fields do have actions.
   'lib/features/family/state/trust_actions.dart': {'updateMember', 'updateFamily'},
+  // A photo, made small on this device: no action offers it, so an AI can't add one.
+  'lib/features/family/state/picture_actions.dart': {'setPhoto'},
   // The app's actions layer itself: what a reviewed draft changed, and taking it back.
   'lib/app/actions.dart': {'recording', 'undo'},
   // Mirroring this phone's own calendars is a sync, not something a person does.

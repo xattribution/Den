@@ -19,7 +19,8 @@ String noOrphan(String text) {
   if (text.length >= 60) return text;
   final trimmed = text.trimRight();
   final i = trimmed.lastIndexOf(' ');
-  if (i <= 0) return text;
+  // Two words have no orphan to keep, and joined they would break inside a word.
+  if (i <= 0 || trimmed.lastIndexOf(' ', i - 1) <= 0) return text;
   return '${trimmed.substring(0, i)}$nbsp${trimmed.substring(i + 1)}${text.substring(trimmed.length)}';
 }
 

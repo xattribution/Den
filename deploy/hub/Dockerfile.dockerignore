@@ -1,0 +1,8 @@
+# What the hub image doesn't need from the repository: a checkout you develop in may hold build
+# output and caches for another platform, and changing tests or docs shouldn't rebuild the web app.
+.git
+**/.dart_tool
+**/build
+**/test
+docs
+integrations

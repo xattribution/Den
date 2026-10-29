@@ -273,6 +273,7 @@ From den_core's `Member`; sign-in salts and hashes are never sent.
   "picture": "owl",
   "animal": "bird",
   "birthday": "2017-04-02",
+  "until": null,
   "grants": ["lists"],
   "order": 2
 }
@@ -283,9 +284,10 @@ From den_core's `Member`; sign-in salts and hashes are never sent.
 | `role` | string | `parent` \| `adult` \| `kid` \| `guest` |
 | `tier` | string? | `preReader` \| `little` \| `big` \| `teen` |
 | `marker` | string | `sky` `grass` `lavender` `tangerine` `aqua` `coral` `sunshine` `bubblegum`, the order new people get them in. Older names are read as one of these (`blue` as `sky`, `orange` as `tangerine`, and so on). |
-| `picture` | string | A picture from the app's pack by id (`fox`, `whale`, `rocket`, ...; den_core's `Picture.pack`), or `initial` for the first letter of their name |
+| `picture` | string | A picture from the app's pack by id (`fox`, `whale`, `rocket`, ...; den_core's `Picture.pack`), `initial` for the first letter of their name, or `photo:<id>` when they have a photo (photos are added only in the Den app, and their bytes aren't served here) |
 | `animal` | string | What older versions showed (`cat` `dog` `rabbit` `bird` `butterfly` `fish` `horse` `cow` `bug`); a member without a picture shows the matching one |
 | `birthday` | date? | |
+| `until` | date? | For a sitter: the last day they have access (set only in the Den app, on a parent's own device) |
 | `grants` | string[] | Subset of `events`, `chores`, `lists`, `points` |
 | `order` | int | Display order; members arrays are sorted by it |
 
@@ -1224,6 +1226,7 @@ each engine operation no action offers, with the reason.
 | `delete_category` | destructive | `calendar` | `editEvents` | server |
 | `update_family_settings` | destructive | `admin` | `manageFamily` | client |
 | `save_member` (not roles, permissions or sign-in) | destructive | `admin` | `manageFamily` | client |
+| `set_picture` (the pack or an initial; a person their own, a kid when allowed) | write | `admin` | | |
 | `save_calendar_feed` (https on the public web) | destructive | `admin` | `manageFamily` | server |
 | `remove_calendar_feed` | destructive | `admin` | `manageFamily` | server |
 

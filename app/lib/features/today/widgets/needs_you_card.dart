@@ -155,6 +155,10 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
     final busy = _busy.contains(key);
     final failed = _failed[key];
     Widget act(String label, VoidCallback run) => FilledButton(onPressed: busy ? null : run, child: Text(label, maxLines: 1, softWrap: false));
+    Widget gotIt() => OutlinedButton(
+          onPressed: () => app.markSeen(key),
+          child: const Text('Got it', maxLines: 1, softWrap: false),
+        );
     Widget go(String label, String route) => OutlinedButton(
           onPressed: () => context.push(route),
           child: Text(label, maxLines: 1, softWrap: false),
@@ -211,6 +215,22 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
           go('Review', '/settings/connections'),
           null,
           null,
+        ),
+      PrivacyNeed(:final change) => (
+          _face(app, change.by, PhosphorIconsRegular.lockKey),
+          privacyNotice(app.memberById(change.by)?.name ?? 'A parent', parentsSee: change.parentsSee),
+          app.formats.relative(app.formats.localDate(change.at), app.today),
+          gotIt(),
+          null,
+          null,
+        ),
+      AccessEndedNeed(:final member, :final until) => (
+          _face(app, member.id, PhosphorIconsRegular.calendarX),
+          accessEndedWords(member.name, until, app.formats, app.today),
+          "${FamilyWords.possessive(member.name)} devices no longer sync",
+          gotIt(),
+          null,
+          () => context.push('/family/member/${member.id}'),
         ),
       ListNeed(:final list) => (
           _glyph(context, Pictograms.listKind(list.list.kind)),

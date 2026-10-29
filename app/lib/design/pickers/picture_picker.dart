@@ -1,5 +1,8 @@
+import 'dart:typed_data';
+
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../avatar.dart';
 import '../motion.dart';
@@ -7,8 +10,8 @@ import '../pictures.dart';
 import '../tokens.dart';
 
 /// A person's picture and color, as the canvas's "Pick a picture" draws it: their avatar as it
-/// will look, their initial as a choice, the eight family colors, and the pack by group. One tap
-/// on anything chooses it.
+/// will look, Camera and Photos for a photo, their initial as a choice, the eight family colors,
+/// and the pack by group. One tap on anything chooses it.
 class PicturePicker extends StatefulWidget {
   const PicturePicker({
     super.key,
@@ -19,6 +22,11 @@ class PicturePicker extends StatefulWidget {
     required this.onColor,
     this.colorLabel = 'Color',
     this.takenBy = const {},
+    this.photo,
+    this.onCamera,
+    this.onPhotos,
+    this.showColors = true,
+    this.photoBusy = false,
   });
 
   /// Their name, for the initial and what screen readers say.
@@ -36,6 +44,21 @@ class PicturePicker extends StatefulWidget {
   /// Colors other people already have, with their names, so two people don't end up sharing
   /// one by accident.
   final Map<Marker, String> takenBy;
+
+  /// The photo [picture] names (`photo:<id>`), when this device has it.
+  final Uint8List? photo;
+
+  /// Takes a photo; null leaves Camera out (no camera here).
+  final VoidCallback? onCamera;
+
+  /// Chooses a photo; null leaves Photos out.
+  final VoidCallback? onPhotos;
+
+  /// Whether the colors are offered (only a parent changes someone's color).
+  final bool showColors;
+
+  /// A photo is being read and made small.
+  final bool photoBusy;
 
   @override
   State<PicturePicker> createState() => _PicturePickerState();
@@ -55,29 +78,75 @@ class _PicturePickerState extends State<PicturePicker> {
     final t = context.text;
     final color = PersonColor.forMarker(widget.color).color;
     final initial = widget.picture == Picture.initial;
+    final isPhoto = Picture.photoIdOf(widget.picture) != null;
     final group = DenPictures.groups[_group];
+    final avatar = isPhoto
+        ? DenAvatar.photo(widget.photo, color: color, size: 96, semanticLabel: widget.name)
+        : initial
+            ? DenAvatar.initial(widget.name, color: color, size: 96, semanticLabel: widget.name)
+            : DenAvatar.picture(widget.picture, color: color, size: 96, semanticLabel: widget.name);
+    final tiles = [
+      if (widget.onCamera != null)
+        _Tile(
+          icon: PhosphorIconsRegular.camera,
+          label: 'Camera',
+          semanticLabel: 'Take a photo',
+          onTap: widget.photoBusy ? null : widget.onCamera!,
+        ),
+      if (widget.onPhotos != null)
+        _Tile(
+          icon: PhosphorIconsRegular.image,
+          label: 'Photos',
+          semanticLabel: 'Choose a photo',
+          selected: isPhoto,
+          onTap: widget.photoBusy ? null : widget.onPhotos!,
+        ),
+      _Tile(
+        letter: widget.name.characters.isEmpty ? '' : widget.name.characters.first.toUpperCase(),
+        label: 'Initial',
+        selected: initial,
+        onTap: () => widget.onPicture(Picture.initial),
+      ),
+    ];
+    // The tiles share one height, the tallest's, whatever the text size.
+    Widget tileRow() => IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (i, tile) in tiles.indexed) ...[
+                if (i > 0) const SizedBox(width: Sp.s),
+                Expanded(child: tile),
+              ],
+            ],
+          ),
+        );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            initial
-                ? DenAvatar.initial(widget.name, color: color, size: 96, semanticLabel: widget.name)
-                : DenAvatar.picture(widget.picture, color: color, size: 96, semanticLabel: widget.name),
-            const SizedBox(width: Sp.l),
-            Expanded(
-              child: _InitialChoice(
-                letter: widget.name.characters.isEmpty ? '' : widget.name.characters.first.toUpperCase(),
-                selected: initial,
-                onTap: () => widget.onPicture(Picture.initial),
-              ),
-            ),
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            // Three tiles beside the picture while their words fit; under it otherwise.
+            final room = (constraints.maxWidth - 96 - Sp.l - Sp.s * (tiles.length - 1)) / tiles.length;
+            final need = MediaQuery.textScalerOf(context).scale(13) * 5.2 + Sp.m;
+            if (tiles.length == 1 || room >= need) {
+              return Row(children: [avatar, const SizedBox(width: Sp.l), Expanded(child: tileRow())]);
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [avatar, const SizedBox(height: Sp.m), tileRow()],
+            );
+          },
         ),
-        const SizedBox(height: Sp.l),
-        Text(widget.colorLabel, style: t.meta(c.ink2)),
-        const SizedBox(height: Sp.xs),
-        ColorChoices(value: widget.color, onChanged: widget.onColor, takenBy: widget.takenBy),
+        if (widget.photoBusy) ...[
+          const SizedBox(height: Sp.s),
+          Text('Adding the photo…', style: t.meta(c.ink2)),
+        ],
+        if (widget.showColors) ...[
+          const SizedBox(height: Sp.l),
+          Text(widget.colorLabel, style: t.meta(c.ink2)),
+          const SizedBox(height: Sp.xs),
+          ColorChoices(value: widget.color, onChanged: widget.onColor, takenBy: widget.takenBy),
+        ],
         const SizedBox(height: Sp.m),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
@@ -219,12 +288,17 @@ class _Swatch extends StatelessWidget {
   }
 }
 
-class _InitialChoice extends StatelessWidget {
-  const _InitialChoice({required this.letter, required this.selected, required this.onTap});
+/// Camera, Photos or Initial (AvatarPicker.dc.html): a tile with an ink glyph or the letter
+/// over its word; the chosen one has an ink edge.
+class _Tile extends StatelessWidget {
+  const _Tile({this.icon, this.letter, required this.label, this.semanticLabel, this.selected = false, required this.onTap});
 
-  final String letter;
+  final IconData? icon;
+  final String? letter;
+  final String label;
+  final String? semanticLabel;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -234,6 +308,7 @@ class _InitialChoice extends StatelessWidget {
       onTap: onTap,
       selected: selected,
       color: c.card,
+      semanticLabel: semanticLabel ?? label,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(Radii.tile),
         side: BorderSide(color: selected ? c.ink : c.line, width: 1.5),
@@ -241,14 +316,17 @@ class _InitialChoice extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: Targets.kid),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: Sp.m, vertical: Sp.s),
+          padding: const EdgeInsets.symmetric(horizontal: Sp.xs, vertical: Sp.s),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(letter, style: t.section(c.ink)),
-              const SizedBox(height: 2),
-              Text('Initial', style: t.caption(c.ink).bold),
+              if (icon != null)
+                Icon(icon, size: 22, color: onTap == null ? c.ink3 : c.ink)
+              else
+                Text(letter ?? '', style: t.section(c.ink)),
+              const SizedBox(height: 4),
+              Text(label, style: t.caption(c.ink).bold, maxLines: 1, softWrap: false),
             ],
           ),
         ),

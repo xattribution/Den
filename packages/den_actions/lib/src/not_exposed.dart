@@ -28,6 +28,11 @@ const Map<String, String> notExposed = {
   'addTokenConnection': '$_trust: an AI can\'t make itself or another one a token',
   'approveConnection': '$_trust: an AI can\'t approve itself or widen its own access',
   'revokeConnection': _trust,
+  'endExpiredAccess': '$_trust; a parent\'s own device removes a sitter\'s devices after their last day, when Den opens there',
+  'endAccessNow': '$_trust; it also removes the sitter\'s devices and rotates keys',
+  // Photos.
+  'setPhoto': 'A photo is taken or chosen on a device and made small there before it is saved; an AI connection or '
+      'the assistant sees that someone has one (their picture reads "photo:<id>") but can\'t add one',
   'requestOAuthConnection': 'Written by the hub\'s OAuth server when an app asks to connect; a parent approves it',
   'setConnectionToken': 'Written by the hub\'s OAuth server when it issues a token for approved access',
   // The hub's and the runner's own bookkeeping.

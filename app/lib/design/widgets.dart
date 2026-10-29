@@ -10,6 +10,7 @@ import 'motion.dart';
 import 'tokens.dart';
 
 export 'avatar.dart';
+export 'photos.dart';
 export 'feedback.dart';
 export 'pickers/people_picker.dart';
 export 'widgets/buttons.dart';
