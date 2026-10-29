@@ -88,10 +88,12 @@ void main() {
     });
     expect(refused['isError'], isTrue);
     expect(((refused['content'] as List).single as Map)['text'], startsWith('Den didn\'t allow that: Leo can\'t'));
+    // A token acts as the parent who made it (MCP eval #4): what that parent may do, within its scopes.
     final automation = await f.token(scopes: {Scope.admin}, label: 'Parity automation');
     final auto = (await list(automation)).map((t) => t['name']).toSet();
-    expect(auto, isNot(contains('save_member')), reason: 'no family administration without a parent');
-    expect(auto, contains('add_items'));
+    expect(auto, containsAll(['add_items', 'save_member']));
+    final lists = await f.token(scopes: {Scope.lists}, label: 'Parity lists');
+    expect((await list(lists)).map((t) => t['name']), isNot(contains('save_member')));
     final reader = await f.token(scopes: {Scope.read}, member: f.id('Alex'), label: 'Parity reader');
     final read = await list(reader);
     expect(read.every((t) => (t['annotations'] as Map)['readOnlyHint'] == true), isTrue);
