@@ -167,6 +167,31 @@ void main() {
     expect((ok.data['feed'] as Map)['url'], 'https://school.example.org/cal.ics');
   });
 
+  test('pictures: from the pack or an initial, never a photo; photos show as "photo:<id>"', () async {
+    final app = on(Surface.app);
+    final mine = await runner.run(app, 'set_picture', {'picture': 'owl'});
+    expect((mine.data['member'] as Map)['picture'], 'owl', reason: mine.text);
+    final leo = await runner.run(on(Surface.mcp), 'set_picture', {'person': 'Leo', 'picture': 'initial'});
+    expect((leo.data['member'] as Map)['picture'], Picture.initial, reason: leo.text);
+    final photo = await runner.run(on(Surface.mcp), 'set_picture', {'person': 'Leo', 'picture': 'photo:abcdefghijklmnop'});
+    expect(photo.isError, isTrue);
+    expect(runner.spec('set_picture')!.engine, {'setPicture'});
+    expect(notExposed['setPhoto'], contains('can\'t add one'));
+    final family = await runner.run(on(Surface.mcp), 'get_family', const {});
+    final members = (family.data['members'] as List).cast<Map<String, Object?>>();
+    expect(members.first.keys, containsAll(['picture', 'until']));
+  });
+
+  test('a kid whose parents turned off "Rewards need my OK" gets what they can afford at once', () async {
+    final maya = idOf(den, 'Maya');
+    final reward = den.points().rewards.firstWhere((r) => r.needsApproval);
+    final waits = await runner.run(on(Surface.app), 'request_reward', {'reward': reward.title, 'person': 'Maya'});
+    expect(waits.data['status'], 'requested', reason: waits.text);
+    await den.updateFamily({'oversight.$maya.${OversightSetting.rewardsNeedOk}': false});
+    final now = await runner.run(on(Surface.app), 'request_reward', {'reward': reward.title, 'person': 'Maya'});
+    expect(now.data['status'], 'approved', reason: now.text);
+  });
+
   test('what the app\'s editors change: steps keep their ids, a rotation its first day, a list its pictogram', () async {
     final app = on(Surface.app);
     final dishes = den.chores.firstWhere((c) => c.title == 'Dishes');

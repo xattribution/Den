@@ -105,6 +105,25 @@ List<ActionSpec> familyActions() => [
         run: _saveMember,
       ),
       ActionSpec(
+        name: 'family.set_picture',
+        mcpName: 'set_picture',
+        title: 'Change someone\'s picture',
+        description: 'Changes the picture that stands for a person: one from Den\'s pack, or "initial" for the first '
+            'letter of their name. A parent can change anyone\'s; others their own, a kid only when a parent allows '
+            'it. Photos are taken or chosen in the Den app; a picture of "photo:<id>" means the person has one.',
+        input: S.input({
+          'person': S.person('Whose picture (default this connection\'s person).'),
+          'picture': S.string('A picture from Den\'s pack by name, or "initial".', oneOf: [...Picture.pack, Picture.initial]),
+        }, required: ['picture']),
+        output: S.output({'member': memberShape}),
+        scopes: const {Scope.admin},
+        effect: Effect.write,
+        idempotent: true,
+        engine: const {'setPicture'},
+        example: {'picture': Picture.pack[5]},
+        run: _setPicture,
+      ),
+      ActionSpec(
         name: 'family.save_feed',
         mcpName: 'save_calendar_feed',
         title: 'Subscribe to a calendar',
@@ -265,6 +284,14 @@ Future<ActionResult> _saveMember(ActionContext c, ActionInput a) async {
     a.has('member') ? 'Changed ${m.name}\'s details [member $id].' : 'Added ${m.name} (${m.role.name}) to the family [member $id].',
     {'member': Wire.member(m)},
   );
+}
+
+Future<ActionResult> _setPicture(ActionContext c, ActionInput a) async {
+  final who = a.has('person') ? c.people.one(a.str('person')!) : c.member;
+  if (who == null) throw ActionError('Name whose picture to change.', field: 'person');
+  await c.den.setPicture(who, a.str('picture', required: true)!);
+  final m = c.den.member(who)!;
+  return ActionResult('Changed ${m.name}\'s picture to ${m.picture} [member $who].', {'member': Wire.member(m)});
 }
 
 /// The https address of a calendar to subscribe to, refusing anything but a public host: a
