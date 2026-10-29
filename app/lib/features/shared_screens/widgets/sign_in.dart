@@ -119,8 +119,7 @@ class _WhoSheetState extends State<_WhoSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(widget.title, style: context.type.title(c.ink)),
-          const SizedBox(height: Sp.l),
+          SheetHeader(title: widget.title),
           Wrap(
             spacing: Sp.s,
             runSpacing: Sp.s,
@@ -136,15 +135,13 @@ class _WhoSheetState extends State<_WhoSheet> {
       children: [
         Row(
           children: [
-            IconButton(
-              tooltip: 'Back',
-              onPressed: () => setState(() {
+            PageBackButton(
+              onTap: () => setState(() {
                 _chosen = null;
                 _error = null;
               }),
-              icon: const Icon(PhosphorIconsRegular.arrowLeft),
             ),
-            const SizedBox(width: Sp.xs),
+            const SizedBox(width: Sp.m),
             DenAvatar(chosen, size: 40),
             const SizedBox(width: Sp.m),
             Expanded(
@@ -154,7 +151,7 @@ class _WhoSheetState extends State<_WhoSheet> {
                   'pattern' => '${FamilyWords.possessive(chosen.name)} pattern',
                   _ => chosen.name,
                 },
-                style: context.type.title(c.ink),
+                style: context.text.sheetTitle(c.ink),
               ),
             ),
           ],

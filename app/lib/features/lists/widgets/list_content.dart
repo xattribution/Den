@@ -511,12 +511,18 @@ class _ItemSheetState extends State<_ItemSheet> {
     final t = context.text;
     final shopping = widget.kind == ListKind.shopping;
     final withQty = widget.kind == ListKind.shopping || widget.kind == ListKind.packing;
-    Widget field(String label, TextEditingController controller, {bool autofocus = false, TextCapitalization caps = TextCapitalization.sentences}) =>
+    Widget field(
+      String label,
+      TextEditingController controller, {
+      bool autofocus = false,
+      TextCapitalization caps = TextCapitalization.sentences,
+      double top = Sp.l,
+    }) =>
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, Sp.l, 0, Sp.xs),
+              padding: EdgeInsets.fromLTRB(DenLayout.headingInset, top, 0, Sp.xs),
               child: Text(label, style: t.meta(c.ink2)),
             ),
             TextField(
@@ -534,11 +540,8 @@ class _ItemSheetState extends State<_ItemSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, Sp.xs, 0, 0),
-            child: Semantics(header: true, child: Text('Edit item', style: t.sheetTitle(c.ink))),
-          ),
-          field('Item', _text, autofocus: true),
+          const SheetHeader(title: 'Edit item'),
+          field('Item', _text, autofocus: true, top: 0),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: Sp.xs),
@@ -554,14 +557,18 @@ class _ItemSheetState extends State<_ItemSheet> {
           const SizedBox(height: Sp.xl),
           Row(
             children: [
-              TextButton.icon(
-                style: TextButton.styleFrom(foregroundColor: c.destructive),
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  widget.onRemove();
-                },
-                icon: const Icon(PhosphorIconsRegular.trash, size: 20),
-                label: const Text('Remove'),
+              // Its icon lines up with the fields above, on the gutter.
+              Hang(
+                by: Sp.m,
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(foregroundColor: c.destructive),
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    widget.onRemove();
+                  },
+                  icon: const Icon(PhosphorIconsRegular.trash, size: 20),
+                  label: const Text('Remove'),
+                ),
               ),
               const Spacer(),
               FilledButton(onPressed: _save, child: const Text('Save')),
