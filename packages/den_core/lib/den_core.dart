@@ -4,12 +4,13 @@ library;
 
 export 'src/change.dart';
 export 'src/den.dart';
+export 'src/family_controls.dart';
 export 'src/hlc.dart';
 export 'src/ids.dart' show newId, base32, randomBytes;
 export 'src/model.dart';
 export 'src/permissions.dart';
 export 'src/rrule.dart' show RecurrenceRule, Frequency, WeekdayNum, UntilKind;
-export 'src/schema.dart' show checkFields;
+export 'src/schema.dart' show checkFields, photoFormat;
 export 'src/secrets.dart' show hashToken;
 export 'src/space_keys.dart';
 export 'src/storage.dart';
