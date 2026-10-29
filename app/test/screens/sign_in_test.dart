@@ -122,9 +122,8 @@ void main() {
       await tester.pumpAndSettle();
       await _type(tester, '1111');
       expect(findWords("That's not Alex's PIN. Try again in 20 seconds"), findsOneWidget);
-      await tester.tap(find.descendant(of: find.byType(PinPad), matching: find.bySemanticsLabel('2')));
-      await tester.pump();
-      expect(find.bySemanticsLabel('0 of 4 digits'), findsOneWidget, reason: 'the keys wait too');
+      final key = find.ancestor(of: find.descendant(of: find.byType(PinPad), matching: find.text('2')), matching: find.byType(InkWell));
+      expect(tester.widget<InkWell>(key).onTap, isNull, reason: 'the keys wait too');
       await matchShot('sign_in_wait_tablet');
     });
 
@@ -173,7 +172,7 @@ void main() {
       expect(parent.seen('tries:${told.id}'), isTrue);
 
       await pumpScreen(tester, const HistoryScreen(), state: parent, pushed: true);
-      expect(find.textContaining('counted 10 wrong tries at Priya\'s PIN', findRichText: true), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp("^Kitchen wall counted 10 wrong tries at Priya's PIN")), findsOneWidget);
     });
   });
 }

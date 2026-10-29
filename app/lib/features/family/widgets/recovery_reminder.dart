@@ -42,17 +42,17 @@ class _RecoveryWordsButtonsState extends State<RecoveryWordsButtons> {
     widget.onDone('Den will ask again in 3 days');
   }
 
+  /// A label on one line, made a little smaller only where it couldn't fit otherwise (a narrow
+  /// column at 200 % text), never cut off.
+  static Widget _label(String text) => FittedBox(fit: BoxFit.scaleDown, child: Text(text, maxLines: 1, softWrap: false));
+
   @override
   Widget build(BuildContext context) => Wrap(
         spacing: Sp.s,
         runSpacing: Sp.s,
         children: [
-          FilledButton(onPressed: _busy ? null : _save, child: const Text('Save them', maxLines: 1, softWrap: false)),
-          if (widget.later)
-            OutlinedButton(
-              onPressed: _busy ? null : _later,
-              child: const Text('Remind me later', maxLines: 1, softWrap: false),
-            ),
+          FilledButton(onPressed: _busy ? null : _save, child: _label('Save them')),
+          if (widget.later) OutlinedButton(onPressed: _busy ? null : _later, child: _label('Remind me later')),
         ],
       );
 }
