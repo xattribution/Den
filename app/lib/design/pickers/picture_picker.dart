@@ -76,7 +76,7 @@ class _PicturePickerState extends State<PicturePicker> {
   Widget build(BuildContext context) {
     final c = context.colors;
     final t = context.text;
-    final color = PersonColor.forMarker(widget.color).color;
+    final color = c.marker(widget.color);
     final initial = widget.picture == Picture.initial;
     final isPhoto = Picture.photoIdOf(widget.picture) != null;
     final group = DenPictures.groups[_group];
@@ -202,8 +202,8 @@ Map<Marker, String> colorsTaken(Iterable<Member> members, {String? except}) => {
         if (m.id != except) m.marker: m.name,
     };
 
-/// The eight family colors in assignment order. The chosen one has an ink ring with a gap; one
-/// someone else has carries their initial.
+/// The eight family colors in assignment order, in the family's pack. The chosen one has an ink
+/// ring with a gap; one someone else has carries their initial.
 class ColorChoices extends StatelessWidget {
   const ColorChoices({super.key, required this.value, required this.onChanged, this.takenBy = const {}});
 
@@ -218,7 +218,7 @@ class ColorChoices extends StatelessWidget {
       children: [
         for (final m in Marker.values)
           _Swatch(
-            color: PersonColor.forMarker(m),
+            color: c.pack.of(m),
             selected: m == value,
             takenBy: takenBy[m],
             onTap: () => onChanged(m),
@@ -240,7 +240,7 @@ class _Swatch extends StatelessWidget {
     required this.onMarker,
   });
 
-  final PersonColor color;
+  final PackColor color;
   final bool selected;
   final String? takenBy;
   final VoidCallback onTap;

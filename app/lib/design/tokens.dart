@@ -35,9 +35,14 @@ class DenColors extends ThemeExtension<DenColors> {
     required this.photoBg,
     required this.photoFg,
     required this.bar,
+    this.pack = ColorPack.bright,
   });
 
   final Brightness brightness;
+
+  /// The family's colors ([Family.colors]): which shades [marker] draws. The app sets it from
+  /// the family for everything under it; it never changes the grays or ink.
+  final ColorPack pack;
 
   /// The page behind grouped sections, and the surface of sheets.
   final Color bg;
@@ -112,8 +117,9 @@ class DenColors extends ThemeExtension<DenColors> {
 
   bool get isDark => brightness == Brightness.dark;
 
-  /// A person's color. The same hex in light and dark, always with [onMarker] on it.
-  Color marker(Marker m) => PersonColor.forMarker(m).color;
+  /// A person's color in the family's [pack]. The same hex in light and dark, always with
+  /// [onMarker] on it.
+  Color marker(Marker m) => pack.color(m);
 
   @Deprecated('Use bg: the page behind sections (sheets sit on bg too).')
   Color get paper => bg;
@@ -187,8 +193,42 @@ class DenColors extends ThemeExtension<DenColors> {
     bar: Color(0xFF000000),
   );
 
+  static final Expando<Map<ColorPack, DenColors>> _packs = Expando('DenColors.withPack');
+
+  /// The same tokens drawing people in [pack]: one object per pack, so a theme made from it
+  /// again equals the last one and nothing under it rebuilds.
+  DenColors withPack(ColorPack pack) =>
+      pack == this.pack ? this : (_packs[this] ??= {})[pack] ??= copyWith(pack: pack);
+
   @override
-  DenColors copyWith() => this;
+  DenColors copyWith({ColorPack? pack}) => pack == null || pack == this.pack
+      ? this
+      : DenColors(
+          brightness: brightness,
+          bg: bg,
+          card: card,
+          raised: raised,
+          fill: fill,
+          line: line,
+          ink: ink,
+          ink2: ink2,
+          ink3: ink3,
+          onPrimary: onPrimary,
+          onMarker: onMarker,
+          destructive: destructive,
+          star: star,
+          starEdge: starEdge,
+          scrim: scrim,
+          handle: handle,
+          track: track,
+          switchOff: switchOff,
+          knob: knob,
+          pictureBg: pictureBg,
+          photoBg: photoBg,
+          photoFg: photoFg,
+          bar: bar,
+          pack: pack,
+        );
 
   @override
   DenColors lerp(DenColors? other, double t) {
@@ -196,6 +236,7 @@ class DenColors extends ThemeExtension<DenColors> {
     Color l(Color a, Color b) => Color.lerp(a, b, t)!;
     return DenColors(
       brightness: t < 0.5 ? brightness : other.brightness,
+      pack: t < 0.5 ? pack : other.pack,
       bg: l(bg, other.bg),
       card: l(card, other.card),
       raised: l(raised, other.raised),
@@ -222,11 +263,100 @@ class DenColors extends ThemeExtension<DenColors> {
   }
 }
 
-/// The family colors: eight bright colors, one per person, the same hex in light and dark and
-/// always with dark ink text ([DenColors.onMarker], 5.4:1 or better on every one). Declared in
-/// assignment order; every neighbor in this order passes the color-blind (deltaE 15.9 worst)
-/// and normal-vision (deltaE 25.8 worst) separation checks. Never add or tweak one by eye: run
-/// the validator.
+/// One of a pack's eight colors: what pickers call it, and its hex.
+@immutable
+class PackColor {
+  const PackColor(this.label, this.color);
+
+  final String label;
+  final Color color;
+}
+
+/// The family's color packs ([Family.colors]): eight colors each, one per person, in assignment
+/// order. Every pack keeps each place's family of hue (blue, green, purple, orange, aqua, red,
+/// yellow, pink), so changing packs changes shades and never who has which color. Each color is
+/// the same hex in light and dark, always with dark ink text ([DenColors.onMarker], 4.8:1 or
+/// better on every color of every pack), and every neighbor in a pack's order passes the
+/// color-blind (deltaE 8) and normal-vision (deltaE 15) separation checks in both themes
+/// (DESIGN.md, "Family colors"). Never add or tweak one by eye: run the validator.
+extension ColorPackLook on ColorPack {
+  /// The pack's name, as Settings shows it.
+  String get label => switch (this) {
+        ColorPack.bright => 'Bright',
+        ColorPack.deep => 'Deep',
+        ColorPack.soft => 'Soft',
+        ColorPack.bold => 'Bold',
+      };
+
+  /// The eight colors in assignment order, one per [Marker].
+  List<PackColor> get colors => switch (this) {
+        ColorPack.bright => _bright,
+        ColorPack.deep => _deep,
+        ColorPack.soft => _soft,
+        ColorPack.bold => _bold,
+      };
+
+  /// The color in this pack of whoever has [m].
+  PackColor of(Marker m) => colors[m.index];
+
+  Color color(Marker m) => colors[m.index].color;
+}
+
+/// Sky, Grass, Lavender...: the first pack, [PersonColor]'s colors.
+const List<PackColor> _bright = [
+  PackColor('Sky', Color(0xFF339FEE)),
+  PackColor('Grass', Color(0xFF4CC157)),
+  PackColor('Lavender', Color(0xFFAD87ED)),
+  PackColor('Tangerine', Color(0xFFF88B1C)),
+  PackColor('Aqua', Color(0xFF10CACA)),
+  PackColor('Coral', Color(0xFFF05653)),
+  PackColor('Sunshine', Color(0xFFF4CE23)),
+  PackColor('Bubblegum', Color(0xFFF075AA)),
+];
+
+/// Deeper and richer: as dark as dark text allows (4.8:1 to 6.0:1); the yellow stays a clear
+/// gold, never amber or mustard.
+const List<PackColor> _deep = [
+  PackColor('Ocean', Color(0xFF2682FF)),
+  PackColor('Emerald', Color(0xFF009D4F)),
+  PackColor('Grape', Color(0xFF9D64F6)),
+  PackColor('Pumpkin', Color(0xFFE97200)),
+  PackColor('Teal', Color(0xFF009EA4)),
+  PackColor('Cherry', Color(0xFFF33A3F)),
+  PackColor('Gold', Color(0xFFECC906)),
+  PackColor('Raspberry', Color(0xFFEC3F94)),
+];
+
+/// Light and cheerful: sorbet shades that keep their color (chroma 0.11 or more), never cream,
+/// beige or a wash.
+const List<PackColor> _soft = [
+  PackColor('Bluebell', Color(0xFF71C8FF)),
+  PackColor('Mint', Color(0xFF7CE695)),
+  PackColor('Lilac', Color(0xFFC7A8FF)),
+  PackColor('Apricot', Color(0xFFFFB072)),
+  PackColor('Lagoon', Color(0xFF5DE9E9)),
+  PackColor('Watermelon', Color(0xFFFF8482)),
+  PackColor('Lemon', Color(0xFFFEE657)),
+  PackColor('Blossom', Color(0xFFFA96C3)),
+];
+
+/// Bold primaries: the crayon box, each hue as strong as the screen draws it.
+const List<PackColor> _bold = [
+  PackColor('Blue', Color(0xFF477FFF)),
+  PackColor('Green', Color(0xFF30C532)),
+  PackColor('Purple', Color(0xFFB853FF)),
+  PackColor('Orange', Color(0xFFFF7902)),
+  PackColor('Turquoise', Color(0xFF06C1EC)),
+  PackColor('Red', Color(0xFFFF2920)),
+  PackColor('Yellow', Color(0xFFF5DA04)),
+  PackColor('Pink', Color(0xFFF33BBF)),
+];
+
+/// The eight places in the family's colors, by their names in the Bright pack, with the Bright
+/// hex. Everywhere a family is known, draw a person with `context.colors.marker(m)`, which
+/// follows the family's pack; [color] is for where there is no family yet (starting one).
+/// Every neighbor in this order passes the color-blind (deltaE 15.9 worst) and normal-vision
+/// (deltaE 25.8 worst) separation checks.
 enum PersonColor {
   sky('Sky', Color(0xFF339FEE)),
   grass('Grass', Color(0xFF4CC157)),
