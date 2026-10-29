@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:den_core/den_core.dart';
 import 'package:test/test.dart';
@@ -327,6 +328,13 @@ void main() {
       expect(base64.decode(leoTablet.photo(id)!.data), bytes);
       final webp = await phone.setPhoto(maya, fakeWebp());
       expect(phone.photo(webp)!.mime, Photo.webp);
+    });
+
+    test('a photo a browser made small on its canvas (web/den_web.js) is one the schema takes', () async {
+      final bytes = File('test/fixtures/canvas_photo.jpg').readAsBytesSync();
+      expect(photoFormat(bytes), (mime: Photo.jpeg, width: 256, height: 256));
+      final id = await phone.setPhoto(maya, bytes);
+      expect(phone.member(maya)!.photo, id);
     });
 
     test('the schema takes only a small square JPEG or WebP', () async {
