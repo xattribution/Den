@@ -58,6 +58,15 @@ void main() {
     expect((await check(await sign(family.founder, to: kidPhone.deviceId))).problem, 'bad-signature');
   });
 
+  test('every signed request names the hub it is for, in X-Den-Hub, for a host to route by', () async {
+    final headers = await sign(family.founder);
+    expect(headers[DeviceRequest.hubHeader], hub.deviceId);
+    // Only routing: the signature covers the hub already, so naming another changes nothing.
+    final other = {...headers, DeviceRequest.hubHeader: kidPhone.deviceId};
+    expect((await check(other)).ok, isTrue);
+    expect((await check(await sign(family.founder, to: kidPhone.deviceId))).problem, 'bad-signature');
+  });
+
   test('the same request twice is refused the second time', () async {
     final headers = await sign(family.founder);
     final seen = NonceBook();

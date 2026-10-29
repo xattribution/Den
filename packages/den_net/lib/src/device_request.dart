@@ -10,11 +10,14 @@ import 'util.dart';
 /// device asks the hub for a service (reading a capture) rather than syncing.
 ///
 /// Headers: `X-Den-Device` (device id), `X-Den-Time` (UTC ms), `X-Den-Nonce`, optional
-/// `X-Den-Actor` (the member acting on that device), and `X-Den-Signature`: base64url Ed25519
+/// `X-Den-Actor` (the member acting on that device), `X-Den-Signature`: base64url Ed25519
 /// over `"den/device-request/v1" 0x00 | canonical JSON [method, path, time, nonce,
-/// sha256(body) hex, device, actor, hub]`. The hub ([DeviceRequest.verify]) accepts it only
-/// from an approved, unrevoked device of its family, addressed to itself, within five minutes
-/// of its own clock, with a nonce it hasn't seen.
+/// sha256(body) hex, device, actor, hub]`, and `X-Den-Hub`, the hub device it is addressed to
+/// (the same id the signature covers), so a server holding several families' logs (a Den host)
+/// hands it to that family's hub without guessing. The hub ([DeviceRequest.verify]) accepts it
+/// only from an approved, unrevoked device of its family, addressed to itself, within five
+/// minutes of its own clock, with a nonce it hasn't seen. A request without `X-Den-Hub` (an
+/// older app) goes to the family whose address it came to.
 abstract final class DeviceRequest {
   /// The signing device's id.
   static const device = 'x-den-device';
@@ -30,6 +33,10 @@ abstract final class DeviceRequest {
 
   /// The device's signature.
   static const signature = 'x-den-signature';
+
+  /// The hub device the request is addressed to. Only routing: the signature already covers
+  /// the same id, so a header naming another hub makes the signature fail there.
+  static const hubHeader = 'x-den-hub';
 
   /// How far a request's time may be from the hub's.
   static const Duration skew = Duration(minutes: 5);
@@ -59,6 +66,7 @@ abstract final class DeviceRequest {
       nonce: n,
       actor: ?actorId,
       signature: sig,
+      hubHeader: hub,
     };
   }
 

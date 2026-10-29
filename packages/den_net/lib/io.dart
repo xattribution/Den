@@ -148,6 +148,29 @@ Handler syncWebSocketHandler(
       pingInterval: pingInterval,
     );
 
+/// [syncWebSocketHandler] for a server holding several logs (a Den host): reads each
+/// connection's hello first ([peekHello]) and hands it to [route], which serves it on the node
+/// of the family the hello names, or closes it. [onSocket] sees every connection as it opens,
+/// before its hello (to count it). A connection whose first message isn't a hello, or that sends
+/// none within [helloTimeout], is closed and never reaches [route].
+Handler helloWebSocketHandler(
+  void Function(PeekedHello<dynamic> hello) route, {
+  void Function(WebSocketChannel socket)? onSocket,
+  int maxMessageBytes = maxSyncSocketMessageBytes,
+  Duration? pingInterval = const Duration(seconds: 30),
+  Duration helloTimeout = const Duration(seconds: 20),
+}) =>
+    boundedWebSocketHandler(
+      (socket) {
+        onSocket?.call(socket);
+        unawaited(peekHello<dynamic>(socket, timeout: helloTimeout).then((hello) {
+          if (hello != null) route(hello);
+        }));
+      },
+      maxMessageBytes: maxMessageBytes,
+      pingInterval: pingInterval,
+    );
+
 /// A shelf handler that upgrades to a WebSocket like `webSocketHandler`, but reads the header of
 /// every incoming frame as it arrives and ends the connection as soon as a frame, or the
 /// fragments of one message, announce more than [maxMessageBytes] of payload, so an oversized
