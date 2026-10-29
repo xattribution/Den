@@ -79,7 +79,13 @@ class DenHub {
   late final RelayWatch _relayWatch = RelayWatch(_ctx.log);
   MdnsResponder? _mdns;
   StreamSubscription<Set<String>>? _changes;
+  StreamSubscription<SyncPeer>? _peers;
   final List<HubService> _services = [];
+
+  /// Services that write to the family's log on their own (calendar feeds, the OAuth sweep):
+  /// held while the hub [catchingUp] after a restore, started once it has caught up.
+  final Set<HubService> _writers = {};
+  final List<HubService> _held = [];
   bool _servicesStarted = false;
   bool _stopped = false;
 
@@ -148,6 +154,10 @@ class DenHub {
   /// Whether the hub is in a family, approved, and serving the API.
   bool get ready => _ctx.ready;
 
+  /// Whether the hub was restored from a backup and waits for a device of the family to sync
+  /// before it writes anything of its own ([HubContext.catchingUp]).
+  bool get catchingUp => _ctx.catchingUp;
+
   /// Adds a service started once the hub is ready and stopped with it.
   void addService(HubService service) {
     _services.add(service);
@@ -177,6 +187,12 @@ class DenHub {
       ..add(_reminders)
       ..add(_oauth)
       ..add(_push);
+    _writers.addAll([_feeds, _oauth]);
+    if (_ctx.catchingUp) {
+      log.warn('Restored from a backup: this hub writes nothing of its own until a phone or tablet in the family '
+          'has synced with it. Open Den on one.');
+      _peers = node.peerConnected.listen(_watchCatchUp);
+    }
     _web = webAppHandler(config.webDir, policy: _webPolicy);
     _routes
       ..add('GET', '/health', (r, _) => _health())
@@ -248,11 +264,37 @@ class DenHub {
       _relayWatch.runMailbox(mailbox);
     }
     for (final s in _services) {
-      unawaited(_startService(s));
+      if (_ctx.catchingUp && _writers.contains(s)) {
+        _held.add(s);
+      } else {
+        unawaited(_startService(s));
+      }
     }
   }
 
   Future<void> _startService(HubService s) => _guarded(s.name, s.start);
+
+  /// While catching up after a restore: once [peer] (an approved device of the family, not this
+  /// hub) has finished its first exchange, the hub holds what that device had of the hub's own
+  /// later changes, and den_core numbers new ones past them. Then the hub writes again.
+  void _watchCatchUp(SyncPeer peer) {
+    unawaited(peer.live.then((_) async {
+      if (_stopped || !_ctx.catchingUp) return;
+      final d = den.device(peer.deviceId);
+      if (d == null || d.id == den.deviceId || !d.approved || d.revoked) return;
+      await _ctx.state.delete(restoreMarkerDoc);
+      _ctx.log.info('Caught up after the restore: ${d.name} synced with the hub, which writes again');
+      await _peers?.cancel();
+      _peers = null;
+      final held = [..._held];
+      _held.clear();
+      if (_servicesStarted && !_stopped) {
+        for (final s in held) {
+          unawaited(_startService(s));
+        }
+      }
+    }, onError: (Object _) {}));
+  }
 
   /// Runs [body] in a zone whose uncaught errors are logged instead of reaching the process (or
   /// the app running the hub). The parts of the hub that act on their own, on timers or on
@@ -456,6 +498,7 @@ class DenHub {
       }
     }
     await _changes?.cancel();
+    await _peers?.cancel();
     await _mdns?.stop();
     await _relayWatch.stop();
     await _mailbox?.stop();

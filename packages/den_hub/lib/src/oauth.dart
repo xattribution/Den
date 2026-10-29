@@ -136,14 +136,14 @@ class OAuthServer implements HubService {
   /// waiting page hears why), turns down pending connections in the log that no open request
   /// needs (one a parent admitted and never approved, and the ones earlier hubs wrote for every
   /// request), and forgets registrations that never connected. Runs every minute; [now] is for
-  /// tests.
+  /// tests. Writes nothing while the hub is catching up after a restore.
   Future<void> sweep({int? now}) async {
     final at = now ?? hub.now();
     _requests.removeWhere((_, p) => at - p.created > 2 * approvalWindow.inMilliseconds);
     for (final p in _requests.values) {
       if (_expired(p, at) && p.authCode == null) p.declined = true;
     }
-    if (!hub.ready) return;
+    if (!hub.ready || hub.catchingUp) return;
     final live = {
       for (final p in _requests.values)
         if (p.connection != null && !p.declined && !_expired(p, at)) p.connection!,
@@ -420,7 +420,8 @@ class OAuthServer implements HubService {
         final expired = _expired(p, hub.now());
         final gone = id != null && (c == null || c.status == ConnectionStatus.revoked);
         if (p.declined || gone || expired) {
-          if (c != null && c.status == ConnectionStatus.pending) await hub.den.revokeConnection(c.id);
+          // Left for the sweep while the hub is catching up after a restore.
+          if (c != null && c.status == ConnectionStatus.pending && !hub.catchingUp) await hub.den.revokeConnection(c.id);
           return (
             state: 'declined',
             message: expired && !p.declined && !gone ? 'Nobody approved it in time.' : 'A parent said no.',
@@ -472,6 +473,7 @@ class OAuthServer implements HubService {
   Future<Response> decide(Request r, String ref) async {
     final signed = await auth.withBody(r, limit: 4096);
     final c = DeviceAuth.parentOf(signed.check, message: 'Only a parent\'s own phone can let an app connect.');
+    hub.requireCaughtUp();
     final Object? json;
     try {
       json = jsonDecode(utf8.decode(signed.body));
@@ -581,6 +583,7 @@ class OAuthServer implements HubService {
   /// parents set up. Its refresh tokens stop working and the hub ends the connections it made.
   Future<Response> deleteClient(Request r, String id) async {
     final c = await auth.parent(r, message: 'Only a parent\'s own phone can remove an app.');
+    hub.requireCaughtUp();
     final client = store.client(id);
     if (client == null || client.kind != OAuthClientKind.static) {
       throw ApiError.notFound(type: 'client', message: 'There\'s no app with that id.');
@@ -613,11 +616,20 @@ class OAuthServer implements HubService {
     return _tokenError(r, error, description, status: status);
   }
 
-  /// `POST /oauth/token`: authorization_code (with PKCE) and refresh_token (rotating).
+  /// `POST /oauth/token`: authorization_code (with PKCE) and refresh_token (rotating). While the
+  /// hub catches up after a restore it issues nothing: `503` with `Retry-After`, which leaves
+  /// the code or refresh token the client holds unused.
   Future<Response> token(Request r) async {
     final key = hub.clientOf(r);
     if (hub.limits.exhausted('failures', key, Limits.failures) || !hub.limits.allow('oauth-token', key, Limits.oauthToken)) {
       return _tokenError(r, 'invalid_request', 'Too many requests from here. Try again later.', status: 429);
+    }
+    if (hub.catchingUp) {
+      return jsonResponse(
+        {'error': 'temporarily_unavailable', 'error_description': ApiError.catchingUp().message},
+        status: 503,
+        headers: {...corsHeaders(r), 'pragma': 'no-cache', 'retry-after': '${ApiError.catchUpRetry}'},
+      );
     }
     final text = utf8.decode(await readBodyBytes(r), allowMalformed: true);
     final Map<String, String> form;

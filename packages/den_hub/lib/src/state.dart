@@ -2,6 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+/// The hub's state document that says it was restored from a backup and hasn't caught up yet
+/// (`<dataDir>/hub/restored.json`, written by `den_hub restore`). While it is there the hub
+/// writes nothing of its own to the family's log; see [HubState.restored].
+const String restoreMarkerDoc = 'restored';
+
 /// Small JSON documents the hub keeps for itself: reminders already sent, OAuth clients and
 /// refresh-token hashes, calendar feed caches. Each lives in `<dataDir>/hub/<name>.json`, written
 /// to a temporary file and renamed over the old one. Without a directory they live in memory.
@@ -41,16 +46,37 @@ class HubState {
     final dir = _dir;
     if (dir == null) return Future.value();
     final text = jsonEncode(_docs[name] ?? const {});
-    final run = _tail.then((_) async {
-      await dir.create(recursive: true);
+    return _queue(() async {
+      await _ensureDir(dir);
       final file = _file(name);
       final temp = File('${file.path}.tmp');
       await temp.writeAsString(text, flush: true);
       await temp.rename(file.path);
     });
+  }
+
+  /// Removes document [name], file and all.
+  Future<void> delete(String name) {
+    _docs[name] = {};
+    final dir = _dir;
+    if (dir == null) return Future.value();
+    return _queue(() async {
+      final file = _file(name);
+      if (await file.exists()) await file.delete();
+    });
+  }
+
+  /// Whether `den_hub restore` left its marker and no device has synced since: the hub then
+  /// writes nothing of its own (see `HubContext.catchingUp`).
+  bool get restored => read(restoreMarkerDoc).isNotEmpty;
+
+  Future<void> _queue(Future<void> Function() body) {
+    final run = _tail.then((_) => body());
     _tail = run.then((_) {}, onError: (Object _) {});
     return run;
   }
+
+  Future<void> _ensureDir(Directory dir) => dir.create(recursive: true);
 
   /// Waits for pending writes.
   Future<void> flush() => _tail;

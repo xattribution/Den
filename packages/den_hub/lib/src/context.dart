@@ -55,6 +55,19 @@ class HubContext {
   /// In a family, approved, log loaded: the API answers.
   bool get ready => den.hasFamily && den.isApproved;
 
+  /// Restored from a backup (`den_hub restore` left [restoreMarkerDoc]) and no approved device
+  /// has synced with the hub since. What the hub wrote after the backup is still on the family's
+  /// devices, under change ids this copy of the log doesn't hold; a change it wrote now could
+  /// take one of those ids, and every replica would ignore the other's as a duplicate. So until a
+  /// device has handed those changes back (den_core then numbers past them), the hub writes
+  /// nothing of its own: no calendar feeds, no OAuth sweep or tokens, no API or MCP writes.
+  bool get catchingUp => state.restored;
+
+  /// Throws `503 catching_up` (with `Retry-After`) while [catchingUp].
+  void requireCaughtUp() {
+    if (catchingUp) throw ApiError.catchingUp();
+  }
+
   /// The hub device's name.
   String get name => den.thisDevice?.name ?? config.name;
 

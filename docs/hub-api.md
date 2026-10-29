@@ -163,6 +163,7 @@ Every error, at every status, has this body:
 | 429 | `rate_limited` | Too many requests from this client (below). Also sends `Retry-After` | `retry_after` (seconds) |
 | 500 | `internal` | Anything unexpected. The message carries no stack trace | |
 | 503 | `not_ready` | The hub hasn't joined or created a family yet, isn't approved yet, or is still loading its log | |
+| 503 | `catching_up` | A write (any scope but `read`, an action that changes something, an MCP tool call that does, an OAuth token) while the hub catches up after `den_hub restore`: it writes nothing of its own until a phone or tablet of the family has synced with it. Reads and previews still work. Also sends `Retry-After` | `retry_after` (seconds) |
 
 ### Limits per client
 

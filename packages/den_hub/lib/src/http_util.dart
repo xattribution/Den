@@ -58,6 +58,19 @@ class ApiError implements Exception {
         'This hub isn\'t part of a family yet, or is still starting.',
       );
 
+  /// `503 catching_up`, with `Retry-After`: the hub was restored from a backup and writes nothing
+  /// until a device of the family has synced with it (`HubContext.catchingUp`).
+  factory ApiError.catchingUp() => ApiError(
+        503,
+        'catching_up',
+        'The hub is catching up after a restore. Open Den on a phone or tablet in the family, then try again.',
+        details: {'retry_after': catchUpRetry},
+        headers: {'retry-after': '$catchUpRetry'},
+      );
+
+  /// Seconds a client waits before trying a write again while the hub catches up.
+  static const int catchUpRetry = 60;
+
   /// `429 rate_limited`, with `Retry-After` in seconds.
   factory ApiError.rateLimited(int retryAfter, [String message = 'Too many tries from here. Wait a minute and try again.']) =>
       ApiError(429, 'rate_limited', message, details: {'retry_after': retryAfter}, headers: {'retry-after': '$retryAfter'});

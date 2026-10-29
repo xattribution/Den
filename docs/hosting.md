@@ -278,9 +278,16 @@ docker compose run --rm backup restore backups/den-2026-10-28-0317.denbackup
 docker compose up -d
 ```
 
-Then let the family open Den on their phones before anyone changes anything through scripts or
-assistants: whatever happened after the backup is still on those phones, and the hub takes it
-back from them as they sync.
+**Then open Den on a phone.** What the hub wrote after the backup (an event an assistant added,
+a calendar feed's updates) isn't in the backup; it's on the family's phones. So a restored hub
+writes nothing of its own until a phone or tablet in the family has synced with it: calendar
+feeds wait, and assistants and scripts that try to change something are told "The hub is
+catching up after a restore" and to try again in a minute. Open Den on a phone that has been in
+use since the backup was made (the one used most recently is best) and let it sync. The hub
+takes back what it wrote and carries on after it; the other phones catch up as they open.
+
+To check, `docker compose exec hub /app/bin/den_hub status` says `Catching up after a restore`
+until a phone has synced, and stops saying it once one has.
 
 ## Moving to a new server
 
@@ -335,9 +342,12 @@ A day ahead, lower the DNS record's TTL to 300 seconds, so the switch takes minu
 5. **Point DNS** at the new server: change the `A` (and `AAAA`) record to its address. Caddy gets
    the certificate as soon as the name reaches it; `docker compose logs -f caddy` shows it.
 
-6. **Check**: `curl -fsS https://den.example.com/health` from your computer says
-   `"ready":true`, `docker compose exec hub /app/bin/den_hub status` says
-   `In a family and serving.`, and Den on a phone syncs again.
+6. **Open Den on a phone** once `curl -fsS https://den.example.com/health` from your computer
+   says `"ready":true`. A restored hub writes nothing of its own until a phone or tablet in the
+   family has synced with it ([Restore](#restore)); until then calendar feeds wait and assistants
+   are asked to try again. When the phone has synced,
+   `docker compose exec hub /app/bin/den_hub status` says `In a family and serving.` and no
+   longer says `Catching up after a restore`.
 
 7. **Shut the old one down**: `docker compose down` there. Keep it a few days, then delete it.
 

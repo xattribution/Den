@@ -54,7 +54,10 @@ they are signed too and can't be stripped on the way.
 
 A device numbers its changes from its own counter and never reuses one. A device that receives
 its own changes back from a peer (after a restore from an older backup, say) moves its counter
-past them before it writes again.
+past them before it writes again. A hub restored with `den_hub restore` writes nothing of its own
+(calendar feeds, the OAuth sweep and tokens, API and MCP writes, which answer `503 catching_up`)
+until an approved device of the family has finished a sync with it: the restore leaves a marker
+(`<data>/hub/restored.json`) that the hub removes then, and `den_hub status` reports.
 
 **Merging.** Each field of a record takes the value from the valid change with the greatest HLC
 that set it (last-writer-wins per field). HLC order is `(millis, counter, deviceId)`, with the
