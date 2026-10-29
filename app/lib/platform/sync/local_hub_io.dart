@@ -14,15 +14,36 @@ import '../capabilities.dart';
 /// Desktops and Android can keep a hub running; iPhones and iPads stop apps in the background.
 bool get localHubSupported => Capabilities.runsHub;
 
-LocalHub createLocalHub({int port = defaultHubPort, bool mdns = true, String? dataDir, HubKeepAlive? keepAlive}) =>
-    _IoHub(port: port, mdns: mdns, dataDir: dataDir, keepAlive: keepAlive ?? HubKeepAlive.platform(android: Capabilities.android, mac: Capabilities.macOS));
+LocalHub createLocalHub({int port = defaultHubPort, bool mdns = true, String? dataDir, String name = 'hub', HubKeepAlive? keepAlive}) =>
+    _IoHub(
+      port: port,
+      mdns: mdns,
+      dataDir: dataDir,
+      name: name,
+      keepAlive: keepAlive ?? HubKeepAlive.platform(android: Capabilities.android, mac: Capabilities.macOS),
+    );
+
+/// Deletes `<app support>/<name>`, the data of a hub this app ran for a family it left.
+Future<void> forgetLocalHub(String name) async {
+  final dir = await _IoHub._dataDir(name);
+  if (dir == null) return;
+  final d = Directory(dir);
+  if (await d.exists()) await d.delete(recursive: true);
+}
 
 class _IoHub extends LocalHub {
-  _IoHub({required this.port, required this.mdns, required this.keepAlive, this.dataDir});
+  _IoHub({required this.port, required this.mdns, required this.keepAlive, required this.name, this.dataDir});
 
   final int port;
   final bool mdns;
   final String? dataDir;
+
+  /// The data directory's name under the app's support directory: `hub` or `hub-<slot>`.
+  final String name;
+
+  /// The hub this app runs now, for whichever family: one at a time, since every one would
+  /// answer on the same port and advertise itself the same way.
+  static _IoHub? _running;
 
   /// Keeps the app, and so the hub, running in the background while the hub is on.
   final HubKeepAlive keepAlive;
@@ -52,6 +73,15 @@ class _IoHub extends LocalHub {
   @override
   Future<void> start(Den den, {Uri? relay}) async {
     if (_state == LocalHubState.running || _state == LocalHubState.starting) return;
+    final other = _running;
+    if (other != null && !identical(other, this)) {
+      _state = LocalHubState.failed;
+      _error = 'This device keeps another of your families online already. It can run one family\'s hub at a time: '
+          'turn that one off first.';
+      notifyListeners();
+      return;
+    }
+    _running = this;
     _state = LocalHubState.starting;
     _error = null;
     notifyListeners();
@@ -60,7 +90,7 @@ class _IoHub extends LocalHub {
         den,
         HubConfig(
           port: port,
-          dataDir: dataDir ?? await _defaultDataDir(),
+          dataDir: dataDir ?? await _dataDir(name),
           relay: relay,
           name: den.thisDevice?.name ?? 'Den hub',
           mdns: mdns,
@@ -82,6 +112,7 @@ class _IoHub extends LocalHub {
         }
       });
     } on SocketException catch (e) {
+      if (identical(_running, this)) _running = null;
       _state = LocalHubState.failed;
       final code = e.osError?.errorCode;
       final inUse = code == 98 || code == 48 || code == 10048 || (e.message.toLowerCase().contains('address already in use'));
@@ -89,6 +120,7 @@ class _IoHub extends LocalHub {
           ? 'Port $port is already in use, maybe by another Den hub on this computer. Stop that one, then turn this on again.'
           : "The hub couldn't open port $port on this device. Check its firewall, then turn this on again.";
     } on Object catch (e) {
+      if (identical(_running, this)) _running = null;
       _state = LocalHubState.failed;
       _error = "The hub couldn't start (${e.runtimeType}). Turn this off and on again, or restart Den.";
     }
@@ -97,6 +129,7 @@ class _IoHub extends LocalHub {
 
   @override
   Future<void> stop() async {
+    if (identical(_running, this)) _running = null;
     _tick?.cancel();
     _tick = null;
     final hub = _hub;
@@ -110,10 +143,10 @@ class _IoHub extends LocalHub {
     await hub?.stop();
   }
 
-  static Future<String?> _defaultDataDir() async {
+  static Future<String?> _dataDir(String name) async {
     try {
       final dir = await getApplicationSupportDirectory();
-      return '${dir.path}${Platform.pathSeparator}hub';
+      return '${dir.path}${Platform.pathSeparator}$name';
     } on Object {
       return null;
     }

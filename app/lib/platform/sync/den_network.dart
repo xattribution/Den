@@ -30,7 +30,7 @@ class DenNetwork extends ChangeNotifier {
     Map<String, HubSighting> seen = const {},
     this.log,
   })  : node = SyncNode(den),
-        localHub = localHub ?? LocalHub.create(),
+        localHub = localHub ?? LocalHub.create(name: log?.hubData ?? Membership.primaryHub),
         _hubs = [...hubs],
         _joinHub = joinHub,
         _turnedAway = turnedAway,
@@ -61,11 +61,17 @@ class DenNetwork extends ChangeNotifier {
     );
   }
 
-  /// Deletes the settings this device kept for the family [log]: one it left.
+  /// Deletes the settings this device kept for the family [log] (one it left), and the data of
+  /// the hub this app ran for it.
   static Future<void> forget(Membership log) async {
     final prefs = await SharedPreferences.getInstance();
     for (final k in const [_hubsKey, _relayKey, _joinHubKey, _turnedAwayKey, _seenKey]) {
       await prefs.remove(log.pref(k));
+    }
+    try {
+      await LocalHub.forget(log.hubData);
+    } on Object {
+      // Nothing there, or not this platform.
     }
   }
 

@@ -7,7 +7,10 @@ import 'local_hub.dart';
 /// Browsers and other platforms without `dart:io` can't run a hub.
 const bool localHubSupported = false;
 
-LocalHub createLocalHub({int port = 47733, bool mdns = true, String? dataDir, HubKeepAlive? keepAlive}) => _NoHub();
+LocalHub createLocalHub({int port = 47733, bool mdns = true, String? dataDir, String name = 'hub', HubKeepAlive? keepAlive}) =>
+    _NoHub();
+
+Future<void> forgetLocalHub(String name) async {}
 
 class _NoHub extends LocalHub {
   @override

@@ -11,11 +11,16 @@ enum LocalHubState { off, starting, running, failed }
 /// den_hub needs `dart:io`, so it is only ever imported behind the conditional import above;
 /// browsers and iOS get [supported] false.
 abstract class LocalHub extends ChangeNotifier {
-  /// [port] 0 picks a free one and [dataDir] null uses the app's support directory, for tests.
-  /// [keepAlive] defaults to the platform's ([HubKeepAlive.platform]): on Android, the
-  /// foreground service that keeps the hub running while the app is in the background.
-  static LocalHub create({int port = 47733, bool mdns = true, String? dataDir, HubKeepAlive? keepAlive}) =>
-      impl.createLocalHub(port: port, mdns: mdns, dataDir: dataDir, keepAlive: keepAlive);
+  /// [port] 0 picks a free one and [dataDir] null uses `<app support>/<name>`: `hub` for the
+  /// device's first family, `hub-<slot>` for each other one ([Membership.hubData]), so no
+  /// family's hub ever reads another's keys, tokens or settings. [keepAlive] defaults to the
+  /// platform's ([HubKeepAlive.platform]): on Android, the foreground service that keeps the hub
+  /// running while the app is in the background.
+  static LocalHub create({int port = 47733, bool mdns = true, String? dataDir, String name = 'hub', HubKeepAlive? keepAlive}) =>
+      impl.createLocalHub(port: port, mdns: mdns, dataDir: dataDir, name: name, keepAlive: keepAlive);
+
+  /// Deletes the data of the hub kept under [name] (a family this device left).
+  static Future<void> forget(String name) => impl.forgetLocalHub(name);
 
   /// Whether this platform can run the hub in-process.
   static bool get supported => impl.localHubSupported;
