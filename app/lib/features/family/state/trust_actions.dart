@@ -95,6 +95,18 @@ class TrustActions {
 
   Future<void> revokeDevice(String device) => _den.revokeDevice(device);
 
+  /// "That wasn't us" for a phone recovery let in: removes it, turns off what let it in (that
+  /// parent's words, or the hub's help) in the same commit, and says which devices it let in
+  /// since, for [removeDevices] ([Den.disownRecovery]).
+  Future<DisownedRecovery> thatWasntUs(String device) => _den.disownRecovery(device);
+
+  /// Removes [devices], one after another.
+  Future<void> removeDevices(Iterable<String> devices) async {
+    for (final d in devices) {
+      await _den.revokeDevice(d);
+    }
+  }
+
   /// Whether this device may remove one of the family's hubs: a parent's own personal device.
   /// Never a hub, even one a parent keeps online on their computer, and never a shared screen.
   static bool mayRemoveHubs(Den den) => den.thisDevice?.mode == DeviceMode.personal;

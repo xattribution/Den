@@ -277,14 +277,6 @@ revoked device the revoker never held.
   them), stretches them, and pairs with the hub (pairing kind `recovery`, below); the hub says
   whose they are, the person says it's them, and the phone signs its own proof with the words'
   key and is in.
-- **No longer a parent.** Removing a person, or making a parent anything else, takes their words
-  away in the same commit (`recovery: {key: null, kept}`, `kept` naming the devices the words let
-  in that the author holds, which stay), so old words let nobody in, backdated or not; made a
-  parent again, they make new words. A removal or role change written by an older Den, which
-  left the words in place, doesn't retire them (accepted: replaying it as if it had would erase
-  the devices the words let in before). The hub's help needs no change: den_hub signs a proof
-  only for someone who is a parent when the code is redeemed, and a proof lives at most 30
-  minutes, so only a code made and redeemed in the half hour before the change could still be used.
 - **The hub's help**, only if the family opts in. A parent turns on "Let the hub help us get back
   in" (Settings, Family, their own device): it asks the hub for the public half of its server
   recovery key (`GET /api/v1/recovery/key`) and writes it into `family.recovery.serverKey`.
@@ -294,11 +286,25 @@ revoked device the revoker never held.
   that parent, that device, a fresh nonce and the code's expiry, and the phone joins over `/ws`
   with it. Turning server help off writes `serverKey: null`, after which the hub's key lets
   nobody in, backdated or not.
+- **No longer a parent.** Removing a person, or making a parent anything else, takes their words
+  away in the same commit (`recovery: {key: null, kept}`, `kept` naming the devices the words
+  let in that the author holds, which stay), so old words let nobody in, backdated or not; made
+  a parent again, they make new words. A removal or role change written by an older Den, which
+  left the words in place, doesn't retire them (accepted: replaying it as if it had would erase
+  the devices the words let in before). The hub's help needs no change: den_hub signs a proof
+  only for someone who is a parent when the code is redeemed, and a proof lives at most 30
+  minutes, so only a code made and redeemed in the half hour before the change could be used.
 
 Every device sees it: History renders such a change as "Alex's new iPhone was let in with Alex's
 recovery words" (or "by the hub's recovery"), and every other parent's own device shows it in
-Needs you, with "Got it" or "That wasn't us" (an ordinary revocation), until someone there puts
-it away. The parent's new phone offers "Remove your old phone" on their page. Recovery is never
+Needs you, with "Got it" or "That wasn't us", until someone there puts it away. "That wasn't us"
+(`Den.disownRecovery`) removes the phone and, in the same commit, takes away what let it in while
+the family still trusts it: that parent's words (`kept` names the devices they let in, the phone
+among them, so what it did stays on record) or the hub's help. Whoever used them can't use them
+again, backdated or not. The row then says so ("We removed Alex's new iPhone and turned off the
+words it used. Alex needs new recovery words.") and names the devices the phone let in since,
+directly or through ones it let in (`Den.letInBy`), with "Remove them too". The parent's new
+phone offers "Remove your old phone" on their page. Recovery is never
 an action: no MCP client, API token or assistant can set up, turn on or use it
 (`not_exposed.dart`).
 

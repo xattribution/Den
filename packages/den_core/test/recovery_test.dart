@@ -300,6 +300,93 @@ void main() {
     });
   });
 
+  group('"That wasn\'t us"', () {
+    late String sam;
+    late Den samPhone;
+
+    setUp(() async {
+      sam = await parent.addMember(name: 'Sam', role: Role.parent);
+      samPhone = await joinDevice(parent, clock, member: sam, name: 'Sam phone', kind: DeviceKind.phone);
+      await exchange(parent, hub);
+      await exchange(samPhone, hub);
+    });
+
+    test('removes the phone, turns off the words it used, and lists what it let in', () async {
+      // Someone with Dana's words gets a phone in, and before anyone looks, lets in an iPad as
+      // Sam's, which lets in one more.
+      final (intruder, _) = await recover(words);
+      await exchange(hub, intruder);
+      final ipad = await joinDevice(intruder, clock, member: sam, name: 'Sam iPad');
+      final laptop = await joinDevice(ipad, clock, member: sam, name: 'Sam laptop', kind: DeviceKind.desktop);
+      await exchange(ipad, intruder);
+      await exchange(intruder, hub);
+      await exchange(hub, samPhone);
+      final before = clock.now;
+      clock.advance(const Duration(minutes: 2));
+
+      final done = await samPhone.disownRecovery(intruder.deviceId);
+      expect(done.kind, RecoveryKind.words);
+      expect(done.member, dana);
+      expect(done.retired, isTrue);
+      expect(done.letIn.map((d) => d.id), [ipad.deviceId, laptop.deviceId]);
+      expect(samPhone.device(intruder.deviceId)!.revoked, isTrue);
+      expect(samPhone.member(dana)!.rec.fields['recovery'], {
+        'key': null,
+        'kept': [intruder.deviceId],
+      });
+      for (final d in done.letIn) {
+        await samPhone.revokeDevice(d.id);
+      }
+      await exchange(samPhone, hub);
+      expect(hub.device(ipad.deviceId)!.revoked, isTrue);
+      expect(hub.device(laptop.deviceId)!.revoked, isTrue);
+      expect(samPhone.letInBy(intruder.deviceId), isEmpty);
+
+      // The same words let nobody in now, nor clocked before the change.
+      final (_, again) = await recover(words);
+      expect(again.invalid.values.single, contains('no recovery words'));
+      final phone = await DeviceKeys.generate();
+      final proof = await words.prove(
+        family: parent.familyId!,
+        kind: RecoveryKind.words,
+        member: dana,
+        devicePubkey: phone.pubkey,
+        expires: before + 10 * minute,
+      );
+      final backdated = await recoveryChange(phone, proof, millis: before + 1000);
+      expect((await hub.ingest([backdated])).invalid.values.single, contains('replaced'));
+    });
+
+    test('turns off the hub\'s help when the hub let the phone in', () async {
+      final server = await RecoveryKey.generate();
+      await parent.setServerRecoveryKey(server.publicKey);
+      await exchange(parent, hub);
+      final (intruder, _) = await recover(server, kind: RecoveryKind.hub);
+      await exchange(hub, samPhone);
+      clock.advance(const Duration(minutes: 1));
+      final done = await samPhone.disownRecovery(intruder.deviceId);
+      expect(done.kind, RecoveryKind.hub);
+      expect(done.retired, isTrue);
+      expect(done.letIn, isEmpty);
+      expect(serverRecoveryKeyOf(samPhone.family!), isNull);
+      await exchange(samPhone, hub);
+      final (_, again) = await recover(server, kind: RecoveryKind.hub);
+      expect(again.invalid.values.single, contains('hasn\'t let the hub help'));
+    });
+
+    test('leaves words alone that were already replaced', () async {
+      final (intruder, _) = await recover(words);
+      await exchange(hub, parent);
+      clock.advance(const Duration(minutes: 1));
+      final fresh = await RecoveryKey.generate();
+      await parent.setRecoveryKey(dana, fresh.publicKey);
+      final done = await parent.disownRecovery(intruder.deviceId);
+      expect(done.retired, isFalse);
+      expect(recoveryKeyOf(parent.member(dana)!), fresh.publicKey);
+      expect(parent.device(intruder.deviceId)!.revoked, isTrue);
+    });
+  });
+
   group('someone who is a parent no longer', () {
     late String sam;
     late Den samPhone;

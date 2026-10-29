@@ -52,6 +52,23 @@ class ReminderDue {
   final List<String> members;
 }
 
+/// What [Den.disownRecovery] did about a phone recovery let in that nobody recognized.
+class DisownedRecovery {
+  const DisownedRecovery({required this.member, required this.kind, required this.retired, required this.letIn});
+
+  /// The parent it got in as.
+  final String member;
+
+  /// Whether their words or the hub's help let it in.
+  final RecoveryKind kind;
+
+  /// Whether those were turned off now; false when they had been replaced or turned off since.
+  final bool retired;
+
+  /// Devices it let in, directly or through devices it let in, still in the family.
+  final List<Device> letIn;
+}
+
 /// What [Den.undo] will write, and what it leaves alone.
 class _UndoPlan {
   _UndoPlan(this.drafts, this.skipped);
@@ -977,6 +994,62 @@ class Den {
           }),
         ]);
       });
+
+  /// "That wasn't us", for a phone recovery let in ([recoveryOf]): removes it (rotating the keys
+  /// of what it held), and takes away what let it in while the family still trusts it, in the
+  /// same commit: that parent's words (keeping the devices they let in that this device holds,
+  /// the phone among them, so what it did stays on record), or the hub's help. Whoever used them
+  /// can then let nobody in, even with a recovery change clocked before this one. Returns that,
+  /// and the devices the phone let in since, directly or through devices it let in, still in
+  /// the family: for the parent to remove too ([revokeDevice]).
+  Future<DisownedRecovery> disownRecovery(String deviceId) => _locked(() async {
+        final d = device(deviceId);
+        final proof = d == null ? null : recoveryOf(d);
+        if (d == null || proof == null) throw const InvalidInput('That device wasn\'t let in by recovery');
+        final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
+        var retired = false;
+        final drafts = <_Draft>[if (!d.revoked) _revocation(deviceId)];
+        final m = member(proof.member);
+        final f = family;
+        if (proof.kind == RecoveryKind.words && m != null && recoveryKeyOf(m) == proof.key) {
+          retired = true;
+          drafts.add(_Draft(RecordType.member, m.id, Space.family, {
+            'recovery': {'key': null, 'kept': keptBy(_mat.store, key: proof.key, member: m.id)},
+          }));
+        } else if (proof.kind == RecoveryKind.hub && f != null && serverRecoveryKeyOf(f) == proof.key) {
+          retired = true;
+          drafts.add(_Draft(RecordType.family, familyId!, Space.family, {
+            'recovery': {'serverKey': null, 'kept': keptBy(_mat.store, key: proof.key, hub: true)},
+          }));
+        }
+        await _commitNow(drafts);
+        await _rotateNow(held);
+        return DisownedRecovery(member: proof.member, kind: proof.kind, retired: retired, letIn: letInBy(deviceId));
+      });
+
+  /// The devices still in the family that [deviceId] approved, then those they approved, and
+  /// so on, each device's in the order it approved them.
+  List<Device> letInBy(String deviceId) {
+    final byApprover = <String, List<Device>>{};
+    for (final d in devices) {
+      final by = d.rec.fieldTimes['approved']?.device;
+      if (by != null && by != d.id && d.approved) (byApprover[by] ??= []).add(d);
+    }
+    for (final list in byApprover.values) {
+      list.sort((a, b) => a.rec.fieldTimes['approved']!.compareTo(b.rec.fieldTimes['approved']!));
+    }
+    final out = <Device>[];
+    final seen = {deviceId};
+    final queue = [deviceId];
+    while (queue.isNotEmpty) {
+      for (final d in byApprover[queue.removeAt(0)] ?? const <Device>[]) {
+        if (!seen.add(d.id)) continue;
+        queue.add(d.id);
+        if (!d.revoked) out.add(d);
+      }
+    }
+    return out;
+  }
 
   Future<String> addCategory({required String name, String icon = 'calendar'}) async {
     final id = newId();

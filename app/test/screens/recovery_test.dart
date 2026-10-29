@@ -86,8 +86,9 @@ Future<Den> _recover(Den into, String member, RecoveryKey key, {String name = "P
   return phone;
 }
 
-/// The demo family on Alex's phone, after Priya lost hers and let a new one in with her words.
-Future<AppState> _priyaRecovered(WidgetTester tester) => real(tester, () async {
+/// The demo family on Alex's phone, after Priya lost hers and let a new one in with her words;
+/// that phone then let in devices named [letIn] as Priya's, each through the one before.
+Future<AppState> _priyaRecovered(WidgetTester tester, {List<String> letIn = const []}) => real(tester, () async {
       final state = await demoState();
       final den = state.den;
       final priya = _id(state, 'Priya');
@@ -106,7 +107,22 @@ Future<AppState> _priyaRecovered(WidgetTester tester) => real(tester, () async {
       final key = await RecoveryWords.key(_words);
       await old.setRecoveryKey(priya, key.publicKey);
       await den.ingest(old.changesSince(den.versionVector));
-      await _recover(den, priya, key);
+      var approver = await _recover(den, priya, key);
+      for (final name in letIn) {
+        await approver.ingest(den.changesSince(const {}, spaces: den.spacesForDevice(approver.deviceId)));
+        final next = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate(), now: _newer);
+        await next.requestJoin(
+          familyId: den.familyId!,
+          founderPubkey: den.founderPubkey!,
+          deviceName: name,
+          kind: DeviceKind.tablet,
+          memberId: priya,
+        );
+        await approver.ingest(next.changesSince(const {}));
+        await approver.approveDevice(next.deviceId, member: priya, mode: DeviceMode.personal);
+        await den.ingest(approver.changesSince(const {}));
+        approver = next;
+      }
       return state;
     });
 
@@ -364,7 +380,29 @@ void main() {
       expect(find.text("That wasn't us"), findsOneWidget);
       await _tapAndWait(tester, find.text("That wasn't us"));
       expect(state.den.devices.firstWhere((d) => d.name == "Priya's new iPhone").revoked, isTrue);
-      expect(findWords("Priya's new iPhone was removed from the family"), findsOneWidget);
+      expect(
+        findWords("We removed Priya's new iPhone and turned off the words it used. Priya needs new recovery words."),
+        findsOneWidget,
+      );
+      // The words that let it in let nobody in now.
+      expect(recoveryKeyOf(state.den.member(_id(state, 'Priya'))!), isNull);
+      expect(find.text('Remove them too'), findsNothing);
+    });
+
+    testWidgets('That wasn\'t us names the devices the phone let in, and removes them too', (tester) async {
+      final state = await _priyaRecovered(tester, letIn: const ["Priya's iPad", "Priya's laptop"]);
+      await pumpScreen(tester, FamilyScreen(selected: _id(state, 'Maya')), state: state, size: _tall, pairing: FakePairing(now: demoNow), pushed: true);
+      await _tapAndWait(tester, find.text("That wasn't us"));
+      expect(findWords("It also let in Priya's iPad and Priya's laptop"), findsOneWidget);
+      await _tapAndWait(tester, find.text('Remove them too'));
+      for (final name in ["Priya's new iPhone", "Priya's iPad", "Priya's laptop"]) {
+        expect(state.den.devices.firstWhere((d) => d.name == name).revoked, isTrue, reason: name);
+      }
+      expect(
+        findWords("We removed Priya's new iPhone and turned off the words it used. Priya needs new recovery words. "
+            "Priya's iPad and Priya's laptop were removed too"),
+        findsOneWidget,
+      );
     });
 
     testWidgets('History says how it got in', (tester) async {
