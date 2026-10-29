@@ -16,6 +16,22 @@ String clockWords(String hhmm) {
   return clockAt(h, m);
 }
 
+/// A reminder [minutes] ahead, said the same way for events and chores: "15 minutes before",
+/// "1 hour 30 minutes before", "2 days before". At 0 it is "At the start" for an event and
+/// "When it's due" for a chore ([due]).
+String reminderWords(int minutes, {bool due = false}) {
+  if (minutes <= 0) return due ? "When it's due" : 'At the start';
+  String unit(int n, String one) => '$n ${n == 1 ? one : '${one}s'}';
+  if (minutes % 10080 == 0) return '${unit(minutes ~/ 10080, 'week')} before';
+  if (minutes % 1440 == 0) return '${unit(minutes ~/ 1440, 'day')} before';
+  if (minutes >= 60) {
+    final h = minutes ~/ 60;
+    final m = minutes % 60;
+    return m == 0 ? '${unit(h, 'hour')} before' : '${unit(h, 'hour')} ${unit(m, 'minute')} before';
+  }
+  return '${unit(minutes, 'minute')} before';
+}
+
 /// Who sees something kept in [space]: "Everyone", "Parents", "Just you" (when it's [me]'s) or
 /// "Just Maya". [nameOf] finds a member's name.
 String audienceWords(String space, {required String? me, required String? Function(String id) nameOf}) {

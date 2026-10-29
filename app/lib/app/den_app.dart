@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'router.dart';
+import '../design/layout.dart';
 import '../design/theme.dart';
 import '../design/tokens.dart';
 import 'app_state.dart';
@@ -13,8 +14,8 @@ import '../platform/web/web_app.dart';
 import '../platform/web/web_insets.dart';
 import '../features/add/add.dart';
 
-/// The root widget: theme from tokens (day, night, or following the system), larger type on a
-/// wall display.
+/// The root widget: theme from tokens (day, night, or following the system), the system's text
+/// size times the person's own (held to 200 %), larger type on a wall display.
 class DenApp extends StatefulWidget {
   const DenApp({super.key, required this.state});
   final AppState state;
@@ -28,7 +29,7 @@ class _DenAppState extends State<DenApp> {
   StreamSubscription<String>? _taps;
   StreamSubscription<Object>? _shares;
 
-  /// The theme and the wall setting: all that rebuilds the app itself.
+  /// The theme, the text size and the wall setting: all that rebuilds the app itself.
   late final ChangeNotifier _prefs = widget.state.watching(const {Changes.prefs});
 
   @override
@@ -84,7 +85,7 @@ class _DenAppState extends State<DenApp> {
             title: 'Den',
             debugShowCheckedModeBanner: false,
             routerConfig: _router,
-            builder: (context, child) => WebSafeArea(child: child),
+            builder: (context, child) => DenTextScale(size: widget.state.textSize, child: WebSafeArea(child: child)),
             theme: denTheme(DenColors.day, typeScale: scale),
             darkTheme: denTheme(DenColors.night, typeScale: scale),
             themeMode: switch (widget.state.theme) {

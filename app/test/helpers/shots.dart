@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:den_app/design/layout.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
 import 'package:den_app/app/app_state.dart';
@@ -71,6 +72,7 @@ Future<void> shoot(
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
+        builder: (context, child) => TextSizeFromState(child: child!),
         home: Scaffold(body: SafeArea(child: screen)),
       ),
     ),
@@ -100,6 +102,7 @@ Future<void> shootRoute(
         debugShowCheckedModeBanner: false,
         routerConfig: router,
         theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
+        builder: (context, child) => TextSizeFromState(child: child!),
       ),
     ),
   );
@@ -114,8 +117,38 @@ Finder findWords(String words) => find.byWidgetPredicate(
       description: 'text "$words"',
     );
 
+/// The person's own text size ([AppState.textSize]) on top of the system's, held to 200 %,
+/// following the setting when it changes, the way the app's root does.
+class TextSizeFromState extends StatelessWidget {
+  const TextSizeFromState({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) =>
+      DenTextScale(size: DenScope.watch(context, const {Changes.prefs}).textSize, child: child);
+}
+
 /// Sets the system text size to [scale] (2.0 is 200 %) for the rest of the test.
 void withTextScale(WidgetTester tester, double scale) {
   tester.platformDispatcher.textScaleFactorTestValue = scale;
   addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+}
+
+/// [child] with the system text size [text] (null keeps what [withTextScale] set), then the
+/// person's own text size on top, held to 200 %, the way the app's root does it. Asking for a
+/// text size here after [withTextScale] set another is a mistake in the test, so it fails.
+Widget systemText(WidgetTester tester, double? text, {required AppState state, required Widget child}) {
+  final scaled = TextSizeFromState(child: child);
+  if (text == null) return scaled;
+  final set = tester.platformDispatcher.textScaleFactor;
+  if (set != 1 && set != text) {
+    throw StateError('withTextScale set the text size to $set and the shot asks for $text; use one of them.');
+  }
+  return Builder(
+    builder: (context) => MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(text)),
+      child: scaled,
+    ),
+  );
 }

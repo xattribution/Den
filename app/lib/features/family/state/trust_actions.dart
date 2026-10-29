@@ -91,6 +91,18 @@ class TrustActions {
 
   Future<void> revokeDevice(String device) => _den.revokeDevice(device);
 
+  /// Whether this device may remove one of the family's hubs: a parent's own personal device.
+  /// Never a hub, even one a parent keeps online on their computer, and never a shared screen.
+  static bool mayRemoveHubs(Den den) => den.thisDevice?.mode == DeviceMode.personal;
+
+  /// Removes one of the family's hubs ([mayRemoveHubs]). The hub hears it from the next device
+  /// that reaches it, and says so in `den_hub status` and its log.
+  Future<void> removeHub(String hub) {
+    if (!mayRemoveHubs(_den)) throw const PermissionDenied("A hub is removed on a parent's own phone");
+    if (_den.device(hub)?.mode != DeviceMode.hub) throw const InvalidInput("That isn't one of the family's hubs");
+    return _den.revokeDevice(hub);
+  }
+
   Future<void> renameDevice(String device, String name) => _den.updateDevice(device, {'name': name});
 
   /// What a shared display shows ([display] is its whole settings map).

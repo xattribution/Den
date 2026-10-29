@@ -123,7 +123,7 @@ void main() {
           reason: 'only this day changes');
     });
 
-    testWidgets('ride actions show only to people the engine lets set a driver (B3)', (tester) async {
+    testWidgets('ride actions show only to adults the engine lets set a driver (B3)', (tester) async {
       final noGrant = await _kidPhone(tester, 'Maya', (parent, maya) => parent.updateMember(maya, {
             'grants': [Grant.lists],
           }));
@@ -137,7 +137,14 @@ void main() {
 
       final withGrant = await _kidPhone(tester, 'Maya');
       await pumpScreen(tester, const TodayScreen(), state: withGrant, size: _tall);
-      expect(find.text('I\'ll drive'), findsWidgets, reason: 'a teen with the events grant may drive');
+      expect(findWords('Zoe, nobody driving yet'), findsOneWidget);
+      expect(find.text('I\'ll drive'), findsNothing, reason: 'a 14-year-old is driven, events grant or not');
+      await pumpScreen(tester, EventDetailScreen(eventId: swim.event.id, at: swim.start), state: withGrant, size: _tall);
+      expect(find.text('Take it'), findsNothing);
+
+      final parent = await _family(tester);
+      await pumpScreen(tester, const TodayScreen(), state: parent, size: _tall);
+      expect(find.text('I\'ll drive'), findsWidgets, reason: 'parents and other adults drive');
     });
 
     testWidgets('two of one person\'s events at once warn once; an event for everyone doesn\'t (B13)', (tester) async {

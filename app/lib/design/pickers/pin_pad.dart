@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../motion.dart';
 import '../tokens.dart';
 
 /// A 4-digit PIN pad for shared screens: four dots and a phone-style keypad with 72-dp keys, so
@@ -49,15 +50,23 @@ class PinPadState extends State<PinPad> {
             mainAxisSize: MainAxisSize.min,
             children: [
               for (var i = 0; i < widget.length; i++)
-                AnimatedContainer(
-                  duration: Motion.of(context, Motion.state),
-                  margin: const EdgeInsets.symmetric(horizontal: Sp.s),
-                  width: 18,
-                  height: 18,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: i < _digits.length ? c.ink : Colors.transparent,
-                    border: Border.all(color: i < _digits.length ? c.ink : c.ink2, width: 2),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: Sp.s),
+                  // Each dot fills on the UI spring as its digit is typed.
+                  child: SpringValue(
+                    value: i < _digits.length ? 1 : 0,
+                    builder: (context, t, _) {
+                      final on = t.clamp(0.0, 1.0);
+                      return Container(
+                        width: 18,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: c.ink.withValues(alpha: on),
+                          border: Border.all(color: Color.lerp(c.ink2, c.ink, on)!, width: 2),
+                        ),
+                      );
+                    },
                   ),
                 ),
             ],

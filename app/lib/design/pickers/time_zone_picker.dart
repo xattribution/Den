@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:timezone/timezone.dart' as tz;
 
+import '../layout.dart';
+import '../sheet.dart';
 import '../tokens.dart';
+import '../widgets/sheet_header.dart';
 
 /// Common US zones first, in the words families use.
 const Map<String, String> commonZones = {
@@ -60,10 +63,9 @@ class TimeZoneField extends StatelessWidget {
 }
 
 Future<String?> showTimeZoneSheet(BuildContext context, String current) {
-  return showModalBottomSheet<String>(
-    context: context,
-    isScrollControlled: true,
-    builder: (context) => FractionallySizedBox(heightFactor: 0.85, child: _ZoneSheet(current: current)),
+  return showDenSheet<String>(
+    context,
+    builder: (context) => SizedBox(height: MediaQuery.sizeOf(context).height * 0.75, child: _ZoneSheet(current: current)),
   );
 }
 
@@ -94,9 +96,9 @@ class _ZoneSheetState extends State<_ZoneSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(Sp.l, 0, Sp.l, Sp.s),
-          child: Text('Time zone', style: context.type.title(c.ink)),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: DenLayout.gutter),
+          child: SheetHeader(title: 'Time zone'),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(Sp.l, 0, Sp.l, Sp.s),

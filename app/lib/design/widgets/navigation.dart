@@ -4,6 +4,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../layout.dart';
 import '../motion.dart';
 import '../tokens.dart';
+import '../words.dart';
 import 'buttons.dart';
 
 /// A place in the app's navigation: Today, Calendar, Chores, Lists, Family.
@@ -205,7 +206,8 @@ class PageHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (overline != null) ...[
-                  Text(overline!, style: t.meta(c.ink2)),
+                  // "October 16" stays together when large text wraps the date.
+                  Text(keepUnits(overline!), style: t.meta(c.ink2)),
                   const SizedBox(height: 2),
                 ],
                 Semantics(header: true, child: Text(title, style: t.screenTitle(c.ink, large: large))),

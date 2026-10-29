@@ -1,12 +1,15 @@
 import 'dart:math' as math;
+import 'dart:ui' show Tristate;
 
 import 'package:den_app/design/motion.dart';
 import 'package:den_app/design/sheet.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
+import 'package:den_app/design/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 /// The most a spring from 0 to 1 passes its target, sampled over two seconds.
 double _peak(SpringDescription spring) {
@@ -369,6 +372,122 @@ void main() {
       expect(find.text('You’re driving Leo'), findsOneWidget);
       await tester.pumpAndSettle();
       expect(find.text('Nobody is driving Leo'), findsNothing);
+    });
+  });
+
+  group('small state changes', () {
+    /// A spring value drawn as a box [value] * 100 wide, which [flip] sends between 0 and 1.
+    Widget springBox(ValueNotifier<double> target) => ValueListenableBuilder<double>(
+          valueListenable: target,
+          builder: (context, value, _) => Align(
+            alignment: Alignment.topLeft,
+            child: SpringValue(
+              value: value,
+              builder: (context, t, _) => SizedBox(key: _box, width: 1 + t.clamp(0.0, 1.0) * 100, height: 10),
+            ),
+          ),
+        );
+
+    testWidgets('a spring value moves through the values between, and lands on its target', (tester) async {
+      final target = ValueNotifier<double>(0);
+      await tester.pumpWidget(_app(springBox(target)));
+      target.value = 1;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(tester.getSize(find.byKey(_box)).width, inExclusiveRange(1, 101));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byKey(_box)).width, 101);
+    });
+
+    testWidgets('turned around mid-way, it heads back from where it is, without a jump', (tester) async {
+      final target = ValueNotifier<double>(0);
+      await tester.pumpWidget(_app(springBox(target)));
+      target.value = 1;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+      final mid = tester.getSize(find.byKey(_box)).width;
+      target.value = 0;
+      await tester.pump();
+      expect(tester.getSize(find.byKey(_box)).width, closeTo(mid, 1));
+      await tester.pump(const Duration(milliseconds: 16));
+      // Still carried a little further by the speed it had, never snapping back.
+      expect(tester.getSize(find.byKey(_box)).width, greaterThan(mid - 15));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byKey(_box)).width, 1);
+    });
+
+    testWidgets('under Reduce Motion nothing moves: the two looks crossfade', (tester) async {
+      final target = ValueNotifier<double>(0);
+      await tester.pumpWidget(_app(springBox(target), reduced: true));
+      target.value = 1;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      final widths = tester.widgetList<SizedBox>(find.byKey(_box)).map((b) => b.width).toSet();
+      expect(widths, {1, 101}, reason: 'only the old and the new look, fading');
+      await tester.pumpAndSettle();
+      expect(tester.widgetList(find.byKey(_box)), hasLength(1));
+      expect(tester.getSize(find.byKey(_box)).width, 101);
+    });
+
+    testWidgets('a tap anywhere 44 tall on a switch flips it, and it says whether it is on', (tester) async {
+      final semantics = tester.ensureSemantics();
+      var on = false;
+      await tester.pumpWidget(_app(StatefulBuilder(
+        builder: (context, setState) => Center(child: DenSwitch(value: on, onChanged: (v) => setState(() => on = v))),
+      )));
+      expect(tester.getSize(find.byType(DenSwitch)), const Size(52, 44));
+      await tester.tapAt(tester.getTopLeft(find.byType(DenSwitch)) + const Offset(4, 3));
+      await tester.pump();
+      expect(on, isTrue);
+      await tester.pump(const Duration(milliseconds: 40));
+      final knob = tester.getSemantics(find.byType(DenPressable)).getSemanticsData();
+      expect(knob.flagsCollection.isToggled, Tristate.isTrue);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(DenSwitch));
+      await tester.pumpAndSettle();
+      expect(on, isFalse);
+      semantics.dispose();
+    });
+
+    testWidgets('a check fills on the check spring, passing full once, a little', (tester) async {
+      var done = false;
+      late StateSetter setDone;
+      await tester.pumpWidget(_app(StatefulBuilder(builder: (context, setState) {
+        setDone = setState;
+        return Center(child: CheckRing(color: PersonColor.sky.color, done: done));
+      })));
+      expect(find.byIcon(PhosphorIconsBold.check), findsNothing);
+      setDone(() => done = true);
+      await tester.pump();
+      var peak = 0.0;
+      var between = false;
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+        final scales = tester
+            .widgetList<Transform>(find.descendant(of: find.byType(CheckRing), matching: find.byType(Transform)))
+            .map((t) => t.transform.entry(0, 0));
+        for (final s in scales) {
+          peak = math.max(peak, s);
+          if (s > 0.05 && s < 0.95) between = true;
+        }
+      }
+      expect(between, isTrue, reason: 'the color grows in');
+      expect(peak, inExclusiveRange(1.0, 1.1), reason: 'one small settle');
+      await tester.pumpAndSettle();
+      expect(find.byIcon(PhosphorIconsBold.check), findsOneWidget);
+    });
+
+    testWidgets("More options' caret turns on the spring", (tester) async {
+      await tester.pumpWidget(_app(const MoreOptions(child: Text('Notes'))));
+      await tester.tap(find.text('More options'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      final turning = tester
+          .widget<Transform>(find.descendant(of: find.byType(MoreOptions), matching: find.byType(Transform)).last)
+          .transform;
+      expect(turning.getRotation().entry(0, 0), inExclusiveRange(-0.99, 0.99));
+      await tester.pumpAndSettle();
+      expect(find.text('Notes'), findsOneWidget);
     });
   });
 }

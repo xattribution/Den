@@ -21,12 +21,16 @@ class ConfirmPanel extends StatelessWidget {
     this.destructive = false,
     this.busy = false,
     this.error,
+    this.cancelLabel = 'Cancel',
   });
 
   final String message;
   final String confirmLabel;
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
+
+  /// "Cancel", or what not doing it means ("Keep it").
+  final String cancelLabel;
 
   /// Removing something: the button says so in red words, never a red fill.
   final bool destructive;
@@ -75,7 +79,7 @@ class ConfirmPanel extends StatelessWidget {
               spacing: Sp.s,
               runSpacing: Sp.s,
               crossAxisAlignment: WrapCrossAlignment.center,
-              children: [confirm, TextButton(onPressed: busy ? null : onCancel, child: const Text('Cancel'))],
+              children: [confirm, TextButton(onPressed: busy ? null : onCancel, child: Text(cancelLabel))],
             ),
           ],
         ),

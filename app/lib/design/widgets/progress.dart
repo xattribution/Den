@@ -32,13 +32,11 @@ class ProgressBar extends StatelessWidget {
             width: double.infinity,
             child: ColoredBox(
               color: c.line,
-              child: TweenAnimationBuilder<double>(
-                tween: Tween(end: value),
-                duration: DenMotion.reduced(context) ? Duration.zero : DenMotion.uiSettle,
-                curve: DenMotion.uiCurve,
+              child: SpringValue(
+                value: value,
                 builder: (context, v, _) => FractionallySizedBox(
                   alignment: AlignmentDirectional.centerStart,
-                  widthFactor: v,
+                  widthFactor: v.clamp(0.0, 1.0),
                   child: DecoratedBox(decoration: BoxDecoration(color: color, borderRadius: radius)),
                 ),
               ),

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -222,23 +224,55 @@ class NavRow extends StatelessWidget {
                   const SizedBox(width: 14),
                 ],
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(label, style: t.body(enabled ? c.ink : c.ink3)),
-                      if (detail != null) Text(tidy(detail!), style: t.meta(c.ink2)),
-                    ],
+                  child: LayoutBuilder(
+                    builder: (context, room) {
+                      final labelStyle = t.body(enabled ? c.ink : c.ink3);
+                      final words = Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(label, style: labelStyle),
+                          if (detail != null) Text(tidy(detail!), style: t.meta(c.ink2)),
+                        ],
+                      );
+                      final shown = value;
+                      if (shown == null) return words;
+                      // At the end beside the chevron, never more than half the row: a long value
+                      // wraps there instead of squeezing the label. Where even that would leave
+                      // the label's longest word no room (large text), the value goes under it
+                      // rather than breaking the word ("Birthd ay").
+                      final scaler = MediaQuery.textScalerOf(context);
+                      double width(String text, TextStyle style) {
+                        final painter = TextPainter(
+                          text: TextSpan(text: text, style: style),
+                          textDirection: TextDirection.ltr,
+                          textScaler: scaler,
+                          maxLines: 1,
+                        )..layout();
+                        final w = painter.width;
+                        painter.dispose();
+                        return w;
+                      }
+                      final valueWidth = math.min(width(shown, t.meta(c.ink2)), box.maxWidth / 2);
+                      final longest = label.split(RegExp(r'\s+')).map((w) => width(w, labelStyle)).fold(0.0, math.max);
+                      if (longest + Sp.s + valueWidth > room.maxWidth) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [words, Text(shown, style: t.meta(c.ink2))],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          Expanded(child: words),
+                          const SizedBox(width: Sp.s),
+                          ConstrainedBox(
+                            constraints: BoxConstraints(maxWidth: box.maxWidth / 2),
+                            child: Text(shown, style: t.meta(c.ink2), textAlign: TextAlign.end),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ),
-                if (value != null) ...[
-                  const SizedBox(width: Sp.s),
-                  // At the end beside the chevron, never more than half the row: a long value
-                  // wraps there instead of squeezing the label.
-                  ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: box.maxWidth / 2),
-                    child: Text(value!, style: t.meta(c.ink2), textAlign: TextAlign.end),
-                  ),
-                ],
                 if (chevron) ...[
                   const SizedBox(width: Sp.s),
                   Icon(PhosphorIconsBold.caretRight, size: 18, color: c.ink3),

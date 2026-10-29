@@ -7,13 +7,27 @@ import '../../../app/app_state.dart';
 import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
+import '../../../platform/web/web_app.dart' show WebAppInfo;
 import '../../family/family.dart';
 import '../state/calendar_feeds.dart';
+import '../state/feed_links.dart';
+import '../widgets/feed_links_section.dart';
 
-/// Settings → Calendars: on a phone, its own calendars to bring in; for parents, calendars by
-/// link (a school's, a team's), which the family's hub fetches and keeps up to date, read-only.
+/// Settings → Calendars: on a phone, its own calendars to bring in; for parents, Den in the
+/// phone's calendar app (a read-only subscription to the family's calendar on the hub), and
+/// calendars by link (a school's, a team's), which the family's hub fetches and keeps up to
+/// date, read-only.
 class CalendarsScreen extends StatefulWidget {
-  const CalendarsScreen({super.key});
+  const CalendarsScreen({super.key, this.feedLinks, this.web, this.openCalendar});
+
+  /// The hub's calendar links, for tests.
+  final FeedLinksSource? feedLinks;
+
+  /// The browser, for tests.
+  final WebAppInfo? web;
+
+  /// Opens a webcal address, for tests.
+  final Future<bool> Function(Uri webcal)? openCalendar;
 
   @override
   State<CalendarsScreen> createState() => _CalendarsScreenState();
@@ -99,6 +113,7 @@ class _CalendarsScreenState extends State<CalendarsScreen> {
             ),
           ),
         if (parent) ...[
+          FeedLinksSection(source: widget.feedLinks, web: widget.web, open: widget.openCalendar),
           DenSection(
             title: 'Calendars by link',
             child: feeds.isEmpty

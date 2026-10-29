@@ -1,20 +1,31 @@
+import 'dart:async';
+
+import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/hub_client.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../app/app_state.dart';
+import '../../family/family.dart';
 
 /// Adding a hub (a NAS, a Raspberry Pi, an always-on computer): find it on the network or type
-/// its address, enter the setup code it printed, then compare the words and approve it.
+/// its address, enter the setup code it printed, then compare the words and approve it. When an
+/// older hub of the family used the same address (the hub was reset), the last step offers to
+/// remove that one too.
 class AddHubScreen extends StatefulWidget {
-  const AddHubScreen({super.key, this.session});
+  const AddHubScreen({super.key, this.session, this.replaces = const []});
 
   /// Shows a setup already under way, for tests.
   final HubSetupSession? session;
+
+  /// The family's hubs at the same address, with [session], for tests.
+  final List<Device> replaces;
 
   @override
   State<AddHubScreen> createState() => _AddHubScreenState();
@@ -28,6 +39,7 @@ class _AddHubScreenState extends State<AddHubScreen> {
   String? _error;
   HubInfo? _ours;
   late HubSetupSession? _session = widget.session;
+  late List<Device> _replaces = widget.replaces;
   PairingService? _pairing;
 
   @override
@@ -87,9 +99,15 @@ class _AddHubScreenState extends State<AddHubScreen> {
         setState(() => _error = 'Enter the 8-character setup code from ${info.name}.');
         return;
       }
+      // Hubs of the family that answered at this address before (the hub there was reset):
+      // found now, before the new one's address is saved.
+      final replaces = context.app.network?.hubsAt(info.base, except: info.device) ?? const <Device>[];
       final session = _pairing!.setUpHub(info, code);
       session.addListener(_changed);
-      setState(() => _session = session);
+      setState(() {
+        _session = session;
+        _replaces = replaces;
+      });
     } on PairingException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {
@@ -115,7 +133,7 @@ class _AddHubScreenState extends State<AddHubScreen> {
   @override
   Widget build(BuildContext context) {
     final session = _session;
-    if (session != null) return _Progress(session: session, onStartOver: _startOver);
+    if (session != null) return _Progress(session: session, replaces: _replaces, onStartOver: _startOver);
     final c = context.colors;
     final found = _found;
 
@@ -226,8 +244,9 @@ class _WordsCheck extends StatelessWidget {
 
 /// The setup after the code went out: waiting for the hub, the words and Approve, then done.
 class _Progress extends StatelessWidget {
-  const _Progress({required this.session, required this.onStartOver});
+  const _Progress({required this.session, required this.replaces, required this.onStartOver});
   final HubSetupSession session;
+  final List<Device> replaces;
   final VoidCallback onStartOver;
 
   @override
@@ -299,7 +318,96 @@ class _Progress extends StatelessWidget {
             HubSetupStage.failed => AttentionLine(message: session.error ?? "Adding $name didn't finish. Try again.", bad: true),
           },
         ),
+        if (session.stage == HubSetupStage.done && replaces.isNotEmpty && TrustActions.mayRemoveHubs(context.app.den))
+          _ReplaceOffer(older: replaces),
       ],
+    );
+  }
+}
+
+/// After adding a hub where an older one of the family used to answer: the old one is dead (the
+/// hub was reset), so offer to remove it, and the family's devices stop looking for it.
+class _ReplaceOffer extends StatefulWidget {
+  const _ReplaceOffer({required this.older});
+  final List<Device> older;
+
+  @override
+  State<_ReplaceOffer> createState() => _ReplaceOfferState();
+}
+
+class _ReplaceOfferState extends State<_ReplaceOffer> {
+  bool _busy = false;
+  bool _removed = false;
+  bool _kept = false;
+  String? _error;
+
+  Future<void> _remove() async {
+    final trust = context.trustActions;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final problem = await tryWrite(() async {
+      for (final d in widget.older) {
+        await trust.removeHub(d.id);
+      }
+      return null;
+    });
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _error = problem;
+      _removed = problem == null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final f = context.app.formats;
+    final one = widget.older.length == 1 ? widget.older.single : null;
+    final old = one == null
+        ? '${widget.older.length} older hubs'
+        : 'The ${one.name} added ${DateFormat.MMMd().format(f.at((one.rec.fieldTimes['approved'] ?? one.rec.updated).millis))}';
+    return DenSection(
+      title: one == null ? 'The old hubs' : 'The old hub',
+      child: Padding(
+        padding: const EdgeInsets.only(top: Sp.m),
+        child: DenCrossfade(
+          child: _removed
+              ? Padding(
+                  key: const ValueKey('removed'),
+                  padding: const EdgeInsets.only(bottom: Sp.l),
+                  child: Row(
+                    children: [
+                      Icon(PhosphorIconsBold.check, size: 20, color: c.ink),
+                      const SizedBox(width: Sp.m),
+                      Expanded(
+                        child: Text(one == null ? 'Removed the old hubs.' : 'Removed the old ${one.name}.', style: context.text.body(c.ink)),
+                      ),
+                    ],
+                  ),
+                )
+              : _kept
+                  ? Padding(
+                      key: const ValueKey('kept'),
+                      padding: const EdgeInsets.only(bottom: Sp.l),
+                      child: Text('Kept. You can remove ${one == null ? 'them' : 'it'} later in Hub and sync.', style: context.text.body(c.ink2)),
+                    )
+                  : ConfirmPanel(
+                      key: const ValueKey('ask'),
+                      message: '$old used this address before. Now that the new one answers there, remove '
+                          "${one == null ? 'them' : 'it'} so the family's devices stop looking for ${one == null ? 'them' : 'it'}.",
+                      confirmLabel: one == null ? 'Remove the old hubs' : 'Remove the old hub',
+                      cancelLabel: 'Keep it',
+                      destructive: true,
+                      busy: _busy,
+                      error: _error,
+                      onConfirm: _remove,
+                      onCancel: () => setState(() => _kept = true),
+                    ),
+        ),
+      ),
     );
   }
 }
