@@ -556,8 +556,9 @@ class _Recent extends StatelessWidget {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            // Room for "+15" and its star at the current text size.
                             SizedBox(
-                              width: 56,
+                              width: MediaQuery.textScalerOf(context).scale(40) + 16,
                               child: Row(
                                 children: [
                                   Text(deltaWords(line.delta), style: t.rowTitle(c.ink)),

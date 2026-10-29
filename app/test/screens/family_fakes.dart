@@ -129,7 +129,9 @@ Future<void> pumpScreen(
         key: UniqueKey(),
         debugShowCheckedModeBanner: false,
         theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
-        builder: pairing == null ? null : (context, navigator) => PairingScope(service: pairing, child: navigator!),
+        builder: (context, navigator) => TextSizeFromState(
+          child: pairing == null ? navigator! : PairingScope(service: pairing, child: navigator!),
+        ),
         onGenerateRoute: (_) => MaterialPageRoute<void>(builder: (_) => child),
         onGenerateInitialRoutes: (_) => [
           if (pushed) MaterialPageRoute<void>(builder: (_) => const Scaffold()),
