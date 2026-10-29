@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../motion.dart';
 import '../tokens.dart';
 
-/// One choice among several, in a Wrap or a [ChoiceRow]: solid ink when chosen (owner rule O1),
-/// the well otherwise. Radius 6, like every control.
+/// One choice among several, in a Wrap or a [ChoiceRow]: a pill, solid ink when chosen (owner
+/// rule O1), the card color otherwise. Choosing shades it from one to the other on the UI spring
+/// (a crossfade under Reduce Motion).
 ///
-/// [ChoiceTile] is 44 tall with an ink ripple (calendar and family forms). [ChoiceTile.chip] is
-/// a 40 tall chip inside a 48 tall target, with a selection click and an optional [count] (the
-/// chores, lists and points editors, and [DayToggles]).
+/// [ChoiceTile] is 44 tall (calendar and family forms). [ChoiceTile.chip] is a 40 tall chip
+/// inside a 48 tall target, with a selection click and an optional [count] (the chores, lists
+/// and points editors, and [DayToggles]).
 class ChoiceTile extends StatelessWidget {
   const ChoiceTile({
     super.key,
@@ -54,7 +56,6 @@ class ChoiceTile extends StatelessWidget {
   Widget _buildChip(BuildContext context) {
     final c = context.colors;
     final enabled = onTap != null;
-    final fg = selected ? c.onInk : (enabled ? c.ink : c.ink3);
     return Semantics(
       button: true,
       selected: selected,
@@ -71,27 +72,29 @@ class ChoiceTile extends StatelessWidget {
             : null,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: Sp.xs),
-          child: AnimatedContainer(
-            duration: Motion.of(context, Motion.state),
-            curve: Motion.curve,
-            constraints: const BoxConstraints(minHeight: 40, minWidth: 48),
-            padding: EdgeInsets.symmetric(horizontal: padding),
-            decoration: BoxDecoration(
-              color: selected ? c.ink : c.well,
-              borderRadius: BorderRadius.circular(Radii.control),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (icon != null) ...[Icon(icon, size: 18, color: fg), const SizedBox(width: Sp.s - 2)],
-                Text(label, style: selected ? context.type.bodyStrong(fg) : context.type.body(fg)),
-                if (count != null) ...[
-                  const SizedBox(width: Sp.s - 2),
-                  Text('$count', style: context.type.meta(selected ? c.onInk : c.ink2)),
-                ],
-              ],
-            ),
+          child: SpringValue(
+            value: selected ? 1 : 0,
+            builder: (context, t, _) {
+              final on = t.clamp(0.0, 1.0);
+              final fg = Color.lerp(enabled ? c.ink : c.ink3, c.onPrimary, on)!;
+              return Container(
+                constraints: const BoxConstraints(minHeight: 40, minWidth: 48),
+                padding: EdgeInsets.symmetric(horizontal: padding),
+                decoration: ShapeDecoration(color: Color.lerp(c.card, c.ink, on), shape: const StadiumBorder()),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (icon != null) ...[Icon(icon, size: 18, color: fg), const SizedBox(width: Sp.s - 2)],
+                    Text(label, style: on > 0.5 ? context.type.bodyStrong(fg) : context.type.body(fg)),
+                    if (count != null) ...[
+                      const SizedBox(width: Sp.s - 2),
+                      Text('$count', style: context.type.meta(Color.lerp(c.ink2, c.onPrimary, on)!)),
+                    ],
+                  ],
+                ),
+              );
+            },
           ),
         ),
       ),
@@ -107,10 +110,10 @@ class ChoiceTile extends StatelessWidget {
       label: semanticsLabel,
       excludeSemantics: semanticsLabel != null,
       child: Material(
-        color: selected ? c.ink : c.well,
-        borderRadius: BorderRadius.circular(Radii.control),
+        color: selected ? c.ink : c.card,
+        shape: const StadiumBorder(),
         child: InkWell(
-          borderRadius: BorderRadius.circular(Radii.control),
+          customBorder: const StadiumBorder(),
           onTap: onTap,
           child: Container(
             constraints: const BoxConstraints(minHeight: Targets.adult, minWidth: Targets.adult),

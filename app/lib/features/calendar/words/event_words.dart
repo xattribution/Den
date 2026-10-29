@@ -2,22 +2,9 @@ import 'package:den_core/den_core.dart';
 
 import '../../../app/family_reads.dart';
 
-/// Reminder offsets offered first, in minutes before the start.
+/// Reminder offsets offered first, in minutes before the start. Their words are
+/// `reminderWords` (app/words.dart), which chores say too.
 const List<int> reminderPresets = [5, 15, 30, 60, 120, 1440];
-
-/// "At the start", "15 minutes before", "1 hour 30 minutes before", "2 days before".
-String reminderWords(int minutes) {
-  if (minutes <= 0) return 'At the start';
-  String unit(int n, String one) => '$n ${n == 1 ? one : '${one}s'}';
-  if (minutes % 10080 == 0) return '${unit(minutes ~/ 10080, 'week')} before';
-  if (minutes % 1440 == 0) return '${unit(minutes ~/ 1440, 'day')} before';
-  if (minutes >= 60) {
-    final h = minutes ~/ 60;
-    final m = minutes % 60;
-    return m == 0 ? '${unit(h, 'hour')} before' : '${unit(h, 'hour')} ${unit(m, 'minute')} before';
-  }
-  return '${unit(minutes, 'minute')} before';
-}
 
 /// A ride leg as parents say it: driving there is drop-off, coming back is pick-up.
 String legWords(String leg) => leg == 'from' ? 'Pick-up' : 'Drop-off';
@@ -37,12 +24,12 @@ String? countdownWords(int days) {
   return 'In $days days';
 }
 
-/// Members who might drive: adults, and teens.
-List<Member> possibleDrivers(FamilyReads app) =>
-    app.den.members.where((m) => m.role == Role.parent || m.role == Role.adult || m.tier == Tier.teen).toList();
+/// Members who might drive: parents and other adults. Kids, teens too, are driven: Den never
+/// asks a 14-year-old to take the car.
+List<Member> possibleDrivers(FamilyReads app) => app.den.members.where(canDrive).toList();
 
-/// Whether this person could take a ride leg.
-bool canDrive(Member? me) => me != null && (me.role == Role.parent || me.role == Role.adult || me.tier == Tier.teen);
+/// Whether this person could take a ride leg: a parent or another adult.
+bool canDrive(Member? me) => me != null && (me.role == Role.parent || me.role == Role.adult);
 
 /// Whether whoever is acting may take a ride leg themselves: someone who could drive, and whom
 /// the engine lets set a driver (that changes the event, so it needs [DenAction.editEvents]).

@@ -1,8 +1,10 @@
+import 'package:den_app/platform/sync/den_network.dart';
 import 'package:den_app/platform/sync/hub_client.dart';
 import 'package:den_app/platform/sync/local_hub.dart';
 import 'package:den_app/platform/sync/pairing.dart';
 import 'package:den_app/features/advanced/screens/add_hub_screen.dart';
 import 'package:den_app/features/advanced/screens/hub_screen.dart';
+import 'package:den_app/features/family/family.dart' show TrustActions;
 import 'package:den_app/features/advanced/screens/nearby_device_screen.dart';
 import 'package:den_app/features/advanced/screens/link_browser_screen.dart';
 import 'package:den_app/features/onboarding/screens/link_this_browser_screen.dart';
@@ -229,6 +231,76 @@ void main() {
     await tester.drag(find.byType(ListView).first, const Offset(0, -260));
     await tester.pumpAndSettle();
     await matchShot('settings_hub_failed_phone_night');
+  });
+
+  testWidgets('Hub and sync lists the hubs after a reset, newest in use first, and removes the old one', (tester) async {
+    final r = await replacedHub(tester);
+    final den = r.state.den;
+    expect(r.state.network!.hubDevices.map((d) => d.id), [r.newHub, r.oldHub]);
+    expect(r.state.network!.hubDevice!.id, r.newHub, reason: 'not name order: both are "Den hub"');
+    await pumpScreen(tester, const HubScreen(), state: r.state, size: const Size(390, 1240));
+    expect(find.text('Hubs'), findsOneWidget);
+    // (The clock's "AM" follows a narrow no-break space.)
+    expect(find.textContaining(RegExp(r'^Last seen today at 7:56\sAM · Added Oct 16$')), findsOneWidget);
+    expect(find.text('Last seen Oct 2 · Added Sep 18'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Remove').last);
+    await tester.pumpAndSettle();
+    expect(find.textContaining("devices stop looking for it"), findsOneWidget);
+    await matchShot('settings_hubs_remove_phone');
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Remove Den hub'));
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    });
+    await tester.pumpAndSettle();
+    expect(den.device(r.oldHub)!.revoked, isTrue);
+    expect(den.device(r.newHub)!.revoked, isFalse);
+    expect(find.text('The hub'), findsOneWidget, reason: 'one hub left');
+  });
+
+  testWidgets("Hubs are removed only on a parent's own personal device, not on a hub", (tester) async {
+    final r = await replacedHub(tester);
+    final den = r.state.den;
+    // Alex's computer keeping the family online is a hub, though Alex owns it.
+    await tester.runAsync(() => den.setThisDeviceMode(DeviceMode.hub));
+    await pumpScreen(tester, const HubScreen(), state: r.state, size: const Size(390, 1240));
+    expect(find.text('Hubs'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Remove'), findsNothing);
+    expect(() => TrustActions(den).removeHub(r.oldHub), throwsA(isA<PermissionDenied>()));
+    expect(den.device(r.oldHub)!.revoked, isFalse);
+  });
+
+  testWidgets('Adding a hub where an older one answered offers to remove the old one', (tester) async {
+    final r = await replacedHub(tester);
+    final den = r.state.den;
+    final network = r.state.network!;
+    expect(network.hubsAt(Uri.parse('http://192.168.1.20:47733'), except: r.newHub).map((d) => d.id), [r.oldHub]);
+    expect(network.hubsAt(Uri.parse('http://192.168.1.31:47733'), except: r.newHub), isEmpty, reason: 'another address');
+    await pumpScreen(
+      tester,
+      AddHubScreen(session: FakeHubSetup(HubSetupStage.done), replaces: [den.device(r.oldHub)!]),
+      state: r.state,
+      pairing: FakePairing(now: demoNow),
+    );
+    expect(find.textContaining(RegExp(r'^The Den hub added Sep 18\sused this address before')), findsOneWidget);
+    await matchShot('family_add_hub_replaces_phone');
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Remove the old hub'));
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    });
+    await tester.pumpAndSettle();
+    expect(den.device(r.oldHub)!.revoked, isTrue);
+    expect(find.text('Removed the old Den hub.'), findsOneWidget);
+  });
+
+  test('Which hub a phone tries first, and where it saw each', () {
+    final seen = HubSighting.decode(HubSighting.encode({
+      'H1': HubSighting(5, Uri.parse('wss://den.example.com:443/ws')),
+      'H2': const HubSighting(7, null),
+    }));
+    expect(seen['H1']!.at, 5);
+    expect(seen['H1']!.address.toString(), 'wss://den.example.com:443/ws');
+    expect(seen['H2']!.address, isNull);
+    expect(HubSighting.decode('not json'), isEmpty);
   });
 
   test('Hub addresses as people type them', () {

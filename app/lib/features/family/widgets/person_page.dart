@@ -249,12 +249,13 @@ class _PersonPageState extends State<PersonPage> {
   Future<void> _pickBirthday(BuildContext context, AppState app, Member m) async {
     final today = app.formats.dateTime(app.today);
     final current = m.birthday == null ? null : app.formats.dateTime(m.birthday!);
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: current ?? DateTime(today.year - (m.isKid ? 8 : 35), today.month, today.day),
-      firstDate: DateTime(1900),
-      lastDate: today,
-      helpText: '${FamilyWords.possessive(m.name)} birthday',
+    final picked = await showDayPicker(
+      context,
+      title: '${FamilyWords.possessive(m.name)} birthday',
+      initial: current ?? DateTime(today.year - (m.isKid ? 8 : 35), today.month, today.day),
+      first: DateTime(1900),
+      last: today,
+      yearFirst: current == null,
     );
     if (picked == null || !context.mounted) return;
     final family = context.familyActions;

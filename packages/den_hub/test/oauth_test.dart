@@ -65,8 +65,8 @@ void main() {
     expect(page.statusCode, 200);
     expect(page.headers['content-type'], startsWith('text/html'));
     expect(page.body, contains('Approve Claude in the Den app'));
-    expect(page.body, contains('Settings &rarr; AI and automations'));
-    expect(page.body, contains('#FBFAF7'));
+    expect(page.body, contains('Settings &rarr; Advanced &rarr; AI and automations'));
+    expect(page.body, contains('#F2F2F2'));
     final id = RegExp(r'var id = "([^"]+)"').firstMatch(page.body)!.group(1)!;
     return (id, page.body);
   }

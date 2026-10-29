@@ -82,8 +82,8 @@ class _ChoreDetailScreenState extends State<ChoreDetailScreen> {
       appBar: AppBar(
         actions: [
           if (canEdit)
-            Padding(
-              padding: const EdgeInsets.only(right: Sp.s),
+            BarAction(
+              quiet: true,
               child: TextButton.icon(
                 onPressed: () => context.push('/chore/${widget.id}/edit'),
                 icon: const Icon(PhosphorIconsRegular.pencilSimple, size: 18),
@@ -167,7 +167,7 @@ class _ChoreDetailScreenState extends State<ChoreDetailScreen> {
                       ),
                       if (pointsOn) InfoRow.text(label: 'Stars', value: pointsWords),
                       if (chore.reminders.isNotEmpty && chore.dueTime != null)
-                        InfoRow.text(label: 'Reminders', value: chore.reminders.map(reminderWords).join(', ')),
+                        InfoRow.text(label: 'Reminders', value: chore.reminders.map((m) => reminderWords(m, due: true)).join(', ')),
                       InfoRow.text(label: 'Who sees it', value: app.seenBy(chore.space)),
                       if (chore.notes.isNotEmpty) InfoRow.text(label: 'Notes', value: chore.notes),
                     ]),

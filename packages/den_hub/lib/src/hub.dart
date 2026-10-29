@@ -22,6 +22,7 @@ import 'gate.dart';
 import 'http_util.dart';
 import 'ics/export.dart';
 import 'ics/feeds.dart';
+import 'feed_links.dart';
 import 'invites.dart';
 import 'log.dart';
 import 'mcp/http.dart';
@@ -167,7 +168,8 @@ class DenHub {
     _mcp = McpServer(_ctx, runner: actions, reader: _capture.reader);
     _mcpHttp = McpHttp(_ctx, _mcp, _feed);
     _oauth = OAuthServer(_ctx, _auth);
-    _ics = IcsExport(_ctx);
+    final feedLinks = HubFeedLinks(_ctx, _auth);
+    _ics = IcsExport(_ctx, links: feedLinks);
     _feeds = FeedService(_ctx);
     _reminders = ReminderService(_ctx);
     _push = WebPushService(_ctx, _auth);
@@ -214,6 +216,7 @@ class DenHub {
     _capture.register(_routes);
     _assistant = HubAssistant(_ctx, _auth)..register(_routes);
     HubInvites(_ctx).register(_routes);
+    feedLinks.register(_routes);
     _recovery = HubRecovery(_ctx, _auth)..register(_routes);
     _push.register(_routes);
     _changes = den.onChange.listen((_) {

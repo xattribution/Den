@@ -26,13 +26,16 @@ enum SyncState {
 /// A client's state, the endpoint in use and the last error.
 class SyncStatus {
   /// Creates a status.
-  const SyncStatus(this.state, {this.endpoint, this.lastError, this.awaitingApproval = false});
+  const SyncStatus(this.state, {this.endpoint, this.device, this.lastError, this.awaitingApproval = false});
 
   /// The state.
   final SyncState state;
 
   /// The endpoint connected or being tried.
   final Uri? endpoint;
+
+  /// The device at [endpoint], once connected.
+  final String? device;
 
   /// Why the last connection failed or ended.
   final String? lastError;
@@ -49,7 +52,10 @@ class SyncStatus {
 /// `ws(s)://host:47733/ws` URLs or relay tunnels `wss://relay/connect/<hubDeviceId>`), syncs,
 /// stays live, and reconnects with exponential backoff and jitter.
 ///
-/// A `/connect/<hubDeviceId>` endpoint pins the server to that device id.
+/// A `/connect/<hubDeviceId>` endpoint pins the server to that device id. An endpoint whose
+/// server this family doesn't trust (a hub that was removed, or one it never approved) goes to
+/// the back of the line, and the next one is tried at once, so a dead hub still answering at a
+/// saved address doesn't keep a device from the hub that replaced it.
 class SyncClient {
   /// Creates a client; call [start].
   SyncClient({
@@ -93,6 +99,12 @@ class SyncClient {
   Completer<void>? _wake;
   bool _running = false;
   bool _stopped = false;
+
+  /// Endpoints whose server was refused, tried after the others.
+  final Set<Uri> _refused = {};
+
+  /// Close reasons that mean "not this server", not "not now".
+  static const _refusals = {'removed', 'unknown-peer'};
 
   /// The current status.
   SyncStatus get status => _status;
@@ -138,7 +150,7 @@ class SyncClient {
       String? error;
       SyncPeer? peer;
       Uri? used;
-      for (final endpoint in endpoints) {
+      for (final endpoint in [...endpoints.where((e) => !_refused.contains(e)), ...endpoints.where(_refused.contains)]) {
         if (_stopped) break;
         _set(SyncStatus(SyncState.connecting, endpoint: endpoint, lastError: _status.lastError));
         try {
@@ -161,21 +173,32 @@ class SyncClient {
       if (peer != null) {
         _peer = peer;
         var wentLive = false;
-        _set(SyncStatus(SyncState.syncing, endpoint: used));
+        final device = peer.deviceId;
+        _set(SyncStatus(SyncState.syncing, endpoint: used, device: device));
         final approvalWatch = Timer.periodic(const Duration(milliseconds: 500), (_) {
           if (peer!.awaitingApproval && !_status.awaitingApproval && _status.state == SyncState.syncing) {
-            _set(SyncStatus(SyncState.syncing, endpoint: used, awaitingApproval: true));
+            _set(SyncStatus(SyncState.syncing, endpoint: used, device: device, awaitingApproval: true));
           }
         });
         unawaited(peer.live.then((_) {
           wentLive = true;
-          if (identical(_peer, peer) && !_stopped) _set(SyncStatus(SyncState.live, endpoint: used));
+          if (identical(_peer, peer) && !_stopped) _set(SyncStatus(SyncState.live, endpoint: used, device: device));
         }, onError: (Object _) {}));
         await peer.closed;
         approvalWatch.cancel();
         _peer = null;
         error = peer.closeReason ?? 'disconnected';
         if (wentLive) delay = minBackoff;
+        if (_refusals.contains(error)) {
+          // Another endpoint may reach the right hub: try it now rather than after the backoff
+          // (once per refusal, so endpoints that can't be reached don't make this spin).
+          if (_refused.add(used!) && !_stopped && endpoints.any((e) => !_refused.contains(e))) {
+            _set(SyncStatus(SyncState.offline, endpoint: used, device: device, lastError: error));
+            continue;
+          }
+        } else if (wentLive) {
+          _refused.remove(used);
+        }
       }
       if (_stopped) break;
       _set(SyncStatus(SyncState.offline, endpoint: used, lastError: error ?? 'no endpoint reachable'));

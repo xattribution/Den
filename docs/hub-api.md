@@ -7,7 +7,8 @@ The hub implements exactly this file; the Home Assistant integration
 file disagree, fix one of them in the same change.
 
 Device sync (`/ws`), MCP (`/mcp`), OAuth and the ICS feed are specified elsewhere; this file
-covers `/health`, everything under `/api/v1`, and the mDNS advertisement.
+covers `/health`, everything under `/api/v1` (including the calendar links that open the ICS
+feed), and the mDNS advertisement.
 
 ## Contents
 
@@ -51,6 +52,10 @@ covers `/health`, everything under `/api/v1`, and the mDNS advertisement.
   [`PUT /api/v1/assistant`](#put-apiv1assistant) ·
   [`POST /api/v1/assistant/model`](#post-apiv1assistantmodel)
 - [Invites by message](#invites-by-message)
+- [Calendar links: Den in a phone's calendar](#calendar-links-den-in-a-phones-calendar):
+  [`GET /api/v1/feeds`](#get-apiv1feeds) ·
+  [`POST /api/v1/feeds`](#post-apiv1feeds) ·
+  [`DELETE /api/v1/feeds/{id}`](#delete-apiv1feedsid)
 - [Getting back in: server-assisted recovery](#getting-back-in-server-assisted-recovery):
   [`GET /api/v1/recovery/key`](#get-apiv1recoverykey) ·
   [`POST /api/v1/recovery/tickets`](#post-apiv1recoverytickets) ·
@@ -1344,7 +1349,8 @@ No token. Where the hub is in joining a family, for the app's "Add a hub" screen
 | `name` | The hub's name |
 | `version` | `den_hub`'s version |
 | `setup_needed` | No family and no join under way: a parent's phone can send the setup code |
-| `stage` | `waiting_for_code`, `joining`, `waiting_for_approval`, `syncing` or `ready` |
+| `stage` | `waiting_for_code`, `joining`, `waiting_for_approval`, `syncing`, `ready`, or `removed`: a parent removed this hub from the family (Hub and sync, the hub's **Remove**), and a phone that refused it told it so when it connected. Only a reset brings it back, as a new device |
+| `removed` | With `stage` `removed`: what to tell its owner, also in the hub's log ("This hub was removed from the family on Oct 28; reset it to add it again"). The date is in the family's time zone |
 | `matching_words` | Present only while the pairing session with the inviting phone is up (`joining` through `syncing`): the three words both ends derive from that session's transcript (den_net's matching words). The phone shows its own three; a parent approves only if they're the same. The hub also logs them at info level and `den_hub status` prints them |
 | `last_error` | Why the last join didn't finish (`timed-out`, `unreachable`, or the phone's reason), until the hub is ready |
 
@@ -1698,6 +1704,72 @@ invite; and per client, redeeming counts against the browser link budget and a w
 against the failed-tries budget, see [Limits per client](#limits-per-client)), `503 not_ready`.
 Redeeming needs no open "Add a device" window in the public posture: the invite is a parent's
 consent already.
+
+## Calendar links: Den in a phone's calendar
+
+"Show Den in iPhone Calendar": a parent's own device makes a read-only address for the
+family's calendar, or for one person's, and the phone's calendar app subscribes to it
+(`webcal://`). The address opens one ICS feed and nothing else. It is not an API token: it can't
+reach `/api/v1`, MCP or any other feed.
+
+The feed reads with the permissions of the parent who made the link, exactly as the ICS feed
+does for a token acting as that parent: their own "Just me" events are in it, a kid's or a
+teen's private events only while the family's oversight lets parents see them (and they drop
+out when it stops), and `parents` events for parents. A person's link holds the events they're
+in and the events for everyone, like `GET /ics/<token>/<memberId>.ics`. A link stops working
+when a parent turns it off or when the parent who made it leaves the family.
+
+The hub keeps only a SHA-256 hash of each link's secret, with who made it and for what, in
+`<data>/hub/feed_links.json` (its user only); the address itself is shown once, when it is made.
+At most 50 links at once. The endpoints take no token; requests are signed by a parent's own
+device ([`DeviceRequest`](#capture-reading-for-every-device), not a shared display), and anyone
+else gets `401` or `403 permission_denied`.
+
+### `GET /api/v1/feeds`
+
+The family's links, newest first, never their addresses:
+
+```json
+{"feeds": [{"id": "Qm9iWm9lRmVlZA", "label": "Alex's iPhone", "feed": "family", "feed_name": "The Carters",
+            "made_by": "M5ALEX7QK4MXN3TB", "made_by_name": "Alex",
+            "made": "2026-10-28T15:00:00.000Z", "made_ms": 1793199600000}]}
+```
+
+`feed` is `family` or the member id whose events the link holds (`feed_name` is then their name).
+
+### `POST /api/v1/feeds`
+
+Body `{"feed": "family", "label": "Alex's iPhone"}`: `feed` is `family` (the default) or a
+member id; `label` (1 to 60 characters) says where the calendar goes. Answer `201`, the only
+time the address is shown:
+
+```json
+{
+  "id": "Qm9iWm9lRmVlZA",
+  "label": "Alex's iPhone",
+  "feed": "family",
+  "feed_name": "The Carters",
+  "made_by": "M5ALEX7QK4MXN3TB",
+  "made_by_name": "Alex",
+  "made": "2026-10-28T15:00:00.000Z",
+  "made_ms": 1793199600000,
+  "url": "https://den.example.com/ics/denfeed_q3Jx.../family.ics",
+  "webcal": "webcal://den.example.com/ics/denfeed_q3Jx.../family.ics"
+}
+```
+
+Both are built on the hub's public URL (`DEN_PUBLIC_URL`), else the address the request came
+to; a phone's calendar fetches it from wherever it is, so the hub has to be reachable there
+(over HTTPS) for the calendar to stay up to date. `GET` on the address answers
+`text/calendar` as the ICS feed does; on another file under the same secret, `404`; once the
+link is off, `401`. Errors: `400 invalid_input` (no such member, a missing or long label),
+`409 too_many` (50 links), `503 not_ready`.
+
+### `DELETE /api/v1/feeds/{id}`
+
+Turns a link off: `{"ok": true}`, and calendars subscribed to it stop updating at their next
+refresh (they keep what they last fetched until the person removes the subscription).
+`404 not_found` for an unknown id.
 
 ## Getting back in: server-assisted recovery
 

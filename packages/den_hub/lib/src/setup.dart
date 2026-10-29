@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:den_actions/times.dart' show wallOf;
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
 import 'package:den_net/io.dart' show boundedWebSocketHandler, maxSyncSocketMessageBytes;
@@ -36,6 +37,20 @@ const Duration setupLockoutMax = Duration(hours: 1);
 /// until when (UTC ms) browsers may ask to link in the public posture, opened from the server.
 const String linkOpenFile = 'link-open';
 
+const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/// "This hub was removed from the family on Oct 28; reset it to add it again", or null while
+/// [den] isn't a device its family removed. The date is the family's. A phone that refuses the
+/// hub tells it so (den_net, `join_rejected` with reason `removed`), handing it the signed record.
+String? removedNotice(Den den) {
+  final me = den.hasFamily ? den.thisDevice : null;
+  if (me == null || !me.revoked || !me.approved) return null;
+  final at = me.rec.fieldTimes['revoked']?.millis;
+  if (at == null) return 'This hub was removed from the family; reset it to add it again';
+  final day = wallOf(den.family?.timezone ?? 'UTC', at);
+  return 'This hub was removed from the family on ${_months[day.month - 1]} ${day.day}; reset it to add it again';
+}
+
 class _Tries {
   int wrong = 0;
   int level = 0;
@@ -59,6 +74,9 @@ enum SetupStage {
 
   /// In the family and approved.
   ready,
+
+  /// The family removed this hub ([removedNotice]); only a reset brings it back.
+  removed,
 }
 
 String _newCode(Random random) =>
@@ -72,6 +90,9 @@ class HubSetup {
   HubSetup(this.hub, {required this.onReady}) {
     if (hub.ready) {
       _stage = SetupStage.ready;
+    } else if (removedNotice(hub.den) case final notice?) {
+      _stage = SetupStage.removed;
+      _log.warn(notice);
     } else {
       _issueCode();
     }
@@ -144,7 +165,14 @@ class HubSetup {
 
   /// Rechecks readiness after the den changed (approval synced in, say).
   void refresh() {
-    if (_stage != SetupStage.ready && hub.ready) _becomeReady();
+    if (_stage != SetupStage.ready && hub.ready) {
+      _becomeReady();
+    } else if (_stage != SetupStage.removed) {
+      final notice = removedNotice(hub.den);
+      if (notice == null) return;
+      _stage = SetupStage.removed;
+      _log.warn(notice);
+    }
   }
 
   void _becomeReady() {
@@ -163,14 +191,16 @@ class HubSetup {
         'device': hub.den.deviceId,
         'name': hub.name,
         'version': hubVersion,
-        'setup_needed': !hub.ready && _attempt == null,
+        'setup_needed': !hub.ready && _attempt == null && _stage != SetupStage.removed,
         'stage': switch (_stage) {
           SetupStage.waitingForCode => 'waiting_for_code',
           SetupStage.joining => 'joining',
           SetupStage.waitingForApproval => 'waiting_for_approval',
           SetupStage.syncing => 'syncing',
           SetupStage.ready => 'ready',
+          SetupStage.removed => 'removed',
         },
+        if (_stage == SetupStage.removed) 'removed': removedNotice(hub.den),
         'matching_words': ?matchingWords,
         if (_lastError != null && !hub.ready) 'last_error': _lastError,
       });

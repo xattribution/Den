@@ -1,4 +1,6 @@
 import 'package:den_app/app/app_state.dart';
+import 'package:den_app/design/motion.dart';
+import 'package:den_app/features/advanced/advanced.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -95,6 +97,65 @@ void main() {
     testWidgets('phone, nothing matches', (tester) async {
       final state = await demo(tester);
       await shootAt(tester, 'history_search_phone_empty', state: state, location: '/search?q=trampoline');
+    });
+
+    testWidgets('finds as you type, in the same frame, grouped by kind, and one tap opens a result', (tester) async {
+      final state = await demo(tester);
+      await shootAt(tester, 'history_search_phone_typing', state: state, location: '/search', act: () async {
+        await tester.enterText(find.byType(TextField), 'm');
+        await tester.pump();
+        expect(find.text('People'), findsOneWidget, reason: 'no waiting for the typing to stop');
+        await tester.enterText(find.byType(TextField), 'ma');
+        await tester.pump();
+      });
+      expect(find.text('Maya'), findsWidgets);
+      expect(find.text('People'), findsOneWidget);
+      await tester.tap(find.text('Maya').last);
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing, reason: 'the result opened');
+    });
+
+    testWidgets('Return opens the first result', (tester) async {
+      final state = await demo(tester);
+      await shootAt(tester, 'history_search_phone', state: state, location: '/search?q=so');
+      await tester.showKeyboard(find.byType(TextField));
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pumpAndSettle();
+      expect(find.text('Soccer practice'), findsWidgets);
+      expect(find.byType(TextField), findsNothing);
+    });
+  });
+
+  group('History reads as sentences', () {
+    testWidgets('a moved event says where it went, and its fields wait behind a tap', (tester) async {
+      final state = await demo(tester);
+      await morningChanges(tester, state);
+      await shootAt(
+        tester,
+        'history_phone_open',
+        state: state,
+        location: '/history',
+        size: tallPhone,
+        act: () => tester.tap(findWords('Alex moved Soccer practice on Oct 20 to 5:30 PM')),
+      );
+      expect(findWords('Alex moved Soccer practice on Oct 20 to 5:30 PM'), findsOneWidget);
+      expect(tester.widgetList<DenReveal>(find.byType(DenReveal)).where((r) => r.visible), hasLength(1));
+      expect(find.textContaining('Starts'), findsWidgets);
+    });
+
+    testWidgets('one field changed says what it became', (tester) async {
+      final state = await demo(tester);
+      final den = state.den;
+      final dishes = den.chores.firstWhere((c) => c.title == 'Dishes');
+      await write(tester, () async {
+        await den.updateChore(dishes.id, {'points': 3});
+        await den.updateChore(dishes.id, {'title': 'Dinner dishes'});
+      });
+      final said = [
+        for (final e in den.history(limit: 2)) historySentence(state, e, historyLine(state, e)),
+      ];
+      // Each change says the name the chore had then.
+      expect(said, ['renamed Dishes to Dinner dishes', 'made Dishes worth 3 stars']);
     });
   });
 }

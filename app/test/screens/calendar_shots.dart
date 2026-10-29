@@ -19,7 +19,8 @@ const Size padContent = Size(932, 820);
 
 /// Renders the whole app at [location] (pushed over [base] when given, so sheets and pages show
 /// what's behind them) and compares it with `test/goldens/<name>.png`. [text] is the system
-/// text size (2 for 200 %).
+/// text size (2 for 200 %); leave it out to keep what [withTextScale] set. The person's own
+/// text size ([AppState.textSize]) applies on top, as in the app.
 Future<void> shootAt(
   WidgetTester tester,
   String name, {
@@ -28,7 +29,23 @@ Future<void> shootAt(
   String? base,
   Size size = phone,
   bool night = false,
-  double text = 1,
+  double? text,
+  Future<void> Function()? act,
+}) async {
+  await pumpAt(tester, state: state, location: location, base: base, size: size, night: night, text: text, act: act);
+  await expectLater(find.byType(MaterialApp), matchesGoldenFile('../goldens/$name.png'));
+}
+
+/// [shootAt] without the comparison: the whole app at [location], for a test that only checks
+/// that it draws (no overflow, no exception) or acts on it.
+Future<void> pumpAt(
+  WidgetTester tester, {
+  required AppState state,
+  required String location,
+  String? base,
+  Size size = phone,
+  bool night = false,
+  double? text,
   Future<void> Function()? act,
 }) async {
   await loadFonts();
@@ -44,10 +61,7 @@ Future<void> shootAt(
         debugShowCheckedModeBanner: false,
         routerConfig: router,
         theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(text)),
-          child: child!,
-        ),
+        builder: (context, child) => systemText(tester, text, state: state, child: child!),
       ),
     ),
   );
@@ -64,18 +78,17 @@ Future<void> shootAt(
     await act();
     await tester.pumpAndSettle();
   }
-  await expectLater(find.byType(MaterialApp), matchesGoldenFile('../goldens/$name.png'));
 }
 
 /// Pumps [screen] alone (no tab bar or sidebar: the calendar's own pixels, as the canvas board
-/// draws them) at [size], with the system text size [text].
+/// draws them) at [size], with the system text size [text] (or what [withTextScale] set).
 Future<void> pumpCalendar(
   WidgetTester tester,
   Widget screen, {
   required AppState state,
   Size size = phone,
   bool night = false,
-  double text = 1,
+  double? text,
 }) async {
   await loadFonts();
   tester.view.physicalSize = size;
@@ -87,10 +100,7 @@ Future<void> pumpCalendar(
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: state.wall ? DenType.wallScale : 1),
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(text)),
-          child: child!,
-        ),
+        builder: (context, child) => systemText(tester, text, state: state, child: child!),
         home: Scaffold(body: screen),
       ),
     ),
@@ -106,7 +116,7 @@ Future<void> shootCalendar(
   required AppState state,
   Size size = phone,
   bool night = false,
-  double text = 1,
+  double? text,
   Future<void> Function()? act,
 }) async {
   await pumpCalendar(tester, screen, state: state, size: size, night: night, text: text);

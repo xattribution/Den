@@ -77,6 +77,26 @@ have a contiguous vector; the per-space summaries above don't need one, and they
 from out-of-order delivery. Changes new to this replica are forwarded to every other live peer
 once, so a hub relays between its clients and a chain of devices converges.
 
+### A server the client doesn't know, or one the family removed
+
+An unpinned client syncs only with a server it knows as an approved device of its family.
+
+- `vouch` / `vouched {list}`: a server it has never heard of that names the same family (a hub
+  approved on a parent's phone since this device last synced, typically one that replaced the
+  old hub at the same address) is asked for its record. The client keeps the changes to that
+  device record only if they hold its request signed with the key it proved in the handshake
+  and an approval signed by a parent's device the client already trusts, then syncs as usual.
+  Anything else, or no answer in 30 seconds, closes with `unknown-peer`. Whatever else the
+  server sends meanwhile waits.
+- `join_rejected {reason: "removed", list}`: to a server this family revoked, from any client
+  that knows it. `list` holds the signed changes to the server's own device record; the server
+  keeps only those and only as den_core validates them, so it learns it was removed and when,
+  and can say so. A client connected when the server is revoked sends the same on the way out.
+
+`SyncClient` puts an endpoint that closed with `removed` or `unknown-peer` at the back of its
+list and tries the next one at once, so a dead hub still answering at a saved address doesn't
+keep a device from the hub that replaced it. `SyncStatus.device` says which device answered.
+
 ### Space-key epochs
 
 When a parent's device revokes a device, den_core rotates the key of every space it held (one
