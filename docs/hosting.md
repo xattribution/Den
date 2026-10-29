@@ -480,12 +480,15 @@ Then, on a parent's phone: Settings, Advanced, Hub and sync, Add a device, **Ano
 the hub the whole family, and the other phones catch up through it, the ones that haven't heard
 of the new hub yet too (it shows them the parent's approval).
 
-The new hub is a new device. The phone that added it sees that the old one used the same address
-and offers **Remove the old hub**: do that, so phones stop looking for it. If you skipped it,
-remove it later under Hub and sync, where each hub shows when this phone last saw it and when it
-was added; the old one is the one not seen since the reset. Until then phones still sync, with
-whichever hub answers at the address. If the family lets the hub help them get back in, the new
-hub has a new recovery key: see [If a parent loses their phone](#if-a-parent-loses-their-phone).
+The new hub is a new device, and the old one stays in the family until a parent removes it: an
+approved device that holds a copy of everything the hub held, whose keys are in the old volume and
+every backup of it. Remove it. The phone that added the new hub sees that the old one used the
+same address and offers **Remove the old hub**. If you skipped it, remove it under Settings,
+Advanced, Hub and sync, where each hub shows when this phone last saw it and when it was added;
+the old one is the one not seen since the reset, and **Remove** takes it out of the family on
+every device. Until then phones still sync, with whichever hub answers at the address. If the
+family lets the hub help them get back in, the new hub has a new recovery key: see
+[If a parent loses their phone](#if-a-parent-loses-their-phone).
 
 ### Factory reset
 
@@ -568,17 +571,23 @@ Either way, the new phone then offers **Remove your old phone** on the parent's 
 
 ### Bring in a family from Sett
 
-Copy Sett's `coord.db` into `den/deploy/hosted` on the server (`chmod 644 coord.db` so the hub
-can read it). With the hub in a family, and the name of a parent in it:
+Copy Sett's `coord.db` into `den/deploy/hosted` on the server and keep it to root
+(`chmod 600 coord.db`): it holds Sett's secrets. With the hub in a family, and the name of a
+parent in it, hand the file to the hub's own user inside its data volume, import, and delete
+both copies:
 
 ```sh
 docker compose stop hub
-docker compose run --rm -v "$PWD/coord.db:/coord.db:ro" hub import-sett /coord.db --as Alex
+docker compose run --rm -T --entrypoint sh hub -c 'umask 077 && cat > /data/coord.db' < coord.db
+docker compose run --rm hub import-sett /data/coord.db --as Alex
+docker compose run --rm --entrypoint rm hub -f /data/coord.db
 docker compose start hub
 rm coord.db
 ```
 
-It says what it brought over and what it left behind; the phones get it as they sync.
+The copy in the volume is the hub user's alone (mode 600), so no other account on the server
+can read it while it is there. The import says what it brought over and what it left behind;
+the phones get it as they sync.
 
 ### Uninstall
 
