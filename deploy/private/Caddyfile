@@ -14,8 +14,9 @@
 	}
 }
 
-# A family's site: the certificate, compression, and its own hub. Each address below imports it
-# with its hub's port.
+# A family's site: the certificate, compression, and the hub that serves it. Each address below
+# imports it with that hub's port: the Den host's (DEN_PORT) for every family on it, which is all
+# of them unless one keeps a hub container of its own.
 (den) {
 	# The certificate comes from Let's Encrypt through Cloudflare's DNS (the ACME DNS-01
 	# challenge), with the token from .env. Caddy renews it the same way, about a month ahead.
@@ -38,7 +39,8 @@
 	import den {$DEN_PORT:47733}
 }
 
-# The other families on this server (sudo ./install.sh add-family), a site each, to their own
-# hub: Caddyfile.families, which install.sh writes and compose.families.yaml mounts here. With
-# no other families, nothing is mounted and this imports nothing.
+# The other families on this server (sudo ./install.sh add-family), a site each, to the Den host
+# (or to a family's own hub container): Caddyfile.families, which install.sh writes and
+# compose.families.yaml mounts here. With no other families, nothing is mounted and this imports
+# nothing.
 import /etc/caddy/families/*
