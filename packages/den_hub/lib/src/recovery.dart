@@ -101,8 +101,13 @@ class HubRecovery {
   /// Most codes waiting at once.
   static const int maxLive = 10;
 
-  /// Wrong codes allowed in [wrongWindow], from everyone together.
+  /// Wrong codes one client may try in [wrongWindow].
   static const int maxWrong = 10;
+
+  /// Wrong codes all clients together may try in [wrongWindow]: twenty clients' worth, so one
+  /// can't use them up and keep a parent out, against at most [maxLive] codes of 44 bits that
+  /// last half an hour.
+  static const int wrongCeiling = 200;
 
   /// How long wrong codes count.
   static const Duration wrongWindow = Duration(minutes: 10);
@@ -110,7 +115,7 @@ class HubRecovery {
   static const String _keyDoc = 'recovery';
 
   final Random _random = Random.secure();
-  final List<int> _wrong = [];
+  final WrongGuesses _wrong = WrongGuesses(perClient: maxWrong, ceiling: wrongCeiling, window: wrongWindow);
   String? _cliSecret;
 
   /// Adds the recovery routes.
@@ -294,10 +299,14 @@ class HubRecovery {
     hub.checkFailures(request);
     hub.limit(request, 'pairing', Limits.pairing);
     final now = hub.now();
-    _wrong.removeWhere((at) => at <= now - wrongWindow.inMilliseconds);
-    if (_wrong.length >= maxWrong) {
-      final wait = ((_wrong.first + wrongWindow.inMilliseconds - now) / 1000).ceil();
-      throw ApiError.rateLimited(wait < 1 ? 1 : wait, 'Too many wrong codes were tried. Wait ten minutes, then try again.');
+    final client = hub.clientOf(request);
+    final wait = _wrong.wait(client, now);
+    if (wait != null) {
+      throw ApiError.rateLimited(
+          wait.seconds,
+          wait.all
+              ? 'Too many wrong codes were tried. Wait a few minutes, then try again.'
+              : 'Too many wrong codes from here. Wait ten minutes, then try again.');
     }
     final b = Body(await readJsonObject(request, required: true));
     final code = normalizeCode(b.string('code', required: true, min: 1, max: 200)!);
@@ -311,7 +320,7 @@ class HubRecovery {
     final hash = _hash(code.split(' '));
     final ticket = tickets[hash];
     if (ticket is! Map || (ticket['device'] != null && ticket['device'] != pubkey)) {
-      _wrong.add(now);
+      _wrong.add(client, now);
       hub.failed(request);
       hub.log.warn('Someone tried words that match no recovery code');
       throw ApiError.notFound(type: 'recovery', message: 'Those words aren\'t right, or they have expired or been used. Ask for new ones.');

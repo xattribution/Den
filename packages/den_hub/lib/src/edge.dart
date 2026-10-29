@@ -171,6 +171,66 @@ abstract final class Limits {
   static const int openSockets = 64;
 }
 
+/// Wrong guesses at a short code (an invite's four words, a recovery code), counted per client
+/// (see [clientKey]) and for everyone together. Each client gets [perClient] in [window]; all
+/// clients together get [ceiling], far more than one client's share, so no one address can use
+/// up the guesses and keep the family from joining or getting back in, while the codes' 44 bits
+/// stay out of reach of everyone at once.
+class WrongGuesses {
+  /// Counts wrong guesses.
+  WrongGuesses({required this.perClient, required this.ceiling, required this.window, this.maxClients = 10000});
+
+  /// Wrong guesses one client may make in [window].
+  final int perClient;
+
+  /// Wrong guesses all clients together may make in [window].
+  final int ceiling;
+
+  /// How long a wrong guess counts.
+  final Duration window;
+
+  /// Most clients remembered; past it, the quietest are forgotten first.
+  final int maxClients;
+
+  final Map<String, List<int>> _byClient = {};
+  final List<int> _all = [];
+
+  void _prune(int now) {
+    final horizon = now - window.inMilliseconds;
+    _all.removeWhere((at) => at <= horizon);
+    _byClient.removeWhere((_, times) {
+      times.removeWhere((at) => at <= horizon);
+      return times.isEmpty;
+    });
+    while (_byClient.length > maxClients) {
+      _byClient.remove(_byClient.keys.first);
+    }
+  }
+
+  int _seconds(int until, int now) => max(1, ((until - now) / 1000).ceil());
+
+  /// Seconds [client] must wait before guessing again, and whether that is everyone's wait
+  /// (`all`); null when it may guess now.
+  ({int seconds, bool all})? wait(String client, int now) {
+    _prune(now);
+    final mine = _byClient[client];
+    if (mine != null && mine.length >= perClient) {
+      return (seconds: _seconds(mine.first + window.inMilliseconds, now), all: false);
+    }
+    if (_all.length >= ceiling) return (seconds: _seconds(_all.first + window.inMilliseconds, now), all: true);
+    return null;
+  }
+
+  /// Counts a wrong guess from [client].
+  void add(String client, int now) {
+    _prune(now);
+    // Taken out and put back, so the clients heard from longest ago come first.
+    final times = _byClient.remove(client) ?? <int>[];
+    _byClient[client] = times..add(now);
+    _all.add(now);
+  }
+}
+
 class _Bucket {
   _Bucket(this.tokens, this.at);
   double tokens;

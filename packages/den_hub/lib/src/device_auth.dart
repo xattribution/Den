@@ -31,6 +31,41 @@ class DeviceAuth {
   final NonceBook _nonces = NonceBook();
   final NonceBook _early = NonceBook();
 
+  /// The request context key the hub's admission sets once [headersVerify] held, so [precheck]
+  /// doesn't check the same signature twice.
+  static const String verifiedHeaders = 'den.device-request.verified';
+
+  /// Whether [request]'s headers carry a signature that verifies over the body hash they claim
+  /// ([bodyHash]), from an approved device of this family, fresh by the hub's clock: what lets a
+  /// request skip the budget for anonymous ones. No side effects: nothing is counted and no
+  /// nonce is used, so [precheck] still turns a replay away. A request without [bodyHash] can't
+  /// be checked before its body is read, so it isn't.
+  Future<bool> headersVerify(Request request) async {
+    if (!hub.ready) return false;
+    String? h(String name) => request.headers[name];
+    final id = h(DeviceRequest.device), sent = h(DeviceRequest.time);
+    final nonce = h(DeviceRequest.nonce), sig = h(DeviceRequest.signature);
+    final claimed = h(bodyHash)?.trim().toLowerCase();
+    if (id == null || sent == null || nonce == null || sig == null || claimed == null || !_hex.hasMatch(claimed)) {
+      return false;
+    }
+    final at = int.tryParse(sent);
+    if (at == null || (hub.now() - at).abs() > DeviceRequest.skew.inMilliseconds) return false;
+    final device = hub.den.device(id);
+    if (device == null || !device.approved || device.revoked || hub.den.accessEnded(id)) return false;
+    final bytes = signedBytes(
+      method: request.method,
+      url: request.requestedUri,
+      time: at,
+      nonce: nonce,
+      bodyHash: claimed,
+      device: id,
+      actor: h(DeviceRequest.actor),
+      hub: hub.den.deviceId,
+    );
+    return verifySignature(bytes, sig, device.pubkey);
+  }
+
   /// Checks [request]'s headers before its body is read: signed, fresh, from an approved device
   /// of this family and, when it sends [bodyHash], signed by that device. Returns the claimed
   /// hash, or null when the device didn't send one. Throws `401` (or `429` past too many
@@ -50,17 +85,21 @@ class DeviceAuth {
     final claimed = h(bodyHash)?.trim().toLowerCase();
     if (claimed == null) return null;
     if (!_hex.hasMatch(claimed)) throw _refuse(request, 'bad-hash');
-    final bytes = signedBytes(
-      method: request.method,
-      url: request.requestedUri,
-      time: at,
-      nonce: nonce,
-      bodyHash: claimed,
-      device: id,
-      actor: h(DeviceRequest.actor),
-      hub: hub.den.deviceId,
-    );
-    if (!await verifySignature(bytes, sig, device.pubkey)) throw _refuse(request, 'bad-signature');
+    // Already checked on the way in (the hub's admission), headers and all.
+    final checked = request.context[verifiedHeaders] == true;
+    if (!checked) {
+      final bytes = signedBytes(
+        method: request.method,
+        url: request.requestedUri,
+        time: at,
+        nonce: nonce,
+        bodyHash: claimed,
+        device: id,
+        actor: h(DeviceRequest.actor),
+        hub: hub.den.deviceId,
+      );
+      if (!await verifySignature(bytes, sig, device.pubkey)) throw _refuse(request, 'bad-signature');
+    }
     if (!_early.add(id, nonce, hub.now())) throw _refuse(request, 'replay');
     return claimed;
   }
@@ -94,10 +133,17 @@ class DeviceAuth {
     return (check: await verify(request, body), body: body);
   }
 
-  /// [c], when it is a parent acting on their own device (not a shared display); throws `403`
-  /// with [message] for anyone else.
+  /// [c], when it is a parent acting on their own device: a personal device (which only ever acts
+  /// for its owner), or a hub-mode device whose owner is the one acting (a parent's tablet or
+  /// computer keeping the family online). Throws `403` with [message] for anyone else: a shared
+  /// display, and a hub that names someone else or belongs to nobody (an old server hub left in
+  /// the family can name any member it likes; den_net's [DeviceRequest] takes a hub at its word
+  /// for whom it acts for, which is enough for reading but not for trust).
   static DeviceRequestCheck parentOf(DeviceRequestCheck c, {String message = 'Only a parent\'s own phone can do that.'}) {
-    if (!(c.actor?.isParent ?? false) || c.device!.mode == DeviceMode.shared) throw ApiError.denied(message);
+    final actor = c.actor, device = c.device!;
+    if (actor == null || !actor.isParent || device.mode == DeviceMode.shared || device.member != actor.id) {
+      throw ApiError.denied(message);
+    }
     return c;
   }
 

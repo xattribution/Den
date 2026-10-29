@@ -611,9 +611,16 @@ docker compose run --rm backup restore backups/den-2026-10-28-0317.denbackup
 docker compose up -d
 ```
 
-Then let the family open Den on their phones before anyone changes anything through scripts or
-assistants: whatever happened after the backup is still on those phones, and the hub takes it
-back from them as they sync.
+**Then open Den on a phone.** What the hub wrote after the backup (an event an assistant added,
+a calendar feed's updates) isn't in the backup; it's on the family's phones. So a restored hub
+writes nothing of its own until a phone or tablet in the family has synced with it: calendar
+feeds wait, and assistants and scripts that try to change something are told "The hub is
+catching up after a restore" and to try again in a minute. Open Den on a phone that has been in
+use since the backup was made (the one used most recently is best) and let it sync. The hub
+takes back what it wrote and carries on after it; the other phones catch up as they open.
+
+To check, `docker compose exec hub /app/bin/den_hub status` says `Catching up after a restore`
+until a phone has synced, and stops saying it once one has.
 
 ## Moving to a new server
 
@@ -668,9 +675,12 @@ A day ahead, lower the DNS record's TTL to 300 seconds, so the switch takes minu
 5. **Point DNS** at the new server: change the `A` (and `AAAA`) record to its address. Caddy gets
    the certificate as soon as the name reaches it; `docker compose logs -f caddy` shows it.
 
-6. **Check**: `curl -fsS https://den.example.com/health` from your computer says
-   `"ready":true`, `docker compose exec hub /app/bin/den_hub status` says
-   `In a family and serving.`, and Den on a phone syncs again.
+6. **Open Den on a phone** once `curl -fsS https://den.example.com/health` from your computer
+   says `"ready":true`. A restored hub writes nothing of its own until a phone or tablet in the
+   family has synced with it ([Restore](#restore)); until then calendar feeds wait and assistants
+   are asked to try again. When the phone has synced,
+   `docker compose exec hub /app/bin/den_hub status` says `In a family and serving.` and no
+   longer says `Catching up after a restore`.
 
 7. **Shut the old one down**: `docker compose down` there. Keep it a few days, then delete it.
 
@@ -803,12 +813,15 @@ Then, on a parent's phone: Settings, Advanced, Hub and sync, Add a device, **Ano
 the hub the whole family, and the other phones catch up through it, the ones that haven't heard
 of the new hub yet too (it shows them the parent's approval).
 
-The new hub is a new device. The phone that added it sees that the old one used the same address
-and offers **Remove the old hub**: do that, so phones stop looking for it. If you skipped it,
-remove it later under Hub and sync, where each hub shows when this phone last saw it and when it
-was added; the old one is the one not seen since the reset. Until then phones still sync, with
-whichever hub answers at the address. If the family lets the hub help them get back in, the new
-hub has a new recovery key: see [If a parent loses their phone](#if-a-parent-loses-their-phone).
+The new hub is a new device, and the old one stays in the family until a parent removes it: an
+approved device that holds a copy of everything the hub held, whose keys are in the old volume and
+every backup of it. Remove it. The phone that added the new hub sees that the old one used the
+same address and offers **Remove the old hub**. If you skipped it, remove it under Settings,
+Advanced, Hub and sync, where each hub shows when this phone last saw it and when it was added;
+the old one is the one not seen since the reset, and **Remove** takes it out of the family on
+every device. Until then phones still sync, with whichever hub answers at the address. If the
+family lets the hub help them get back in, the new hub has a new recovery key: see
+[If a parent loses their phone](#if-a-parent-loses-their-phone).
 
 ### Factory reset
 
@@ -837,7 +850,9 @@ phone:
    tap **Find me**.
 4. Den shows whose words they are. **Yes, let this phone in**, and the phone is theirs at once.
 
-The hub only carries the request: it can't make up words, and no setting is needed.
+The hub only carries the request: it can't make up words, and no setting is needed. In the Home
+Screen web app the words are typed into the app the hub serves, so they are only as safe as the
+server is (see below).
 
 **With the hub's help, only if the family turned it on.** A parent turns on Settings, Family,
 **Let the hub help us get back in** on their own phone. Then, from `den/deploy/hosted`:
@@ -866,9 +881,19 @@ server help on, the command says so and how, and lets nobody in.
 
 **What this means for whoever runs the server.** With server help on, the admin could add a
 phone as any parent; every device in the family shows when that happens ("Alex's new iPhone was
-let in by the hub's recovery"), and any parent can remove it. With it off, the admin can't let
-anyone in: turning it off makes the hub's key useless, even for a request dated earlier. Root on
-the server can still read what the hub holds, as always.
+let in by the hub's recovery"), and any parent can remove it. With it off, the hub's key lets
+nobody in, even for a request dated earlier. Root on the server can still read what the hub
+holds, as always.
+
+There is one more thing whoever controls the server can do, with server help on or off. The
+Home Screen web app comes from the hub, and it holds each parent's key on their phone. So whoever
+controls what the hub serves (root on the server, the hub's image, or Caddy and its certificate)
+could serve a changed app that acts as any parent who opens it: approve a phone, change who is a
+parent. The family's devices can't tell that apart from the parent. To keep that from happening,
+keep the server patched and its logins to people you trust, and build the image from this
+repository (or pull a published release). A parent who wants the stronger guarantee makes these
+decisions (approving devices, roles, AI access, recovery) in the Den app installed on their
+phone, tablet or computer, whose code doesn't come from the server.
 
 The hub's server recovery key lives in its data volume (`hub/recovery.json`) and is in every
 backup (`docker compose run --rm backup`), so a [restore](#restore) keeps server help working. A
@@ -879,17 +904,23 @@ Either way, the new phone then offers **Remove your old phone** on the parent's 
 
 ### Bring in a family from Sett
 
-Copy Sett's `coord.db` into `den/deploy/hosted` on the server (`chmod 644 coord.db` so the hub
-can read it). With the hub in a family, and the name of a parent in it:
+Copy Sett's `coord.db` into `den/deploy/hosted` on the server and keep it to root
+(`chmod 600 coord.db`): it holds Sett's secrets. With the hub in a family, and the name of a
+parent in it, hand the file to the hub's own user inside its data volume, import, and delete
+both copies:
 
 ```sh
 docker compose stop hub
-docker compose run --rm -v "$PWD/coord.db:/coord.db:ro" hub import-sett /coord.db --as Alex
+docker compose run --rm -T --entrypoint sh hub -c 'umask 077 && cat > /data/coord.db' < coord.db
+docker compose run --rm hub import-sett /data/coord.db --as Alex
+docker compose run --rm --entrypoint rm hub -f /data/coord.db
 docker compose start hub
 rm coord.db
 ```
 
-It says what it brought over and what it left behind; the phones get it as they sync.
+The copy in the volume is the hub user's alone (mode 600), so no other account on the server
+can read it while it is there. The import says what it brought over and what it left behind;
+the phones get it as they sync.
 
 ### Uninstall
 
