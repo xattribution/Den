@@ -25,6 +25,7 @@ export 'widgets/progress.dart';
 export 'widgets/rows.dart';
 export 'widgets/section.dart';
 export 'widgets/sheet_header.dart';
+export 'widgets/source_tag.dart';
 export 'widgets/states.dart';
 export 'widgets/switch_line.dart';
 

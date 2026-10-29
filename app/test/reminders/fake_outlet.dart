@@ -7,6 +7,9 @@ class FakeOutlet implements ReminderOutlet {
   final List<PlannedReminder> scheduledCalls = [];
   final List<int> cancelled = [];
   Set<int> leftover = {};
+
+  /// The route each leftover opens, where a test gives one.
+  Map<int, String> leftoverRoutes = {};
   String? launch;
   int asks = 0;
   void Function(String route)? tap;
@@ -31,6 +34,9 @@ class FakeOutlet implements ReminderOutlet {
 
   @override
   Future<Set<int>> pending() async => {...leftover};
+
+  @override
+  Future<Map<int, String?>> pendingRoutes() async => {for (final id in leftover) id: leftoverRoutes[id]};
 
   @override
   Future<void> askPermission() async => asks++;

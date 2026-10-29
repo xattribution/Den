@@ -258,8 +258,24 @@ abstract final class WebApp {
     }
   }
 
-  /// Subscribes to pushes for the hub's [key]. Call it straight from a tap, before awaiting
-  /// anything: Safari asks for permission only in a user gesture. Throws [WebPushException].
+  /// This browser's subscription whatever key it was made for, and whether that is [key]: a
+  /// device in several families keeps a family's own subscription until a tap replaces it with
+  /// one for the key they share ([subscribe] does).
+  static Future<({WebPushSubscription? subscription, bool same})> pushState(String key) async {
+    final text = await impl.pushState(key);
+    if (text == null) return (subscription: null, same: false);
+    try {
+      final json = jsonDecode(text);
+      if (json is! Map) return (subscription: null, same: false);
+      return (subscription: WebPushSubscription.fromJson(json['subscription']), same: json['same'] == true);
+    } on FormatException {
+      return (subscription: null, same: false);
+    }
+  }
+
+  /// Subscribes to pushes for the hub's [key], replacing a subscription made for another key.
+  /// Call it straight from a tap, before awaiting anything: Safari asks for permission only in a
+  /// user gesture. Throws [WebPushException].
   static Future<WebPushSubscription> subscribe(String key) async {
     final text = await impl.subscribe(key);
     Object? json;
@@ -276,6 +292,10 @@ abstract final class WebApp {
   }
 
   static Future<void> unsubscribe() => impl.unsubscribe();
+
+  /// Tells the service worker the families this browser holds, by id with their names: it titles
+  /// a family's push with the name kept here, and shows nothing of a push from any other.
+  static Future<void> setFamilies(Map<String, String> families) => impl.setFamilies(jsonEncode(families));
 
   /// Opens the share sheet with [text], or copies it where there is none. Call it straight from
   /// a tap.

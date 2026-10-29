@@ -57,6 +57,9 @@ ArgParser cliParser() {
         help: 'The other families\' hubs on this server, whose shared calendars may be fetched through this '
             'machine\'s own reverse proxy: https addresses or names (env DEN_PEER_HUBS)')
     ..addOption('csp', help: 'Replace the web app\'s Content-Security-Policy (env DEN_CSP)')
+    ..addOption('host-push',
+        help: 'Families that share the host\'s own Web Push key, so one web app holding several of them gets every '
+            'family\'s reminders: "all", or their addresses, comma-separated (env DEN_HOST_PUSH; default none)')
     ..addOption('log-level', help: 'debug, info, warn or error (env DEN_LOG)')
     ..addFlag('public',
         help: 'Reachable from the internet: minimal unauthenticated answers, mDNS off (env DEN_PUBLIC=1; '
@@ -242,6 +245,7 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
   final mailbox = a['mailbox'] as bool? ?? _envFlag(env['DEN_MAILBOX']) ?? false;
   final allowedOrigins = [...?env['DEN_ALLOWED_ORIGINS']?.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty)];
   final log = HubLog(level: _level(opt('log-level', 'DEN_LOG')), sink: io.err.writeln);
+  final sharedPush = parseHostPush(opt('host-push', 'DEN_HOST_PUSH') ?? '');
 
   /// A family's hub: the first family's as `serve` always made it; another family's at its own
   /// address, labeled in the log, with its own notify.json, and without mDNS and Home Assistant
@@ -266,6 +270,7 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
         mailbox: mailbox,
         mdns: hosted == null ? a['mdns'] as bool? ?? _envFlag(env['DEN_MDNS']) ?? !publicPosture : false,
         log: hosted == null ? log : log.labeled(hosted.hostname ?? hosted.id),
+        hostPush: sharedPush.all || (address != null && sharedPush.hosts.contains(address.host.toLowerCase())),
       );
 
   Future<HostedTenant> openLog(HostedLog hosted, {required bool fresh}) async {
@@ -353,4 +358,15 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
   } finally {
     if (!handedOver) await data.unlock();
   }
+}
+
+/// `DEN_HOST_PUSH`: the families that opt into the host's own Web Push key, so one web app at one
+/// address holding several families on the host gets every one's reminders through one
+/// subscription. `all` (or `on`, `1`, `true`), or the families' addresses, comma-separated;
+/// empty for none. Each family otherwise hands out and signs with its own key only.
+({bool all, Set<String> hosts}) parseHostPush(String text) {
+  final parts = [for (final p in text.split(',')) if (p.trim().isNotEmpty) p.trim().toLowerCase()];
+  if (parts.any((p) => const {'all', 'on', '1', 'true', 'yes'}.contains(p))) return (all: true, hosts: const {});
+  String hostOf(String p) => (p.contains('://') ? Uri.tryParse(p)?.host : p.split(':').first) ?? '';
+  return (all: false, hosts: {for (final p in parts) hostOf(p)}..remove(''));
 }

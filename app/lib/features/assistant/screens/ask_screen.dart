@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/app_state.dart';
+import '../../../app/household.dart';
 import '../../../design/layout.dart';
 import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
@@ -57,6 +58,13 @@ class _AskScreenState extends State<AskScreen> {
   bool _showAsking = false;
   bool _listening = false;
   CaptureSources? _listeningTo;
+
+  /// The family Ask acts in, to name on a device in several: the one whose page this is.
+  FamilyLog? _family(BuildContext context) {
+    final home = Household.maybeOf(context);
+    if (home == null || !home.several) return null;
+    return home.of(DenScope.read(context).den) ?? home.active;
+  }
   int _seen = 0;
 
   AskSession get session => _session!;
@@ -309,7 +317,12 @@ class _AskScreenState extends State<AskScreen> {
       children: [
         Padding(
           padding: EdgeInsets.fromLTRB(DenLayout.gutter, widget.panel ? Sp.l : 0, DenLayout.gutter, 0),
-          child: _AskHeader(onNewChat: entry == AskEntry.open && exchanges.isNotEmpty ? _newChat : null),
+          child: _AskHeader(
+            onNewChat: entry == AskEntry.open && exchanges.isNotEmpty ? _newChat : null,
+            // On a device in several families, Ask acts in the family of the page it is on (the
+            // one the device shows; in "All my families", the one last chosen) and says which.
+            family: _family(context),
+          ),
         ),
         if (widget.panel) Expanded(child: scroller) else Flexible(child: scroller),
         if (bar != null)
@@ -325,9 +338,12 @@ class _AskScreenState extends State<AskScreen> {
 /// Ask's top line: its title, "New chat" while there is a conversation, and "Done". The two
 /// pills sit beside the title while they fit, and under it at large text sizes.
 class _AskHeader extends StatelessWidget {
-  const _AskHeader({this.onNewChat});
+  const _AskHeader({this.onNewChat, this.family});
 
   final VoidCallback? onNewChat;
+
+  /// The family Ask acts in, said under the title when the device holds several.
+  final FamilyLog? family;
 
   @override
   Widget build(BuildContext context) {
@@ -358,7 +374,25 @@ class _AskHeader extends StatelessWidget {
         spacing: Sp.m,
         runSpacing: Sp.s,
         children: [
-          Semantics(header: true, child: Text('Ask', style: t.sheetTitle(c.ink))),
+          if (family == null)
+            Semantics(header: true, child: Text('Ask', style: t.sheetTitle(c.ink)))
+          else
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Semantics(header: true, child: Text('Ask', style: t.sheetTitle(c.ink))),
+                const SizedBox(height: 2),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SourceTag(label: family!.name, color: family!.color, size: 18, semantics: false),
+                    const SizedBox(width: Sp.s),
+                    Flexible(child: Text('In ${family!.name}', style: t.meta(c.ink2))),
+                  ],
+                ),
+              ],
+            ),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [

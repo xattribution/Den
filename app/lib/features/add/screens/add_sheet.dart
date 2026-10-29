@@ -8,6 +8,9 @@ import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
+import '../../../app/household.dart';
+import '../../../app/log_scope.dart';
+import '../../../app/redirect.dart' show mergedFamilies;
 import '../../../app/words.dart';
 import '../../../design/layout.dart';
 import '../../../design/motion.dart';
@@ -37,8 +40,20 @@ bool _canCapture(AppState app) =>
 /// something already there, or words Den can't place go to the helper (`/ask`), going on from the
 /// conversation Ask is keeping. "Open Ask" under the rest opens that conversation as it is.
 /// Photos and files still go to the review page. See DESIGN.md, "AI helper".
+///
+/// In "All my families", opened from the app's own places, Add says which family it adds to
+/// ("Adding to Kotvas") and offers the others: everything it adds, and every page it opens,
+/// is that family's. Opened from a family's own page, it adds there.
 Future<void> showAddSheet(BuildContext context) {
   final router = GoRouter.of(context);
+  final home = Household.maybeOf(context);
+  if (home != null && home.showingAll && SheetScope.of(context) == null) {
+    return showDenSheet<void>(
+      context,
+      closeLabel: 'Close Add',
+      builder: (_) => _AddToFamily(home: home, router: router is ScopedRouter ? router.inner : router),
+    );
+  }
   return showDenSheet<void>(
     context,
     closeLabel: 'Close Add',
@@ -46,11 +61,96 @@ Future<void> showAddSheet(BuildContext context) {
   );
 }
 
+/// Add in "All my families": the family it adds to, which the person can change, and Add in
+/// that family's scope.
+class _AddToFamily extends StatefulWidget {
+  const _AddToFamily({required this.home, required this.router});
+
+  final Household home;
+  final GoRouter router;
+
+  @override
+  State<_AddToFamily> createState() => _AddToFamilyState();
+}
+
+class _AddToFamilyState extends State<_AddToFamily> {
+  late FamilyLog _log = _first();
+
+  /// The family the device showed last, when "All my families" merges it.
+  FamilyLog _first() {
+    final families = mergedFamilies(widget.home);
+    return families.contains(widget.home.active) ? widget.home.active : families.firstOrNull ?? widget.home.active;
+  }
+
+  /// Opens [route] in [log]'s family. Ask stays with the family the device shows, so asking in
+  /// another one shows that family first.
+  void _open(FamilyLog log, String route, {Object? extra}) {
+    // A family page opens in that family; Ask, which is always the family shown, shows it first.
+    ScopedRouter(widget.router, log.id, show: () async {
+      if (!identical(widget.home.active, log)) await widget.home.choose(log);
+    }).push<void>(route, extra: extra);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final families = mergedFamilies(widget.home);
+    final log = _log;
+    return LogScope(
+      log: log,
+      child: AddSheet(
+        key: ValueKey(log.id),
+        addingTo: families.length < 2 ? null : _AddingTo(families: families, chosen: log, onChoose: (l) => setState(() => _log = l)),
+        open: (route, {extra}) => _open(log, route, extra: extra),
+      ),
+    );
+  }
+}
+
+/// "Adding to Kotvas", and each family to choose instead.
+class _AddingTo extends StatelessWidget {
+  const _AddingTo({required this.families, required this.chosen, required this.onChoose});
+
+  final List<FamilyLog> families;
+  final FamilyLog chosen;
+  final ValueChanged<FamilyLog> onChoose;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final t = context.text;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, 0, DenLayout.headingInset, Sp.s),
+          child: Semantics(liveRegion: true, child: Text('Adding to ${chosen.name}', style: t.label(c.ink))),
+        ),
+        ChipRow(
+          inset: 0,
+          children: [
+            for (final log in families)
+              PersonPill(
+                face: SourceTag(label: log.name, color: log.color, size: 28, semantics: false),
+                name: log.name,
+                selected: identical(log, chosen),
+                onTap: () => onChoose(log),
+              ),
+          ],
+        ),
+        const SizedBox(height: Sp.l),
+      ],
+    );
+  }
+}
+
 /// The Add sheet. [open] opens a route behind it once it has closed.
 class AddSheet extends StatefulWidget {
-  const AddSheet({super.key, required this.open});
+  const AddSheet({super.key, required this.open, this.addingTo});
 
   final void Function(String route, {Object? extra}) open;
+
+  /// Which family it adds to, with the others to choose ("All my families").
+  final Widget? addingTo;
 
   @override
   State<AddSheet> createState() => _AddSheetState();
@@ -238,6 +338,7 @@ class _AddSheetState extends State<AddSheet> {
                   ],
                 ),
               ),
+              ?widget.addingTo,
               if (capture || helper) ...[
                 _Entry(
                   controller: _text,
@@ -701,6 +802,7 @@ class _FoundEntry extends StatelessWidget {
     final d = f.dateTime(e.date);
     final date = await showDatePicker(
       context: context,
+      builder: carryTransition(context),
       initialDate: DateTime(d.year, d.month, d.day),
       firstDate: DateTime(d.year - 1),
       lastDate: DateTime(d.year + 3),
@@ -715,6 +817,7 @@ class _FoundEntry extends StatelessWidget {
     final start = f.parseHhmm(e.start)!;
     final picked = await showTimePicker(
       context: context,
+      builder: carryTransition(context),
       initialTime: TimeOfDay(hour: start ~/ 60, minute: start % 60),
       helpText: e.title,
     );

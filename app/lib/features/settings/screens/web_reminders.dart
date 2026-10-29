@@ -6,19 +6,28 @@ import '../../../design/widgets.dart';
 import '../../../platform/sync/hub_client.dart';
 import '../../../platform/sync/hub_push.dart';
 import '../../../app/app_state.dart';
+import '../../../app/household.dart';
 import '../../../platform/web/web_app.dart';
 
 /// Reminders in a browser: one tap turns on reminders from the hub for this device (Web Push),
 /// or says plainly why it can't here and what to do. On iPhone that needs Den on the Home
 /// Screen and iOS 16.4 or later.
+///
+/// A browser holding several families has one subscription for all of them ([PushPlan]): made
+/// with the key the families on the server share and registered with each, so one tap turns
+/// on every family's reminders; a family whose server doesn't share it is named.
 class WebReminders extends StatefulWidget {
-  const WebReminders({super.key, this.web, this.client});
+  const WebReminders({super.key, this.web, this.client, this.families});
 
   /// The browser, for tests; by default read from the page.
   final WebAppInfo? web;
 
   /// The hub's push endpoints, for tests.
   final HubPushClient? client;
+
+  /// Every family's push endpoints, the one Settings is for first, for tests; by default the
+  /// household's when the device holds several families.
+  final List<PushFamily>? families;
 
   @override
   State<WebReminders> createState() => _WebRemindersState();
@@ -34,6 +43,9 @@ class _WebRemindersState extends State<WebReminders> {
   String? _note;
   String? _error;
 
+  /// With several families: what one subscription reaches.
+  PushPlan? _plan;
+
   WebAppInfo get _web => widget.web ?? WebApp.info;
 
   String get _thing => _web.ios ? (_web.ipad ? 'iPad' : 'iPhone') : 'browser';
@@ -46,6 +58,11 @@ class _WebRemindersState extends State<WebReminders> {
     final network = context.watch(const {}).network;
     final client = _client = widget.client ?? (network == null ? null : HubPushClient(network));
     if (pushAvailability(_web) != PushAvailability.ready) return;
+    final families = widget.families ?? _householdFamilies(context);
+    if (families != null && families.length > 1) {
+      _loadSeveral(families);
+      return;
+    }
     if (client == null) {
       _loaded = true;
       _error = "Reminders come from the family's hub, and this $_thing isn't connected to one.";
@@ -75,9 +92,55 @@ class _WebRemindersState extends State<WebReminders> {
     }
   }
 
+  /// Every family on this device with a hub to ask, the one Settings is for first; null for a
+  /// device in one family.
+  List<PushFamily>? _householdFamilies(BuildContext context) {
+    final home = Household.maybeOf(context);
+    if (home == null || !home.several) return null;
+    final shown = home.of(DenScope.read(context).den) ?? home.active;
+    return [
+      for (final log in [shown, ...home.families.where((l) => !identical(l, shown))])
+        if (log.den.isApproved && log.network != null) PushFamily(log.name, HubPushClient(log.network!)),
+    ];
+  }
+
+  /// Where every family stands, and whether this browser's subscription is the one they share.
+  Future<void> _loadSeveral(List<PushFamily> families) async {
+    try {
+      final plan = await PushPlan.look(families);
+      final browser = await WebApp.pushState(plan.key);
+      if (!mounted) return;
+      setState(() {
+        _plan = plan;
+        _key = plan.key;
+        _on = plan.on && browser.subscription != null && browser.same;
+        _loaded = true;
+      });
+    } on HubException catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.message;
+          _loaded = true;
+        });
+      }
+    }
+  }
+
   void _turnOn() {
     final key = _key;
     final client = _client;
+    final plan = _plan;
+    if (plan != null && key != null && !_busy) {
+      // Straight from the tap, before anything is awaited.
+      final subscribing = WebApp.subscribe(key);
+      setState(() {
+        _busy = true;
+        _error = null;
+        _note = null;
+      });
+      _finishSeveral(subscribing, plan);
+      return;
+    }
     if (key == null || client == null || _busy) return;
     // Straight from the tap, before anything is awaited: Safari asks for permission only then.
     final subscribing = WebApp.subscribe(key);
@@ -115,7 +178,58 @@ class _WebRemindersState extends State<WebReminders> {
     }
   }
 
+  Future<void> _finishSeveral(Future<WebPushSubscription> subscribing, PushPlan plan) async {
+    try {
+      final subscription = await subscribing;
+      await plan.register(subscription);
+      await plan.reached.first.client.test();
+      if (mounted) {
+        setState(() {
+          _on = true;
+          _note = plan.reached.length > 1
+              ? 'Reminders are on from ${_names([for (final f in plan.reached) f.name])}. A test one is on its way.'
+              : 'Reminders are on. A test one is on its way.';
+        });
+      }
+    } on WebPushException catch (e) {
+      if (mounted) setState(() => _error = _pushError(e));
+    } on HubException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _pushError(WebPushException e) => switch (e.reason) {
+        'NotAllowedError' => "Notifications are off for Den. Turn them on in this $_thing's Settings, Notifications, Den.",
+        'not-ready' => 'Den is still getting ready on this $_thing. Try again in a moment.',
+        _ => "This $_thing couldn't turn on reminders. Try again.",
+      };
+
+  static String _names(List<String> names) =>
+      names.length < 2 ? names.join() : '${names.sublist(0, names.length - 1).join(', ')} and ${names.last}';
+
   Future<void> _turnOff() async {
+    final plan = _plan;
+    if (plan != null) {
+      setState(() {
+        _busy = true;
+        _error = null;
+        _note = null;
+      });
+      try {
+        for (final f in plan.reached) {
+          await f.client.unsubscribe();
+        }
+        await WebApp.unsubscribe();
+        if (mounted) setState(() => _on = false);
+      } on HubException catch (e) {
+        if (mounted) setState(() => _error = e.message);
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
+      return;
+    }
     final client = _client;
     if (client == null) return;
     setState(() {
@@ -162,7 +276,14 @@ class _WebRemindersState extends State<WebReminders> {
               children: [
                 Icon(PhosphorIconsRegular.bellRinging, size: 22, color: c.ink),
                 const SizedBox(width: Sp.m),
-                Expanded(child: Text('Reminders are on for this $_thing', style: t.body(c.ink))),
+                Expanded(
+                  child: Text(
+                    (_plan?.reached.length ?? 1) > 1
+                        ? 'Reminders are on for this $_thing, from ${_names([for (final f in _plan!.reached) f.name])}'
+                        : 'Reminders are on for this $_thing',
+                    style: t.body(c.ink),
+                  ),
+                ),
                 TextButton(onPressed: _busy ? null : _turnOff, child: const Text('Turn off')),
               ],
             )
@@ -172,9 +293,17 @@ class _WebRemindersState extends State<WebReminders> {
               child: FilledButton.icon(
                 onPressed: _busy ? null : _turnOn,
                 icon: const Icon(PhosphorIconsRegular.bell, size: 18),
-                label: Text('Turn on reminders on this $_thing'),
+                label: Text((_plan?.reached.length ?? 1) > 1 ? 'Turn on reminders from every family' : 'Turn on reminders on this $_thing'),
               ),
             ),
+          if (why == null && _loaded && (_plan?.unreached.isNotEmpty ?? false)) ...[
+            const SizedBox(height: Sp.s),
+            NoticeLine(
+              icon: PhosphorIconsRegular.bellSlash,
+              message: "Reminders from ${_names(_plan!.unreached)} can't come to this $_thing yet. "
+                  'Whoever runs your Den server can turn that on.',
+            ),
+          ],
           if (_note != null) ...[const SizedBox(height: Sp.s), Text(_note!, style: t.meta(c.ink2))],
           if (_error != null) ...[
             const SizedBox(height: Sp.s),

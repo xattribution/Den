@@ -6,11 +6,16 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../app/app_state.dart';
+import '../../../app/family_label.dart';
+import '../../../app/household.dart';
+import '../../../design/layout.dart';
+import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/notifications/reminder_scheduler.dart';
 import '../../advanced/advanced.dart';
+import '../../family/family.dart' show ConfirmPanel, MembershipActions, pasteAnotherFamily;
 import '../../onboarding/onboarding.dart';
 import '../widgets/calendar_look_choice.dart';
 import '../widgets/text_size_choice.dart';
@@ -36,6 +41,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool? _reminders;
   String? _version;
   String? _remindersError;
+  String? _pasteError;
+  bool _leaving = false;
+  bool _leavingBusy = false;
+  String? _leaveError;
+
+  /// Paste an invite to another family. Straight from the tap, so a browser lets it read the
+  /// clipboard.
+  Future<void> _joinAnother() async {
+    final problem = await pasteAnotherFamily(GoRouter.maybeOf(context));
+    if (mounted) setState(() => _pasteError = problem);
+  }
+
+  /// Leaves the family these settings are for, on this device; another family shows.
+  Future<void> _leave(Household home, FamilyLog log) async {
+    setState(() {
+      _leavingBusy = true;
+      _leaveError = null;
+    });
+    final router = GoRouter.maybeOf(context);
+    try {
+      await MembershipActions.leave(home, log);
+      router?.go('/today');
+    } on Object {
+      if (mounted) {
+        setState(() {
+          _leavingBusy = false;
+          _leaveError = "Couldn't leave the family on this device. Try again.";
+        });
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -92,6 +128,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return DenPage(
       title: 'Settings',
       children: [
+        // Which family's settings, where the switcher doesn't say.
+        const FamilyLabel(),
         const SyncLine(),
         GroupCard(
           child: Column(
@@ -154,6 +192,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onChanged: _reminders == null ? null : _setReminders,
                 ),
         ),
+        ?_joinAnotherRow(context),
         if (parent)
           GroupCard(
             child: NavRow(
@@ -175,11 +214,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ]),
           ),
         ),
+        ?_leaveFamily(context, thing),
         if (DemoSession.active)
           Align(
             alignment: Alignment.centerLeft,
             child: OutlinedButton(onPressed: DemoSession.leave, child: const Text('Leave the demo family')),
           ),
+      ],
+    );
+  }
+
+  /// Joining another family on this device (FAMILY-LINKS-PLAN §5.1): paste the invite its
+  /// parent sent. In a family already; never in the demo family.
+  Widget? _joinAnotherRow(BuildContext context) {
+    final home = Household.maybeOf(context);
+    if (home == null || home.store == null || DemoSession.active) return null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GroupCard(
+          child: NavRow(
+            icon: PhosphorIconsRegular.clipboardText,
+            label: 'Join another family',
+            detail: "Paste the invite from one of its parents",
+            chevron: false,
+            onTap: _joinAnother,
+          ),
+        ),
+        if (_pasteError != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, Sp.m, DenLayout.headingInset, 0),
+            child: Semantics(liveRegion: true, child: Text(_pasteError!, style: context.text.meta(context.colors.destructive))),
+          ),
+      ],
+    );
+  }
+
+  /// "Leave the Smith family on this iPhone": only on a device in another family too, so the
+  /// last family is never left this way (FAMILY-LINKS-PLAN, "only leave, not remove").
+  Widget? _leaveFamily(BuildContext context, String thing) {
+    final home = Household.maybeOf(context);
+    if (home == null) return null;
+    // The family this page is for (`/l/<id>/settings` is another family's), never simply the
+    // one the device shows.
+    final log = home.of(DenScope.read(context).den);
+    if (log == null || !MembershipActions.canLeave(home, log)) return null;
+    final name = log.name;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (!_leaving)
+          GroupCard(
+            child: NavRow(
+              icon: PhosphorIconsRegular.signOut,
+              label: 'Leave $name on $thing',
+              detail: 'Your other families stay',
+              chevron: false,
+              onTap: () => setState(() => _leaving = true),
+            ),
+          ),
+        DenReveal(
+          visible: _leaving,
+          child: !_leaving
+              ? const SizedBox(width: double.infinity)
+              : ConfirmPanel(
+                  message: "$name's calendar, chores and lists leave $thing, and the family's parents see $thing go. "
+                      'Your other families stay. To come back, ask one of its parents for a new invite.',
+                  confirmLabel: 'Leave $name',
+                  destructive: true,
+                  busy: _leavingBusy,
+                  error: _leaveError,
+                  onConfirm: () => _leave(home, log),
+                  onCancel: () => setState(() => _leaving = false),
+                ),
+        ),
       ],
     );
   }

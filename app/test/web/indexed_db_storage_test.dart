@@ -80,4 +80,42 @@ void main() {
     expect(await storage.loadSnapshot(), isNull);
     storage.close();
   });
+
+  test("two families in one browser: a database each, and leaving one deletes only it, open or not", () async {
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final firstName = 'den-test-first-$stamp', secondName = 'den-test-second-$stamp';
+    Future<Den> founded(IndexedDbStorage storage, String name) async {
+      final den = await Den.open(storage: storage, keys: await DeviceKeys.generate());
+      await den.createFamily(
+        familyName: name,
+        timezone: 'America/Chicago',
+        yourName: 'Grandma',
+        marker: Marker.sky,
+        animal: Animal.cat,
+        deviceName: "Grandma's iPhone",
+        deviceKind: DeviceKind.phone,
+      );
+      return den;
+    }
+
+    final kotvasDb = await openDeviceStorage(name: firstName) as IndexedDbStorage;
+    final smithDb = await openDeviceStorage(name: secondName) as IndexedDbStorage;
+    final kotvas = await founded(kotvasDb, 'Kotvas');
+    final smith = await founded(smithDb, 'Smith family');
+    expect((await kotvasDb.loadMeta())!['familyId'], kotvas.familyId);
+    expect((await smithDb.loadMeta())!['familyId'], smith.familyId);
+    expect((await kotvasDb.loadChanges()).every((c) => c.device == kotvas.deviceId), isTrue);
+    expect((await smithDb.loadChanges()).every((c) => c.device == smith.deviceId), isTrue);
+
+    // Leaving the Smiths deletes their database, though this page still holds it open.
+    await deleteDeviceStorage(secondName);
+    final reopened = await IndexedDbStorage.open(name: secondName);
+    expect(await reopened.loadMeta(), isNull);
+    expect(await reopened.loadChanges(), isEmpty);
+    reopened.close();
+    expect((await kotvasDb.loadMeta())!['familyId'], kotvas.familyId, reason: 'the other family stays');
+    kotvasDb.close();
+    await deleteDeviceStorage(firstName);
+    await deleteDeviceStorage(secondName);
+  });
 }

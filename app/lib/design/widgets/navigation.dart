@@ -95,9 +95,13 @@ class DenSidebar extends StatelessWidget {
     required this.onAdd,
     this.footer,
     this.addLabel = 'Add',
+    this.heading,
   });
 
   final String title;
+
+  /// Drawn in place of [title] when given: the family switcher on a device in several families.
+  final Widget? heading;
   final List<NavPlace> places;
   final VoidCallback onAdd;
   final String addLabel;
@@ -121,8 +125,9 @@ class DenSidebar extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(Sp.m, 0, Sp.m, Sp.l),
-                  child: Semantics(header: true, child: Text(title, style: t.sheetTitle(c.ink).copyWith(fontSize: 22 * t.scale))),
+                  padding: EdgeInsets.fromLTRB(Sp.m, 0, Sp.m, heading == null ? Sp.l : Sp.s),
+                  child: heading ??
+                      Semantics(header: true, child: Text(title, style: t.sheetTitle(c.ink).copyWith(fontSize: 22 * t.scale))),
                 ),
                 FilledButton.icon(
                   onPressed: onAdd,

@@ -33,6 +33,8 @@ import 'setup.dart' show restrictToOwner;
 /// of an invite key (den_core's invite_keys.dart) the parent's phone wrote into the family's
 /// log: then whoever has the words lets their device in at once, and the hub checks first that
 /// the key reached it. Words typed into an older app still work: the hub stretches them itself.
+/// Words the hub picks itself (for an older app that sends no slot) are kept with their slot
+/// too, so the app asks for every invite by its slot alone and never needs to send the words.
 class HubInvites {
   /// Creates the invite endpoints for [hub].
   HubInvites(this.hub) {
@@ -79,11 +81,22 @@ class HubInvites {
       ..add('POST', '/api/v1/invites/redeem', (r, _) => redeem(r));
   }
 
-  /// Whether this family keeps a live invite under [key]: four words, or `slot:<hex>`.
+  /// Whether this family keeps a live invite under [key]: four words, or `slot:<hex>` (the
+  /// slot of an invite kept by its words included).
   bool holds(String key) {
     if (!hub.ready) return false;
     _prune(hub.now());
-    return _invites.containsKey(key);
+    return _invites.containsKey(key) || _wordsFor(key) != null;
+  }
+
+  /// The words an invite the hub picked is kept under, by its slot (`slot:<hex>`).
+  String? _wordsFor(String key) {
+    if (!key.startsWith('slot:')) return null;
+    for (final e in _invites.entries) {
+      final v = e.value;
+      if (v is Map && v['slot'] == key) return e.key;
+    }
+    return null;
   }
 
   /// Whether [key] is taken here or by another family on the host: invite words are unique per
@@ -185,7 +198,9 @@ class HubInvites {
     while (_taken(code)) {
       code = _newCode();
     }
-    _invites[code] = {'grant': grant.toJson(), 'url': grant.invite.toUrl(), 'expires': expires, 'made': now};
+    // Kept with its slot as well, so an app that asks by slot alone finds it.
+    final alias = 'slot:${await InviteWords.slot(code)}';
+    _invites[code] = {'grant': grant.toJson(), 'url': grant.invite.toUrl(), 'expires': expires, 'made': now, 'slot': alias};
     await _save();
     hub.log.info('A parent made an invite');
     final words = code.split(' ');
@@ -283,7 +298,8 @@ class HubInvites {
       hub.log.warn('Someone tried words that match no invite');
       throw ApiError.notFound(type: 'invite', message: "That code isn't right, or the invite has expired. Ask for a new invite.");
     }
-    return holders.single._answer(request, code, client, now);
+    final holder = holders.single;
+    return holder._answer(request, holder._wordsFor(code) ?? code, client, now);
   }
 
   /// The invite this family keeps under [code], for [redeemAcross].

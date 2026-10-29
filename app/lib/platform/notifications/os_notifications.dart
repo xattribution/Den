@@ -121,9 +121,12 @@ class OsNotifications implements ReminderOutlet {
   }
 
   @override
-  Future<Set<int>> pending() async {
+  Future<Set<int>> pending() async => (await pendingRoutes()).keys.toSet();
+
+  @override
+  Future<Map<int, String?>> pendingRoutes() async {
     if (!_osSchedules) return {};
     final requests = await _plugin.pendingNotificationRequests();
-    return {for (final r in requests) r.id};
+    return {for (final r in requests) r.id: r.payload};
   }
 }

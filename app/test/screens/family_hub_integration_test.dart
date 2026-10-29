@@ -3,6 +3,7 @@
 // Plain `test`s (no widget binding), so sockets and timers are real.
 import 'dart:io';
 
+import 'package:den_app/platform/storage/memberships.dart';
 import 'package:den_app/platform/sync/den_network.dart';
 import 'package:den_app/platform/sync/hub_client.dart';
 import 'package:den_app/platform/sync/hub_keep_alive.dart';
@@ -11,6 +12,7 @@ import 'package:den_app/platform/sync/net_pairing.dart';
 import 'package:den_app/platform/sync/pairing.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
@@ -402,5 +404,53 @@ void main() {
     expect(keepAlive.calls.where((c) => c.startsWith('start')), hasLength(1));
     expect(phone.thisDevice!.mode, DeviceMode.personal);
     expect(phone.actor?.id, sam);
+  });
+
+  test("each family's in-app hub keeps its own data, runs one at a time, and goes with the family", () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final support = await Directory.systemTemp.createTemp('den-support');
+    const channel = MethodChannel('plugins.flutter.io/path_provider');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (_) async => support.path);
+    addTearDown(() async {
+      messenger.setMockMethodCallHandler(channel, null);
+      for (var tries = 0; tries < 5 && support.existsSync(); tries++) {
+        try {
+          await support.delete(recursive: true);
+        } on FileSystemException {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      }
+    });
+    const smith = Membership(id: 'smithfamily23456', slot: 'slotslotslotslot');
+    final kotvasPhone = await parentPhone();
+    final smithPhone = await parentPhone();
+    final kotvas = DenNetwork(kotvasPhone, localHub: LocalHub.create(port: 0, mdns: false, keepAlive: RecordingKeepAlive()));
+    final smiths = DenNetwork(smithPhone, log: smith, localHub: LocalHub.create(port: 0, mdns: false, name: smith.hubData, keepAlive: RecordingKeepAlive()));
+    addTearDown(kotvas.dispose);
+    addTearDown(smiths.dispose);
+
+    await kotvas.keepOnline(true);
+    expect(kotvas.localHub.state, LocalHubState.running, reason: kotvas.localHub.error);
+    expect(Directory('${support.path}/hub').existsSync(), isTrue, reason: "the first family's, where it always was");
+
+    // The Smiths' too: refused while the Kotvases' runs, with why.
+    await smiths.localHub.start(smithPhone);
+    expect(smiths.localHub.state, LocalHubState.failed);
+    expect(smiths.localHub.error, contains("one family's hub at a time"));
+    expect(Directory('${support.path}/hub-slotslotslotslot').existsSync(), isFalse, reason: 'nothing of theirs started');
+
+    await kotvas.keepOnline(false);
+    await smiths.localHub.start(smithPhone);
+    expect(smiths.localHub.state, LocalHubState.running, reason: smiths.localHub.error);
+    expect(Directory('${support.path}/hub-slotslotslotslot').existsSync(), isTrue, reason: 'a directory of its own');
+    final kotvasFiles = Directory('${support.path}/hub').listSync(recursive: true).map((f) => f.path.split('/hub/').last).toSet();
+    expect(kotvasFiles, isNotEmpty);
+    await smiths.localHub.stop();
+
+    // The Smiths leave this device: their hub's data goes too; the Kotvases' stays.
+    await DenNetwork.forget(smith);
+    expect(Directory('${support.path}/hub-slotslotslotslot').existsSync(), isFalse);
+    expect(Directory('${support.path}/hub').existsSync(), isTrue);
   });
 }

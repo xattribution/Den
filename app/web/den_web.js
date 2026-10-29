@@ -222,10 +222,33 @@
       registration = r;
       return r.pushManager.getSubscription();
     }).then(function (s) {
+      current = null;
       if (!s) return null;
       if (key && !sameKey(s, key)) return s.unsubscribe().then(function () { return null; });
+      current = s;
       return JSON.stringify(s.toJSON());
     }).catch(function () { return null; });
+  }
+
+  // The subscription last looked at, so subscribing for another key can replace it.
+  var current = null;
+
+  /**
+   * This browser's push subscription as JSON, and whether it was made for [key]:
+   * {"subscription": {...} | null, "same": bool}. Unlike pushSubscription, one made for another
+   * key is kept (a family's own, while Den holds several families that share the host's key)
+   * until subscribe replaces it.
+   */
+  function pushState(key) {
+    function answer(o) { return JSON.stringify(o); }
+    if (!pushCapable()) return Promise.resolve(answer({ subscription: null, same: false }));
+    return nav.serviceWorker.ready.then(function (r) {
+      registration = r;
+      return r.pushManager.getSubscription();
+    }).then(function (s) {
+      current = s || null;
+      return answer({ subscription: s ? s.toJSON() : null, same: !!s && sameKey(s, key) });
+    }).catch(function () { return answer({ subscription: null, same: false }); });
   }
 
   /**
@@ -238,8 +261,14 @@
     if (!pushCapable()) return Promise.resolve(answer({ error: 'unsupported' }));
     if (!registration) return Promise.resolve(answer({ error: 'not-ready' }));
     var options = { userVisibleOnly: true, applicationServerKey: bytes(key) };
-    return registration.pushManager.subscribe(options).then(
-      function (s) { return answer({ subscription: s.toJSON() }); },
+    // A browser holds one subscription: one made for another key goes first.
+    var old = current && !sameKey(current, key) ? current : null;
+    current = null;
+    var made = old
+      ? old.unsubscribe().catch(function () {}).then(function () { return registration.pushManager.subscribe(options); })
+      : registration.pushManager.subscribe(options);
+    return made.then(
+      function (s) { current = s; return answer({ subscription: s.toJSON() }); },
       function (e) { return answer({ error: (e && e.name) || 'failed' }); }
     );
   }
@@ -248,8 +277,25 @@
     if (!pushCapable()) return Promise.resolve(false);
     return nav.serviceWorker.ready
       .then(function (r) { return r.pushManager.getSubscription(); })
-      .then(function (s) { return s ? s.unsubscribe() : false; })
+      .then(function (s) { current = null; return s ? s.unsubscribe() : false; })
       .catch(function () { return false; });
+  }
+
+  // ------------------------------------------------------------------ families
+
+  /**
+   * Tells the service worker which families this Den holds, as JSON {"<family id>": "<name>"}:
+   * a push names its family by id, and the worker titles it with the name kept here, and shows
+   * nothing of a push from a family not in it.
+   */
+  function setFamilies(json) {
+    if (!('serviceWorker' in nav) || typeof caches === 'undefined') return Promise.resolve(false);
+    return nav.serviceWorker.ready.then(function (r) {
+      return caches.open('den-families').then(function (cache) {
+        var body = new Response(json, { headers: { 'content-type': 'application/json' } });
+        return cache.put(new URL('families.json', r.scope).href, body);
+      });
+    }).then(function () { return true; }, function () { return false; });
   }
 
   // ------------------------------------------------------------------ sharing
@@ -630,8 +676,10 @@
     holdEngine: holdEngine,
     waitForEngine: waitForEngine,
     pushSubscription: pushSubscription,
+    pushState: pushState,
     subscribe: subscribe,
     unsubscribe: unsubscribe,
+    setFamilies: setFamilies,
     share: share,
     copy: copy,
     paste: paste,

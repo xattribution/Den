@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../../../app/household.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/capabilities.dart';
@@ -24,14 +25,26 @@ import 'home_screen_steps.dart';
 ///
 /// In Safari on an iPhone or iPad, Den goes on the Home Screen first: the family will live in
 /// the Home Screen app, which keeps its own storage and picks the invite up by itself.
+///
+/// With [another] it joins another family beside the one this device is in (`/families/join`):
+/// its title says so, and getting back in on a new phone isn't offered there. Nothing starts
+/// before the person saw whose invite it is and on which server ("Join the Smith family on
+/// den.example.com"), whether the invite came as a link, as typed words or as a QR code, with a
+/// warning when a family of the same name is on this device already.
 class JoinScreen extends StatefulWidget {
-  const JoinScreen({super.key, this.scan, this.code, this.browser, this.web});
+  const JoinScreen({super.key, this.scan, this.code, this.hub, this.another = false, this.browser, this.web});
 
   /// Forces the camera on or off, for tests; by default phones and tablets scan.
   final bool? scan;
 
   /// The invite's words, from its link.
   final String? code;
+
+  /// The hub's address, when the invite's link carried it.
+  final String? hub;
+
+  /// Joining another family beside the one this device is in.
+  final bool another;
 
   /// Joins as a browser served by the hub, for tests; by default only on the web.
   final bool? browser;
@@ -45,7 +58,7 @@ class JoinScreen extends StatefulWidget {
 
 class _JoinScreenState extends State<JoinScreen> {
   late final _words = TextEditingController(text: widget.code);
-  final _hub = TextEditingController();
+  late final _hub = TextEditingController(text: widget.hub);
   DeviceKind? _kind;
   late bool _scanning = widget.code == null && (widget.scan ?? Capabilities.scanQr);
   bool _busy = false;
@@ -54,6 +67,13 @@ class _JoinScreenState extends State<JoinScreen> {
 
   /// What the link's words open, once the hub said; null while asking, or typing words.
   InvitePeek? _peek;
+
+  /// What [_peek] answers: the words and server it was asked for ([_key]), or the QR code. With
+  /// [JoinScreen.another] a join goes ahead only for what the person saw.
+  String? _peeked;
+
+  /// A QR invite scanned while joining another family, waiting for the person to confirm it.
+  String? _qr;
 
 
   /// Typing words instead of joining with the link's.
@@ -71,7 +91,7 @@ class _JoinScreenState extends State<JoinScreen> {
     final pairing = Pairing.of(context);
     if (pairing == _pairing) return;
     _pairing = pairing;
-    final steps = _browser && _web.needsHomeScreen;
+    final steps = _browser && _web.needsHomeScreen && !widget.another;
     if (!_typing && !steps) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _look();
@@ -102,12 +122,29 @@ class _JoinScreenState extends State<JoinScreen> {
   /// This device's name, from whom the invite is for ("Sam's iPhone").
   String _name(String? forName) => suggestDeviceName(forName ?? '', _kind ?? DeviceKind.phone);
 
+  /// The invite's four words and server, as typed or pasted; null without four words.
+  ({String words, String? hub})? _typed() {
+    final typed = inviteFrom(_words.text);
+    if (typed.words.length != 4) return null;
+    final hub = _hub.text.trim();
+    return (words: typed.words.join(' '), hub: typed.hub ?? (hub.isEmpty ? null : hub));
+  }
+
+  static String _key(({String words, String? hub}) typed) => '${typed.words}|${typed.hub ?? ''}';
+
   /// Asks the hub what the link's words open, for "Join the Riveras as Leo".
   Future<void> _look() async {
     setState(() => _error = null);
+    final typed = _typed();
     try {
-      final peek = await _pairing!.peekInvite(_words.text);
-      if (mounted) setState(() => _peek = peek);
+      final hub = _hub.text.trim();
+      final peek = await _pairing!.peekInvite(typed?.words ?? _words.text, hubUrl: typed?.hub ?? (hub.isEmpty ? null : hub));
+      if (mounted) {
+        setState(() {
+          _peek = peek;
+          _peeked = typed == null ? null : _key(typed);
+        });
+      }
     } on PairingException catch (e) {
       if (mounted) {
         setState(() {
@@ -160,8 +197,51 @@ class _JoinScreenState extends State<JoinScreen> {
       setState(() => _error = "That code isn't a Den invite. Ask a parent for an invite.");
       return;
     }
+    if (widget.another) {
+      // Another family: say which server it is on before anything starts.
+      setState(() {
+        _scanning = false;
+        _typing = false;
+        _peek = null;
+        _peeked = null;
+        _qr = raw;
+        _error = null;
+      });
+      _pairing!.peekQr(raw).then((peek) {
+        if (mounted && _qr == raw) {
+          setState(() {
+            _peek = peek;
+            _peeked = raw;
+          });
+        }
+      }, onError: (Object e) {
+        if (!mounted || _qr != raw) return;
+        setState(() {
+          _qr = null;
+          _typing = true;
+          _error = e is PairingException ? e.message : "That isn't a Den invite, or it has expired. Ask for a new code.";
+        });
+      });
+      return;
+    }
     _join((p) => p.joinWithQr(raw, deviceName: _name(null), kind: _kind!));
   }
+
+  /// Joins with what the confirmation shows: the QR code scanned, or the words.
+  void _confirmed() {
+    final qr = _qr;
+    if (qr == null) return _sendWords();
+    if (_peeked != qr) return;
+    _join((p) => p.joinWithQr(qr, deviceName: _name(null), kind: _kind!));
+  }
+
+  /// Back to typing words, forgetting what was confirmed.
+  void _useOtherWords() => setState(() {
+        _typing = true;
+        _qr = null;
+        _peek = null;
+        _peeked = null;
+      });
 
   /// Fills the words from what's on the clipboard: the words alone, the link, or the whole
   /// invite message. Called straight from the tap, so a browser lets it read the clipboard.
@@ -190,16 +270,27 @@ class _JoinScreenState extends State<JoinScreen> {
   }
 
   void _sendWords() {
-    final typed = inviteFrom(_words.text);
-    if (typed.words.length != 4) {
+    final typed = _typed();
+    if (typed == null) {
       setState(() => _error = 'Type all four words from the invite.');
       return;
     }
-    final words = typed.words.join(' ');
-    final hub = typed.hub ?? (_hub.text.trim().isEmpty ? null : _hub.text.trim());
+    if (widget.another && _peeked != _key(typed)) {
+      // Another family: whose invite this is, and on which server, before anything starts.
+      setState(() {
+        _typing = false;
+        _qr = null;
+        _peek = null;
+        _peeked = null;
+      });
+      _look();
+      return;
+    }
+    final words = typed.words;
+    final hub = typed.hub;
     final kind = _kind!;
     _join((p) async {
-      if (_browser || hub != null) {
+      if (_browser || hub != null || widget.another) {
         try {
           return await p.joinWithInvite(words, hubUrl: hub, deviceName: _name, kind: kind);
         } on PairingException catch (e) {
@@ -214,10 +305,10 @@ class _JoinScreenState extends State<JoinScreen> {
   @override
   Widget build(BuildContext context) {
     final web = _web;
-    if (_browser && web.needsHomeScreen && !_inSafari) {
+    if (_browser && web.needsHomeScreen && !_inSafari && !widget.another) {
       final link = widget.code == null ? null : DenLink.parse(widget.code!);
       return DenPage(
-        title: 'Join your family',
+        title: _title,
         children: [
           HomeScreenSteps(ipad: web.ipad, link: link?.words == null ? null : DenLink(kind: DenLinkKind.family, words: link!.words)),
           Align(
@@ -242,8 +333,10 @@ class _JoinScreenState extends State<JoinScreen> {
     final c = context.colors;
     final t = context.text;
     final name = peek?.memberName;
-    final family = peek?.familyName ?? 'your family';
+    final family = peek?.familyName ?? (widget.another ? 'A family' : 'your family');
     final device = _deviceWord;
+    final server = widget.another ? peek?.server : null;
+    final twin = widget.another ? _sameName(context, peek?.familyName) : null;
     final color = PersonColor.forMarker(peek?.marker ?? Marker.lavender).color;
     final picture = peek?.picture;
     final face = name == null
@@ -252,9 +345,9 @@ class _JoinScreenState extends State<JoinScreen> {
             ? DenAvatar.picture(picture, color: color, size: 64, semanticLabel: name)
             : DenAvatar.initial(name, color: color, size: 64, semanticLabel: name);
     return DenPage(
-      title: 'Join your family',
+      title: _title,
       bottom: FilledButton(
-        onPressed: _busy || peek == null ? null : _sendWords,
+        onPressed: _busy || peek == null ? null : _confirmed,
         style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
         child: Text(_busy ? 'Joining' : name == null ? 'Join' : 'Join as $name'),
       ),
@@ -275,6 +368,7 @@ class _JoinScreenState extends State<JoinScreen> {
                       children: [
                         Text(name ?? family, style: t.section(c.ink)),
                         if (name != null) Text(family, style: t.meta(c.ink2)),
+                        if (server != null) Text('on $server', style: t.meta(c.ink2)),
                       ],
                     ),
                   ),
@@ -288,14 +382,20 @@ class _JoinScreenState extends State<JoinScreen> {
                 : (peek.letsIn ? "This $device becomes $name's, as soon as you tap Join." : "This $device becomes $name's once a parent lets it in."),
             style: t.body(c.ink2),
           ),
+          if (twin != null)
+            NoticeLine(
+              icon: PhosphorIconsRegular.warning,
+              message: 'This device is in a family called $twin already. Join only if this invite came from the people '
+                  'you expect${server == null ? '' : ', on $server'}.',
+            ),
         ],
-        if (_error != null) ErrorState(message: _error!, actionLabel: 'Try again', onAction: _sendWords),
-        if (name != null)
+        if (_error != null) ErrorState(message: _error!, actionLabel: 'Try again', onAction: _confirmed),
+        if (name != null || widget.another)
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
-              onPressed: _busy ? null : () => setState(() => _typing = true),
-              child: Text("Not $name? Use other words"),
+              onPressed: _busy ? null : _useOtherWords,
+              child: Text(name == null ? 'Use other words' : "Not $name? Use other words"),
             ),
           ),
       ],
@@ -308,13 +408,13 @@ class _JoinScreenState extends State<JoinScreen> {
     final width = MediaQuery.sizeOf(context).width;
     final camera = (width.clamp(0.0, 560.0) - 64).clamp(200.0, 420.0);
     return DenPage(
-      title: 'Join your family',
+      title: _title,
       bottom: _scanning
           ? null
           : FilledButton(
               onPressed: _busy ? null : _sendWords,
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-              child: Text(_busy ? 'Joining' : 'Join the family'),
+              child: Text(_busy ? 'Joining' : widget.another ? 'Join' : 'Join the family'),
             ),
       children: [
         if (_scanning) ...[
@@ -404,12 +504,27 @@ class _JoinScreenState extends State<JoinScreen> {
               ),
             ),
         ],
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(onPressed: () => context.push('/welcome/recover'), child: const Text('I lost my phone')),
-        ),
+        if (!widget.another)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(onPressed: () => context.push('/welcome/recover'), child: const Text('I lost my phone')),
+          ),
       ],
     );
+  }
+
+  String get _title => widget.another ? 'Join another family' : 'Join your family';
+
+  /// The name of a family on this device called [name] too, if any.
+  static String? _sameName(BuildContext context, String? name) {
+    final want = name?.trim().toLowerCase();
+    if (want == null || want.isEmpty) return null;
+    final home = Household.maybeOf(context);
+    if (home == null) return null;
+    for (final log in home.families) {
+      if (log.name.trim().toLowerCase() == want) return log.name;
+    }
+    return null;
   }
 }
 

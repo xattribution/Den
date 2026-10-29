@@ -9,13 +9,18 @@ import 'package:web/web.dart' as web;
 /// Home Screen with the family already there and catches up with the hub after the first frame.
 /// Where IndexedDB is unavailable (some private windows), the family lives in memory for the
 /// visit and comes back from the hub; the device then joins again with fresh keys (see Boot).
-Future<DenStorage> openDeviceStorage() async {
+/// The first family's database is `den`; each other family's is `den-<id>` ([name]).
+Future<DenStorage> openDeviceStorage({String name = 'den'}) async {
   try {
-    return await IndexedDbStorage.open();
+    return await IndexedDbStorage.open(name: name);
   } on Object {
     return MemoryStorage();
   }
 }
+
+/// Deletes the database [name]: a family this device left. A connection still open to it (this
+/// page's own engine) lets go when asked ([IndexedDbStorage.open] closes on `versionchange`).
+Future<void> deleteDeviceStorage(String name) => IndexedDbStorage.delete(name);
 
 /// [DenStorage] on IndexedDB: database `den`, object store `changes` (each change's JSON keyed
 /// by its id, so storing one twice keeps one) and `meta` (one JSON document under `meta`, and the
@@ -59,6 +64,20 @@ class IndexedDbStorage implements DenStorage, SnapshotStorage {
 
   /// Closes the database, for tests that open it again.
   void close() => _db.close();
+
+  /// Deletes the database [name], waiting until it is gone (or the browser refused).
+  static Future<void> delete(String name) {
+    final done = Completer<void>();
+    final request = web.window.indexedDB.deleteDatabase(name);
+    request.onsuccess = ((web.Event _) {
+      if (!done.isCompleted) done.complete();
+    }).toJS;
+    request.onerror = ((web.Event event) {
+      event.preventDefault();
+      if (!done.isCompleted) done.completeError(StateError(request.error?.message ?? "IndexedDB couldn't delete $name"));
+    }).toJS;
+    return done.future.timeout(const Duration(seconds: 10), onTimeout: () {});
+  }
 
   @override
   Future<List<Change>> loadChanges() async {

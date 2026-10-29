@@ -61,6 +61,7 @@ class HubConfig {
     this.accessTokenLifetime = const Duration(hours: 1),
     this.refreshTokenLifetime = const Duration(days: 90),
     this.onSetupCode,
+    this.hostPush = false,
   });
 
   /// TCP port for HTTP, WebSocket sync and MCP; 0 picks a free one.
@@ -164,6 +165,14 @@ class HubConfig {
 
   /// Called with each new setup code while the hub has no family (an app showing it on screen).
   final void Function(String code)? onSetupCode;
+
+  /// Whether this family, on a Den host, opts into the host's own Web Push key
+  /// (`DEN_HOST_PUSH`): it hands it out beside its own, so one web app at one address holding
+  /// several families on the host makes one subscription with it and registers that with each.
+  /// The family then signs the subscriptions made with the host's key with that key, and its
+  /// own subscriptions with its own key; never another family's. Off (the default), the family
+  /// hands out and signs with its own key only, as a hub always has.
+  final bool hostPush;
 
   /// The bind address as an [InternetAddress] or string for `HttpServer.bind`.
   Object get bindAddress => host ?? InternetAddress.anyIPv4;

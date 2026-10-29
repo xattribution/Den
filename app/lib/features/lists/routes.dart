@@ -3,11 +3,11 @@ import 'package:go_router/go_router.dart';
 import 'screens/grocery_add.dart';
 import 'screens/list_detail.dart';
 import 'screens/list_editor.dart';
-import 'screens/lists_index.dart';
+import 'screens/all_lists.dart';
 
 /// The Lists tab: `/lists`.
 StatefulShellBranch listsBranch() => StatefulShellBranch(
-      routes: [GoRoute(path: '/lists', builder: (_, _) => const ListsIndex())],
+      routes: [GoRoute(path: '/lists', builder: (_, _) => const ListsTab())],
     );
 
 /// A list: `/lists/new`, `/lists/groceries/add`, `/lists/:id`, `/lists/:id/edit`. Fixed paths

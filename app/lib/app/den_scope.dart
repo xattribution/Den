@@ -49,8 +49,11 @@ class _DenScopeState extends State<DenScope> {
   void didUpdateWidget(DenScope old) {
     super.didUpdateWidget(old);
     if (old.state != widget.state) {
+      // Another family's state (the device switched families): everything below reads it anew.
       old.state.removeListener(_changed);
       widget.state.addListener(_changed);
+      _version++;
+      _touched.add(Changes.all);
     }
   }
 

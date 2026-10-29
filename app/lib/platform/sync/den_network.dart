@@ -10,11 +10,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'local_hub.dart';
 import 'local_stub.dart' if (dart.library.io) 'local_io.dart' as local;
 import '../capabilities.dart';
+import '../storage/memberships.dart';
 
 /// This device's link to the rest of the family: one [SyncNode] for the engine, and a
 /// [SyncClient] that keeps it live with the hub over the home network or, away from home,
 /// through the relay. Without a hub, devices still pair and sync directly. On desktops and
 /// Android a parent can make this device the hub itself ([keepOnline]).
+///
+/// A device in several families has one of these per family ([log]), each with its own node,
+/// connection and saved hubs.
 class DenNetwork extends ChangeNotifier {
   DenNetwork(
     this.den, {
@@ -24,8 +28,9 @@ class DenNetwork extends ChangeNotifier {
     String? joinHub,
     String? turnedAway,
     Map<String, HubSighting> seen = const {},
+    this.log,
   })  : node = SyncNode(den),
-        localHub = localHub ?? LocalHub.create(),
+        localHub = localHub ?? LocalHub.create(name: log?.hubData ?? Membership.primaryHub),
         _hubs = [...hubs],
         _joinHub = joinHub,
         _turnedAway = turnedAway,
@@ -39,21 +44,44 @@ class DenNetwork extends ChangeNotifier {
   static const _turnedAwayKey = 'den.turnedAway';
   static const _seenKey = 'den.hubsSeen';
 
-  /// Restores the saved hub addresses and relay for this device.
-  static Future<DenNetwork> load(Den den) async {
+  /// Restores the saved hub addresses and relay for this device, for the family [log] (the
+  /// first one when null).
+  static Future<DenNetwork> load(Den den, {Membership? log}) async {
     final prefs = await SharedPreferences.getInstance();
-    final relay = prefs.getString(_relayKey);
+    String key(String k) => log?.pref(k) ?? k;
+    final relay = prefs.getString(key(_relayKey));
     return DenNetwork(
       den,
-      hubs: [...?prefs.getStringList(_hubsKey)?.map(Uri.tryParse).whereType<Uri>()],
+      hubs: [...?prefs.getStringList(key(_hubsKey))?.map(Uri.tryParse).whereType<Uri>()],
       relay: relay == null ? null : Uri.tryParse(relay),
-      joinHub: prefs.getString(_joinHubKey),
-      turnedAway: prefs.getString(_turnedAwayKey),
-      seen: HubSighting.decode(prefs.getString(_seenKey)),
+      joinHub: prefs.getString(key(_joinHubKey)),
+      turnedAway: prefs.getString(key(_turnedAwayKey)),
+      seen: HubSighting.decode(prefs.getString(key(_seenKey))),
+      log: log,
     );
   }
 
+  /// Deletes the settings this device kept for the family [log] (one it left), and the data of
+  /// the hub this app ran for it.
+  static Future<void> forget(Membership log) async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final k in const [_hubsKey, _relayKey, _joinHubKey, _turnedAwayKey, _seenKey]) {
+      await prefs.remove(log.pref(k));
+    }
+    try {
+      await LocalHub.forget(log.hubData);
+    } on Object {
+      // Nothing there, or not this platform.
+    }
+  }
+
   final Den den;
+
+  /// The family whose settings these are; null for a device's first family as Den always kept
+  /// them.
+  final Membership? log;
+
+  String _key(String k) => log?.pref(k) ?? k;
   final SyncNode node;
 
   /// The hub this app runs in-process when this device is the family's hub.
@@ -380,7 +408,7 @@ class DenNetwork extends ChangeNotifier {
   Future<void> _saveSeen() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_seenKey, HubSighting.encode(_seen));
+      await prefs.setString(_key(_seenKey), HubSighting.encode(_seen));
     } on Object {
       // Only a preference for which hub to try first.
     }
@@ -393,23 +421,23 @@ class DenNetwork extends ChangeNotifier {
 
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_hubsKey, [for (final h in _hubs) h.toString()]);
+    await prefs.setStringList(_key(_hubsKey), [for (final h in _hubs) h.toString()]);
     final pin = _joinHub;
     if (pin == null) {
-      await prefs.remove(_joinHubKey);
+      await prefs.remove(_key(_joinHubKey));
     } else {
-      await prefs.setString(_joinHubKey, pin);
+      await prefs.setString(_key(_joinHubKey), pin);
     }
     final away = _turnedAway;
     if (away == null) {
-      await prefs.remove(_turnedAwayKey);
+      await prefs.remove(_key(_turnedAwayKey));
     } else {
-      await prefs.setString(_turnedAwayKey, away);
+      await prefs.setString(_key(_turnedAwayKey), away);
     }
     if (relay == null) {
-      await prefs.remove(_relayKey);
+      await prefs.remove(_key(_relayKey));
     } else {
-      await prefs.setString(_relayKey, relay.toString());
+      await prefs.setString(_key(_relayKey), relay.toString());
     }
   }
 

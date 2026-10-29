@@ -12,7 +12,8 @@ GoRoute familyRoute({List<RouteBase> addDevice = const []}) => GoRoute(
       routes: [
         GoRoute(
           path: 'devices/add',
-          redirect: (_, s) => s.matchedLocation == '/family/devices/add' ? '/settings/advanced/hub' : null,
+          // The page itself (not one under it), here or under a family (`/l/<log>/family/...`).
+          redirect: (_, s) => s.matchedLocation.endsWith('/family/devices/add') ? '/settings/advanced/hub' : null,
           routes: addDevice,
         ),
         GoRoute(path: 'member/:id', builder: (_, s) => FamilyScreen(selected: s.pathParameters['id'])),

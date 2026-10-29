@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/app_state.dart';
+import '../../../app/family_label.dart';
 import '../../../design/forms/forms.dart' show AnyoneMark;
 import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
@@ -104,6 +105,8 @@ class _ChoresBoardState extends State<ChoresBoard> {
     final header = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // In "All my families", whose chores these are.
+        const FamilyLabel(note: 'Chores and stars stay with each family'),
         PageHeader(
           overline: f.long(day),
           title: day == today || relative == f.short(day) ? 'Chores' : relative,

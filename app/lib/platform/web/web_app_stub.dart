@@ -9,9 +9,13 @@ Future<void> waitForEngine() async {}
 
 Future<String?> pushSubscription(String key) async => null;
 
+Future<String?> pushState(String key) async => null;
+
 Future<String?> subscribe(String key) async => null;
 
 Future<void> unsubscribe() async {}
+
+Future<void> setFamilies(String json) async {}
 
 Future<String> share(String text) async => 'failed';
 

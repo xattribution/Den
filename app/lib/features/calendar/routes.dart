@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../design/layout.dart';
 import '../../design/sheet_page.dart';
+import 'screens/all_calendar.dart';
 import 'screens/calendar_screen.dart';
 import 'screens/event_detail.dart';
 import 'screens/event_editor.dart';
@@ -19,8 +20,7 @@ StatefulShellBranch calendarBranch() => StatefulShellBranch(
   routes: [
     GoRoute(
       path: '/calendar',
-      builder: (_, s) =>
-          CalendarScreen(view: _view(s.uri.queryParameters['view']), date: s.uri.queryParameters['date']),
+      builder: (_, s) => CalendarTab(view: _view(s.uri.queryParameters['view']), date: s.uri.queryParameters['date']),
       routes: [
         GoRoute(
           path: ':view/:date',

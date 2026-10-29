@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http_client;
 import 'package:shelf/shelf.dart';
 
 import 'edge.dart';
+import 'push/web_push_crypto.dart';
 import 'setup.dart' show restrictToOwner;
 
 /// The directory under a host's data directory that holds each log besides the first:
@@ -15,9 +16,15 @@ import 'setup.dart' show restrictToOwner;
 const String hostLogsDir = 'logs';
 
 /// The directory under a host's data directory with the host's own state: `host.json` (the logs
-/// it serves and their addresses) and `cli-secret`. No family's keys are kept there: each
-/// family's Web Push key is in its own data, and goes with it.
+/// it serves and their addresses), `cli-secret`, and `push.json`, the host's own push key
+/// ([hostPushFile]). No family's keys are kept there: each family's Web Push key is in its own
+/// data, and goes with it.
 const String hostStateDir = 'host';
+
+/// The file in [hostStateDir] with the host's own Web Push key: the one key families on the host
+/// that opt in ([HubConfig.hostPush]) hand out besides their own, so one web app holding several
+/// of them gets all their pushes through one subscription. It is no family's key.
+const String hostPushFile = 'push.json';
 
 /// The file in [hostStateDir] holding the secret `den_hub add-family`, `adopt` and
 /// `remove-family` show the running host, as `den_hub recover` shows a hub its own. Made again
@@ -139,6 +146,75 @@ class HostState {
   Uri? _primaryUrl;
   bool _several = false;
 
+  VapidKeys? _pushKey;
+
+  /// Reads the host's push key ([hostPushFile]) as the host starts, when it has one. A file that
+  /// can't be read stops the host ([StateError]) rather than a new key quietly taking its place:
+  /// every browser that turned reminders on with the old one would stop getting them.
+  void loadPushKey() {
+    final dir = dataDir;
+    if (dir == null || _pushKey != null) return;
+    final file = File(_path(dir, hostPushFile));
+    if (file.existsSync()) _pushKey = _readPushKey(file);
+  }
+
+  /// The host's own Web Push key ([hostPushFile]), made on first use; in memory without a data
+  /// directory. It is written owner-only from the start (`host/` 0700, the file 0600 before the
+  /// key goes in, then renamed into place), and a host that can't make it so ([FileSystemException])
+  /// or can't read the one it has ([StateError]) says so instead of serving with another.
+  VapidKeys pushKey() {
+    final have = _pushKey;
+    if (have != null) return have;
+    final dir = dataDir;
+    if (dir == null) return _pushKey = VapidKeys.generate();
+    final file = File(_path(dir, hostPushFile));
+    if (file.existsSync()) return _pushKey = _readPushKey(file);
+    final made = VapidKeys.generate();
+    ownerOnlyDir(file.parent);
+    final temp = File('${file.path}.tmp');
+    if (temp.existsSync()) temp.deleteSync();
+    temp.createSync(exclusive: true);
+    ownerOnlyFile(temp.path);
+    temp.writeAsStringSync(jsonEncode({'v': 1, 'vapid': b64url(made.privateKey)}), flush: true);
+    temp.renameSync(file.path);
+    return _pushKey = made;
+  }
+
+  static VapidKeys _readPushKey(File file) {
+    Object? problem;
+    try {
+      final json = jsonDecode(file.readAsStringSync());
+      if (json is Map && json['vapid'] is String) return VapidKeys.fromPrivate(unb64url(json['vapid'] as String));
+    } on Object catch (e) {
+      problem = e;
+    }
+    throw StateError(
+      "The host's push key (${file.path}) can't be read${problem == null ? '' : ' ($problem)'}. Restore it from a backup. "
+      'To make a new one instead, move the file away: every browser that turned reminders on with it then turns them on again.',
+    );
+  }
+
+  /// Makes [dir] (and what leads to it) and leaves it to its owner alone: `chmod 700`, or on
+  /// Windows the owner's access only (best effort there). Throws when `chmod` fails.
+  static void ownerOnlyDir(Directory dir) {
+    dir.createSync(recursive: true);
+    _chmod(dir.path, '700');
+  }
+
+  /// Leaves the file at [path] to its owner alone: `chmod 600`; on Windows, best effort.
+  static void ownerOnlyFile(String path) => _chmod(path, '600');
+
+  static void _chmod(String path, String mode) {
+    if (Platform.isWindows) {
+      restrictToOwner(path);
+      return;
+    }
+    final done = Process.runSync('chmod', [mode, path]);
+    if (done.exitCode != 0) {
+      throw FileSystemException("Couldn't leave it to its owner alone (chmod $mode: ${'${done.stderr}'.trim()})", path);
+    }
+  }
+
   /// Deletes `vapid.json`, which earlier builds of the host kept every family's Web Push key in
   /// (each family's own data has its key). Best effort.
   void dropKeyring() {
@@ -245,12 +321,7 @@ class HostState {
   void save() {
     final file = _registry;
     if (file == null) return;
-    file.parent.createSync(recursive: true);
-    try {
-      if (!Platform.isWindows) Process.runSync('chmod', ['700', file.parent.path]);
-    } on Object {
-      // Best effort.
-    }
+    ownerOnlyDir(file.parent);
     final temp = File('${file.path}.tmp');
     temp.writeAsStringSync(
       const JsonEncoder.withIndent('  ').convert({
@@ -329,4 +400,8 @@ abstract interface class HostLink {
 
   /// Outgoing HTTP to addresses callers gave a hub, through the host's NetGuard.
   http_client.Client get fetch;
+
+  /// The host's own Web Push key ([hostPushFile]), which a family hands out and signs with only
+  /// when it opted in ([HubConfig.hostPush]), and only for subscriptions made with it.
+  VapidKeys get pushKey;
 }

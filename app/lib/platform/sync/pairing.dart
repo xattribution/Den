@@ -99,9 +99,12 @@ class InviteMessage {
 /// What an invite's words open, before anything is written: the family, whose device this
 /// becomes, and whether that happens at once ([letsIn]) or after a parent's tap.
 class InvitePeek {
-  const InvitePeek({this.familyName, this.memberName, this.marker, this.picture, this.letsIn = false});
+  const InvitePeek({this.familyName, this.memberName, this.marker, this.picture, this.letsIn = false, this.server});
 
   final String? familyName;
+
+  /// The server that answered (its host name), for "Join the Smith family on den.example.com".
+  final String? server;
 
   /// Whose device this becomes; null for an invite that names nobody.
   final String? memberName;
@@ -245,6 +248,10 @@ abstract class PairingService {
   /// What [words] open at the hub at [hubUrl] (or the one that served this page), before
   /// anything is written: for "Join the Riveras as Leo?".
   Future<InvitePeek> peekInvite(String words, {String? hubUrl}) async => throw const PairingException(LocalOnlyPairing.message);
+
+  /// What a QR invite ([joinWithQr]) is to, before anything is written, for a join that is
+  /// confirmed first (another family beside this device's); by default, nothing to show.
+  Future<InvitePeek> peekQr(String uri) async => const InvitePeek();
 
   /// Joins with an invite's four [words] through the hub at [hubUrl], or the hub that served
   /// this page. [deviceName] names this device from the name of the person the invite is for

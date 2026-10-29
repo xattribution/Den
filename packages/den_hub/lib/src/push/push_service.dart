@@ -27,6 +27,13 @@ import 'web_push_crypto.dart';
 ///   people it is for, encrypted for each browser (RFC 8291) so the push service sees nothing.
 /// - Nudges: a device asking to join (to parents), a reward asked for (to whoever decides
 ///   rewards), and a chore given to someone for today or tomorrow (to them: their turn).
+/// - Several families in one web app (a Den host, [HubConfig.hostPush]): a browser holds one
+///   subscription, bound to one key. A family that opted in also hands out the host's own key
+///   ([HostLink.pushKey]); the app subscribes once with it and registers that subscription with
+///   each family it holds. The family records which key each subscription was made with and
+///   signs it with that key only: the host's for those made with the host's, its own for the
+///   rest, never another family's. Its pushes to a host-key subscription name the family
+///   (`family`, `label`), so the app shows whose it is and opens it there.
 class WebPushService implements HubService, ReminderSink {
   /// Creates the service for [hub], checking device requests with [auth].
   WebPushService(this.hub, this.deviceAuth);
@@ -92,13 +99,42 @@ class WebPushService implements HubService, ReminderSink {
   }
 
   /// The key a browser subscribes with: this family's own, whatever address it asks at, so no
-  /// family's subscriptions are ever signed with another family's key. (One app holding several
-  /// families at one origin will need one key there; that is for the app to bring.)
+  /// family's subscriptions are ever signed with another family's key.
   VapidKeys _keyFor(Request request) => keys;
 
-  /// The key every push of this family's is signed with: its own, the key every subscription it
-  /// holds was made with (an adopted family's included: its key came with it).
-  VapidKeys _signerOf(Map<Object?, Object?> sub) => keys;
+  /// The host's own key, when this family opted into it on a Den host ([HubConfig.hostPush]);
+  /// null otherwise.
+  VapidKeys? get hostKey {
+    final host = hub.host;
+    return hub.config.hostPush && host != null ? host.pushKey : null;
+  }
+
+  /// The key a subscription is signed with: the one it was made with. The host's key only for a
+  /// subscription made with it while this family opts in; this family's own for the rest (one
+  /// from before keys were recorded, or an adopted family's, was made with its own). Null for a
+  /// subscription made with the host's key after the family stopped opting in: it is signed with
+  /// no key, never with the family's own in its place.
+  VapidKeys? _signerOf(Map<Object?, Object?> sub) {
+    final made = sub['vapid'];
+    if (made is String && made.startsWith(_hostPrefix)) {
+      final host = hostKey;
+      return host != null && made == '$_hostPrefix${b64url(host.publicKey)}' ? host : null;
+    }
+    return keys;
+  }
+
+  /// How a subscription made with the host's key is recorded: `host:<public key>`, which no
+  /// family's own key ever reads as.
+  static const String _hostPrefix = 'host:';
+
+  /// Whether [sub] was made with the host's key.
+  static bool _shared(Map<Object?, Object?> sub) => (sub['vapid'] as String? ?? '').startsWith(_hostPrefix);
+
+  /// Whether [deviceId] has a subscription this family can sign.
+  bool _subscribed(String deviceId) {
+    final sub = _devices[deviceId];
+    return sub is Map && _signerOf(sub) != null;
+  }
 
   Future<void> _save() async {
     await hub.state.save(_doc);
@@ -117,8 +153,18 @@ class WebPushService implements HubService, ReminderSink {
 
   Future<Device> _check(Request request) async => (await deviceAuth.check(request)).device!;
 
-  Response _answer(Request request, String deviceId) =>
-      jsonResponse({'key': b64url(_keyFor(request).publicKey), 'subscribed': _devices.containsKey(deviceId)});
+  Response _answer(Request request, String deviceId) {
+    final host = hostKey;
+    final sub = _devices[deviceId];
+    final subscribed = _subscribed(deviceId);
+    return jsonResponse({
+      'key': b64url(_keyFor(request).publicKey),
+      'subscribed': subscribed,
+      // The key families on this host share for one web app holding several of them.
+      if (host != null) 'host_key': b64url(host.publicKey),
+      if (subscribed && sub is Map) 'with': _shared(sub) ? 'host' : 'family',
+    });
+  }
 
   /// `GET /api/v1/push`: the hub's public key, and whether this device gets reminders.
   Future<Response> status(Request request) async => _answer(request, (await _check(request)).id);
@@ -151,6 +197,23 @@ class WebPushService implements HubService, ReminderSink {
     if (p256dh is! String || auth is! String || !_validKeys(p256dh, auth)) {
       throw ApiError.invalid("That subscription's keys aren't a browser's.", field: 'keys');
     }
+    // The key the browser subscribed with: this family's own (named or not, as the app always
+    // sent it), or the host's when the family opts into it. Any other key, another family's
+    // included, is refused: this family signs with no one else's.
+    final own = b64url(_keyFor(request).publicKey);
+    final made = b.string('key', max: 200);
+    final host = hostKey;
+    final String vapid;
+    if (made == null || made == own) {
+      vapid = own;
+    } else if (host != null && made == b64url(host.publicKey)) {
+      vapid = '$_hostPrefix$made';
+    } else {
+      throw ApiError.invalid(
+        "That subscription was made for a key this family doesn't send with. Turn reminders off and on again.",
+        field: 'key',
+      );
+    }
     final base = hub.base(request);
     _devices[device.id] = {
       'endpoint': endpoint.toString(),
@@ -158,8 +221,8 @@ class WebPushService implements HubService, ReminderSink {
       'auth': auth,
       'contact': base.scheme == 'https' ? base.toString() : null,
       'since': hub.now(),
-      // The key the browser was handed at this address, which it subscribed with.
-      'vapid': b64url(_keyFor(request).publicKey),
+      // The key the browser subscribed with, which signs it: this family's own, or `host:<key>`.
+      'vapid': vapid,
     };
     await _save();
     hub.log.info('A device turned reminders on');
@@ -185,7 +248,7 @@ class WebPushService implements HubService, ReminderSink {
   /// `POST /api/v1/push/test`: one notification to this device, to see reminders work.
   Future<Response> test(Request request) async {
     final device = await _check(request);
-    if (!_devices.containsKey(device.id)) throw ApiError.notFound(message: "This device hasn't turned reminders on.");
+    if (!_subscribed(device.id)) throw ApiError.notFound(message: "This device hasn't turned reminders on.");
     final sent = await _push(device.id, {
       'title': 'Reminders are on',
       'body': 'Den will remind you here.',
@@ -213,9 +276,15 @@ class WebPushService implements HubService, ReminderSink {
     final endpoint = Uri.tryParse(sub['endpoint'] as String? ?? '');
     final p256dh = sub['p256dh'], auth = sub['auth'];
     if (endpoint == null || p256dh is! String || auth is! String) return false;
+    final signer = _signerOf(sub);
+    if (signer == null) return false;
+    // A subscription several families share names the family each push is from, so the app
+    // says whose it is and opens it in that family.
+    final family = hub.den.family;
+    final sent = _shared(sub) && family != null ? {...payload, 'family': family.id, 'label': family.name} : payload;
     try {
       final body = encryptForPush(
-        utf8.encode(jsonEncode(payload)),
+        utf8.encode(jsonEncode(sent)),
         uaPublic: unb64url(p256dh),
         authSecret: unb64url(auth),
       );
@@ -224,7 +293,7 @@ class WebPushService implements HubService, ReminderSink {
           .post(
             endpoint,
             headers: {
-              'authorization': _signerOf(sub).authorization(
+              'authorization': signer.authorization(
                 endpoint,
                 subject: subject,
                 expires: DateTime.now().toUtc().add(const Duration(hours: 12)),
@@ -257,7 +326,8 @@ class WebPushService implements HubService, ReminderSink {
     return [
       for (final id in _devices.keys)
         if (den.device(id) case final Device d
-            when d.approved &&
+            when _subscribed(id) &&
+                d.approved &&
                 !d.revoked &&
                 d.mode == DeviceMode.personal &&
                 members.contains(d.member) &&
@@ -269,7 +339,7 @@ class WebPushService implements HubService, ReminderSink {
   // ------------------------------------------------------------------ reminders
 
   @override
-  bool get active => _devices.isNotEmpty;
+  bool get active => _devices.keys.any(_subscribed);
 
   @override
   Future<void> remind(ReminderDue reminder) async {

@@ -1771,8 +1771,11 @@ family, or not naming this hub), `429 rate_limited` (50 invites waiting), `503 n
 Body `{"slot": "<64 hex>"}` (the app stretches the words itself), or
 `{"code": "maple river canoe tiger"}`, typed any way people type it (case, commas, hyphens; each
 word may be its first four letters). A `code` the hub keeps no invite under is stretched to its
-slot on the hub, so words typed into an older app still find the app's own invites. Answer
-`200`:
+slot on the hub, so words typed into an older app still find the app's own invites. Words the
+hub picked itself (for an older app that sent no slot) are kept with their slot too, so the app
+asks for every invite by its slot alone: it sends the words themselves only to an older hub that
+answers a slot with `400 invalid_input`, never to one that answers `404` (it holds no such
+invite, and the words carry the invite's key). Answer `200`:
 
 ```json
 {
@@ -2042,6 +2045,11 @@ pushes. It is always this family's own key, on a Den host too, whatever address 
 to: no family's subscriptions are ever signed with another family's key. The hub records the key
 with the subscription.
 
+On a Den host whose family opts into the host's own key (`DEN_HOST_PUSH`, see
+[Several families in one app](#several-families-in-one-app)), the answer also has `host_key`, and,
+once this device subscribed, `with`: `"host"` or `"family"`, the key its subscription was made
+with.
+
 ### `PUT /api/v1/push`
 
 A personal device (shared screens show reminders themselves). Body: the browser's
@@ -2053,8 +2061,11 @@ A personal device (shared screens show reminders themselves). Body: the browser'
 
 `endpoint` must be https on a known push service (`push.apple.com`, `fcm.googleapis.com`,
 `push.services.mozilla.com`, `notify.windows.com`), so the hub never posts to an address of a
-device's choosing. Answers like `GET`. Errors: `400 invalid_input` (`details.field` `endpoint` or
-`keys`), `401 unauthorized`, `403 permission_denied` (not a personal device).
+device's choosing. An optional `key` names the `applicationServerKey` the browser subscribed
+with: this family's own (the default), or the host's `host_key` when the family opts into it. Any
+other key, another family's included, is refused. Answers like `GET`. Errors: `400 invalid_input`
+(`details.field` `endpoint`, `keys` or `key`), `401 unauthorized`, `403 permission_denied` (not a
+personal device).
 
 ### `DELETE /api/v1/push`
 
@@ -2082,6 +2093,31 @@ and `Urgency`. The plaintext is JSON the service worker shows:
 - Nudges, each once: a device asking to join, to parents (`/today`); a reward asked for, to
   whoever decides rewards (`/points`); a chore given to someone for today or tomorrow, to them
   ("Your turn", `/chore/<id>?date=`).
+- To a subscription made with the host's key, every push also names the family: `family` (its
+  id) and `label` (its name). The service worker titles it "Smith family: Soccer practice" and a
+  tap opens `/l/<family><route>`, that family's page in an app holding several.
+
+### Several families in one app
+
+A browser holds one push subscription, bound to one `applicationServerKey`. One Home Screen app
+at one address holding several families of a Den host (FAMILY-LINKS-PLAN §3.5) therefore needs
+one key that every one of those families sends with, while no family may ever send with another
+family's key. The host keeps one of its own for that, `<data>/host/push.json` (its user only:
+`host/` is made 0700 and the key file 0600 before the key is written; a host that can't make
+them so, or can't read the key it has, refuses to start the families that use it rather than
+quietly making another; no family's key), and a family uses it only when the operator opted that
+family in (`DEN_HOST_PUSH`):
+
+- the family hands out `host_key` beside its own `key`;
+- the app, holding several families that all hand out the same `host_key`, subscribes once with
+  it and `PUT`s that subscription to each family (signed by that family's device, routed by
+  `X-Den-Hub`), naming `key`;
+- the family records which key each subscription was made with, and signs each with that key
+  only: the host's for those made with it, its own for the rest;
+- a family that stops opting in signs its host-key subscriptions with nothing (they read as not
+  subscribed, and the app subscribes again), never with its own key in the host key's place.
+
+Single-family apps and families that don't opt in are exactly as before.
 
 ## One host, several families
 

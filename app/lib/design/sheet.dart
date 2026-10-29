@@ -7,21 +7,63 @@ import 'layout.dart';
 import 'motion.dart';
 import 'tokens.dart';
 
+/// What a sheet or dialog shows, wrapped in the scope of the part of the app it opened from.
+typedef SheetWrap = Widget Function(Widget child);
+
+/// What a sheet, dialog or anything else pushed over the app carries from where it opened. A
+/// sheet is a route of its own, drawn under the navigator, above the page that opened it, so it
+/// would otherwise read whatever the app's root provides. The app puts one of these over a part
+/// that acts for something of its own (a page of another family, `LogScope`), and every sheet
+/// opened there ([showDenSheet], [carryScope]) wraps its content in [wrap], so it acts for the
+/// same thing as the page.
+class SheetScope extends InheritedWidget {
+  const SheetScope({super.key, required this.wrap, required super.child});
+
+  final SheetWrap wrap;
+
+  /// The wrap of the part [context] is in; null at the app's root, where a sheet reads what the
+  /// app provides as it always has.
+  static SheetWrap? of(BuildContext context) =>
+      (context.getElementForInheritedWidgetOfExactType<SheetScope>()?.widget as SheetScope?)?.wrap;
+
+  @override
+  bool updateShouldNotify(SheetScope oldWidget) => false;
+}
+
+/// [builder] wrapped in the scope [context] is in ([SheetScope]), or [scope] when given: for
+/// every route builder that shows something over the app (a sheet, a dialog, a picker).
+WidgetBuilder carryScope(BuildContext context, WidgetBuilder builder, {SheetWrap? scope}) {
+  final wrap = scope ?? SheetScope.of(context);
+  if (wrap == null) return builder;
+  return (inner) => wrap(Builder(builder: builder));
+}
+
+/// For the `builder` of Flutter's own pickers and dialogs (`showDatePicker`, `showTimePicker`):
+/// carries the scope [context] is in, as [carryScope] does for a route's builder.
+TransitionBuilder? carryTransition(BuildContext context) {
+  final wrap = SheetScope.of(context);
+  if (wrap == null) return null;
+  return (inner, child) => wrap(child ?? const SizedBox.shrink());
+}
+
 /// Opens [builder] in a Den sheet and completes with what the sheet pops. A sheet opened from
 /// a part of the app drawn in another theme than the app's (the calendar kept light at night)
-/// takes that theme: its surface, handle, scrim and everything in it.
+/// takes that theme: its surface, handle, scrim and everything in it. It carries the scope of
+/// the part it opened from ([SheetScope]), or [scope] when given (a sheet shown from a context
+/// that outlived its page).
 Future<T?> showDenSheet<T>(
   BuildContext context, {
   required WidgetBuilder builder,
   bool dismissible = true,
   String closeLabel = 'Close',
   RouteSettings? settings,
+  SheetWrap? scope,
 }) {
   final navigator = Navigator.of(context);
   final theme = Theme.of(context);
   return navigator.push<T>(
     DenSheetRoute<T>(
-      builder: builder,
+      builder: carryScope(context, builder, scope: scope),
       dismissible: dismissible,
       closeLabel: closeLabel,
       settings: settings,

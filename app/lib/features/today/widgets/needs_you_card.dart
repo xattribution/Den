@@ -18,7 +18,10 @@ import '../words/today_words.dart';
 /// action that settles it. Settling one turns its row into what it did, with Undo, in place;
 /// the row stays until Today is left. Nothing waiting, no section.
 class NeedsYouSection extends StatefulWidget {
-  const NeedsYouSection({super.key, required this.now, this.carded = false, this.gap = 0});
+  const NeedsYouSection({super.key, required this.now, this.carded = false, this.gap = 0, this.title = 'Needs you'});
+
+  /// The heading: "Needs you", or which family in "All my families" ("Kotvas needs you").
+  final String title;
 
   /// The current time, for which rides are still ahead.
   final int now;
@@ -119,7 +122,7 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
       padding: EdgeInsets.only(bottom: widget.gap),
       child: widget.carded
           ? _carded(context, body, open)
-          : DenSection(title: 'Needs you', trailing: SectionCount(needCount(open)), child: body),
+          : DenSection(title: widget.title, trailing: SectionCount(needCount(open)), child: body),
     );
   }
 
@@ -137,7 +140,7 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
               children: [
-                Expanded(child: Semantics(header: true, child: Text('Needs you', style: context.text.section(c.ink)))),
+                Expanded(child: Semantics(header: true, child: Text(widget.title, style: context.text.section(c.ink)))),
                 SectionCount(needCount(open)),
               ],
             ),
@@ -284,6 +287,8 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
       detail: detail,
       action: failed == null ? action : null,
       onTap: open,
+      // Two buttons beside the words would leave the words a sliver of an iPad column.
+      actionBelow: need is RecoveryWordsNeed ? true : null,
     );
     if (failed == null || retry == null) return row;
     return Column(

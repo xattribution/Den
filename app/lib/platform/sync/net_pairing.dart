@@ -105,6 +105,16 @@ class _HubRecovery extends RecoverySession {
   return (words: words, code: words == null ? net.normalizeCode(rest) : null, hub: hub);
 }
 
+/// The family an invite is to, and the hub that keeps it ([NetPairing.inviteTarget]).
+class InviteTarget {
+  const InviteTarget({required this.base, required this.familyId, this.familyName});
+
+  /// The hub's HTTP base address, `https://den.example.com`.
+  final Uri base;
+  final String familyId;
+  final String? familyName;
+}
+
 /// [PairingService] on den_net: QR invites and spoken codes over the hub, the relay's
 /// rendezvous, or (with neither) a direct connection on the same Wi-Fi.
 class NetPairing extends PairingService {
@@ -423,8 +433,10 @@ class NetPairing extends PairingService {
   /// doesn't ask again.
   final Map<String, RedeemedInvite> _redeemed = {};
 
-  /// What [code] opens at [base]: first by the slot the words stretch to (the app's own
-  /// invites), then by the words themselves (an invite whose words the hub chose).
+  /// What [code] opens at [base]: by the slot the words stretch to, which every hub that keeps
+  /// slots answers (the app's own invites, and words a hub chose, which it stretches itself).
+  /// The words themselves go only to an older hub that says it doesn't know slots: a hub that
+  /// knows them but holds no such slot never sees the words, which carry the invite's key.
   Future<RedeemedInvite> _redeem(Uri base, String code) async {
     final at = '$base $code';
     final known = _redeemed[at];
@@ -433,8 +445,14 @@ class NetPairing extends PairingService {
     try {
       redeemed = await _client.redeemInvite(base, slot: await net.InviteWords.slot(code));
     } on HubException catch (e) {
-      // Not kept by a slot, or an older hub that only knows words.
-      if (e.code != 'not_found' && e.code != 'invalid_input') rethrow;
+      if (e.code == 'not_found') {
+        throw const PairingException(
+          "That code isn't right, or the invite has expired. Ask for a new invite.",
+          reason: PairingException.unknownCode,
+        );
+      }
+      // An older hub that only knows words.
+      if (e.code != 'invalid_input') rethrow;
       try {
         redeemed = await _client.redeemInvite(base, code: code);
       } on HubException catch (again) {
@@ -456,19 +474,45 @@ class NetPairing extends PairingService {
     return base;
   }
 
+  /// Which family [words] are an invite to, at the hub at [hubUrl] (or the one that served this
+  /// page), before anything is written: for a device already in a family, which starts the
+  /// family's own engine under its id before it joins ([shareRedeemed] hands the answer on, so
+  /// the hub isn't asked twice).
+  Future<InviteTarget> inviteTarget(String words, {String? hubUrl}) async {
+    final code = net.normalizeCode(words);
+    if (code == null) {
+      throw const PairingException("Those aren't the four words from an invite. Check them against the message.");
+    }
+    final base = _inviteBase(hubUrl);
+    final redeemed = await _redeem(base, code);
+    final net.Invite invite;
+    try {
+      invite = await net.Invite.parse(redeemed.invite);
+    } on FormatException {
+      throw const PairingException('This invite has expired. Ask for a new one.');
+    }
+    return InviteTarget(base: base, familyId: invite.familyId, familyName: redeemed.familyName);
+  }
+
+  /// Hands [other] the invites this one redeemed already, so it joins with them without asking
+  /// the hub again.
+  void shareRedeemed(NetPairing other) => other._redeemed.addAll(_redeemed);
+
   @override
   Future<InvitePeek> peekInvite(String words, {String? hubUrl}) async {
     final code = net.normalizeCode(words);
     if (code == null) {
       throw const PairingException("Those aren't the four words from an invite. Check them against the message.");
     }
-    final redeemed = await _redeem(_inviteBase(hubUrl), code);
+    final base = _inviteBase(hubUrl);
+    final redeemed = await _redeem(base, code);
     return InvitePeek(
       familyName: redeemed.familyName,
       memberName: redeemed.memberName,
       marker: Marker.parse(redeemed.memberMarker),
       picture: redeemed.memberPicture,
       letsIn: redeemed.preapproved,
+      server: base.host,
     );
   }
 

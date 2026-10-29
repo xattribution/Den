@@ -20,6 +20,7 @@ import 'hub.dart';
 import 'invites.dart';
 import 'log.dart';
 import 'net_guard.dart';
+import 'push/web_push_crypto.dart' show VapidKeys;
 import 'recovery.dart';
 import 'tenant_router.dart';
 import 'web.dart';
@@ -252,6 +253,12 @@ class DenHost implements HostLink {
           hubs: config.peerHubs,
           moreHubs: () => [for (final t in host._tenants) ?t.config.publicUrl],
         ).client();
+    try {
+      host.state.loadPushKey();
+    } on Object catch (e) {
+      log.error('$e');
+      rethrow;
+    }
     host._cliSecret = host.state.writeCliSecret();
     host.state.dropKeyring();
     host._web = webAppHandler(config.webDir, policy: host._webPolicy);
@@ -303,6 +310,16 @@ class DenHost implements HostLink {
       if (den.familyId != null && t.den.familyId == den.familyId) throw StateError('That family is on this host already');
       if (name != null && t.hostnames.contains(name)) throw StateError('$name is another family\'s address on this host');
     }
+    // A family that hands out the host's key gets it now: a key the host can't keep owner-only,
+    // or can't read, stops the family here rather than at its first reminder.
+    if (config.hostPush) {
+      try {
+        state.pushKey();
+      } on Object catch (e) {
+        log.error("The host's push key isn't safe to use: $e");
+        rethrow;
+      }
+    }
     final tenant = await DenHub.tenantOf(this, den, config);
     _tenants.add(tenant);
     if (id != null) _ids[tenant] = id;
@@ -327,6 +344,9 @@ class DenHost implements HostLink {
 
   @override
   bool inviteTaken(String key) => _tenants.any((t) => t.invites.holds(key));
+
+  @override
+  VapidKeys get pushKey => state.pushKey();
 
   @override
   bool recoveryCodeTaken(String hash) => _tenants.any((t) => t.recovery.holdsCode(hash));

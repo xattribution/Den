@@ -41,9 +41,91 @@ abstract final class Changes {
   static const notices = 'notices';
 }
 
-/// The app's live state: the device's [Den] engine plus UI preferences. Tells listeners what
-/// each change touched ([lastChange]), whether made here or synced from another device, so
-/// [DenScope] rebuilds only the widgets that read it.
+/// How this device looks and runs, whichever family it shows: Day, Night or Auto, the text
+/// size, how the calendar looks, and whether it is a wall display. Every family's [AppState] on
+/// the device shares one, so a change in one family's Settings is the device's.
+class DevicePrefs extends ChangeNotifier {
+  DevicePrefs({
+    bool wall = false,
+    ThemeChoice theme = ThemeChoice.auto,
+    TextSize textSize = TextSize.standard,
+    CalendarDays calendarDays = CalendarDays.dots,
+    bool calendarLight = false,
+  })  : _wall = wall,
+        _theme = theme,
+        _textSize = textSize,
+        _calendarDays = calendarDays,
+        _calendarLight = calendarLight;
+
+  static const _wallKey = 'den.wall';
+  static const _themeKey = 'den.theme';
+  static const _textSizeKey = 'den.textSize';
+  static const _calendarDaysKey = 'den.calendarDays';
+  static const _calendarLightKey = 'den.calendarLight';
+
+  /// The saved preferences.
+  static Future<DevicePrefs> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    return DevicePrefs(
+      wall: prefs.getBool(_wallKey) ?? false,
+      theme: ThemeChoice.values.asNameMap()[prefs.getString(_themeKey)] ?? ThemeChoice.auto,
+      textSize: TextSize.values.asNameMap()[prefs.getString(_textSizeKey)] ?? TextSize.standard,
+      calendarDays: CalendarDays.values.asNameMap()[prefs.getString(_calendarDaysKey)] ?? CalendarDays.dots,
+      calendarLight: prefs.getBool(_calendarLightKey) ?? false,
+    );
+  }
+
+  bool _wall;
+  bool get wall => _wall;
+  set wall(bool value) {
+    if (value == _wall) return;
+    _wall = value;
+    notifyListeners();
+    AppState._save((p) => p.setBool(_wallKey, value));
+  }
+
+  ThemeChoice _theme;
+  ThemeChoice get theme => _theme;
+  set theme(ThemeChoice value) {
+    _theme = value;
+    notifyListeners();
+    AppState._save((p) => p.setString(_themeKey, value.name));
+  }
+
+  TextSize _textSize;
+  TextSize get textSize => _textSize;
+  set textSize(TextSize value) {
+    if (value == _textSize) return;
+    _textSize = value;
+    notifyListeners();
+    AppState._save((p) => p.setString(_textSizeKey, value.name));
+  }
+
+  CalendarDays _calendarDays;
+  CalendarDays get calendarDays => _calendarDays;
+  set calendarDays(CalendarDays value) {
+    if (value == _calendarDays) return;
+    _calendarDays = value;
+    notifyListeners();
+    AppState._save((p) => p.setString(_calendarDaysKey, value.name));
+  }
+
+  bool _calendarLight;
+  bool get calendarLight => _calendarLight;
+  set calendarLight(bool value) {
+    if (value == _calendarLight) return;
+    _calendarLight = value;
+    notifyListeners();
+    AppState._save((p) => p.setBool(_calendarLightKey, value));
+  }
+}
+
+/// The app's live state: one family's [Den] engine on this device plus UI preferences. Tells
+/// listeners what each change touched ([lastChange]), whether made here or synced from another
+/// device, so [DenScope] rebuilds only the widgets that read it.
+///
+/// A device in several families has one per family (see `household.dart`); they share
+/// [DevicePrefs], and each keeps its own notices under [key].
 class AppState extends ChangeNotifier with FamilyReads {
   AppState(
     Den den, {
@@ -52,53 +134,71 @@ class AppState extends ChangeNotifier with FamilyReads {
     TextSize textSize = TextSize.standard,
     CalendarDays calendarDays = CalendarDays.dots,
     bool calendarLight = false,
+    DevicePrefs? device,
     this.network,
     this.reminders,
     this.phoneCalendars,
     Set<String> seen = const {},
     Map<String, int> snoozed = const {},
     String? signInTries,
-  })
-      : _den = den,
-        _wall = wall,
-        _theme = theme,
-        _textSize = textSize,
-        _calendarDays = calendarDays,
-        _calendarLight = calendarLight,
+    String Function(String key)? key,
+  })  : _den = den,
+        device = device ??
+            DevicePrefs(wall: wall, theme: theme, textSize: textSize, calendarDays: calendarDays, calendarLight: calendarLight),
+        _key = key ?? _same,
         _seen = {...seen},
         _snoozed = {...snoozed} {
     signInGuard = SignInGuard.fromJson(
       signInTries,
       now: () => _den.now(),
-      onChange: (json) => _save((p) => p.setString(_signInTriesKey, json)),
+      onChange: (json) => _save((p) => p.setString(_key(_signInTriesKey), json)),
     );
+    this.device.addListener(_prefsChanged);
     _listen();
     _keepPhotos();
   }
 
-  /// Restores the saved theme, text size, calendar and wall preferences for this device.
+  static String _same(String key) => key;
+
+  /// Restores the saved theme, text size, calendar and wall preferences for this device (or
+  /// shares [device]'s), and this family's notices kept under [key] (Den's own names for the
+  /// first family).
   static Future<AppState> load(
     Den den, {
     DenNetwork? network,
     ReminderScheduler? reminders,
     PhoneCalendars? phoneCalendars,
+    DevicePrefs? device,
+    String Function(String key)? key,
   }) async {
     final prefs = await SharedPreferences.getInstance();
+    final k = key ?? _same;
     return AppState(
       den,
-      wall: prefs.getBool(_wallKey) ?? false,
-      theme: ThemeChoice.values.asNameMap()[prefs.getString(_themeKey)] ?? ThemeChoice.auto,
-      textSize: TextSize.values.asNameMap()[prefs.getString(_textSizeKey)] ?? TextSize.standard,
-      calendarDays: CalendarDays.values.asNameMap()[prefs.getString(_calendarDaysKey)] ?? CalendarDays.dots,
-      calendarLight: prefs.getBool(_calendarLightKey) ?? false,
-      seen: {...?prefs.getStringList(_seenKey)},
-      snoozed: _readSnoozed(prefs.getStringList(_snoozedKey)),
-      signInTries: prefs.getString(_signInTriesKey),
+      device: device ?? await DevicePrefs.load(),
+      seen: {...?prefs.getStringList(k(_seenKey))},
+      snoozed: _readSnoozed(prefs.getStringList(k(_snoozedKey))),
+      signInTries: prefs.getString(k(_signInTriesKey)),
       network: network,
       reminders: reminders,
       phoneCalendars: phoneCalendars,
+      key: key,
     );
   }
+
+  /// Deletes this family's notices from the device (a family it left), as kept under [key].
+  static Future<void> forget(String Function(String key) key) async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final k in const [_seenKey, _snoozedKey, _signInTriesKey]) {
+      await prefs.remove(key(k));
+    }
+  }
+
+  /// How this device looks and runs, shared by every family on it.
+  final DevicePrefs device;
+
+  /// This family's name for one of this device's settings.
+  final String Function(String key) _key;
 
   /// This device's sync with the hub and other devices; null for the demo family and in tests.
   final DenNetwork? network;
@@ -110,11 +210,6 @@ class AppState extends ChangeNotifier with FamilyReads {
   /// Calendars brought in from this phone; null where there are none to bring in, and in tests.
   final PhoneCalendars? phoneCalendars;
 
-  static const _wallKey = 'den.wall';
-  static const _themeKey = 'den.theme';
-  static const _textSizeKey = 'den.textSize';
-  static const _calendarDaysKey = 'den.calendarDays';
-  static const _calendarLightKey = 'den.calendarLight';
   static const _seenKey = 'den.seen';
   static const _snoozedKey = 'den.snoozed';
   static const _signInTriesKey = 'den.signInTries';
@@ -147,7 +242,7 @@ class AppState extends ChangeNotifier with FamilyReads {
     if (!_seen.add(key)) return;
     _changed(const {Changes.notices});
     final keep = [..._seen];
-    _save((p) => p.setStringList(_seenKey, keep.length > 200 ? keep.sublist(keep.length - 200) : keep));
+    _save((p) => p.setStringList(_key(_seenKey), keep.length > 200 ? keep.sublist(keep.length - 200) : keep));
   }
 
   /// Until when (UTC milliseconds) a reminder this device's person put off ("Remind me later") stays
@@ -160,7 +255,7 @@ class AppState extends ChangeNotifier with FamilyReads {
     _snoozed[key] = until;
     _changed(const {Changes.notices});
     final keep = [for (final e in _snoozed.entries) '${e.value} ${e.key}'];
-    _save((p) => p.setStringList(_snoozedKey, keep));
+    _save((p) => p.setStringList(_key(_snoozedKey), keep));
   }
 
   static Map<String, int> _readSnoozed(List<String>? kept) => {
@@ -223,60 +318,29 @@ class AppState extends ChangeNotifier with FamilyReads {
   /// the theme. Its owner disposes it.
   ChangeNotifier watching(Set<String> types) => _Watching(this, types);
 
-  bool _wall;
+  void _prefsChanged() => _changed(const {Changes.prefs});
 
   /// Running as a shared wall display: larger type, the week grid first, "who's doing this?".
-  bool get wall => _wall;
-  set wall(bool value) {
-    if (value == _wall) return;
-    _wall = value;
-    _changed(const {Changes.prefs});
-    _save((p) => p.setBool(_wallKey, value));
-  }
+  bool get wall => device.wall;
+  set wall(bool value) => device.wall = value;
 
-  ThemeChoice _theme;
-  ThemeChoice get theme => _theme;
-  set theme(ThemeChoice value) {
-    _theme = value;
-    _changed(const {Changes.prefs});
-    _save((p) => p.setString(_themeKey, value.name));
-  }
-
-  TextSize _textSize;
+  ThemeChoice get theme => device.theme;
+  set theme(ThemeChoice value) => device.theme = value;
 
   /// How much larger than the system's this device draws text (Settings, Appearance). A Home
   /// Screen web app never hears the iPhone's own Text Size, so this is how it gets larger there.
-  TextSize get textSize => _textSize;
-  set textSize(TextSize value) {
-    if (value == _textSize) return;
-    _textSize = value;
-    _changed(const {Changes.prefs});
-    _save((p) => p.setString(_textSizeKey, value.name));
-  }
-
-  CalendarDays _calendarDays;
+  TextSize get textSize => device.textSize;
+  set textSize(TextSize value) => device.textSize = value;
 
   /// Whether the calendar's month shows people's dots under each day or the day in their colors
   /// (the calendar's view options, and Settings, Appearance).
-  CalendarDays get calendarDays => _calendarDays;
-  set calendarDays(CalendarDays value) {
-    if (value == _calendarDays) return;
-    _calendarDays = value;
-    _changed(const {Changes.prefs});
-    _save((p) => p.setString(_calendarDaysKey, value.name));
-  }
-
-  bool _calendarLight;
+  CalendarDays get calendarDays => device.calendarDays;
+  set calendarDays(CalendarDays value) => device.calendarDays = value;
 
   /// Whether the calendar stays light while the rest of the app is dark (Settings, Appearance:
   /// "Calendar: Always light"); otherwise it matches the app.
-  bool get calendarLight => _calendarLight;
-  set calendarLight(bool value) {
-    if (value == _calendarLight) return;
-    _calendarLight = value;
-    _changed(const {Changes.prefs});
-    _save((p) => p.setBool(_calendarLightKey, value));
-  }
+  bool get calendarLight => device.calendarLight;
+  set calendarLight(bool value) => device.calendarLight = value;
 
   StreamSubscription<Set<String>>? _sub;
   Formats? _formats;
@@ -299,6 +363,7 @@ class AppState extends ChangeNotifier with FamilyReads {
   @override
   void dispose() {
     _sub?.cancel();
+    device.removeListener(_prefsChanged);
     super.dispose();
   }
 }

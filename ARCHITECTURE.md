@@ -919,7 +919,11 @@ holds each other family in the same layout; `<data>/host/` the host's own state.
 add-family` starts a fresh family on the running host; `den_hub adopt` moves a hub that ran on its
 own in, keys and all, so it keeps its device id and its phones keep syncing; `--family` picks a
 family for the per-family commands (backups are per family). Every family's Web Push goes out
-under its own VAPID key only. A family reading another family's calendar link on the same host
+under its own VAPID key, and, for families the operator opted in (`DEN_HOST_PUSH`), under the
+host's own key (`<data>/host/push.json`) for the subscriptions made with it: one web app holding
+several of those families subscribes once with that key and registers the subscription with each
+(see "Notifications"). A family signs a subscription only with the key it was made with, never
+another family's. A family reading another family's calendar link on the same host
 (`GET /ics/...` only, and only by the calendar feed service, `HubContext.feedFetch`) is answered
 in-process, under the reading hub's own rate limits; anything else, OAuth client metadata
 included, goes out through NetGuard.
@@ -1123,6 +1127,23 @@ given to someone for today or tomorrow (them). Pushes go only to known push serv
 service worker shows each push and a tap opens its route (`/event/<id>?at=`, `/chore/<id>?date=`,
 `/today`, `/points`).
 
+**Several families on one device.** A device holds one engine per family (see "The app"), and
+reminders are one budget across all of them (`planHouseholdReminders`): the 60 nearest of every
+family, ids made with the family's id for every family but the first (whose ids stay what they
+were), titles starting with the family's name ("Kotvas: Soccer at 5") and taps opening
+`/l/<family>/...` once there are several. The background task opens every family's engine under
+the one lock. In a browser there is one push subscription, bound to one key, so a Home Screen app
+holding several families of a Den host subscribes once with the host's own key, which those
+families opt into, and registers the subscription with each (`PUT /api/v1/push`, signed by that
+family's device and routed by `X-Den-Hub`); each family signs only the subscriptions made with
+the host's key with it, and names itself in their pushes (`family`, `label`), which the service
+worker turns into "Smith family: ..." and `/l/<family>/...`. A family whose server doesn't share
+the key can't reach that browser until it does; Settings says so. Why this is safe: the host
+already holds every family on it (it serves their code and data), so a key it keeps for them
+adds no reader; a family never signs with another family's own key, and its record of which key
+a subscription was made with decides the signer, so one family's opting out never moves
+another's subscriptions onto its key.
+
 ## The app
 
 `app/lib` is cut by what changes together:
@@ -1172,6 +1193,55 @@ changes or the day turns. `context.app` still rebuilds on everything; the wall a
 screens use it, since they show everything. The router's redirect runs again only when who's who
 or the wall setting changes, and the app itself rebuilds only for the theme and the wall setting.
 
+**Several families on one device** (FAMILY-LINKS-PLAN §2.10, §4). `Household` (`app/household.dart`)
+holds a `FamilyLog` per family: its own `Den` with its own `DeviceKeys`, log and change counter,
+its own `DenNetwork` and pairing, and its own `AppState` (all sharing one `DevicePrefs`: theme,
+text size, calendar look, wall). The first family is kept as Den always kept it (IndexedDB `den`
+or the `den` directory, keychain `den.device.keys`, `den.hubs` and the other settings, the
+in-app hub's `hub` directory); each other is named by a random slot this device picked and
+recorded in its membership (`den-<slot>`, `den.device.keys.<slot>`, `den.hubs.<slot>`,
+`hub-<slot>`), never by anything a server answered, so no two names differ only in case (one
+directory on macOS and Windows). A family id is accepted only in den_core's form (16 lowercase
+base32 letters). The list (`den.memberships`) and the choice (`den.household.active`: a family
+or `all`) are written only once a second family joins, so a device in one family is untouched.
+One device holds at most one engine per family: `prepare` refuses a family it holds, one whose
+engine didn't open this time (still listed, its reminders kept), and one it is preparing
+already; nothing is ever deleted that another listed family is kept under. The app runs one
+in-app hub at a time ("Keep the family online"), each family's in its own directory. `DenApp`
+gives the family shown to the root `DenScope` (which tells every reader when its state swaps),
+so every screen is the one it always was. `/l/<family>/<page>` is any of a family's pages in
+that family's scope (`LogScope`: its state, color pack, pairing (never the family shown's),
+Add's reader through its own hub (`CaptureScope`, `Capture.forFamily`), and `ScopedRouter`,
+which opens the family's own pages in the family, leaves the app's places alone, and shows the
+family first for a page that is always the family shown: Ask, the kids' app, the wall), behind
+that family's own gates (waiting, access ended, the kids' app, the wall); a page without the
+prefix is the family shown, `/l/<family>` with a tab shows that family, and a family this device
+doesn't hold, or a link that doesn't decode, is `/families/missing`. Everything
+shown over a page (a sheet, a dialog, a picker) carries the page's family: `LogScope` puts a
+`SheetScope` over its page, and `showDenSheet`, `carryScope` and `carryTransition` wrap what they
+show in it, so a sheet opened on another family's page writes there, not to the family shown (a
+test fails on any other way of showing a route). The
+switcher (`features/family/screens/families_sheet.dart`) appears only with two families or more:
+"Kotvas ▾" at the top of Today on a phone, the sidebar's title on iPad; switching is instant.
+"All my families" shows Today, Calendar and Lists from every family that shows its tabs on this
+device (`mergedFamilies`: not one waiting, one whose access ended, a little kid's or a wall's),
+each thing with its family's tag (`SourceTag`) and written through its own family's actions, so
+receipts and Undo stay there; Chores, Family and Settings stay per family and say which
+(`FamilyLabel`), and Add says where it adds ("Adding to Kotvas", with the others to choose);
+something shared from another app asks which family it is for before anything is read.
+Joining another family (Paste an invite, or an invite's link on a device in a family) is the
+join screen with `AnotherFamilyPairing`: it asks the server which family the invite is for and
+shows "Join the Smiths on den.example.com" (with a warning when a family of that name is on the
+device) before anything starts, whether the invite came as a link, as typed words or as a QR
+code; then it starts that family's engine with new keys, joins through it and takes it in. In
+the web app everything goes through the app's own address, where a Den host finds every
+family's invites and syncs each by the family its hello names; the native apps ask the invite's
+link's server, or one typed, never the server of the family shown, and invite words leave the
+device only as their slot. Leaving a family (its Settings, only while another family stays)
+first takes this browser's push subscription off that family's hub, then removes this device
+from it (a device may) and deletes its log, keys, settings and hub data here. Ask acts in the
+family of the page it is on (the one shown; in "All", the one last chosen) and says which.
+
 **The AI helper** (`features/assistant`, off by default; DESIGN.md, "AI helper"). Ask is `/ask`
 (a sheet, or a panel from 840 pt). Add sends a question or a change there with an `AskRequest`;
 Today's pill, the sidebar, Add's "Open Ask" and ⌘K open it with `AskRequest.open()`. Which of
@@ -1217,8 +1287,12 @@ proxy in front of the hub, where it has the hub as its own origin.
   read by the router's redirect). The page also offers Copy invite above the steps, and the
   welcome screen Paste an invite, for someone whose Den is already on the Home Screen; the words
   stay on the page for typing. docs/design/onboarding.md has the reasoning and the sources.
-- **One engine per browser.** Tabs share the log; a Web Lock (`den.engine`) lets one tab write
-  it, and another tab waits until it closes.
+- **One engine per family, one tab at a time.** Tabs share the logs; a Web Lock (`den.engine`)
+  lets one tab hold every family's engine, and another tab waits until it closes. A browser
+  holding several families keeps each in its own database (`den`, then `den-<slot>`) with its own
+  keys (`den.device.keys`, then `den.device.keys.<slot>`). The app tells the service worker which
+  families it holds (`den-families` cache, id to name): a push titles itself with the name kept
+  here, never one the push carries, and one from a family not held shows nothing it carries.
 - **Opening and updating.** `web/sw.js`, registered by `web/den_web.js` as
   `sw.js?v=<build>`, keeps every file the app needs to start in a cache named for its build and
   answers the app shell from it, so Den opens at once and with no connection, from local data,

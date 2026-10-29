@@ -93,6 +93,81 @@ List<PlannedReminder> planReminders(
   return out;
 }
 
+/// One family's engine as the device's reminders see it: one budget across every family this
+/// device holds.
+class ReminderLog {
+  const ReminderLog({required this.den, required this.id, this.label, this.first = true});
+
+  final Den den;
+
+  /// The family's id: it goes into the notification ids of every family but the first, and into
+  /// the routes taps open once the device holds several (`/l/<id>/event/...`).
+  final String id;
+
+  /// The family's name, which starts each reminder's title while the device holds several
+  /// families ("Kotvas: Soccer at 5").
+  final String? label;
+
+  /// The first family this device held keeps the ids Den always gave its reminders, so a device
+  /// that had them scheduled replaces them rather than adding a second of each.
+  final bool first;
+}
+
+/// The reminders the device should hold across every family in [logs]: each family's own
+/// ([planReminders]), soonest first, at most [limit] in all. With one family it is exactly that
+/// family's plan. With several, a family's reminders other than the first's have ids made with
+/// its id, every title starts with the family's name, and a tap opens the family's own page.
+///
+/// [others] counts families this device holds whose engines aren't among [logs] this time (a
+/// keychain not readable yet): the device still holds several, so titles and routes stay as
+/// they are. [taken] are ids the OS holds for those, which no reminder here takes.
+List<PlannedReminder> planHouseholdReminders(
+  List<ReminderLog> logs, {
+  required int now,
+  Duration window = reminderWindow,
+  int limit = maxScheduledReminders,
+  int others = 0,
+  Set<int> taken = const {},
+}) {
+  final families = [for (final l in logs) if (l.den.hasFamily && l.den.isApproved) l];
+  if (families.isEmpty || limit <= 0) return const [];
+  // Every family the device holds counts, one still waiting for a parent too: a tap must open
+  // the family it came from whichever one the device shows.
+  final several = logs.where((l) => l.den.hasFamily).length + others > 1;
+  if (!several && families.single.first && taken.isEmpty) {
+    return planReminders(families.single.den, now: now, window: window, limit: limit);
+  }
+  final all = <PlannedReminder>[];
+  for (final log in families) {
+    for (final r in planReminders(log.den, now: now, window: window, limit: limit)) {
+      final key = log.first ? r.key : '${log.id}|${r.key}';
+      final label = log.label;
+      all.add(PlannedReminder(
+        id: reminderId(key),
+        key: key,
+        at: r.at,
+        title: several && label != null && label.isNotEmpty ? '$label: ${r.title}' : r.title,
+        body: r.body,
+        route: several ? '/l/${Uri.encodeComponent(log.id)}${r.route}' : r.route,
+      ));
+    }
+  }
+  all.sort((a, b) => a.at != b.at ? a.at.compareTo(b.at) : a.key.compareTo(b.key));
+  final ids = <int>{...taken};
+  final out = <PlannedReminder>[];
+  for (final r in all) {
+    if (out.length >= limit) break;
+    var id = r.id;
+    while (!ids.add(id)) {
+      id = (id + 1) & 0x7fffffff;
+    }
+    out.add(id == r.id
+        ? r
+        : PlannedReminder(id: id, key: r.key, at: r.at, title: r.title, body: r.body, route: r.route));
+  }
+  return out;
+}
+
 /// A positive 31-bit notification id for a reminder key (FNV-1a), stable across runs and devices.
 int reminderId(String key) {
   var hash = 0x811c9dc5;
