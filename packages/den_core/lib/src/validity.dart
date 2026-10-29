@@ -3,6 +3,7 @@ import 'package:collection/collection.dart';
 import 'change.dart';
 import 'chores.dart';
 import 'hlc.dart';
+import 'invite_keys.dart';
 import 'model.dart';
 import 'permissions.dart';
 import 'recovery.dart';
@@ -141,6 +142,10 @@ class Validator {
     // The one way a device approves itself: as an existing parent's, with a recovery proof.
     if (c.type == RecordType.device && c.fields.containsKey('recovery')) {
       return checkRecovery(c, store, trust, retiredRecoveryKeys);
+    }
+    // Or as someone's own, with a proof from an invite key a parent made (invite_keys.dart).
+    if (c.type == RecordType.device && c.fields.containsKey('invite')) {
+      return checkInviteJoin(c, store, trust, excluded: retiredRecoveryKeys.excludes(c));
     }
     if (c.device == trust.founderDevice && authorEntry == null) {
       return _genesis(c, existing, trust);
@@ -323,6 +328,7 @@ class Validator {
     RecordType.redemption: {'reward', 'member', 'cost'},
     RecordType.connection: {'kind'},
     RecordType.photo: {'member', 'mime', 'data'},
+    RecordType.inviteKey: {'member', 'home', 'modes', 'uses', 'by', 'device', 'expires'},
   };
 
   Rejection? _permit(_Ctx x, TrustRoot trust) {
@@ -431,6 +437,8 @@ class Validator {
           return _schema('That person isn\'t in the family');
         }
         return null;
+      case RecordType.inviteKey:
+        return checkInviteKeyWrite(c, x.existing, store, ownDevice: x.ownDevice, actor: x.actor);
       case RecordType.photo:
         final member = c.fields['member'] ?? x.existing?.fields['member'];
         if (member is! String || store.liveAt(Space.family, RecordType.member, member) == null) {

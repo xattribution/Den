@@ -248,6 +248,17 @@ final FieldCheck _recoveryProof = shape({
   'sig': keyText(),
 }, required: {'kind', 'member', 'key', 'nonce', 'expires', 'sig'});
 
+/// The proof a device let in by an invite carries (`device.invite`). See invite_keys.dart.
+final FieldCheck _inviteProof = shape({
+  'invite': id(),
+  'member': id(nullable: true),
+  'mode': names(DeviceMode.values),
+  'key': keyText(),
+  'nonce': keyText(),
+  'expires': number(min: 0),
+  'sig': keyText(),
+}, required: {'invite', 'mode', 'key', 'nonce', 'expires', 'sig'});
+
 /// One entry of `family.oversight`: a person's privacy (`<memberId>`: `{parentsSeePrivate}`),
 /// or one of their other settings (`<memberId>.<setting>`: a bool, null for the default).
 String? _oversightEntry(String key, Object? v) {
@@ -396,6 +407,18 @@ final Map<String, TypeSpec> typeSpecs = {
     'member': id(),
     'tries': number(min: 1, max: 1000000),
   }, required: {'device', 'member', 'tries'}, space: Space.family),
+  // An invite that lets someone in at once (invite_keys.dart).
+  RecordType.inviteKey: TypeSpec({
+    'member': id(nullable: true),
+    'home': id(nullable: true),
+    'modes': listOf(names(DeviceMode.values), max: 3, unique: true),
+    'uses': number(min: 1, max: 50),
+    'key': keyText(nullable: true),
+    'by': id(),
+    'device': id(),
+    'expires': number(min: 0),
+    'kept': listOf(id(), max: 50, unique: true),
+  }, required: {'by', 'device', 'expires'}, space: Space.family),
   RecordType.device: TypeSpec({
     'name': text(min: 1, max: maxName),
     'kind': names(DeviceKind.values),
@@ -409,6 +432,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'revokedAfter': number(min: 0),
     'display': shape({'layout': names(DisplayLayout.values), 'openCheckoff': flag()}),
     'recovery': _recoveryProof,
+    'invite': _inviteProof,
   }, required: {'name', 'kind', 'pubkey', 'mode'}, space: Space.family),
   RecordType.category: TypeSpec({
     'name': text(min: 1, max: maxName),

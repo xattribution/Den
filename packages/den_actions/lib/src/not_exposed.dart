@@ -44,6 +44,17 @@ const Map<String, String> notExposed = {
       'nothing acting for the family can',
   'disownRecovery': '$_trust: "That wasn\'t us" removes a phone recovery let in and turns off the words or the hub\'s '
       'help that let it in, from another parent\'s own phone',
+  // Invites that let someone in at once (den_core's invite_keys.dart): a parent's own device
+  // vouches in advance for one device of one person. Never an assistant's or MCP client's to
+  // make, use or take back, whoever it acts for.
+  'createInviteKey': '$_trust: an invite that lets someone in without a tap is a parent\'s approval given ahead of '
+      'time, so only a parent\'s own phone makes one, and its secret goes only into the invite they send',
+  'withdrawInviteKey': '$_trust: taking back an invite before it is used is the inviting family\'s call, made on a '
+      'parent\'s own phone',
+  'requestInviteJoin': 'A new device lets itself in as the invited person\'s own with the invite\'s key; nothing '
+      'acting for the family holds that key',
+  'disownInvite': '$_trust: "That wasn\'t Dad" removes a device an invite let in and takes the invite\'s key away, '
+      'from a parent\'s own phone',
   'requestOAuthConnection': 'Written by the hub\'s OAuth server when an app asks to connect; a parent approves it',
   'setConnectionToken': 'Written by the hub\'s OAuth server, which clears the token hash an older hub recorded',
   // The hub's and the runner's own bookkeeping.

@@ -79,6 +79,14 @@ enum SetupStage {
   removed,
 }
 
+/// The link that starts a family on this hub with no typing (`den_hub setup-link`):
+/// `https://<hub>/#/setup/<code>/<hub device id>`. The phone that opens it sends the setup code
+/// (the hub's proof that it's the phone the link went to) and takes in only the hub whose device
+/// id the link names, the hash of its key, so there are no words to compare. In the fragment,
+/// which browsers never send to the server.
+Uri setupLink(Uri base, String code, String hubDevice) =>
+    base.replace(path: '/', fragment: '/setup/${HubSetup.display(HubSetup.normalize(code))}/$hubDevice');
+
 String _newCode(Random random) =>
     List.generate(8, (_) => setupAlphabet[random.nextInt(setupAlphabet.length)]).join();
 
@@ -140,6 +148,10 @@ class HubSetup {
     _tries.clear();
     final shown = display(_code!);
     _log.info('Setup code for this hub: $shown (enter it in the Den app to add this hub to your family)');
+    final public = hub.config.publicUrl;
+    if (public != null) {
+      _log.info('Or open this link on the first parent\'s phone: ${setupLink(public, shown, hub.den.deviceId)}');
+    }
     final file = _codeFile;
     if (file != null) {
       try {
@@ -205,12 +217,13 @@ class HubSetup {
         if (_lastError != null && !hub.ready) 'last_error': _lastError,
       });
 
-  static String _normalize(String text) => text.toUpperCase().replaceAll(RegExp(r'[\s\-]'), '');
+  /// A setup code as typed: upper case, no spaces or dashes.
+  static String normalize(String text) => text.toUpperCase().replaceAll(RegExp(r'[\s\-]'), '');
 
   bool _codeMatches(String given) {
     final want = _code;
     if (want == null) return false;
-    final g = _normalize(given);
+    final g = normalize(given);
     if (g.length != want.length) return false;
     var diff = 0;
     for (var i = 0; i < want.length; i++) {

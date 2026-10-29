@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'change.dart';
 import 'hlc.dart';
 import 'model.dart';
+import 'invite_keys.dart' show retiresInviteKey;
 import 'recovery.dart';
 import 'snapshot.dart';
 import 'store.dart';
@@ -408,8 +409,8 @@ class Materializer {
   static bool _namesCutoff(Change c) => c.type == RecordType.device && c.fields.containsKey('revokedAfter');
 
   /// Whether [c] can make changes before it count for nothing on a second pass: a revocation
-  /// naming a cutoff, or a replaced recovery key ([RetiredRecoveryKeys]).
-  static bool _decidesVerdicts(Change c) => _namesCutoff(c) || setsRecoveryKey(c);
+  /// naming a cutoff, a replaced recovery key or an invite key taken away ([RetiredRecoveryKeys]).
+  static bool _decidesVerdicts(Change c) => _namesCutoff(c) || setsRecoveryKey(c) || retiresInviteKey(c);
 
   static int? _counterIn(String id) {
     final colon = id.lastIndexOf(':');

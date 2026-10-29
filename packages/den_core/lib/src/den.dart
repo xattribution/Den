@@ -11,6 +11,7 @@ import 'chores.dart';
 import 'family_controls.dart';
 import 'hlc.dart';
 import 'ids.dart';
+import 'invite_keys.dart';
 import 'materializer.dart';
 import 'model.dart';
 import 'order_keys.dart';
@@ -50,6 +51,18 @@ class ReminderDue {
 
   /// Who it is for; empty means everyone who can see the item.
   final List<String> members;
+}
+
+/// What [Den.disownInvite] did about a device an invite let in that nobody recognized: whose
+/// it was meant to be, and the devices it let in since, still in the family.
+class DisownedInvite {
+  const DisownedInvite({required this.member, required this.letIn});
+
+  /// Who the invite was for; null for a shared screen or the hub.
+  final String? member;
+
+  /// Devices the removed one let in, directly or through ones it let in, still in the family.
+  final List<Device> letIn;
 }
 
 /// What [Den.disownRecovery] did about a phone recovery let in that nobody recognized.
@@ -247,7 +260,7 @@ class Den {
       if (gone()) return;
       for (var i = 0; i < unvouched.length; i++) {
         final h = checked[i];
-        if (h == null || !await recoveryProofHolds(unvouched[i], familyId)) {
+        if (h == null || !await recoveryProofHolds(unvouched[i], familyId) || !await inviteProofHolds(unvouched[i], familyId)) {
           bad.add(unvouched[i].id);
         } else {
           _hashes[unvouched[i].id] = h;
@@ -633,6 +646,24 @@ class Den {
     required DeviceKind kind,
     required RecoveryProof proof,
   }) =>
+      _selfApprove(familyId: familyId, founderPubkey: founderPubkey, fields: {
+        'name': deviceName,
+        'kind': kind.name,
+        'pubkey': _keys.pubkey,
+        'xpub': _keys.xpub,
+        'member': proof.member,
+        'mode': DeviceMode.personal.name,
+        'approved': true,
+        'recovery': proof.toJson(),
+      });
+
+  /// Writes this new device's own record letting itself in with [fields] (a recovery or invite
+  /// proof among them), as is: it can't check the change before the family's log arrives.
+  Future<void> _selfApprove({
+    required String familyId,
+    required String founderPubkey,
+    required Map<String, Object?> fields,
+  }) =>
       _locked(() async {
         if (hasFamily && this.familyId != familyId) throw StateError('This device already belongs to a family');
         if (isApproved) throw StateError('This device is already in the family');
@@ -651,16 +682,7 @@ class Den {
           hlc: _clock.next(),
           type: RecordType.device,
           rid: deviceId,
-          fields: {
-            'name': deviceName,
-            'kind': kind.name,
-            'pubkey': _keys.pubkey,
-            'xpub': _keys.xpub,
-            'member': proof.member,
-            'mode': DeviceMode.personal.name,
-            'approved': true,
-            'recovery': proof.toJson(),
-          },
+          fields: fields,
           device: deviceId,
           actor: null,
           sig: '',
@@ -681,6 +703,30 @@ class Den {
         _counter = counter;
         await _saveMeta();
         _emit({RecordType.device});
+      });
+
+  /// Lets this new device into the family as [proof]'s person's own device with an invite a
+  /// parent made (invite_keys.dart): one change to its own device record, approved, carrying
+  /// the proof. Like [requestRecovery], this device holds none of the family's log yet, so the
+  /// change counts for nothing here until the log arrives, and every device that receives it
+  /// decides by the same rules.
+  Future<void> requestInviteJoin({
+    required String familyId,
+    required String founderPubkey,
+    required String deviceName,
+    required DeviceKind kind,
+    required InviteProof proof,
+  }) =>
+      _selfApprove(familyId: familyId, founderPubkey: founderPubkey, fields: {
+        'name': deviceName,
+        'kind': kind.name,
+        'pubkey': _keys.pubkey,
+        'xpub': _keys.xpub,
+        'member': proof.member,
+        'mode': proof.mode.name,
+        'approved': true,
+        if (proof.mode == DeviceMode.shared) 'display': _defaultDisplay,
+        'invite': proof.toJson(),
       });
 
   /// Forgets the family on this device: wipes its log and metadata from storage and returns the
@@ -855,8 +901,14 @@ class Den {
         final grants = fields['grants'];
         if (grants is Iterable) fields['grants'] = [for (final g in grants) g is Enum ? g.name : g];
         final role = fields['role'];
-        if (role != null && role != Role.parent.name) fields.addAll(_noRecovery(m));
-        await _commitNow([_Draft(RecordType.member, id, Space.family, fields)]);
+        final demoted = role != null && role != Role.parent.name;
+        if (demoted) fields.addAll(_noRecovery(m));
+        await _commitNow([
+          // Their invites let nobody in now, even a device clocked before this. First, while
+          // whoever does this is still a parent (they may be changing their own role).
+          if (demoted) ..._retireInvites((k) => k.by == id),
+          _Draft(RecordType.member, id, Space.family, fields),
+        ]);
       });
 
   /// Removes a member and revokes the devices they own, rotating the keys of the spaces those
@@ -871,6 +923,8 @@ class Den {
         final held = {for (final d in owned) ...spacesForDevice(d)};
         final words = _noRecovery(m);
         await _commitNow([
+          // The invites they made, and those for them, let nobody in now.
+          ..._retireInvites((k) => k.by == id || k.member == id || owned.contains(k.device)),
           for (final d in owned) _revocation(d),
           if (words.isNotEmpty) _Draft(RecordType.member, id, Space.family, words),
           _Draft(RecordType.member, id, Space.family, {'_deleted': true}),
@@ -936,7 +990,8 @@ class Den {
   Future<void> revokeDevice(String deviceId) => _locked(() async {
         if (device(deviceId) == null) throw const InvalidInput('That device isn\'t in the family');
         final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
-        await _commitNow([_revocation(deviceId)]);
+        // The invites made on it go with it, taken away first: a device may remove itself.
+        await _commitNow([..._retireInvites((k) => k.device == deviceId), _revocation(deviceId)]);
         await _rotateNow(held);
       });
 
@@ -1030,7 +1085,7 @@ class Den {
         if (d == null || proof == null) throw const InvalidInput('That device wasn\'t let in by recovery');
         final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
         var retired = false;
-        final drafts = <_Draft>[if (!d.revoked) _revocation(deviceId)];
+        final drafts = <_Draft>[..._retireInvites((k) => k.device == deviceId), if (!d.revoked) _revocation(deviceId)];
         final m = member(proof.member);
         final f = family;
         if (proof.kind == RecoveryKind.words && m != null && recoveryKeyOf(m) == proof.key) {
@@ -1049,12 +1104,107 @@ class Den {
         return DisownedRecovery(member: proof.member, kind: proof.kind, retired: retired, letIn: letInBy(deviceId));
       });
 
+  // ---------------------------------------------------------------- invites (invite_keys.dart)
+
+  /// Every invite key the family made, newest first, withdrawn and used ones too.
+  List<InviteKeyRecord> get inviteKeys => _memo('inviteKeys', const {RecordType.inviteKey}, visible: false, () {
+        return [
+          for (final e in _mat.store.ofType(RecordType.inviteKey))
+            if (e.space == Space.family) InviteKeyRecord(e.rec),
+        ]..sort((a, b) => b.rec.created.compareTo(a.rec.created));
+      });
+
+  /// The invite key [id], or null.
+  InviteKeyRecord? inviteKey(String id) {
+    final e = _mat.store.at(Space.family, RecordType.inviteKey, id);
+    return e == null ? null : InviteKeyRecord(e.rec);
+  }
+
+  /// How many more devices the invite key of [record] may let in, not counting [except].
+  int inviteUses(InviteKeyRecord record, {String? except}) => inviteUsesLeft(_mat.store, record, except: except);
+
+  /// The device an invite key let in, or null while nobody used it.
+  Device? usedInvite(String id) => devices.firstWhereOrNull((d) => inviteOf(d)?.invite == id);
+
+  /// Makes an invite that lets [uses] devices in at once, until [expires] (UTC milliseconds, at
+  /// most [inviteKeyMaxLife] away): as [member]'s own, or, for no one, as a shared screen or the
+  /// hub ([modes]). The public half of its key goes in the family's log, signed by this parent's
+  /// own device; the secret half goes in the invite. Returns the record's id ([inviteKeyIdOf] the
+  /// key), which the proof names.
+  Future<String> createInviteKey({
+    required String? member,
+    required String publicKey,
+    required int expires,
+    Set<DeviceMode> modes = const {DeviceMode.personal},
+    int uses = 1,
+  }) =>
+      _locked(() async {
+        if (member != null && this.member(member) == null) throw const InvalidInput('That person isn\'t in the family');
+        final id = inviteKeyIdOf(publicKey);
+        if (id == null) throw const InvalidInput('That isn\'t an invite key');
+        if (inviteKey(id) != null) throw const InvalidInput('That invite key was used before');
+        await _commitNow([
+          _Draft(RecordType.inviteKey, id, Space.family, {
+            'member': member,
+            if (modes.length != 1 || modes.single != DeviceMode.personal)
+              'modes': [for (final m in DeviceMode.values) if (modes.contains(m)) m.name],
+            if (uses != 1) 'uses': uses,
+            'key': publicKey,
+            'by': actor?.id,
+            'device': deviceId,
+            'expires': expires,
+          }),
+        ]);
+        return id;
+      });
+
+  /// Withdraws invite [id]: its key lets nobody else in, even a device clocked before this.
+  /// A device it already let in stays (it is named in `kept`).
+  Future<void> withdrawInviteKey(String id) => _locked(() async {
+        final k = inviteKey(id);
+        if (k == null) throw const InvalidInput('That invite doesn\'t exist');
+        if (k.key == null) return;
+        await _commitNow([_retire(k)]);
+      });
+
+  /// "That wasn't Dad", for a device an invite let in ([inviteOf]): removes it (rotating the
+  /// keys of what it held) and takes the invite's key away in the same commit, keeping the
+  /// device on record so what it did stays in History. Returns whose it was meant to be and
+  /// the devices it let in since, still in the family, for the parent to remove too.
+  Future<DisownedInvite> disownInvite(String deviceId) => _locked(() async {
+        final d = device(deviceId);
+        final proof = d == null ? null : inviteOf(d);
+        if (d == null || proof == null) throw const InvalidInput('That device didn\'t join with an invite');
+        final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
+        final k = inviteKey(proof.invite);
+        await _commitNow([
+          if (k != null && k.key != null) _retire(k),
+          ..._retireInvites((other) => other.device == deviceId),
+          if (!d.revoked) _revocation(deviceId),
+        ]);
+        await _rotateNow(held);
+        return DisownedInvite(member: proof.member, letIn: letInBy(deviceId));
+      });
+
+  /// Takes the keys away from the live invites [which] picks, each naming the devices it let in
+  /// that this device holds (which stay).
+  List<_Draft> _retireInvites(bool Function(InviteKeyRecord k) which) => [
+        for (final k in inviteKeys)
+          if (k.key != null && which(k)) _retire(k),
+      ];
+
+  _Draft _retire(InviteKeyRecord k) =>
+      _Draft(RecordType.inviteKey, k.id, Space.family, {'key': null, 'kept': inviteKeptBy(_mat.store, k.key!)});
+
   /// The devices still in the family that [deviceId] approved, then those they approved, and
   /// so on, each device's in the order it approved them.
   List<Device> letInBy(String deviceId) {
     final byApprover = <String, List<Device>>{};
     for (final d in devices) {
-      final by = d.rec.fieldTimes['approved']?.device;
+      // A device an invite let in approved itself: it counts as let in by the invite's device.
+      final invite = inviteOf(d);
+      final made = invite == null ? null : _mat.store.at(Space.family, RecordType.inviteKey, invite.invite);
+      final by = made != null ? InviteKeyRecord(made.rec).device : d.rec.fieldTimes['approved']?.device;
       if (by != null && by != d.id && d.approved) (byApprover[by] ??= []).add(d);
     }
     for (final list in byApprover.values) {
@@ -3218,8 +3368,8 @@ class Den {
         );
         for (var i = 0; i < toCheck.length; i++) {
           final c = toCheck[i], h = checked[i];
-          // A recovery proof is checked with the signature: signed by the key it names.
-          if (h == null || !await recoveryProofHolds(c, familyId)) {
+          // A recovery or invite proof is checked with the signature: signed by the key it names.
+          if (h == null || !await recoveryProofHolds(c, familyId) || !await inviteProofHolds(c, familyId)) {
             rejected[c.id] = 'The signature doesn\'t verify';
           } else {
             accepted.add(c);

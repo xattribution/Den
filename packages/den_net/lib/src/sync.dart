@@ -6,6 +6,7 @@ import 'package:stream_channel/stream_channel.dart';
 
 import 'change_index.dart';
 import 'invite.dart';
+import 'admission.dart';
 import 'recovery_words.dart';
 import 'relay_client.dart';
 import 'seal.dart';
@@ -142,12 +143,13 @@ class JoinAttempt {
   JoinAttempt._(this.peer, this.via) {
     _completed.future.ignore();
     _recoveringAs.future.ignore();
+    _admittedAs.future.ignore();
   }
 
   /// The session to the inviting device.
   final SyncPeer peer;
 
-  /// `qr`, `code`, or `recovery` (a parent's recovery words).
+  /// `qr`, `code`, `recovery` (a parent's recovery words) or `key` (an invite key).
   final String via;
 
   final StreamController<JoinStage> _stages = StreamController.broadcast();
@@ -158,7 +160,15 @@ class JoinAttempt {
   Invite? _invite;
   _JoinRequest? _request;
   RecoveryKey? _recoveryKey;
+  InviteKey? _admissionKey;
+  String? _expectFamily;
+  String Function(String? memberName)? _admissionName;
+  final Completer<AdmittedAs> _admittedAs = Completer();
   bool _confirmed = false;
+
+  /// With an invite key: what the family's device said it lets this device in as, once it
+  /// checked the key. The join follows on its own.
+  Future<AdmittedAs> get admittedAs => _admittedAs.future;
 
   /// With recovery words: whose they are, once the family's device has checked them. The person
   /// says it's them ([confirmRecovery]) before this device asks to be let in.
@@ -222,6 +232,7 @@ class JoinAttempt {
 
   void _fail(JoinStage stage, String reason) {
     if (!_recoveringAs.isCompleted) _recoveringAs.completeError(JoinException(reason));
+    if (!_admittedAs.isCompleted) _admittedAs.completeError(JoinException(reason));
     if (_stage == JoinStage.done || _stage == JoinStage.rejected || _stage == JoinStage.failed) return;
     _stage = stage;
     if (!_stages.isClosed) _stages.add(stage);
@@ -232,6 +243,9 @@ class JoinAttempt {
 
 /// How long the proof a device signs with recovery words is good for.
 const Duration recoveryWordsProofLife = Duration(minutes: 15);
+
+/// How long the proof a device signs with an invite's key is good for (never past the invite).
+const Duration inviteProofLife = Duration(minutes: 15);
 
 class _JoinRequest {
   _JoinRequest(this.deviceName, this.kind, this.mode, this.memberId);
@@ -322,6 +336,39 @@ class SyncNode {
 
   /// Devices turned away on this node: refused from then on, even with a new invite or code.
   final Set<String> _declined = {};
+
+  /// Invite keys that name nothing one client may try in [keyGuessWindow] before it waits.
+  static const int maxKeyGuessesPerClient = 10;
+
+  /// The same, for every client together: twenty clients' worth, so one can't use them up.
+  static const int maxKeyGuesses = 200;
+
+  /// How long a wrong invite key counts.
+  static const Duration keyGuessWindow = Duration(minutes: 10);
+
+  final Map<String, List<int>> _keyGuesses = {};
+  final List<int> _allKeyGuesses = [];
+
+  void _pruneKeyGuesses() {
+    final since = DateTime.now().millisecondsSinceEpoch - keyGuessWindow.inMilliseconds;
+    _allKeyGuesses.removeWhere((t) => t < since);
+    _keyGuesses.removeWhere((_, times) {
+      times.removeWhere((t) => t < since);
+      return times.isEmpty;
+    });
+  }
+
+  /// Whether [client] (or everyone) tried too many invite keys that name nothing just now.
+  bool _keyGuessesSpent(String client) {
+    _pruneKeyGuesses();
+    return _allKeyGuesses.length >= maxKeyGuesses || (_keyGuesses[client]?.length ?? 0) >= maxKeyGuessesPerClient;
+  }
+
+  void _keyGuessed(String client) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _allKeyGuesses.add(now);
+    (_keyGuesses[client] ??= []).add(now);
+  }
 
   /// Connected peers.
   Iterable<SyncPeer> get peers => List.unmodifiable(_peers);
@@ -447,6 +494,51 @@ class SyncNode {
     peer._start();
     await peer._send({'t': 'pair', 'kind': 'qr', 'proof': await invite.proofFor(den.keys.pubkey)});
     await peer._send({'t': 'join', 'changes': _ownJoinChanges()});
+    return attempt;
+  }
+
+  /// Joins with an invite key (den_core's invite_keys.dart) over [channel] to any device that
+  /// serves sessions for the family: the one pairing message for joining with a self-admitting
+  /// change (admission.dart). The serving side checks the key and says what it admits
+  /// ([JoinAttempt.admittedAs]); this device then writes its change letting itself in, with the
+  /// key's proof good for [inviteProofLife] (never past the key), and sends it as its join. The
+  /// family's devices let it in at once. [deviceName] names this device from whose it will be
+  /// (null for a shared screen or the hub). [expectFamily], [expectDevice] and [expectPubkey]
+  /// pin what this device already knows, from an invite the hub gave it, say.
+  Future<JoinAttempt> joinWithInviteKey(
+    StreamChannel<dynamic> channel,
+    InviteKey key, {
+    required String Function(String? memberName) deviceName,
+    required DeviceKind kind,
+    String? expectFamily,
+    String? expectDevice,
+    String? expectPubkey,
+    FrameEncoding? encoding,
+  }) async {
+    if (den.isApproved) throw StateError('this device is already in a family');
+    final session = await Session.connect(
+      channel,
+      keys: den.keys,
+      familyId: den.familyId ?? expectFamily,
+      expectDevice: expectDevice,
+      expectPubkey: expectPubkey,
+      encoding: encoding,
+      timeout: handshakeTimeout,
+    );
+    final peer = _attach(session);
+    final attempt = JoinAttempt._(peer, 'key')
+      .._admissionKey = key
+      .._expectFamily = expectFamily ?? den.familyId
+      .._admissionName = deviceName
+      .._request = _JoinRequest('', kind, DeviceMode.personal, null);
+    peer._join = attempt;
+    peer._start();
+    await peer._send({
+      't': 'pair',
+      'kind': 'key',
+      'invite': key.id,
+      'proof': await admissionPairProof(key, session.transcriptHash, den.keys.pubkey),
+    });
     return attempt;
   }
 
@@ -932,6 +1024,7 @@ class SyncPeer {
   bool _awaitingApproval = false;
   String? _pairedVia;
   String? _recoveryKey;
+  String? _admissionKey;
   String? _founder;
   String? _closeReason;
   Timer? _pairingTimer;
@@ -1630,6 +1723,7 @@ class SyncPeer {
     }
     String? hostProof;
     Member? recovering;
+    InviteKeyRecord? admitting;
     var ok = false;
     if (kind == 'qr') {
       ok = session.peerFamily == _den.familyId && await _node.invites.redeem(pubkey, proof) != null;
@@ -1646,6 +1740,21 @@ class SyncPeer {
         _recoveryKey = recoveryKeyOf(parent);
         recovering = parent;
         hostProof = await recoveryHostProof(_recoveryKey!, session.transcriptHash, _den.keys.pubkey);
+      }
+    } else if (kind == 'key') {
+      if (_node._keyGuessesSpent(_client)) {
+        _closeReason = 'rate-limited';
+        await _send({'t': 'pair_fail', 'reason': 'rate-limited'});
+        await session.close();
+        return;
+      }
+      admitting = await _admittingKey(m['invite'], proof);
+      if (admitting == null) {
+        _node._keyGuessed(_client);
+      } else {
+        ok = true;
+        _admissionKey = admitting.key;
+        hostProof = await admissionHostProof(_admissionKey!, session.transcriptHash, _den.keys.pubkey);
       }
     }
     if (!ok) {
@@ -1678,7 +1787,28 @@ class SyncPeer {
           'picture': recovering.picture,
         },
       },
+      if (admitting != null) ...{
+        'name': family?.name,
+        'admit': {
+          'mode': admitting.modes.contains(DeviceMode.personal) ? DeviceMode.personal.name : (admitting.modes.toList()..sort((a, b) => a.index.compareTo(b.index))).first.name,
+          'expires': admitting.expires,
+          if (_den.member(admitting.member ?? '') case final m?)
+            'member': {'id': m.id, 'name': m.name, 'marker': m.marker.name, 'picture': m.picture},
+        },
+      },
     });
+  }
+
+  /// The family's invite key [id] names when [proof] is its signature for this session and the
+  /// joiner's key, and it can still let a device in by this device's clock and view; null
+  /// otherwise.
+  Future<InviteKeyRecord?> _admittingKey(Object? id, String proof) async {
+    if (id is! String) return null;
+    final record = _den.inviteKey(id);
+    final key = record?.key;
+    if (record == null || key == null || !record.liveAt(DateTime.now().toUtc().millisecondsSinceEpoch)) return null;
+    if (_den.inviteUses(record, except: deviceId) <= 0) return null;
+    return await checkAdmissionPairProof(proof, key, session.transcriptHash, pubkey) ? record : null;
   }
 
   /// The parent whose recovery key hashes to [keyHash] and signed [proof] for this session and
@@ -1745,6 +1875,7 @@ class SyncPeer {
     }
     final f = c.fields;
     if (f.containsKey('recovery')) return _isRecoveryRequest(c);
+    if (f.containsKey('invite')) return _isInviteRequest(c);
     if (f.containsKey('approved') && f['approved'] != false) return false;
     if (f['approvedBy'] != null) return false;
     if (f.containsKey('revoked') && f['revoked'] != false) return false;
@@ -1761,6 +1892,21 @@ class SyncPeer {
     if (proof == null || c.fields['pubkey'] != pubkey || c.fields['_deleted'] == true) return false;
     if (proof.expires <= DateTime.now().toUtc().millisecondsSinceEpoch) return false;
     if (_pairedVia == 'recovery' && (proof.kind != RecoveryKind.words || proof.key != _recoveryKey)) return false;
+    return verifySignature(c.signedBytes, c.sig, pubkey);
+  }
+
+  /// A join that lets the device in with an invite key's proof: its own record, after pairing
+  /// with that key, unexpired by this device's clock, while the key has uses left by this
+  /// device's view. den_core decides the rest, the same on every replica, and it settles a use
+  /// too many by the earlier clock: refusing it here keeps a device that got the same words later
+  /// from claiming an earlier one and pushing out the device that used them first.
+  Future<bool> _isInviteRequest(Change c) async {
+    final proof = InviteProof.parse(c.fields['invite']);
+    if (proof == null || c.fields['pubkey'] != pubkey || c.fields['_deleted'] == true || c.rid != deviceId) return false;
+    if (_pairedVia != 'key' || proof.key != _admissionKey) return false;
+    if (proof.expires <= DateTime.now().toUtc().millisecondsSinceEpoch) return false;
+    final record = _den.inviteKey(proof.invite);
+    if (record == null || _den.inviteUses(record, except: deviceId) <= 0) return false;
     return verifySignature(c.signedBytes, c.sig, pubkey);
   }
 
@@ -1802,6 +1948,8 @@ class SyncPeer {
     }
     final key = attempt._recoveryKey;
     if (key != null) return _onRecoveryPairOk(attempt, key, family, founder, m);
+    final admission = attempt._admissionKey;
+    if (admission != null) return _onAdmissionPairOk(attempt, admission, family, founder, m);
     final code = attempt._code!;
     final proof = m['proof'];
     final expected = await hostCodeProof(code, session.transcriptHash, pubkey);
@@ -1825,6 +1973,70 @@ class SyncPeer {
     } else if (_den.familyId != family) {
       throw _Violation('wrong-family');
     }
+    await _send({'t': 'join', 'changes': _node._ownJoinChanges()});
+  }
+
+  /// The family's device knows the invite key and proved it holds the family's record of it:
+  /// this device writes its change letting itself in, as what the key admits, and asks with it.
+  Future<void> _onAdmissionPairOk(
+    JoinAttempt attempt,
+    InviteKey key,
+    String family,
+    String founder,
+    Map<String, Object?> m,
+  ) async {
+    final proof = m['proof'];
+    final expected = await admissionHostProof(key.publicKey, session.transcriptHash, pubkey);
+    final admit = asJsonObject(m['admit']);
+    final mode = DeviceMode.values.asNameMap()[admit?['mode']];
+    final until = admit?['expires'];
+    final member = asJsonObject(admit?['member']);
+    if (proof is! String ||
+        !constantTimeEquals(utf8.encode(proof), utf8.encode(expected)) ||
+        mode == null ||
+        until is! int ||
+        (mode == DeviceMode.personal && (member == null || member['id'] is! String))) {
+      _closeReason = 'host-proof';
+      attempt._fail(JoinStage.rejected, 'host-proof');
+      await session.close();
+      return;
+    }
+    if (attempt._expectFamily != null && attempt._expectFamily != family) throw _Violation('wrong-family');
+    if (_den.hasFamily && _den.familyId != family) throw _Violation('wrong-family');
+    _trusted = true;
+    final name = m['name'];
+    final memberId = mode == DeviceMode.personal ? member!['id']! as String : null;
+    final memberName = mode == DeviceMode.personal && member!['name'] is String ? member['name'] as String : null;
+    final admitted = AdmittedAs(
+      familyId: family,
+      familyName: name is String ? name : null,
+      mode: mode,
+      member: memberId,
+      memberName: memberName,
+      marker: member?['marker'] is String ? member!['marker'] as String : null,
+      picture: member?['picture'] is String ? member!['picture'] as String : null,
+      expires: until,
+    );
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final life = now + inviteProofLife.inMilliseconds;
+    final signed = await key.prove(
+      family: family,
+      member: memberId,
+      mode: mode,
+      devicePubkey: _den.keys.pubkey,
+      expires: life < until ? life : until,
+    );
+    final request = attempt._request!;
+    if (!_den.isApproved && !_den.changesSince(const {}).any((c) => c.device == _den.deviceId && c.fields.containsKey('invite'))) {
+      await _den.requestInviteJoin(
+        familyId: family,
+        founderPubkey: founder,
+        deviceName: attempt._admissionName?.call(memberName) ?? request.deviceName,
+        kind: request.kind,
+        proof: signed,
+      );
+    }
+    if (!attempt._admittedAs.isCompleted) attempt._admittedAs.complete(admitted);
     await _send({'t': 'join', 'changes': _node._ownJoinChanges()});
   }
 

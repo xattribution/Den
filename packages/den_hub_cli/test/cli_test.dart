@@ -132,6 +132,38 @@ void main() {
     expect(out, contains('Setup: waiting_for_code'));
   });
 
+  test("setup-link: the first parent's link and QR code, with the setup code to type if it can't be used", () async {
+    final dir = await Directory.systemTemp.createTemp('den_hub_cli_setup');
+    addTearDown(() => dir.delete(recursive: true));
+    final den = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
+    final hub = await DenHub.start(den, HubConfig(
+      port: 0,
+      host: InternetAddress.loopbackIPv4,
+      mdns: false,
+      dataDir: dir.path,
+      publicUrl: Uri.parse('https://den.example.com'),
+      log: HubLog(level: LogLevel.error),
+    ));
+    addTearDown(() async {
+      await hub.stop();
+      await den.close();
+    });
+    final code = File('${dir.path}/hub/setup-code').readAsStringSync().trim();
+    final (status, out, err) = await run(['setup-link', '--data', dir.path, '--port', '${hub.port}'],
+        env: {'DEN_PUBLIC_URL': 'https://den.example.com'});
+    expect(status, 0, reason: err);
+    expect(out, contains('  https://den.example.com/#/setup/$code/${den.deviceId}'));
+    expect(out, contains('If Den asks for the setup code, it is: $code'));
+    expect(out, contains('▀'), reason: 'a QR code drawn in half blocks');
+    // Without the hub's address, the code alone and how to get the link.
+    final (_, plain, _) = await run(['setup-link', '--data', dir.path, '--port', '${hub.port}']);
+    expect(plain, contains('Setup code: $code'));
+    expect(plain, contains('--url'));
+    // An address given on the command line wins.
+    final (_, given, _) = await run(['setup-link', '--data', dir.path, '--port', '${hub.port}', '--url', 'https://den.smith.family']);
+    expect(given, contains('https://den.smith.family/#/setup/$code/${den.deviceId}'));
+  });
+
   test('status of a hub the family removed says so, running or not', () async {
     final removedPath = '${tmp.path}${Platform.pathSeparator}removed';
     final hubDen = await DataDir(removedPath).open();
