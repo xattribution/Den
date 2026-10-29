@@ -2,7 +2,8 @@
 """den-allowlist: keeps Den's firewall open to the family's homes, and to nobody else.
 
 Every home keeps a DDNS name (on Cloudflare, DNS only) pointing at its current public address.
-This reads those names from Den's .env (DEN_HOMES), looks up their A and AAAA records with a
+This reads those names from Den's .env (DEN_HOMES, and each other family's DEN_FAMILY_ line when
+the server has several), looks up their A and AAAA records with a
 resolver it trusts (Cloudflare's 1.1.1.1 over HTTPS, not this server's own resolver), and puts
 the addresses in the nftables sets that may reach HTTPS (home_v4, home_v6) and, if .env asks,
 SSH (ssh_v4, ssh_v6), in table inet den_fw. All four sets change in one transaction.
@@ -20,6 +21,10 @@ last known good addresses); 1 nothing applied (bad .env, or nft refused).
 
 .env (the private setup's, through the link /etc/den/env):
     DEN_HOMES             the homes' DDNS names, separated by spaces or commas
+    DEN_FAMILY_<NAME>     another family on this server (install.sh add-family writes it):
+                          its address, its hub's port, then its homes' DDNS names. Every
+                          family's homes may reach 443; each hub's own sign-in keeps the
+                          families apart
     DEN_HOME_V6_PREFIX    how much of a home's IPv6 address to allow: 64 (its whole /64) by default
     DEN_ALLOW_EXTRA       fixed addresses or networks also allowed on 443 (a home with a static IP)
     DEN_SSH_FROM_HOMES    1 to allow SSH from the homes too (default 0: SSH over Tailscale only)
@@ -42,6 +47,7 @@ import urllib.request
 TABLE = "inet den_fw"
 SETS = ("home_v4", "home_v6", "ssh_v4", "ssh_v6")
 DEFAULT_RESOLVERS = "https://1.1.1.1/dns-query https://1.0.0.1/dns-query"
+FAMILY_PREFIX = "DEN_FAMILY_"
 
 # Cloudflare's proxy addresses (https://www.cloudflare.com/ips/). A home's DDNS record that
 # resolves here is proxied (orange cloud): the home's real address is hidden, and allowing
@@ -103,10 +109,26 @@ def networks(text, setting):
 class Settings:
     def __init__(self, env):
         self.homes = []
-        for name in words(env.get("DEN_HOMES")):
+        self.family = {}  # home -> the other family it belongs to (not there: the first family's)
+
+        def add(name, family=None):
             name = name.rstrip(".").lower()
             if name not in self.homes:
                 self.homes.append(name)
+                if family:
+                    self.family[name] = family
+
+        for name in words(env.get("DEN_HOMES")):
+            add(name)
+        for key, value in env.items():
+            if not key.startswith(FAMILY_PREFIX):
+                continue
+            parts = words(value)
+            if len(parts) < 2 or not parts[1].isdigit():
+                raise SystemExit(f"{key}: {value!r} should be the family's address, its hub's port, then its "
+                                 "homes' DDNS names (sudo ./install.sh add-family writes it)")
+            for name in parts[2:]:
+                add(name, key[len(FAMILY_PREFIX):].lower())
         prefix = env.get("DEN_HOME_V6_PREFIX") or "64"
         if not prefix.isdigit() or not 32 <= int(prefix) <= 128:
             raise SystemExit(f"DEN_HOME_V6_PREFIX: {prefix!r} should be a prefix length from 32 to 128, like 64")
@@ -283,6 +305,8 @@ def main():
     now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
     homes, failed = {}, []
     for name in settings.homes:
+        # Another family's home says whose it is: "home.smith.example (smith)".
+        who = f"{name} ({settings.family[name]})" if name in settings.family else name
         known = state["homes"].get(name)
         known_nets = [ipaddress.ip_network(n) for n in known["networks"]] if known else []
         try:
@@ -291,17 +315,17 @@ def main():
             failed.append(name)
             homes[name] = known_nets
             if known:
-                warn(f"{name}: lookup failed ({e}); it keeps its last known addresses "
+                warn(f"{who}: lookup failed ({e}); it keeps its last known addresses "
                      f"{describe([element(n) for n in known_nets])} (looked up {known['checked']})")
             else:
-                warn(f"{name}: lookup failed ({e}); no last known addresses, so this home isn't allowed yet")
+                warn(f"{who}: lookup failed ({e}); no last known addresses, so this home isn't allowed yet")
             continue
         homes[name] = nets
         found = [element(n) for n in nets]
         if args.dry_run:
-            log(f"{name}: {describe(found)}")
+            log(f"{who}: {describe(found)}")
         elif not known or known_nets != nets:
-            log(f"{name}: {describe(found)}" + (f" (was {describe([element(n) for n in known_nets])})" if known else ""))
+            log(f"{who}: {describe(found)}" + (f" (was {describe([element(n) for n in known_nets])})" if known else ""))
         if not args.dry_run:
             state["homes"][name] = {"networks": [str(n) for n in nets], "checked": now}
 

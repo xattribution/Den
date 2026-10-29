@@ -40,6 +40,7 @@ class Wire {
       'timezone': f.timezone,
       'week_start': f.weekStart,
       'points_enabled': f.pointsEnabled,
+      'colors': f.colors.name,
     };
   }
 

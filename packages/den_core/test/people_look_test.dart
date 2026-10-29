@@ -58,6 +58,31 @@ void main() {
     });
   });
 
+  group('the family\'s color pack', () {
+    test('bright until a parent picks another; anything else reads as bright', () {
+      expect(ColorPack.values.map((p) => p.name), ['bright', 'deep', 'soft', 'bold']);
+      expect(ColorPack.parse('deep'), ColorPack.deep);
+      expect(ColorPack.parse('neon'), ColorPack.bright);
+      expect(ColorPack.parse(null), ColorPack.bright);
+    });
+
+    test('is a family setting: everyone sees it, people keep their colors, and Undo puts it back', () async {
+      final clock = TestClock.at(DateTime.utc(2026, 9, 1, 15));
+      final den = await foundFamily(clock);
+      final leo = await den.addMember(name: 'Leo', role: Role.kid, marker: Marker.bubblegum);
+      expect(den.family!.colors, ColorPack.bright);
+      final r = await den.recording(() => den.updateFamily({'colors': ColorPack.deep.name}));
+      expect(den.family!.colors, ColorPack.deep);
+      expect(den.member(leo)!.marker, Marker.bubblegum, reason: 'Leo keeps his place in the pack');
+      final tablet = await joinDevice(den, clock, member: leo);
+      expect(tablet.family!.colors, ColorPack.deep);
+      await expectLater(den.updateFamily({'colors': 'neon'}), throwsA(isA<InvalidInput>()));
+      await den.undo(r.changes);
+      expect(den.family!.colors, ColorPack.bright);
+      expect(den.family!.rec.fields['colors'], 'bright');
+    });
+  });
+
   group('pictures', () {
     test('a member has the picture chosen for them', () {
       expect(_member({'picture': 'dinosaur', 'animal': 'cat'}).picture, 'dinosaur');

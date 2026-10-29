@@ -151,6 +151,20 @@ void main() {
       expect(state.theme, ThemeChoice.night);
     });
 
+    testWidgets('the calendar: always light, and days in colors, one tap each, kept on this device', (tester) async {
+      final state = await connected(tester);
+      await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state, size: const Size(390, 2400));
+      await tester.tap(find.text('Always light'));
+      await tester.pumpAndSettle();
+      expect(state.calendarLight, isTrue);
+      await tester.tap(find.text('Colors'));
+      await tester.pumpAndSettle();
+      expect(state.calendarDays, CalendarDays.colors);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool('den.calendarLight'), isTrue);
+      expect(prefs.getString('den.calendarDays'), 'colors');
+    });
+
     testWidgets('in a browser, reminders come from the hub', (tester) async {
       final state = await connected(tester);
       await pumpScreen(tester, const SettingsScreen(version: '1.0.0', web: true), state: state, size: _tall);
@@ -179,6 +193,21 @@ void main() {
       expect(state.den.family!.pointsEnabled, isFalse);
       await _tapAndWait(tester, findWords('Points and rewards'));
       expect(state.den.family!.pointsEnabled, isTrue);
+    });
+
+    testWidgets('family colors, at night', (tester) async {
+      final state = await connected(tester);
+      await shootWith(tester, 'settings_family_colors_phone_night', const FamilySettingsScreen(), state: state, size: _tall, night: true, pushed: true);
+    });
+
+    testWidgets('family colors: one tap picks a pack for the whole family, and everyone keeps their place', (tester) async {
+      final state = await connected(tester);
+      final maya = state.den.members.firstWhere((m) => m.name == 'Maya');
+      await pumpScreen(tester, const FamilySettingsScreen(), state: state, size: _tall);
+      expect(find.bySemanticsLabel(RegExp(r'^Deep: Alex, Ocean; Priya, Emerald; Maya, Pumpkin')), findsOneWidget);
+      await _tapAndWait(tester, find.text('Deep'));
+      expect(state.den.family!.colors, ColorPack.deep);
+      expect(state.den.member(maya.id)!.marker, maya.marker, reason: 'Maya keeps her place in the colors');
     });
 
     testWidgets('"Show me first" sets the family to review', (tester) async {

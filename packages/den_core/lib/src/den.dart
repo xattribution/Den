@@ -807,7 +807,7 @@ class Den {
     final id = familyId;
     if (id == null || family == null) throw const InvalidInput('There is no family yet');
     final fields = _cleanPatch(patch, {
-      'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'oversight', 'assistant',
+      'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'colors', 'oversight', 'assistant',
       // One person's entry, `oversight.<memberId>`, so parents changing different people merge.
       for (final k in patch.keys) if (k.startsWith('oversight.')) k,
     });
@@ -1214,6 +1214,7 @@ class Den {
     'reward.active': true,
     'reward.needsApproval': true,
     'family.pointsEnabled': true,
+    'family.colors': 'bright',
   };
 
   /// Whether [c] wrote [field]: the field itself, any entry of it when it's a map, or the whole

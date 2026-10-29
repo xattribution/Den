@@ -21,9 +21,13 @@ export '../design/layout.dart' show TextSize;
 
 enum ThemeChoice { auto, day, night }
 
+/// How the calendar's month shows who has something on a day: their dots under the date, or the
+/// day itself in their colors. Kept on this device.
+enum CalendarDays { dots, colors }
+
 /// What a change can touch besides record types ([RecordType]).
 abstract final class Changes {
-  /// The theme, the text size or the wall setting of this device.
+  /// The theme, the text size, the calendar's look or the wall setting of this device.
   static const prefs = 'prefs';
 
   /// Everything: the engine itself was swapped (the demo family).
@@ -46,6 +50,8 @@ class AppState extends ChangeNotifier with FamilyReads {
     bool wall = false,
     ThemeChoice theme = ThemeChoice.auto,
     TextSize textSize = TextSize.standard,
+    CalendarDays calendarDays = CalendarDays.dots,
+    bool calendarLight = false,
     this.network,
     this.reminders,
     this.phoneCalendars,
@@ -57,6 +63,8 @@ class AppState extends ChangeNotifier with FamilyReads {
         _wall = wall,
         _theme = theme,
         _textSize = textSize,
+        _calendarDays = calendarDays,
+        _calendarLight = calendarLight,
         _seen = {...seen},
         _snoozed = {...snoozed} {
     signInGuard = SignInGuard.fromJson(
@@ -68,7 +76,7 @@ class AppState extends ChangeNotifier with FamilyReads {
     _keepPhotos();
   }
 
-  /// Restores the saved theme, text size and wall preferences for this device.
+  /// Restores the saved theme, text size, calendar and wall preferences for this device.
   static Future<AppState> load(
     Den den, {
     DenNetwork? network,
@@ -81,6 +89,8 @@ class AppState extends ChangeNotifier with FamilyReads {
       wall: prefs.getBool(_wallKey) ?? false,
       theme: ThemeChoice.values.asNameMap()[prefs.getString(_themeKey)] ?? ThemeChoice.auto,
       textSize: TextSize.values.asNameMap()[prefs.getString(_textSizeKey)] ?? TextSize.standard,
+      calendarDays: CalendarDays.values.asNameMap()[prefs.getString(_calendarDaysKey)] ?? CalendarDays.dots,
+      calendarLight: prefs.getBool(_calendarLightKey) ?? false,
       seen: {...?prefs.getStringList(_seenKey)},
       snoozed: _readSnoozed(prefs.getStringList(_snoozedKey)),
       signInTries: prefs.getString(_signInTriesKey),
@@ -103,6 +113,8 @@ class AppState extends ChangeNotifier with FamilyReads {
   static const _wallKey = 'den.wall';
   static const _themeKey = 'den.theme';
   static const _textSizeKey = 'den.textSize';
+  static const _calendarDaysKey = 'den.calendarDays';
+  static const _calendarLightKey = 'den.calendarLight';
   static const _seenKey = 'den.seen';
   static const _snoozedKey = 'den.snoozed';
   static const _signInTriesKey = 'den.signInTries';
@@ -240,6 +252,30 @@ class AppState extends ChangeNotifier with FamilyReads {
     _textSize = value;
     _changed(const {Changes.prefs});
     _save((p) => p.setString(_textSizeKey, value.name));
+  }
+
+  CalendarDays _calendarDays;
+
+  /// Whether the calendar's month shows people's dots under each day or the day in their colors
+  /// (the calendar's view options, and Settings, Appearance).
+  CalendarDays get calendarDays => _calendarDays;
+  set calendarDays(CalendarDays value) {
+    if (value == _calendarDays) return;
+    _calendarDays = value;
+    _changed(const {Changes.prefs});
+    _save((p) => p.setString(_calendarDaysKey, value.name));
+  }
+
+  bool _calendarLight;
+
+  /// Whether the calendar stays light while the rest of the app is dark (Settings, Appearance:
+  /// "Calendar: Always light"); otherwise it matches the app.
+  bool get calendarLight => _calendarLight;
+  set calendarLight(bool value) {
+    if (value == _calendarLight) return;
+    _calendarLight = value;
+    _changed(const {Changes.prefs});
+    _save((p) => p.setBool(_calendarLightKey, value));
   }
 
   StreamSubscription<Set<String>>? _sub;

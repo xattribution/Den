@@ -3,6 +3,7 @@ import 'package:den_app/features/lists/screens/list_detail.dart';
 import 'package:den_app/features/lists/screens/list_editor.dart';
 import 'package:den_app/features/lists/words/list_words.dart';
 import 'package:den_app/features/lists/screens/lists_index.dart';
+import 'package:den_app/features/lists/widgets/item_adder.dart';
 import 'package:den_app/app/app_state.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
@@ -129,7 +130,33 @@ void main() {
     expect(findWords('${open.text} is already on the list'), findsOneWidget);
   });
 
-  testWidgets('Clear takes the done things off, and Undo brings them back in place', (tester) async {
+  testWidgets('Checking crosses an item off where it is, and a tap there takes it back', (tester) async {
+    final state = await demo(tester);
+    final id = _groceries(state);
+    await pumpScreen(tester, ListDetailScreen(id: id), state: state, size: tall);
+    final names = [for (final i in state.den.list(id)!.items) i.text];
+    Map<String, Offset> where() => {for (final n in names) n: tester.getTopLeft(findWords(n))};
+    final before = where();
+    expect(find.text('In the cart'), findsNothing, reason: 'checked things aren\'t collected at the bottom');
+
+    await tester.tap(findWords('Eggs'));
+    await settle(tester);
+    final eggs = state.den.list(id)!.items.firstWhere((i) => i.text == 'Eggs');
+    expect(eggs.checked, isTrue);
+    expect(where(), before, reason: 'nothing moved');
+    final struck = tester.widget<Text>(findWords('Eggs'));
+    expect(struck.style?.decoration, TextDecoration.lineThrough);
+    expect(find.text('Clear checked (4)'), findsOneWidget);
+
+    // A mistap is one more tap in the same place.
+    await tester.tap(findWords('Eggs'));
+    await settle(tester);
+    expect(state.den.list(id)!.items.firstWhere((i) => i.text == 'Eggs').checked, isFalse);
+    expect(where(), before);
+    expect(find.text('Clear checked (3)'), findsOneWidget);
+  });
+
+  testWidgets('Clear checked takes the checked things off, and Undo brings them back in place', (tester) async {
     final state = await demo(tester);
     final id = _groceries(state);
     final done = state.den.list(id)!.items.where((i) => i.checked).length;
@@ -139,17 +166,111 @@ void main() {
       'lists_cleared_phone',
       ListDetailScreen(id: id),
       state: state,
-      size: tall,
       act: (tester) async {
-        await tester.tap(find.text('Clear $done'));
+        // Floating at the bottom of the screen, wherever the list is scrolled.
+        final clear = find.text('Clear checked ($done)');
+        expect(tester.getBottomLeft(clear).dy, greaterThan(phone.height - 80));
+        await tester.tap(clear);
         await settle(tester);
       },
     );
     expect(state.den.list(id)!.items.where((i) => i.checked), isEmpty);
-    expect(findWords('Cleared $done done ${done == 1 ? 'item' : 'items'}'), findsOneWidget);
+    expect(findWords('Cleared $done checked ${done == 1 ? 'item' : 'items'}'), findsOneWidget);
     await tester.tap(find.text('Undo'));
     await settle(tester);
     expect(state.den.list(id)!.items.where((i) => i.checked), hasLength(done));
+    expect(find.text('Clear checked ($done)'), findsOneWidget);
+  });
+
+  testWidgets('Clear checked on the iPad, over the chosen list', (tester) async {
+    final state = await demo(tester);
+    await shoot(tester, 'lists_index_tablet_night', const ListsHome(), state: state, size: tablet, night: true);
+    final clear = find.text('Clear checked (3)');
+    expect(clear, findsOneWidget);
+    expect(tester.getTopLeft(clear).dx, greaterThan(tablet.width / 2), reason: 'in the chosen list\'s column');
+  });
+
+  testWidgets('New things go to the store showing, the chip stays as picked, and "@" moves it', (tester) async {
+    final state = await demo(tester);
+    final id = _groceries(state);
+    await pumpScreen(tester, ListDetailScreen(id: id), state: state, size: tall);
+    final chip = find.byType(StoreChip);
+    String chipSays() => tester.widget<StoreChip>(chip).store ?? 'Any store';
+    final add = find.byType(TextField).first;
+    Item item(String text) => state.den.list(id)!.items.firstWhere((i) => i.text == text);
+    Future<void> type(String text) async {
+      await tester.enterText(add, text);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await settle(tester);
+    }
+
+    expect(chipSays(), 'Any store');
+    await tester.tap(find.text('Costco 4'));
+    await tester.pumpAndSettle();
+    expect(chipSays(), 'Costco', reason: 'it follows the store showing');
+
+    await type('lemons');
+    expect(item('Lemons').store, 'Costco');
+    expect(findWords('Added Lemons at Costco'), findsOneWidget);
+    final focus = tester.widget<EditableText>(find.descendant(of: add, matching: find.byType(EditableText))).focusNode;
+    expect(focus.hasFocus, isTrue, reason: 'the field keeps the keyboard for the next thing');
+
+    await type('bread');
+    expect(item('Bread').store, 'Costco', reason: 'the choice stays');
+    expect(focus.hasFocus, isTrue);
+
+    await type('tape @target');
+    expect(item('Tape').store, 'Target');
+    expect(chipSays(), 'Target', reason: '"@" moves the chip');
+    await type('socks');
+    expect(item('Socks').store, 'Target');
+  });
+
+  testWidgets('The store picker: a store the family uses, or a new one by name', (tester) async {
+    final state = await demo(tester);
+    final id = _groceries(state);
+    Item item(String text) => state.den.list(id)!.items.firstWhere((i) => i.text == text);
+    await shootAfter(
+      tester,
+      'lists_store_picker_phone',
+      ListDetailScreen(id: id),
+      state: state,
+      act: (tester) async {
+        await tester.tap(find.byType(StoreChip));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('New store…'));
+        await tester.pumpAndSettle();
+      },
+    );
+    expect(find.text('Trader Joe\'s'), findsWidgets);
+    await tester.enterText(find.widgetWithText(TextField, 'Store name'), 'corner bakery');
+    await tester.tap(find.text('Add store'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<StoreChip>(find.byType(StoreChip)).store, 'corner bakery');
+    expect(find.text('New store…').hitTestable(), findsNothing, reason: 'the picker closes');
+    await tester.enterText(find.byType(TextField).first, 'rye bread');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await settle(tester);
+    expect(item('Rye bread').store, 'corner bakery');
+
+    // A store the family already uses keeps its spelling.
+    await tester.tap(find.byType(StoreChip));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New store…'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Store name'), 'costco');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(tester.widget<StoreChip>(find.byType(StoreChip)).store, 'Costco');
+
+    await tester.tap(find.byType(StoreChip));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Any store').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'apples');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await settle(tester);
+    expect(item('Apples').store, isNull);
   });
 
   testWidgets('More: Share, Copy, Reorder, Edit and Delete', (tester) async {

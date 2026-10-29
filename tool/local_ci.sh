@@ -73,6 +73,7 @@ for t in "${targets[@]}"; do
       ;;
     web)
       step "web sw test" app node test/web/sw_test.mjs web/sw.js
+      step "web keyboard test" app node test/web/viewport_test.mjs web/den_web.js web/index.html
       if [ -n "${CHROME_EXECUTABLE:-}" ]; then
         step "web chrome tests" app flutter test --platform chrome test/web
       else echo "SKIP  web chrome tests (no Chrome; set CHROME_EXECUTABLE)"; fi
