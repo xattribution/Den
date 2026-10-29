@@ -160,7 +160,7 @@ void main() {
       deviceKind: DeviceKind.phone,
     );
     final list = await den.addList(title: 'Groceries', kind: ListKind.shopping);
-    for (var i = 0; i < Den.snapshotEvery; i++) {
+    for (var i = 0; i < snapshotEvery; i++) {
       clock.advance(const Duration(minutes: 7));
       await den.addItem(list, text: 'Item $i');
     }

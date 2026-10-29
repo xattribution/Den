@@ -290,14 +290,6 @@ class Den {
     return true;
   }
 
-  /// How many changes past the stored snapshot make it due to be written again.
-  static const int snapshotEvery = 256;
-
-  /// How far back a snapshot keeps what a late change needs to rewind to its place: a change
-  /// older than that, arriving after the snapshot was written, makes the next open replay the
-  /// whole log (and the snapshot is written again).
-  static const Duration snapshotWindow = Duration(days: 30);
-
   /// Writes a snapshot when enough has changed since the last, or the last no longer fits. A log
   /// shorter than [snapshotEvery] replays quickly enough without one.
   void _maybeSnapshot() {

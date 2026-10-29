@@ -295,6 +295,15 @@ class SnapshotHeader {
   }
 }
 
+/// How many changes past the stored snapshot make it due to be written again; a shorter log
+/// replays quickly enough without one.
+const int snapshotEvery = 256;
+
+/// How far back a snapshot keeps what a late change needs to rewind to its place: a change older
+/// than that, arriving after the snapshot was written, makes the next open replay the whole log
+/// (and the snapshot is written again).
+const Duration snapshotWindow = Duration(days: 30);
+
 /// How long after [Den.open] the check of the stored log against its snapshot's digest waits, so
 /// it doesn't compete with the first screens. Tests set it to zero.
 Duration snapshotCheckDelay = const Duration(seconds: 2);
