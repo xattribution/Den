@@ -4,5 +4,6 @@ library;
 
 export 'state/display.dart';
 export 'state/kids.dart';
+export 'state/sign_in_guard.dart' show SignInGuard;
 // The AI helper reads its answers aloud to a kid the way the kids' app reads chores.
 export 'widgets/kid_parts.dart' show speak;

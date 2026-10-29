@@ -408,6 +408,16 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
   display a parent with no PIN or pattern never verifies (`Den.verifySignIn`), so once a family
   has a shared display its parents need one to act there; the app asks for one when a parent
   makes a device a shared display.
+- A wrong PIN or pattern makes that person's next try on the same screen wait 20 seconds (on a
+  shared display, and on a parent's phone handed to a kid). The screen keeps the count on the
+  device, so restarting Den doesn't skip the wait, and at every tenth wrong try in a row a shared
+  display adds a `signInTries` record: a parent's own device says so in Needs you ("Someone tried
+  Alex's PIN on Kitchen display 10 times") and History shows it. What remains: `signIn` is in
+  `f`, so every family device holds the hash (PBKDF2, 20,000 rounds), and a determined teen with
+  a laptop and a family device's data could still find a 4-digit PIN or a 4-animal pattern
+  offline. The stakes are bounded: as that person on a shared screen they can give stars, approve
+  rewards and change chores, all of which History shows as done there, and never make a trust
+  decision.
 
 ## Parental controls
 

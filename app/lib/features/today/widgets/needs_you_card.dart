@@ -240,6 +240,14 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
           null,
           () => context.push('/family/member/${member.id}'),
         ),
+      SignInTriesNeed(:final told) => (
+          _face(app, told.member, PhosphorIconsRegular.lockKey),
+          signInTriesSentence(app, told),
+          signInTriesWhen(app, told),
+          gotIt(),
+          null,
+          () => context.push('/family/member/${told.member}'),
+        ),
       ListNeed(:final list) => (
           _glyph(context, Pictograms.listKind(list.list.kind)),
           listDue(app, list),

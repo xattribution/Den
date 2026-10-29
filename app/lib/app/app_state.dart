@@ -8,6 +8,7 @@ import '../platform/calendars/phone_calendars.dart';
 import '../platform/sync/den_network.dart';
 import '../platform/notifications/reminder_scheduler.dart';
 import '../design/photos.dart';
+import '../features/shared_screens/shared_screens.dart' show SignInGuard;
 import 'actions.dart';
 import 'den_scope.dart';
 import 'family_reads.dart';
@@ -46,11 +47,17 @@ class AppState extends ChangeNotifier with FamilyReads {
     this.reminders,
     this.phoneCalendars,
     Set<String> seen = const {},
+    String? signInTries,
   })
       : _den = den,
         _wall = wall,
         _theme = theme,
         _seen = {...seen} {
+    signInGuard = SignInGuard.fromJson(
+      signInTries,
+      now: () => _den.now(),
+      onChange: (json) => _save((p) => p.setString(_signInTriesKey, json)),
+    );
     _listen();
     _keepPhotos();
   }
@@ -68,6 +75,7 @@ class AppState extends ChangeNotifier with FamilyReads {
       wall: prefs.getBool(_wallKey) ?? false,
       theme: ThemeChoice.values.asNameMap()[prefs.getString(_themeKey)] ?? ThemeChoice.auto,
       seen: {...?prefs.getStringList(_seenKey)},
+      signInTries: prefs.getString(_signInTriesKey),
       network: network,
       reminders: reminders,
       phoneCalendars: phoneCalendars,
@@ -87,6 +95,7 @@ class AppState extends ChangeNotifier with FamilyReads {
   static const _wallKey = 'den.wall';
   static const _themeKey = 'den.theme';
   static const _seenKey = 'den.seen';
+  static const _signInTriesKey = 'den.signInTries';
 
   Den _den;
   @override
@@ -118,6 +127,10 @@ class AppState extends ChangeNotifier with FamilyReads {
     final keep = [..._seen];
     _save((p) => p.setStringList(_seenKey, keep.length > 200 ? keep.sublist(keep.length - 200) : keep));
   }
+
+  /// Wrong PINs and patterns on this device, per person, and how long the next try waits; kept
+  /// on this device, so restarting Den doesn't reset it.
+  late final SignInGuard signInGuard;
 
   /// Decodes the photos people's pictures name, so avatars draw them in their first frame.
   void _keepPhotos() {
