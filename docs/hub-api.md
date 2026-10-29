@@ -1645,7 +1645,7 @@ den_assistant's `ModelProxy` (the provider and models it runs), then:
 | `403 refused` | Another provider or a model the hub doesn't offer ("update this device") |
 | `403 too_long` | No output cap, or more than 8,192 tokens (2,048 for a kid) |
 | `403 no_photos` | A kid's request with a photo |
-| `429 daily_limit` | A kid asked `kidDailyLimit` new questions today (a request carrying a tool's answer doesn't count) |
+| `429 daily_limit` | A kid used `kidDailyLimit` today. Every request from a kid's device counts, and so does every capture the hub read for them, except a request answering tool calls the hub itself forwarded to that kid in a turn it already counted (at most eight such requests per turn, within ten minutes, each call answered once). A request whose provider names no call ids (a model at home, Gemini without ids) counts |
 | `402 budget_spent` | This month's estimated cost, the capture reader's included, reached `budgetCents` |
 | `429 busy` | Six requests are already going to the provider |
 | `502 provider_unreachable` | The provider couldn't be reached (`details.retry`) |
