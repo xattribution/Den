@@ -40,6 +40,9 @@ dependencies:
     path: ../packages/den_core
   den_actions:
     path: ../packages/den_actions
+  # The optional AI helper: its loop, context packer and model adapters (through the hub).
+  den_assistant:
+    path: ../packages/den_assistant
   path_provider: ^2.1.6
   flutter_secure_storage: ^11.2.0
   shared_preferences: ^2.5.5

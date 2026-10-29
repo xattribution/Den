@@ -83,17 +83,22 @@ String? errorMessage(Map<String, Object?> json) {
   return asString(asMap(error)['message']);
 }
 
+/// The error code in the hub's error body (`{"error": {"code": ...}}`), or null.
+String? errorCode(Map<String, Object?> json) => asString(asMap(json['error'])['code']);
+
 /// A failed status from [provider] as an exception people can read.
 ModelException failureFor(ModelProvider provider, String model, int status, Map<String, Object?> json, {bool viaHub = false}) {
   final detail = errorMessage(json);
   final who = provider.speaker;
   if (viaHub) {
+    final code = errorCode(json);
     if (status == 401) {
       return ModelException(
         'The hub didn\'t recognize this device. Pair it again in Settings.',
         kind: ModelFailure.auth,
         status: status,
         detail: detail,
+        code: code,
       );
     }
     if ((status == 402 || status == 403 || status == 429) && detail != null) {
@@ -104,6 +109,7 @@ ModelException failureFor(ModelProvider provider, String model, int status, Map<
         status: status,
         retry: status == 429,
         detail: detail,
+        code: code,
       );
     }
     if (status == 404) {
@@ -112,6 +118,18 @@ ModelException failureFor(ModelProvider provider, String model, int status, Map<
         kind: ModelFailure.notFound,
         status: status,
         detail: detail,
+        code: code,
+      );
+    }
+    if (status == 502 && code == 'provider_unreachable') {
+      // The hub is fine; the provider behind it isn't answering.
+      return ModelException(
+        '$who can\'t be reached right now. Try again in a few minutes.',
+        kind: ModelFailure.busy,
+        status: status,
+        retry: true,
+        detail: detail,
+        code: code,
       );
     }
   }

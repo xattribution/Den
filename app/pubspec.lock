@@ -129,7 +129,7 @@ packages:
     source: path
     version: "0.1.0"
   den_assistant:
-    dependency: transitive
+    dependency: "direct main"
     description:
       path: "../packages/den_assistant"
       relative: true

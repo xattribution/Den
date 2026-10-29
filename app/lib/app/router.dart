@@ -2,6 +2,7 @@ import 'package:go_router/go_router.dart';
 
 import '../features/add/routes.dart';
 import '../features/advanced/routes.dart';
+import '../features/assistant/routes.dart';
 import '../features/calendar/routes.dart';
 import '../features/chores/routes.dart';
 import '../features/family/routes.dart';
@@ -31,6 +32,7 @@ GoRouter buildRouter(AppState state) => GoRouter(
         ...calendarRoutes,
         ...advancedRoutes,
         ...addRoutes,
+        ...assistantRoutes,
         ...choreRoutes,
         ...listRoutes,
         ...rewardRoutes,
