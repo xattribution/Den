@@ -68,7 +68,15 @@ class _ListContentState extends State<ListContent> {
     if (items.isEmpty) return false;
     final result = await perform(context, () => context.listActions.addItems(lv.list.id, items));
     if (result == null || !mounted) return false;
-    setState(() => _added = (message: 'Added ${itemNames(items)}', receipt: result.receipt));
+    // What's already on the list isn't added twice; its quantity says how many.
+    NewItem named(Object? i) => (text: '${(i as Map)['text']}', qty: null, store: null);
+    final already = [for (final i in result.data['already'] as List? ?? const []) named(i)];
+    final added = [for (final i in result.data['items'] as List? ?? const []) named(i)];
+    final message = [
+      if (added.isNotEmpty || already.isEmpty) 'Added ${itemNames(added.isEmpty ? items : added)}',
+      if (already.isNotEmpty) '${itemNames(already)} ${already.length == 1 ? 'is' : 'are'} already on the list',
+    ].join('. ');
+    setState(() => _added = (message: message, receipt: result.receipt));
     return true;
   }
 

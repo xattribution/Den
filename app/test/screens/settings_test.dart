@@ -371,6 +371,26 @@ void main() {
       await matchShot('settings_connection_approve_phone');
     });
 
+    testWidgets('an approved assistant acts as the parent approving it unless they pick someone (MCP eval #4, #21)', (tester) async {
+      final state = await connected(tester);
+      await pumpScreen(tester, ConnectionsScreen(apps: FakeApps([])), state: state, size: _tall);
+      expect(find.textContaining('As Alex'), findsOneWidget, reason: 'the Home Assistant token acts as the parent who made it');
+      await tester.tap(find.text('Approve Claude'));
+      await tester.pumpAndSettle();
+      expect(find.text('Acts as'), findsOneWidget);
+      expect(find.text('A parent'), findsNothing, reason: 'no connection acts for the whole family any more');
+      expect(find.text('Their time zone'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Approve Claude').last);
+      await tester.pumpAndSettle();
+      for (var i = 0; i < 3; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+        await tester.pumpAndSettle();
+      }
+      final claude = state.den.connections.firstWhere((x) => x.label == 'Claude');
+      expect(claude.status, ConnectionStatus.active);
+      expect(claude.member, state.den.actor!.id);
+    });
+
     testWidgets('setting up an app for Alexa+ shows its secret once', (tester) async {
       final state = await connected(tester);
       final apps = FakeApps([]);

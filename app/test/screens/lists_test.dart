@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/shots.dart';
 import 'chores_shots.dart';
+import 'family_fakes.dart' show pumpScreen;
 
 String _groceries(AppState state) => groceriesList(state.den)!.list.id;
 
@@ -113,6 +114,19 @@ void main() {
     await tester.tap(find.text('Undo'));
     await settle(tester);
     expect(state.den.list(id)!.items.where((i) => i.text == 'Lemons' || i.text == 'Cilantro'), isEmpty);
+  });
+
+  testWidgets('Something already on the list isn\'t added twice, whatever its case (MCP eval #10)', (tester) async {
+    final state = await demo(tester);
+    final id = _groceries(state);
+    final open = state.den.list(id)!.items.firstWhere((i) => !i.checked && i.store == null);
+    final before = state.den.list(id)!.items.length;
+    await pumpScreen(tester, ListDetailScreen(id: id), state: state);
+    await tester.enterText(find.byType(TextField).first, open.text.toLowerCase());
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await settle(tester);
+    expect(state.den.list(id)!.items, hasLength(before));
+    expect(findWords('${open.text} is already on the list'), findsOneWidget);
   });
 
   testWidgets('Clear takes the done things off, and Undo brings them back in place', (tester) async {

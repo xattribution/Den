@@ -90,11 +90,19 @@ const String writeFailedMessage = 'Den couldn’t save that. Try again in a mome
 /// Runs a write and returns its result, or null when it failed, after showing why in a note.
 /// [write] returns an [ActionResult] (a feature's actions) or nothing (the few direct writes).
 /// A refusal or an error in the engine or in storage becomes words for people, never a crash.
+/// What the action warned of (a name the family already has, someone below zero stars, a
+/// driver now in two places) is shown in a note too, as assistants are told it.
 Future<ActionResult?> perform(BuildContext context, Future<Object?> Function() write) async {
   final (result, problem) = await _write(write);
-  if (problem != null && context.mounted) showNote(context, problem);
+  if (!context.mounted) return result;
+  if (problem != null) showNote(context, problem);
+  final warnings = result == null ? const <String>[] : warningsOf(result);
+  if (warnings.isNotEmpty) showNote(context, warnings.join(' '));
   return result;
 }
+
+/// What [result] warned of, in words.
+List<String> warningsOf(ActionResult result) => [for (final w in result.data['warnings'] as List? ?? const []) '$w'];
 
 /// [perform], when only whether it worked matters.
 Future<bool> attempt(BuildContext context, Future<Object?> Function() write) async =>
