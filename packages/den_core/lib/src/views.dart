@@ -291,6 +291,9 @@ enum GapKind {
 
   /// A chore due today that nobody owns and nobody has done.
   unowned,
+
+  /// One driver with two rides at once, from different places ([Den.rideGap]).
+  driverBusy,
 }
 
 class Gap {

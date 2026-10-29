@@ -1790,10 +1790,15 @@ class Den {
     ]);
   }
 
-  /// Sets the driver of a ride leg for one occurrence (null releases it).
+  /// Sets the driver of a ride leg for one occurrence (null releases it). Only a parent or an
+  /// adult drives ([canDrive]).
   Future<void> claimRide(String eventId, {required int occurrence, required String leg, String? driver}) async {
     if (leg != 'to' && leg != 'from') throw const InvalidInput('A ride leg is "to" or "from"');
-    if (driver != null && member(driver) == null) throw const InvalidInput('That person isn\'t in the family');
+    if (driver != null) {
+      final m = member(driver);
+      if (m == null) throw const InvalidInput('That person isn\'t in the family');
+      if (!canDrive(m)) throw InvalidInput('${m.name} can\'t drive: in Den, parents and adults drive');
+    }
     final entry = _requireLive(RecordType.event, eventId, 'That event doesn\'t exist');
     final event = Event(entry.rec);
     if (event.rrule == null) {
@@ -3149,12 +3154,49 @@ class Den {
         ));
       }
     }
+    out.addAll(_busyDrivers(occ));
     final today = todayDate();
     if (dayStart(today) < end && dayStart(addDays(today, 1)) > start) {
       for (final cd in _choresOn(today)) {
         if (cd.date == today && cd.owner == null && !cd.done) {
           out.add(Gap(kind: GapKind.unowned, message: '${cd.chore.title} is up for grabs', occurrences: const []));
         }
+      }
+    }
+    return out;
+  }
+
+  /// How close two rides by one driver may be, from different places: a leg is driven at its
+  /// event's start (to) or end (from).
+  static const int rideGap = 30 * 60 * 1000;
+
+  /// Someone driving two places at once: two ride legs of different occurrences, less than
+  /// [rideGap] apart, with the same driver, unless both events are at the same place.
+  List<Gap> _busyDrivers(List<Occurrence> occ) {
+    final legs = <(String, int, Occurrence)>[
+      for (final o in occ)
+        if (!o.allDay)
+          for (final r in o.rides)
+            if (r.driver != null) (r.driver!, r.leg == 'from' ? o.end : o.start, o),
+    ]..sort((a, b) => a.$2.compareTo(b.$2));
+    final out = <Gap>[];
+    final seen = <String>{};
+    String key(Occurrence o) => '${o.event.id}@${o.seriesStart}';
+    for (var i = 0; i < legs.length; i++) {
+      for (var j = i + 1; j < legs.length && legs[j].$2 - legs[i].$2 < rideGap; j++) {
+        final (driver, _, a) = legs[i];
+        final (other, _, b) = legs[j];
+        if (driver != other || key(a) == key(b)) continue;
+        final place = a.location.trim().toLowerCase();
+        if (place.isNotEmpty && place == b.location.trim().toLowerCase()) continue;
+        final pair = [key(a), key(b)]..sort();
+        if (!seen.add('$driver|${pair.join('|')}')) continue;
+        out.add(Gap(
+          kind: GapKind.driverBusy,
+          message: '${member(driver)?.name ?? 'Someone'} is driving two places at once: ${a.title} and ${b.title}',
+          occurrences: [a, b],
+          members: [driver],
+        ));
       }
     }
     return out;

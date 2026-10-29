@@ -40,7 +40,7 @@ void main() {
     List<String> shown() => [for (final o in den.occurrences(start, start + 60 * 24 * hour)) '${o.title} ${o.start}'];
     final occ = den.occurrences(start, start + 60 * 24 * hour);
     await den.updateEvent(id, {'title': 'Soccer (away)'}, scope: EditScope.one, occurrence: occ[1].seriesStart);
-    await den.claimRide(id, occurrence: occ[3].seriesStart, leg: 'to', driver: leo);
+    await den.claimRide(id, occurrence: occ[3].seriesStart, leg: 'to', driver: den.actor!.id);
     final before = shown();
 
     await den.deleteEvent(id, scope: EditScope.one, occurrence: occ[1].seriesStart);
@@ -54,7 +54,7 @@ void main() {
     final changes = den.history().length;
     await den.restoreEvent(id, scope: EditScope.following, occurrence: occ[2].seriesStart, rrule: rule);
     expect(shown(), before);
-    expect(den.occurrences(occ[3].start, occ[3].end).single.rides.single.driver, leo,
+    expect(den.occurrences(occ[3].start, occ[3].end).single.rides.single.driver, den.actor!.id,
         reason: 'the changed occurrence comes back with its ride');
     expect(den.history().length - changes, 2, reason: 'the rule and the one changed occurrence, in one go');
   });
