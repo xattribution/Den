@@ -58,6 +58,20 @@ class _SearchScreenState extends State<SearchScreen> {
     return route ?? (hit.type == RecordType.member ? null : '/history?q=${Uri.encodeQueryComponent(hit.title)}');
   }
 
+  static List<SearchHit> _tiesByWhose(FamilyReads app, List<SearchHit> hits) {
+    String whose(SearchHit h) => _ResultRow.whose(app, h) ?? '';
+    final out = <SearchHit>[];
+    for (var i = 0; i < hits.length;) {
+      var j = i + 1;
+      while (j < hits.length && hits[j].title == hits[i].title) {
+        j++;
+      }
+      out.addAll(hits.sublist(i, j)..sort((a, b) => whose(a).compareTo(whose(b))));
+      i = j;
+    }
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = context.app;
@@ -69,6 +83,9 @@ class _SearchScreenState extends State<SearchScreen> {
     for (final hit in hits) {
       byKind.putIfAbsent(hit.type, () => []).add(hit);
     }
+    // The engine ranks ties by title alone: chores of one name ("Make bed") go in the order of
+    // whose they are, so the list reads the same every time.
+    if (byKind[RecordType.chore] case final chores?) byKind[RecordType.chore] = _tiesByWhose(app, chores);
     final kinds = [...searchKinds.keys.where(byKind.containsKey), ...byKind.keys.where((k) => !searchKinds.containsKey(k))];
     void open(SearchHit hit) {
       final route = _routeFor(app, hit);
@@ -132,6 +149,17 @@ class _ResultRow extends StatelessWidget {
   final SearchHit hit;
   final VoidCallback? onTap;
 
+  /// Chores of the same name ("Make bed") are told apart by whose they are.
+  static String? whose(FamilyReads app, SearchHit hit) {
+    final chore = hit.type == RecordType.chore ? app.den.chore(hit.id) : null;
+    return switch (chore?.owner) {
+      OwnerMember(:final id) => app.memberById(id)?.name,
+      OwnerAnyone() => 'Anyone',
+      OwnerRotation() => 'Taking turns',
+      _ => null,
+    };
+  }
+
   static IconData _glyph(String type) => switch (type) {
         RecordType.chore => PhosphorIconsRegular.checkCircle,
         RecordType.list => PhosphorIconsRegular.listBullets,
@@ -148,15 +176,7 @@ class _ResultRow extends StatelessWidget {
     final member = hit.type == RecordType.member ? app.memberById(hit.id) : null;
     final event = hit.type == RecordType.event ? app.den.event(hit.id) : null;
     final when = hit.when == null ? null : f.shortWithYear(f.localDate(hit.when!), relativeTo: app.today);
-    // Chores of the same name ("Make bed") are told apart by whose they are.
-    final chore = hit.type == RecordType.chore ? app.den.chore(hit.id) : null;
-    final whose = switch (chore?.owner) {
-      OwnerMember(:final id) => app.memberById(id)?.name,
-      OwnerAnyone() => 'Anyone',
-      OwnerRotation() => 'Taking turns',
-      _ => null,
-    };
-    final detail = hit.detail == null || hit.detail!.isEmpty ? whose : hit.detail;
+    final detail = hit.detail == null || hit.detail!.isEmpty ? whose(app, hit) : hit.detail;
     return NavRow(
       label: hit.title,
       detail: detail,
