@@ -6,13 +6,11 @@ name: screenshots
 #   git fetch origin screenshots/<branch>:refs/remotes/origin/screenshots/<branch>
 #   git checkout origin/screenshots/<branch> -- app/test
 # and commit. Tests never compare pixels (app/test/flutter_test_config.dart), so the images are
-# for review. It runs on a pull request labeled "screenshots" (and on every push to it while
-# the label is on), or by hand from the Actions tab once this file is on the default branch.
-# See DESIGN.md, "Screenshots".
+# for review. It runs only by hand, from the Actions tab ("Run workflow"), because Actions
+# minutes cost money on a private repository; rendering locally gives the same images
+# (cd app && flutter test --update-goldens). See DESIGN.md, "Screenshots".
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       tests:
@@ -35,7 +33,6 @@ env:
 jobs:
   shots:
     name: Render screenshots
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'screenshots')
     runs-on: ubuntu-latest
     permissions:
       contents: write

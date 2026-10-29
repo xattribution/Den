@@ -600,24 +600,23 @@ Golden tests are screenshots for review, rendered with the real bundled fonts:
 ramp and controls, the family colors, the picture pack, the picture sheet on phone and iPad,
 200 % text) in light and dark, and the tests in `test/screens` draw every screen.
 
-- **One source: CI on Linux.** The images in the repository are the ones the screenshots
-  workflow renders. Tests never compare pixels on any machine
+- **Rendered on Linux, with the real fonts.** Tests never compare pixels on any machine
   (`app/test/flutter_test_config.dart`): every screen still renders, so overflows and
   exceptions fail, but text rasterizes differently from one platform to the next and a pixel
-  diff would mostly measure that.
-- **Make them**: label the pull request `screenshots`. On every push while the label is on,
-  `.github/workflows/screenshots.yml` runs all the tests with `--update-goldens` and pushes the
-  images, and the `pubspec.lock` it resolved, to the branch `screenshots/<branch>`. It pushes
-  what rendered even when a test fails, and then fails itself. Once the workflow is on `main`
-  it can also be run by hand, for some tests only, or with the app icon and Home Assistant
-  brand sources (the tests tagged `golden`).
-- **Look at them and bring them in**:
+  diff would mostly measure that. Render the committed images on Linux (or in a Linux
+  container) so they stay consistent.
+- **Make them**: `cd app && flutter test --update-goldens [test files]`, look at the images that
+  changed, and commit them. `tool/local_ci.sh` runs the rest of the checks.
+- **Or on GitHub, by hand**: the screenshots workflow (Actions tab, "Run workflow") renders all
+  tests, some tests, or the app icon and Home Assistant brand sources (the tests tagged
+  `golden`), and pushes the images to the branch `screenshots/<branch>`:
 
   ```bash
   git fetch origin screenshots/<branch>:refs/remotes/origin/screenshots/<branch>
-  git show origin/screenshots/<branch>:app/test/design/goldens/today_phone.png > today_phone.png
   git checkout origin/screenshots/<branch> -- app/test    # then commit
   ```
+
+  It's manual only, because Actions minutes cost money on a private repository.
 
 ## Migrating a screen
 
