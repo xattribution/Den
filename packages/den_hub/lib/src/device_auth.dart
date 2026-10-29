@@ -94,10 +94,17 @@ class DeviceAuth {
     return (check: await verify(request, body), body: body);
   }
 
-  /// [c], when it is a parent acting on their own device (not a shared display); throws `403`
-  /// with [message] for anyone else.
+  /// [c], when it is a parent acting on their own device: a personal device (which only ever acts
+  /// for its owner), or a hub-mode device whose owner is the one acting (a parent's tablet or
+  /// computer keeping the family online). Throws `403` with [message] for anyone else: a shared
+  /// display, and a hub that names someone else or belongs to nobody (an old server hub left in
+  /// the family can name any member it likes; den_net's [DeviceRequest] takes a hub at its word
+  /// for whom it acts for, which is enough for reading but not for trust).
   static DeviceRequestCheck parentOf(DeviceRequestCheck c, {String message = 'Only a parent\'s own phone can do that.'}) {
-    if (!(c.actor?.isParent ?? false) || c.device!.mode == DeviceMode.shared) throw ApiError.denied(message);
+    final actor = c.actor, device = c.device!;
+    if (actor == null || !actor.isParent || device.mode == DeviceMode.shared || device.member != actor.id) {
+      throw ApiError.denied(message);
+    }
     return c;
   }
 

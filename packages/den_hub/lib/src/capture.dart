@@ -119,14 +119,12 @@ class HubCapture {
     return jsonResponse(describe().toJson());
   }
 
-  /// `PUT /api/v1/capture/reader`: a parent's phone (or the hub's own owner) sets the reader.
+  /// `PUT /api/v1/capture/reader`: a parent's own phone (or a hub whose owner is the parent
+  /// acting) sets the reader and its key.
   Future<Response> configure(Request request) async {
     final bytes = await _body(request, limit: 64 * 1024);
-    final c = await auth.verify(request, bytes);
-    final parent = c.actor?.isParent ?? false;
-    if (!parent || c.device!.mode == DeviceMode.shared) {
-      throw ApiError.denied('Only a parent\'s phone can choose what the hub reads with.');
-    }
+    final c = DeviceAuth.parentOf(await auth.verify(request, bytes),
+        message: 'Only a parent\'s phone can choose what the hub reads with.');
     final json = _json(bytes);
     final kind = HubReaderKind.values.asNameMap()[json['kind']];
     if (kind == null) throw ApiError.invalid('"kind" must be none, claude or home.', field: 'kind');

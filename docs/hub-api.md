@@ -1498,6 +1498,13 @@ the signature once the body is in. Bodies are capped (64 KiB for `PUT`, 30 MB fo
 3 minutes. A personal device acts for its owner and no one else; a shared display for the member
 signed in on it, or nobody; a hub-mode device for its owner. Anything else is `401 unauthorized`.
 
+What this API calls **a parent's own device** (setting the reader or the assistant's key, apps
+waiting to connect and the apps parents set up, opening Add a device, the hub's recovery key) is
+a personal device whose owner is a parent, or a hub-mode device acting for its owner who is a
+parent (a parent's tablet or computer keeping the family online). A shared display never is, and
+neither is a hub that belongs to nobody or names someone other than its owner: `403
+permission_denied`.
+
 ### `GET /api/v1/capture/reader`
 
 Any device. What the hub reads with; the key is never in it.
