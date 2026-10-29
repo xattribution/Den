@@ -359,10 +359,20 @@ class _RenderSheetSlide extends RenderProxyBox {
   Animation<double> _progress;
   set progress(Animation<double> value) {
     if (identical(value, _progress)) return;
-    if (attached) _progress.removeListener(markNeedsPaint);
+    if (attached) _progress.removeListener(_moved);
     _progress = value;
-    if (attached) _progress.addListener(markNeedsPaint);
+    if (attached) _progress.addListener(_moved);
     markNeedsPaint();
+  }
+
+  /// Each frame of the slide repaints; where it comes to rest, screen readers hear where the sheet
+  /// is too. It moves in paint only, so the semantics tree would otherwise keep it wherever it was
+  /// the last time something in it changed, often mid-slide and mostly below the screen, where
+  /// VoiceOver can't reach it and a browser leaves it out of its accessibility tree.
+  void _moved() {
+    markNeedsPaint();
+    final p = _progress.value;
+    if (p == 0 || p == 1) markNeedsSemanticsUpdate();
   }
 
   bool _centered;
@@ -396,12 +406,12 @@ class _RenderSheetSlide extends RenderProxyBox {
   @override
   void attach(PipelineOwner owner) {
     super.attach(owner);
-    _progress.addListener(markNeedsPaint);
+    _progress.addListener(_moved);
   }
 
   @override
   void detach() {
-    _progress.removeListener(markNeedsPaint);
+    _progress.removeListener(_moved);
     super.detach();
   }
 

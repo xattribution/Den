@@ -8,6 +8,7 @@ import 'package:den_app/design/tokens.dart';
 import 'package:den_app/design/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/rendering.dart' show SemanticsNode;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -198,6 +199,28 @@ void main() {
       final sheet = find.ancestor(of: find.text('In the sheet'), matching: find.byType(Material)).first;
       expect(tester.getBottomLeft(sheet).dy, 844);
       expect(tester.getSize(sheet).width, 390);
+    });
+
+    testWidgets('once up, screen readers find what was below the screen while it rose', (tester) async {
+      await _phone(tester);
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(_app(_opener(height: 600)));
+      await tester.tap(find.text('Open'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.pumpAndSettle();
+      final sheet = tester.getRect(find.ancestor(of: find.text('In the sheet'), matching: find.byType(Material)).first);
+      // Where the semantics tree puts it: its rect through every transform up to the screen. The
+      // sheet moves in paint only, so without a word at rest the tree keeps it where it was 40 ms
+      // in, mostly below the screen, where a browser leaves it out of its accessibility tree.
+      final node = find.semantics.byPredicate((n) => n.label.contains('In the sheet')).evaluate().single;
+      var rect = node.rect;
+      for (SemanticsNode? n = node; n != null; n = n.parent) {
+        if (n.transform != null) rect = MatrixUtils.transformRect(n.transform!, rect);
+      }
+      expect(rect.top, closeTo(sheet.top, 1), reason: 'where the sheet is drawn, not where it was mid-slide');
+      expect(rect.bottom, lessThanOrEqualTo(844));
+      semantics.dispose();
     });
 
     testWidgets('closes when flung down', (tester) async {
