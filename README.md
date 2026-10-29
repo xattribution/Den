@@ -4,69 +4,46 @@ The family's calendar, chores, lists and points, on the family's own devices.
 
 ![Den on Android: today's events with person colors, a ride nobody has taken, and chores by person](docs/screens/android-today.png)
 
-## Quick start
+Every phone keeps the whole family, encrypted, and works without a connection. A **hub**, one
+small always-on server you run, keeps everyone in sync while phones sleep, serves Den as a web
+app the family adds to their iPhone Home Screens, and runs the extras: reminders, calendar feeds,
+Home Assistant, and AI assistants over MCP. The family's data lives on its own devices and its
+own hub.
 
-**Just phones.** Install Den on one parent's phone, tap "Start a family", add the kids, and
-invite your partner from their page in Family: Invite sends a link and four words, and you let them in
-with one tap on Today. (A phone in the same room can scan a code instead: Settings → Advanced → Hub
-and sync → A device in the same room.)
-Every phone keeps the whole family, encrypted, and phones sync with each other when they meet on
-the same Wi-Fi. Nothing to host.
+## Run it for your family
 
-**With a hub (recommended).** An always-on device keeps the family online while phones sleep and
-runs the extras: Home Assistant, AI access over MCP, calendar feeds, reminders.
+On a VPS with Docker and a domain pointing at it
+([docs/hosting.md](docs/hosting.md) has every step, and updates, backups and moving servers):
 
-- An old Android tablet or a computer: install Den and turn on Settings → Advanced → Hub and
-  sync → "Keep the family online". The hub runs inside the app; on Android it keeps running in the
-  background, with the notification "Den is keeping the family online", until you turn it off.
-- A NAS, mini PC or Raspberry Pi with Docker:
+```sh
+git clone https://github.com/xattribution/den.git && cd den/deploy/hosted
+cp env.example .env && nano .env          # DEN_DOMAIN=den.example.com
+docker compose up -d --build
+docker compose exec hub /app/bin/den_hub setup-code
+```
 
-  ```bash
-  docker run -d --name den-hub --restart unless-stopped --network host \
-    -v den-hub:/data ghcr.io/xattribution/den-hub:latest
-  ```
+Then open `https://den.example.com` in Safari on a parent's iPhone, add it to the Home Screen,
+tap **Start a family** and type the setup code.
 
-  The hub prints a setup code in its log (`docker logs den-hub`). On a parent's phone, go to
-  Settings → Advanced → Hub and sync → A hub, pick it from the list or type its address, and enter
-  the code. The phone then shows three words and checks that the hub reports the same three
-  (they're in its log too); approve it if they match. Any browser can then open
-  `http://<hub-address>:47733` and link itself by showing a QR code for a parent's phone to scan.
-- A server, behind HTTPS, for a family whose phones should reach it from anywhere through the
-  web app on their home screen (one hub per family; several families can share a server):
-  [docs/hosting.md](docs/hosting.md).
+Other ways to run it:
 
-**Just the web app, on iPhones.** Put the hub behind an HTTPS reverse proxy (set
-`DEN_PUBLIC_URL` to its address; [docs/hosting.md](docs/hosting.md)) and open that address in
-Safari:
-
-1. Tap Share, then Add to Home Screen, and open Den from the Home Screen. (Safari shows these
-   steps first; the Home Screen app keeps its own storage, and only it gets reminders.)
-2. Start a family, with the hub's setup code from its log. That iPhone is the first parent's
-   device and the hub joins the family.
-3. Invite people from Add people, or from their page in Family: Send invite shares a link and four
-   words. They open the link, add Den to their Home Screen the same way, type the words
-   if Den asks, and a parent taps Approve on Today.
-4. Settings → Reminders on this device → Turn on reminders on this iPhone (iOS 16.4 or later).
-
-The web app opens from local data at once, works with no connection, and updates itself the next
-time it opens.
+- **A computer at home**, on the home network: `deploy/compose.yaml`
+  ([setup D](docs/hosting.md#setup-d-a-computer-at-home)).
+- **An old Android tablet or a computer with the Den app**: Settings, Advanced, Hub and sync,
+  "Keep the family online". The hub runs inside the app.
+- **Just phones**, with no hub: one parent starts a family and invites the others; phones sync
+  with each other when they meet on the same Wi-Fi.
 
 **Add anything by sharing it.** Tap Add and type, snap or say it ("soccer every Wednesday at 5
-for Leo"), or share a flyer photo, a screenshot, an email, a link or a PDF to Den from any app.
-Den proposes the events, chores, list items and reminders it found; what needs no look is added
-right away with Undo, or everything waits for you under Settings → Family → "Show me first". Den reads on the phone first (Apple Intelligence or Gemini Nano where the phone has it,
-and its own reader everywhere), and nothing leaves the phone unless a parent connects a reader
-there: a model at home (`docker compose -f deploy/compose.yaml --profile model up -d model`,
-then `ollama pull llama3.2`) or Claude with their own API key, kept in that phone's keychain; or
-once on the hub for every device (Settings → Advanced → AI and automations → Reading photos and messages), where the
-key stays on the hub and each device asks with a request signed by its own key.
+for Leo"), or share a flyer photo, an email, a link or a PDF to Den. Den reads on the phone first,
+and nothing leaves it unless a parent connects a reader: a model on the hub, or Claude with their
+own API key.
 
-**Away from home.** Phones reach the hub through a relay that only ever carries encrypted data.
-Run your own with `deploy/relay`, then enter its address under Settings → Advanced → Hub and sync → Relay.
+**Ask.** The optional AI helper, off until a parent turns it on (Settings, AI helper), answers
+questions and makes changes from Add, with Undo. Its key stays on the hub.
 
-**Moving from Sett.** `den_hub import-sett coord.db --as <your name>` brings members, events with
-their exceptions, chores with steps and check-offs, lists, goals and point adjustments into the
-hub's family.
+**Moving from Sett.** The hub brings in a Sett family with `den_hub import-sett`
+([docs/hosting.md](docs/hosting.md#bring-in-a-family-from-sett)).
 
 ## What's here
 
@@ -75,49 +52,17 @@ hub's family.
 | `app/` | The Flutter app for iPhone, iPad, Android, Mac, Windows, Linux and the web |
 | `packages/den_core/` | The engine: data model, signed change log, spaces, permissions, recurrence, chores, points, history |
 | `packages/den_net/` | Encrypted sessions, sync, pairing, key rotation, relay client, encrypted backups |
-| `packages/den_capture/` | Capture: readers (Den's own, a home model, Claude), resolution to the family, checks against den_core, writes with undo |
+| `packages/den_capture/` | Capture: readers, resolution to the family, checks against den_core, writes with undo |
 | `packages/den_hub/` | The hub library: HTTP API, MCP with OAuth, Home Assistant bridge, reminders, calendar feeds, mDNS |
-| `packages/den_hub_cli/` | The `den_hub` command: serve, MCP over stdio, Sett import, backup and restore |
+| `packages/den_hub_cli/` | The `den_hub` command: serve, setup code, status, backup and restore, MCP over stdio, Sett import |
 | `packages/den_relay/` | The relay: tunnel, mailbox and pairing rendezvous |
 | `packages/den_sett_import/` | Reads Sett's `coord.db` |
-| `integrations/homeassistant/` | The Home Assistant integration (calendars, to-do lists, sensors, services, events) |
-| `deploy/` | Docker images for the hub and the relay; `deploy/hosted/` for a hub on a server behind HTTPS (Caddy, one or two families) |
-| `DESIGN.md` | The design system every screen follows |
-| `ARCHITECTURE.md` | The contract every package builds against |
+| `integrations/homeassistant/` | The Home Assistant integration, published from [`xattribution/den-homeassistant`](https://github.com/xattribution/den-homeassistant) for HACS |
+| `deploy/` | Docker images and compose files: `hosted/` for a server, `compose.yaml` for a computer at home, `relay/` |
+| `docs/hosting.md` | Self-hosting: setups, commands, updates, backups, moving, maintenance |
 | `docs/hub-api.md` | The hub's REST, stream and mDNS contract |
-| `docs/hosting.md` | Hosting hubs on a server behind HTTPS, for the web app on phones |
-
-## Status
-
-| Part | Tests | Verified on this machine |
-| --- | --- | --- |
-| Engine (`den_core`) | 186 | Analyzer clean |
-| Networking (`den_net`) | 80 | Two and three devices syncing in memory, over WebSocket and through the relay; two parents revoking while out of touch settle on one key, through a hub and through the relay alone; a rotated key from a device whose approval arrives in the same relay round is taken |
-| Capture (`den_capture`) | 86 | A school flyer's text becomes six calendar events on the phone alone and through a recorded Claude response, including the text ML Kit really found in it on Android, wrapped lines and all; what a notice asks families to bring is kept; typed and spoken sentences, emails, recorded Gemini Nano and Ollama answers |
-| Relay | 20 | Tunnel, mailbox, rendezvous, rate limits |
-| Hub and its command line | 58 + 5 | Compiled binary serves the web app and prints its setup code; a teen's phone reads through the hub's Claude with signed requests over loopback |
-| Sett importer | 8 | A Sett schema v12 fixture |
-| App | 263, with 174 screenshots and the Home Assistant brand images | Release APK on an Android emulator: reminders, phone calendars, the hub kept online in the background and after Den is closed from recent apps; a typed sentence; a flyer photo shared from Files, read by ML Kit into six events and undone; an email's text and a PDF shared in; History saying where each came from. Web build in a browser |
-| Home Assistant integration | 85 | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub; v0.1.0's `den.zip` downloads from den-homeassistant's release with its manifest and brand images |
-
-Windows, macOS, iOS and Linux app builds and the Docker images run in CI (`.github/workflows`).
-
-HACS installs only from the root of a repository, so the Home Assistant integration is published
-from its own, [`xattribution/den-homeassistant`](https://github.com/xattribution/den-homeassistant):
-`integrations/homeassistant/scripts/prepare_hacs_repo.py` writes its files and CI builds its
-release zip (see the integration's README). Its first release, v0.1.0, carries `den.zip`. To
-install, add that repository to HACS as a custom repository of type Integration.
-
-Known gaps:
-
-- Phones refresh reminders in the background about hourly, but desktops only while Den runs.
-  Browsers get reminders from the hub by Web Push once someone turns them on; that has been
-  checked against RFC test vectors and a recorded push service, not yet on a real iPhone.
-- Capture's native parts have run only on an Android emulator, where Gemini Nano reports itself
-  unavailable (the image has no AICore), so reading with the phone's own model is untested on a
-  phone that has it. Apple Intelligence, Vision and the iOS share extension are written but not
-  yet built (CI builds iOS and macOS on release tags), and signing the iOS app needs the App Group
-  `group.family.den.denApp` on the developer account.
+| `ARCHITECTURE.md` | The contract every package builds against |
+| `DESIGN.md` | The design system every screen follows |
 
 ## Develop
 

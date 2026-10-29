@@ -8,3 +8,6 @@ __pycache__/
 *.pyc
 /data/
 .env
+
+# Hub backups written by the compose files backup service
+deploy/**/backups/
