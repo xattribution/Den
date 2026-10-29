@@ -245,7 +245,8 @@ class ConfirmCard extends StatelessWidget {
 }
 
 /// Why the helper couldn't answer: a limit or "not on for you" as a plain line with an ink icon;
-/// the hub or the company being down in red words, with Try again.
+/// the hub or the company being down in red words, with Try again; a turn that stopped when Ask
+/// closed as a plain line with Ask again.
 class ProblemLine extends StatelessWidget {
   const ProblemLine({super.key, required this.problem, required this.onRetry, this.kid = false});
 
@@ -259,21 +260,38 @@ class ProblemLine extends StatelessWidget {
       return ErrorState(message: problem.message, actionLabel: 'Try again', onAction: onRetry);
     }
     final c = context.colors;
+    final line = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(
+            switch (problem.kind) {
+              ProblemKind.limit => PhosphorIconsBold.hourglassMedium,
+              ProblemKind.stopped => PhosphorIconsBold.pause,
+              _ => PhosphorIconsBold.lockSimple,
+            },
+            size: 20,
+            color: c.ink,
+          ),
+        ),
+        const SizedBox(width: Sp.s),
+        Expanded(child: Text(tidy(problem.message), style: (kid ? context.text.rowTitle : context.text.body)(c.ink))),
+      ],
+    );
+    if (problem.kind != ProblemKind.stopped) return Semantics(liveRegion: true, child: line);
     return Semantics(
       liveRegion: true,
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Icon(
-              problem.kind == ProblemKind.limit ? PhosphorIconsBold.hourglassMedium : PhosphorIconsBold.lockSimple,
-              size: 20,
-              color: c.ink,
-            ),
+          line,
+          const SizedBox(height: Sp.m),
+          OutlinedButton(
+            onPressed: onRetry,
+            style: OutlinedButton.styleFrom(minimumSize: Size(0, buttonHeight(kid: kid))),
+            child: const Text('Ask again', maxLines: 1, softWrap: false),
           ),
-          const SizedBox(width: Sp.s),
-          Expanded(child: Text(tidy(problem.message), style: (kid ? context.text.rowTitle : context.text.body)(c.ink))),
         ],
       ),
     );
@@ -292,6 +310,7 @@ class AskBar extends StatelessWidget {
     this.listening = false,
     this.busy = false,
     this.kid = false,
+    this.hint = 'Ask something else',
   });
 
   final TextEditingController controller;
@@ -301,6 +320,9 @@ class AskBar extends StatelessWidget {
   final bool listening;
   final bool busy;
   final bool kid;
+
+  /// What the empty field says: "Ask anything" to begin with, "Ask something else" after.
+  final String hint;
 
   @override
   Widget build(BuildContext context) {
@@ -316,7 +338,7 @@ class AskBar extends StatelessWidget {
       textCapitalization: TextCapitalization.sentences,
       onSubmitted: (_) => onAsk(),
       style: t.body(c.ink),
-      decoration: InputDecoration(hintText: listening ? 'Listening' : 'Ask something else'),
+      decoration: InputDecoration(hintText: listening ? 'Listening' : hint),
     );
     final ask = ValueListenableBuilder<TextEditingValue>(
       valueListenable: controller,
@@ -388,7 +410,8 @@ class ReadAloudButton extends StatelessWidget {
   );
 }
 
-/// "Asking Claude", shown once the helper has taken more than a moment.
+/// "Asking Claude", shown once the helper has taken more than a moment. It fades in on the UI
+/// spring and nothing about it moves after that: no dots, no pulse.
 class AskingLine extends StatelessWidget {
   const AskingLine({super.key, required this.speaker});
 

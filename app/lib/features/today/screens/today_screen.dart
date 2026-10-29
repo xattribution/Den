@@ -10,6 +10,7 @@ import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/den_network.dart';
+import '../../assistant/assistant.dart' show AskSetUpLine, AskTodayEntry;
 import '../state/today_model.dart';
 import '../widgets/needs_you_card.dart';
 import '../widgets/today_chores.dart';
@@ -18,8 +19,9 @@ import '../widgets/today_groceries.dart';
 import '../words/today_words.dart';
 
 /// The first screen for every adult (Main.dc.html, PadToday.dc.html): the date and a greeting,
-/// what needs them, the day's events, everyone's chores, and the groceries. From 5 PM it looks
-/// ahead to tomorrow too.
+/// Ask while the AI helper is on for them, what needs them, the day's events, everyone's chores,
+/// and the groceries. From 5 PM it looks ahead to tomorrow too. A parent while the helper is off
+/// finds a quiet way to set it up at the end.
 ///
 /// On a phone, one column, the person's face in the header. With room for two columns (an iPad
 /// in landscape, beside the sidebar), Needs you and the events on the left, chores and
@@ -102,6 +104,7 @@ class _TodayScreenState extends State<TodayScreen> {
             children: [
               header,
               notice,
+              const AskTodayEntry(padding: EdgeInsets.only(top: Sp.l)),
               const SizedBox(height: DenLayout.sectionGap),
               NeedsYouSection(now: now, gap: DenLayout.sectionGap),
               events,
@@ -110,6 +113,7 @@ class _TodayScreenState extends State<TodayScreen> {
               TodayChores(chores: view.chores),
               const SizedBox(height: DenLayout.sectionGap),
               const TodayGroceries(),
+              const AskSetUpLine(padding: EdgeInsets.only(top: DenLayout.sectionGap)),
             ],
           );
         }
@@ -128,6 +132,7 @@ class _TodayScreenState extends State<TodayScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        const AskTodayEntry(padding: EdgeInsets.only(bottom: DenLayout.sectionGap)),
                         NeedsYouSection(now: now, carded: true, gap: DenLayout.sectionGap),
                         events,
                         if (ahead != null) ...[const SizedBox(height: DenLayout.sectionGap), ahead],
@@ -142,6 +147,7 @@ class _TodayScreenState extends State<TodayScreen> {
                         TodayChores(chores: view.chores, rows: true),
                         const SizedBox(height: DenLayout.sectionGap),
                         const TodayGroceries(),
+                        const AskSetUpLine(padding: EdgeInsets.only(top: DenLayout.sectionGap)),
                       ],
                     ),
                   ),

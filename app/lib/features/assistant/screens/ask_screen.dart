@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:den_capture/den_capture.dart' show ReaderException;
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../app/app_state.dart';
 import '../../../design/layout.dart';
@@ -12,23 +13,31 @@ import '../../../design/widgets.dart';
 import '../../../platform/capture/capture_sources.dart';
 import '../../add/add.dart' show Capture;
 import '../../shared_screens/shared_screens.dart' show speak;
+import '../state/ask_access.dart';
+import '../state/ask_chats.dart';
 import '../state/ask_request.dart';
 import '../state/ask_session.dart';
 import '../state/helper_link.dart';
+import '../state/suggestions.dart';
 import '../widgets/ask_parts.dart';
+import '../widgets/ask_start.dart';
+import '../words/assistant_words.dart';
 
-/// Ask (`/ask`): the AI helper's answers, opened from Add. A sheet on phones, a panel at the
-/// right edge from 840 pt. Each thing asked shows the helper's plain sentences, then every change
-/// it made as a row in the person's color with Undo, and a change that needs a tap as a "Do it /
-/// Not now" card first. The field at the bottom asks more; "undo that" takes back the last
-/// change. A kid gets big buttons and "Read it to me". Nothing is kept once it closes.
+/// Ask (`/ask`): a conversation with the AI helper. A sheet on phones, a panel at the right edge
+/// from 840 pt. Opened from Today, the sidebar, Add or ⌘K, it shows the conversation this device
+/// is keeping ([AskChats]); an empty one greets the person with a few things to ask as chips.
+/// Each thing asked shows the helper's plain sentences, then every change it made as a row in
+/// the person's color with Undo, and a change that needs a tap as a "Do it / Not now" card
+/// first. The field at the bottom asks more; "undo that" takes back the last change; "New chat"
+/// starts over. A kid gets big buttons and "Read it to me". A parent while the helper is off
+/// gets what it does and the way to set it up.
 class AskScreen extends StatefulWidget {
   const AskScreen({super.key, this.request, this.session, this.panel = false});
 
-  /// What Add sent, which also keeps the conversation while the route lives.
+  /// What opened it: Add's words, or nothing to send ([AskRequest.open]).
   final AskRequest? request;
 
-  /// A conversation to show, for tests.
+  /// A conversation to show, for tests; by default the one [AskChats] keeps.
   final AskSession? session;
 
   /// Drawn as the iPad panel: full height, the field at the foot.
@@ -40,7 +49,7 @@ class AskScreen extends StatefulWidget {
 
 class _AskScreenState extends State<AskScreen> {
   AskSession? _session;
-  bool _ownSession = false;
+  late AskChats _chats;
   final _text = TextEditingController();
   final _focus = FocusNode();
   final _scroll = ScrollController();
@@ -58,32 +67,49 @@ class _AskScreenState extends State<AskScreen> {
     if (_session != null) return;
     final app = DenScope.read(context);
     final request = widget.request;
-    final session = widget.session ?? request?.session ?? AskSession(app: app, link: Assistant.linkFor(context, app));
-    _ownSession = widget.session == null && request == null;
+    _chats = AskChats.of(app);
+    // The request's own while its route lives (an iPad turning draws Ask again), else the kept one.
+    final session = widget.session ?? request?.session ?? _chats.session(Assistant.linkFor(context, app));
     request?.session = session;
-    _session = session
-      ..attach()
-      ..addListener(_changed);
-    _sync();
-    if (request != null && !request.sent) {
+    final send = request != null && request.words.isNotEmpty && !request.sent;
+    _show(session, peek: !send);
+    if (send) {
       request.sent = true;
       // After the first frame, so the sheet is up before anything changes in it.
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => unawaited(session.ask(request.words, spoken: request.spoken)),
       );
     }
+    if (request?.focus ?? false) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focus.requestFocus();
+      });
+    }
+  }
+
+  /// Shows [s]: it counts this view, and asks the hub what it says for the person now.
+  void _show(AskSession s, {bool peek = true}) {
+    _session = s
+      ..attach()
+      ..addListener(_changed);
+    _seen = s.exchanges.length;
+    _sync();
+    if (peek) unawaited(s.peek());
+    // Back to a conversation already going: its newest part in view.
+    if (s.exchanges.isNotEmpty) WidgetsBinding.instance.addPostFrameCallback((_) => _toEnd(jump: true));
+  }
+
+  void _letGo(AskSession s) {
+    s.removeListener(_changed);
+    // A test's own conversation stays as it is; the one AskChats keeps hears that Ask closed.
+    if (widget.session == null || !identical(s, widget.session)) s.detach();
   }
 
   @override
   void dispose() {
     _slow?.cancel();
-    _session?.removeListener(_changed);
-    // Closing Ask ends the conversation; drawn again as a sheet or a panel, it carries on.
-    if (_ownSession) {
-      _session?.dispose();
-    } else if (widget.session == null) {
-      _session?.detach();
-    }
+    final s = _session;
+    if (s != null) _letGo(s);
     if (_listening) unawaited(_listeningTo?.stopListening());
     _text.dispose();
     _focus.dispose();
@@ -115,10 +141,10 @@ class _AskScreenState extends State<AskScreen> {
     }
   }
 
-  void _toEnd() {
+  void _toEnd({bool jump = false}) {
     if (!mounted || !_scroll.hasClients) return;
     final end = _scroll.position.maxScrollExtent;
-    if (DenMotion.reduced(context)) {
+    if (jump || DenMotion.reduced(context)) {
       _scroll.jumpTo(end);
     } else {
       unawaited(_scroll.animateTo(end, duration: DenMotion.uiSettle, curve: DenMotion.uiCurve));
@@ -130,6 +156,37 @@ class _AskScreenState extends State<AskScreen> {
     if (words.isEmpty || session.busy) return;
     _text.clear();
     await session.ask(words);
+  }
+
+  /// A chip: a question is asked at once; a change goes in the field, its example word chosen
+  /// so typing replaces it.
+  void _pick(AskSuggestion s) {
+    if (session.busy) return;
+    if (s.send) {
+      unawaited(session.ask(s.words));
+      return;
+    }
+    final (start, end) = s.pick ?? (s.words.length, s.words.length);
+    _text.value = TextEditingValue(text: s.words, selection: TextSelection(baseOffset: start, extentOffset: end));
+    _focus.requestFocus();
+  }
+
+  /// "New chat": the conversation is forgotten (a turn still running changes nothing more) and
+  /// an empty one takes its place.
+  void _newChat() {
+    final old = session;
+    _letGo(old);
+    final fresh = _chats.startOver(old.link);
+    widget.request?.session = fresh;
+    _text.clear();
+    setState(() => _show(fresh));
+  }
+
+  /// Closes Ask and opens Settings, AI helper.
+  void _setUp() {
+    final router = GoRouter.of(context);
+    Navigator.of(context).pop();
+    router.push('/settings/assistant');
   }
 
   Future<void> _speak() async {
@@ -170,58 +227,81 @@ class _AskScreenState extends State<AskScreen> {
     final color = me == null ? c.ink : c.marker(me.marker);
     final sources = Capture.of(context).sources;
     final exchanges = session.exchanges;
+    final entry = askEntry(app, linked: session.link != null);
+    final gate = session.gate;
+    // A parent can do something about a helper nobody set up.
+    final setUp = (me?.isParent ?? false) ? _setUp : null;
 
-    final talk = Padding(
-      padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final (i, x) in exchanges.indexed) ...[
-            if (i > 0) const SizedBox(height: DenLayout.sectionGap),
-            _ExchangeView(
-              exchange: x,
-              me: me,
-              color: color,
-              kid: kid,
-              busy: session.busy,
-              asking: _showAsking && x.working ? session.speaker : null,
-              onDo: () => session.decide(approve: true),
-              onNotNow: () => session.decide(approve: false),
-              onUndo: session.undo,
-              onRetry: () => session.retry(x),
-              onRead: kid ? _readAloud : null,
-            ),
-          ],
-          if (exchanges.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: DenLayout.headingInset, vertical: Sp.l),
-              child: Text(
-                kid
-                    ? 'Ask about your chores, stars, lists or the calendar.'
-                    : 'Ask about the calendar, chores, stars or lists, or ask for a change.',
-                style: context.text.body(c.ink2),
+    final Widget body;
+    Widget? bar;
+    switch (entry) {
+      case AskEntry.setUp:
+        body = AskSetUp(reason: session.link == null ? noHubWords : askOffForParentWords, onSetUp: _setUp);
+      case AskEntry.hidden:
+        body = Padding(
+          padding: const EdgeInsets.symmetric(horizontal: DenLayout.headingInset, vertical: Sp.s),
+          child: ProblemLine(problem: gate ?? const HelperProblem.refused(helperOffWords), onRetry: () {}, kid: kid),
+        );
+      case AskEntry.open when exchanges.isEmpty:
+        body = AskWelcome(
+          greeting: askGreeting(me?.name, kid: kid),
+          help: askHelpWords(kid: kid, stars: app.den.family?.pointsEnabled ?? true),
+          suggestions: askSuggestions(app),
+          onPick: _pick,
+          kid: kid,
+          gate: gate,
+          onSetUp: gate?.kind == ProblemKind.refused ? setUp : null,
+        );
+      case AskEntry.open:
+        body = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final (i, x) in exchanges.indexed) ...[
+              if (i > 0) const SizedBox(height: DenLayout.sectionGap),
+              _ExchangeView(
+                exchange: x,
+                me: me,
+                color: color,
+                kid: kid,
+                busy: session.busy,
+                asking: _showAsking && x.working ? session.speaker : null,
+                onDo: () => session.decide(approve: true),
+                onNotNow: () => session.decide(approve: false),
+                onUndo: session.undo,
+                onRetry: () => session.retry(x),
+                onRead: kid ? _readAloud : null,
               ),
-            ),
-        ],
-      ),
-    );
-
-    final bar = Padding(
-      padding: const EdgeInsets.fromLTRB(DenLayout.gutter, Sp.s, DenLayout.gutter, Sp.s),
-      child: AskBar(
-        controller: _text,
-        focus: _focus,
-        onAsk: _ask,
-        onSpeak: sources.canSpeak ? _speak : null,
-        listening: _listening,
-        busy: session.busy,
-        kid: kid,
-      ),
-    );
+            ],
+          ],
+        );
+    }
+    if (entry == AskEntry.open) {
+      bar = gate == null
+          ? AskBar(
+              controller: _text,
+              focus: _focus,
+              onAsk: _ask,
+              onSpeak: sources.canSpeak ? _speak : null,
+              listening: _listening,
+              busy: session.busy,
+              kid: kid,
+              hint: exchanges.isEmpty ? 'Ask anything' : 'Ask something else',
+            )
+          // Under a conversation it takes the field's place, unless the last answer just said it;
+          // the welcome says it itself.
+          : (exchanges.isEmpty || exchanges.last.problem?.message == gate.message
+                ? null
+                : ProblemLine(problem: gate, onRetry: () {}, kid: kid));
+    }
 
     final scroller = SingleChildScrollView(
       controller: _scroll,
-      child: ReadableWidth(child: talk),
+      child: ReadableWidth(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l),
+          child: body,
+        ),
+      ),
     );
     return Column(
       mainAxisSize: widget.panel ? MainAxisSize.max : MainAxisSize.min,
@@ -229,11 +309,65 @@ class _AskScreenState extends State<AskScreen> {
       children: [
         Padding(
           padding: EdgeInsets.fromLTRB(DenLayout.gutter, widget.panel ? Sp.l : 0, DenLayout.gutter, 0),
-          child: SheetHeader(title: 'Ask', actionLabel: 'Done'),
+          child: _AskHeader(onNewChat: entry == AskEntry.open && exchanges.isNotEmpty ? _newChat : null),
         ),
         if (widget.panel) Expanded(child: scroller) else Flexible(child: scroller),
-        bar,
+        if (bar != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(DenLayout.gutter, Sp.s, DenLayout.gutter, Sp.s),
+            child: bar,
+          ),
       ],
+    );
+  }
+}
+
+/// Ask's top line: its title, "New chat" while there is a conversation, and "Done". The two
+/// pills sit beside the title while they fit, and under it at large text sizes.
+class _AskHeader extends StatelessWidget {
+  const _AskHeader({this.onNewChat});
+
+  final VoidCallback? onNewChat;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final t = context.text;
+    Widget pill(String label, VoidCallback onTap) => DenPressable(
+          onTap: onTap,
+          color: c.card,
+          semanticLabel: label,
+          child: ExcludeSemantics(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: Targets.adult),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: Sp.l + 2),
+                child: Center(
+                  widthFactor: 1,
+                  child: Text(label, style: t.label(c.ink), maxLines: 1, softWrap: false),
+                ),
+              ),
+            ),
+          ),
+        );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, Sp.xs, 0, Sp.l),
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: Sp.m,
+        runSpacing: Sp.s,
+        children: [
+          Semantics(header: true, child: Text('Ask', style: t.sheetTitle(c.ink))),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (onNewChat != null) ...[pill(newChatLabel, onNewChat!), const SizedBox(width: Sp.s)],
+              pill('Done', () => Navigator.of(context).maybePop()),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
@@ -276,8 +410,20 @@ class _ExchangeView extends StatelessWidget {
     final pending = x.pending;
     final preview = x.previewLines;
     final parts = <Widget>[
-      AskedLine(member: me, words: x.asked),
-      if (asking != null) AskingLine(speaker: asking!),
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AskedLine(member: me, words: x.asked),
+          // "Asking Claude" after a second: it fades in, and gives way to the answer the same way.
+          DenReveal(
+            visible: asking != null,
+            child: Padding(
+              padding: const EdgeInsets.only(top: Sp.m),
+              child: AskingLine(speaker: asking ?? ''),
+            ),
+          ),
+        ],
+      ),
       if (x.answer.isNotEmpty)
         Semantics(liveRegion: true, child: Text(x.answer, style: (kid ? t.rowTitle : t.body)(c.ink))),
       if (x.answer.isNotEmpty && onRead != null) ReadAloudButton(onTap: () => onRead!(x.answer)),

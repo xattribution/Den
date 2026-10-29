@@ -7,8 +7,9 @@ import 'screens/ask_screen.dart';
 import 'state/ask_request.dart';
 import 'widgets/ask_panel.dart';
 
-/// Ask, the AI helper's answers: `/ask`, with an [AskRequest] from Add as the route's extra. A
-/// sheet on phones; from 840 pt a panel at the right edge, with the page behind in view.
+/// Ask, the AI helper's conversation: `/ask`, with an [AskRequest] as the route's extra (Add's
+/// words, or [AskRequest.open] from Today, the sidebar, Add or ⌘K). A sheet on phones; from
+/// 840 pt a panel at the right edge, with the page behind in view.
 final List<RouteBase> assistantRoutes = [
   GoRoute(
     path: '/ask',

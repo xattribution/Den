@@ -75,9 +75,11 @@ class Exchange {
   }
 }
 
-/// One conversation with the AI helper, kept only while Ask is open on this device and never
-/// written anywhere: what the person asked, what the helper answered, each change it made (with
-/// Undo), and a change waiting for "Do it". Closing Ask forgets it all.
+/// One conversation with the AI helper, kept in this device's memory and never written anywhere:
+/// what the person asked, what the helper answered, each change it made (with Undo), and a change
+/// waiting for "Do it". [AskChats] keeps it while the app runs, so closing Ask and opening it
+/// again brings it back; "New chat" or quitting the app forgets it. Closing Ask stops a turn
+/// still running ([stop]): it changes nothing more, and says so when Ask opens again.
 ///
 /// The helper's loop runs here, on the person's own device, against the family's own engine:
 /// every tool call is a den_actions action run as [Surface.assistant] with exactly this person's
@@ -98,10 +100,13 @@ class AskSession extends ChangeNotifier {
   final List<Exchange> exchanges = [];
 
   HelperStatus? _status;
+  DateTime? _statusAt;
   AssistantLoop? _loop;
   bool _busy = false;
   bool _disposed = false;
   bool _closed = false;
+  bool _stopping = false;
+  bool _peeking = false;
   int _views = 0;
 
   /// Waiting for the helper or for an Undo.
@@ -121,22 +126,58 @@ class AskSession extends ChangeNotifier {
   ActionContext _context() =>
       ActionContext(app.den, member: app.den.actor?.id, surface: Surface.assistant, caller: 'assistant');
 
-  /// Whether Ask was closed: the helper may still be answering, but it changes nothing more.
+  /// Whether the conversation was ended ("New chat", or the app let it go): the helper may still
+  /// be answering, but it changes nothing more and nothing new is sent.
   bool get closed => _closed;
+
+  /// Whether Ask is showing this conversation now.
+  bool get shown => _views > 0;
+
+  /// What the hub last said for this person ([peek]); null until it has.
+  HelperStatus? get status => _status;
 
   /// Ask shows this conversation (as a sheet, or as the iPad panel).
   void attach() => _views++;
 
-  /// Ask stopped showing it. When nothing shows it any more, Ask was closed, and it [close]s.
-  /// Drawn again as a sheet or as the iPad panel (an iPad turning), the new view attaches while
-  /// the old one is still there, so it carries on.
+  /// Ask stopped showing it. When nothing shows it any more, Ask was closed, and a turn still
+  /// running [stop]s. Drawn again as a sheet or as the iPad panel (an iPad turning), the new view
+  /// attaches while the old one is still there, so it carries on.
   void detach() {
     if (_views > 0) _views--;
-    if (_views == 0) close();
+    if (_views == 0) stop();
+  }
+
+  /// Ask was closed: a turn still running changes nothing more and ends with [stoppedWords]. The
+  /// conversation stays, and the next question goes on from it.
+  void stop() {
+    if (_busy) _stopping = true;
   }
 
   /// Ends the conversation: a turn still running changes nothing more, and nothing new is sent.
   void close() => _closed = true;
+
+  /// Asks the hub again what it says for this person (Claude or another company, a kid's
+  /// questions today, the month's budget), so a limit or a helper nobody set up shows when Ask
+  /// opens rather than after something was typed. Never throws: when the hub can't be reached,
+  /// the first question says so.
+  Future<void> peek() async {
+    final link = this.link;
+    if (link == null || _peeking || _closed || _busy || !helperOn(app, linked: true)) return;
+    _peeking = true;
+    try {
+      _status = await link.status();
+      _statusAt = DateTime.now();
+    } on Object {
+      // The question will say what's wrong, with Try again.
+    } finally {
+      _peeking = false;
+      _notify();
+    }
+  }
+
+  /// Why the helper can't answer this person right now, from the family's rules and the hub's
+  /// last word ([peek]); null while it can. Ask shows it in place of the field.
+  HelperProblem? get gate => _ruled() ?? (_status == null ? null : _said(_status!));
 
   /// Sends [words] to the helper. "Undo that" takes back the last change here, without asking
   /// the helper.
@@ -165,10 +206,11 @@ class AskSession extends ChangeNotifier {
     });
   }
 
-  /// Tries the last thing again after the hub or the company couldn't answer.
+  /// Tries the last thing again after the hub or the company couldn't answer. A turn that
+  /// stopped when Ask closed stays as it is (what it changed keeps its Undo), and is asked anew.
   Future<void> retry(Exchange x) async {
     if (_busy || x.problem == null) return;
-    exchanges.remove(x);
+    if (x.problem!.kind != ProblemKind.stopped) exchanges.remove(x);
     await ask(x.asked, spoken: x.spoken);
   }
 
@@ -243,6 +285,7 @@ class AskSession extends ChangeNotifier {
   /// Runs one step of the conversation and puts what came of it on [x].
   Future<void> _turn(Exchange x, Future<TurnResult?> Function() step) async {
     _busy = true;
+    _stopping = false;
     x.working = true;
     _notify();
     try {
@@ -256,6 +299,10 @@ class AskSession extends ChangeNotifier {
       debugPrint('The AI helper failed: $e\n$stack');
       x.problem = HelperProblem.down('Something went wrong with the AI helper. Try again.');
     } finally {
+      if (_stopping && x.problem == null && x.answer.isEmpty && x.pending == null) {
+        x.problem = const HelperProblem.stopped(stoppedWords);
+      }
+      _stopping = false;
       _busy = false;
       x.working = false;
       _notify();
@@ -277,6 +324,8 @@ class AskSession extends ChangeNotifier {
     x.pending = r.pending;
     final said = r.text.trim();
     switch (r.end) {
+      case TurnEnd.failed when r.failure?.code == _stoppedCode:
+        x.problem = const HelperProblem.stopped(stoppedWords);
       case TurnEnd.failed:
         x.problem = _problem(r.failure, r.error ?? 'Something went wrong with the AI helper. Try again.');
       case TurnEnd.refused:
@@ -311,6 +360,33 @@ class AskSession extends ChangeNotifier {
   /// answer: off, not set up, a spent budget, a kid's day used up. The hub checks all of it again.
   Future<HelperProblem?> _ready() async {
     if (_loop != null) return null;
+    final ruled = _ruled();
+    if (ruled != null) return ruled;
+    final link = this.link!;
+    final me = this.me!;
+    // What Ask asked the hub as it opened, when that was a moment ago.
+    final fresh = _status != null && _statusAt != null && DateTime.now().difference(_statusAt!) < _statusKept;
+    final status = fresh ? _status! : (_status = await link.status());
+    _statusAt = DateTime.now();
+    final said = _said(status);
+    if (said != null) return said;
+    final chat = _UntilClosed(await link.model(status), () => _closed || _stopping);
+    final execute = actionExecutor(_runner, _context, speaker: status.speaker ?? status.provider!.speaker);
+    _loop = AssistantLoop(
+      model: chat,
+      tools: assistantTools(_runner, _context()),
+      execute: (call) async =>
+          _closed || _stopping ? const ToolFailed('They closed Ask, so nothing changed.') : execute(call),
+      cacheKey: 'den-${app.den.familyId ?? ''}-${me.id}',
+    );
+    return null;
+  }
+
+  /// How long what the hub said as Ask opened counts for the first question.
+  static const Duration _statusKept = Duration(minutes: 1);
+
+  /// Why the family's own rules keep the helper from this person, before asking the hub.
+  HelperProblem? _ruled() {
     final link = this.link;
     final me = this.me;
     if (link == null) return const HelperProblem.refused(noHubWords);
@@ -319,23 +395,21 @@ class AskSession extends ChangeNotifier {
     if (!helperOn(app, linked: true)) {
       return HelperProblem.refused(policy.allows(me) ? sharedScreenWords : notForWords(me.name));
     }
-    final status = _status = await link.status();
-    final model = status.model;
-    if (status.provider == null || model == null) return const HelperProblem.refused(notSetUpWords);
+    return null;
+  }
+
+  /// Why the hub's [status] keeps the helper from this person: nobody chose who runs it, the
+  /// family's rules, the month's budget, a kid's questions for the day.
+  HelperProblem? _said(HelperStatus status) {
+    final me = this.me;
+    if (me == null) return const HelperProblem.refused(helperOffWords);
+    if (status.provider == null || status.model == null) return const HelperProblem.refused(notSetUpWords);
     if (!status.allowed) return HelperProblem.refused(notForWords(me.name));
     if (status.stopped && status.provider != ModelProvider.ollama) {
       return HelperProblem.limit(budgetWords(status.month.isEmpty ? app.today : status.month));
     }
     final used = status.usedToday, limit = status.dailyLimit;
     if (me.isKid && used != null && limit != null && used >= limit) return HelperProblem.limit(dailyLimitWords(limit));
-    final chat = _UntilClosed(await link.model(status), () => _closed);
-    final execute = actionExecutor(_runner, _context, speaker: status.speaker ?? status.provider!.speaker);
-    _loop = AssistantLoop(
-      model: chat,
-      tools: assistantTools(_runner, _context()),
-      execute: (call) async => _closed ? const ToolFailed('They closed Ask, so nothing changed.') : execute(call),
-      cacheKey: 'den-${app.den.familyId ?? ''}-${me.id}',
-    );
     return null;
   }
 
@@ -363,6 +437,9 @@ class AskSession extends ChangeNotifier {
   }
 }
 
+/// The code a model call fails with once Ask was closed.
+const String _stoppedCode = 'closed';
+
 /// [model], until [closed] says Ask was closed: then no more calls go out.
 class _UntilClosed extends ChatModel {
   _UntilClosed(this.model, this.closed);
@@ -375,7 +452,7 @@ class _UntilClosed extends ChatModel {
 
   @override
   Future<ModelReply> respond(ModelRequest request) {
-    if (closed()) throw const ModelException('Ask was closed.', kind: ModelFailure.unknown, code: 'closed');
+    if (closed()) throw const ModelException('Ask was closed.', kind: ModelFailure.unknown, code: _stoppedCode);
     return model.respond(request);
   }
 }

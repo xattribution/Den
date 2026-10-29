@@ -1,14 +1,20 @@
 import 'package:den_app/app/app_state.dart';
+import 'package:den_app/app/den_app.dart' show buildRouter;
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
+import 'package:den_app/features/assistant/assistant.dart';
+import 'package:den_app/features/assistant/screens/ask_screen.dart';
 import 'package:den_app/features/lists/screens/list_detail.dart';
 import 'package:den_app/features/lists/words/list_words.dart';
 import 'package:den_app/platform/web/web_app.dart';
 import 'package:den_app/platform/web/web_insets.dart';
+import 'package:den_assistant/testing.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../helpers/shots.dart';
+import 'assistant_test.dart' show FakeLink, helperOnFor;
 import 'chores_shots.dart';
 
 /// The keyboard on a Home Screen iPhone: Flutter's own reading of it can go stale when the
@@ -107,6 +113,61 @@ void main() {
     expect(controller.text, 'Toothpaste, mint', reason: 'what was typed is still there');
     expect(focus.hasFocus, isTrue, reason: 'the field keeps the focus, so the next tap on it brings the keyboard back');
     await expectLater(find.byType(MaterialApp), matchesGoldenFile('../goldens/web_keyboard_closed_phone_night.png'));
+    expect(errors, isEmpty, reason: 'nothing overflows on the way');
+  });
+
+  testWidgets('Ask\'s field over the keyboard, then the close arrow: back down, still typing', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final state = await demo(tester);
+    await helperOnFor(tester, state.den);
+    Assistant.links = (_) => FakeLink(ScriptedChatModel(const []));
+    addTearDown(() => Assistant.links = Assistant.hubLink);
+    await loadFonts();
+    tester.view.physicalSize = phone;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final page = ValueNotifier<WebViewport?>(const WebViewport());
+    addTearDown(page.dispose);
+    final router = buildRouter(state);
+    await tester.pumpWidget(DenScope(
+      state: state,
+      child: MaterialApp.router(
+        debugShowCheckedModeBanner: false,
+        theme: denTheme(DenColors.night),
+        routerConfig: router,
+        builder: (context, child) => WebSafeArea(insets: const [47, 0, 34, 0], viewport: page, child: child),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final errors = <FlutterErrorDetails>[];
+    final previous = FlutterError.onError;
+    FlutterError.onError = errors.add;
+    addTearDown(() => FlutterError.onError = previous);
+
+    // Today's pill opens Ask; its field takes the words.
+    await tester.tap(find.text('Ask about your day'));
+    await tester.pumpAndSettle();
+    final field = find.descendant(of: find.byType(AskScreen), matching: find.byType(TextField));
+    await tester.tap(field);
+    await tester.enterText(field, 'Who is driving Zoe');
+    final controller = tester.widget<TextField>(field).controller!;
+    final focus = tester.widget<TextField>(field).focusNode!;
+    final ask = find.descendant(of: find.byType(AskScreen), matching: find.widgetWithText(FilledButton, 'Ask'));
+    final resting = tester.getBottomLeft(ask).dy;
+
+    // The keyboard comes up: Flutter and the page agree.
+    tester.view.viewInsets = const FakeViewPadding(bottom: 336);
+    page.value = const WebViewport(keyboard: 336, editing: true);
+    await tester.pumpAndSettle();
+    expect(tester.getBottomLeft(ask).dy, lessThanOrEqualTo(844 - 336), reason: 'the field and Ask sit over the keyboard');
+    expect(tester.getTopLeft(find.text('Done')).dy, greaterThan(47), reason: 'Ask stays under the status bar');
+
+    // The keyboard's close arrow: Flutter heard nothing, the page says it's gone.
+    page.value = const WebViewport(keyboard: 0, editing: true);
+    await tester.pumpAndSettle();
+    expect(tester.getBottomLeft(ask).dy, resting, reason: 'Ask is back where it was');
+    expect(controller.text, 'Who is driving Zoe', reason: 'what was typed is still there');
+    expect(focus.hasFocus, isTrue, reason: 'the field keeps the focus, so the next tap brings the keyboard back');
     expect(errors, isEmpty, reason: 'nothing overflows on the way');
   });
 }

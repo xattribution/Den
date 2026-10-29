@@ -10,15 +10,19 @@ import '../design/sheet.dart';
 import '../design/tokens.dart';
 import '../design/widgets.dart';
 import '../features/add/add.dart';
+import '../features/assistant/assistant.dart' show askPlace, askShortcutOn, openAsk;
 import '../features/family/family.dart' show AccessWatch;
 import 'app_state.dart';
 
 /// The adult app's frame. On a phone: the screen over a tab bar with Today, Calendar, Add in the
 /// middle, Chores and Lists. From 700 pt: the 248 pt sidebar with the family's name, Add, the
 /// places and Family, and the person at the bottom. Family, points, search and settings open
-/// from the person: their face on Today (phone) or at the foot of the sidebar.
+/// from the person: their face on Today (phone) or at the foot of the sidebar. Ask, the AI
+/// helper, is a place in the sidebar after Search while it's on for the person; on a phone it is
+/// Today's pill and a row in Add, so the tab bar keeps its four places.
 ///
-/// Keyboard: ⌘N adds, ⌘1 to ⌘4 go to the places, ⌘F searches.
+/// Keyboard: ⌘N adds, ⌘1 to ⌘4 go to the places, ⌘F searches, ⌘K asks (Ctrl on Windows, Linux
+/// and Android).
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.navigationShell});
 
@@ -70,6 +74,11 @@ class AppShell extends StatelessWidget {
         SingleActivator(key, meta: true): () => _go(i),
         SingleActivator(key, control: true): () => _go(i),
       },
+      // Bound only for someone Ask has something for; otherwise the key stays the browser's.
+      if (askShortcutOn(context, app)) ...{
+        const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () => openAsk(context, focus: true),
+        const SingleActivator(LogicalKeyboardKey.keyK, control: true): () => openAsk(context, focus: true),
+      },
     };
 
     final Widget frame;
@@ -100,6 +109,7 @@ class AppShell extends StatelessWidget {
                   selectedIcon: PhosphorIconsBold.magnifyingGlass,
                   onTap: () => context.push('/search'),
                 ),
+                ?askPlace(context, app),
               ],
               onAdd: () => showAddSheet(context),
               footer: me == null

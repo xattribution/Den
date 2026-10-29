@@ -7,6 +7,7 @@ import 'package:den_app/features/add/add.dart' show Capture;
 import 'package:den_app/features/add/screens/add_sheet.dart' show AddSheet;
 import 'package:den_app/features/assistant/assistant.dart';
 import 'package:den_app/features/assistant/screens/ask_screen.dart';
+import 'package:den_app/features/assistant/state/ask_chats.dart';
 import 'package:den_app/features/assistant/state/ask_session.dart';
 import 'package:den_app/features/assistant/state/snapshot.dart';
 import 'package:den_app/features/assistant/words/assistant_words.dart';
@@ -92,12 +93,13 @@ class ProxyLink implements HelperLink {
 Future<void> helperOnFor(WidgetTester tester, Den den, {Set<String> members = const {}}) =>
     write(tester, () => den.updateFamily({'assistant': AssistantPolicy(enabled: true, members: members).toJson()}));
 
-/// Maya's own phone (a teen), in a family where the helper is on for parents and [members].
-Future<AppState> kidPhone(WidgetTester tester, {required bool allowed}) => real(tester, () async {
+/// Maya's own phone (a teen), in a family where the helper is on for parents and, when
+/// [allowed], for her; with [on] false it is off for the whole family.
+Future<AppState> kidPhone(WidgetTester tester, {required bool allowed, bool on = true}) => real(tester, () async {
       final parent = await createDemoFamily(now: demoNow);
       final maya = parent.members.firstWhere((m) => m.name == 'Maya');
       await parent.updateFamily({
-        'assistant': AssistantPolicy(enabled: true, members: allowed ? {maya.id} : const {}).toJson(),
+        'assistant': AssistantPolicy(enabled: on, members: allowed ? {maya.id} : const {}).toJson(),
       });
       final own = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate(), now: () => demoNow.millisecondsSinceEpoch);
       await own.requestJoin(
@@ -116,12 +118,12 @@ Future<AppState> kidPhone(WidgetTester tester, {required bool allowed}) => real(
       return AppState(own);
     });
 
-/// The session Ask is showing.
+/// The session Ask is showing: a test's own, or the one the device keeps.
 AskSession? shownSession(WidgetTester tester) {
   final screens = find.byType(AskScreen);
   if (screens.evaluate().isEmpty) return null;
   final screen = tester.widget<AskScreen>(screens.first);
-  return screen.session ?? screen.request?.session;
+  return screen.session ?? screen.request?.session ?? AskChats.of(DenScope.read(tester.element(screens.first))).current;
 }
 
 /// Lets the helper's turn finish on the real clock (the engine signs what it writes), then the
@@ -168,8 +170,10 @@ Future<void> openAddAnywhere(WidgetTester tester) async {
 Future<void> askFromAdd(WidgetTester tester, String words) async {
   await openAddAnywhere(tester);
   await typeInSheet(tester, words);
-  expect(find.text('Ask'), findsOneWidget);
-  await tester.tap(find.text('Ask'));
+  // Add's own Ask (the iPad's sidebar has an "Ask" too).
+  final ask = find.descendant(of: find.byType(AddSheet), matching: find.text('Ask'));
+  expect(ask, findsOneWidget);
+  await tester.tap(ask);
   await tester.pumpAndSettle();
   await settleAsk(tester);
 }
