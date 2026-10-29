@@ -2108,18 +2108,21 @@ records alone.
 
 "The address's family" is the family whose public URL names the request's host (`Host`, or a
 trusted proxy's `X-Forwarded-Host`). A host configured for one family (a hub of its own, or
-`den_hub serve` while `host.json` lists no other family) answers at any address, as a hub always
-has. That is configuration, never how many families happen to be open. With several, a request
-that names no family, at an address that is none of theirs, gets `404` with `error.code`
-`no_family`, never another family's answer.
+`den_hub serve` on a host that has never had another family) answers at any address, as a hub
+always has. That is configuration, never how many families happen to be open, and a host that
+has had another family (taken off since, or deleted) never goes back: an address a family had
+never reaches the first family. With several, a request that names no family, at an address that
+is none of theirs, gets `404` with `error.code` `no_family`, never another family's answer.
 
 An address the host is configured to serve whose family isn't open yet (the host is starting, or
 the family didn't open and is tried again every 30 seconds) answers `503` with `error.code`
 `not_ready` and `Retry-After`, whatever the request; a hello naming no family there is closed.
 A calendar's subscribers keep their copies through it (only `401` means a family stopped
 sharing). `GET /health` at an address that is no family's says only `{"ok", "api", "ready"}`,
-and fails (`503`, with `waiting`: how many families aren't open) until every configured family
-is. The web app is the same at every address, with that address in its Content-Security-Policy.
+and `waiting`, how many families aren't open. It fails (`503`) while the host starts, until every
+family has had its first try at opening; after that it answers `200`, so one family that won't
+open keeps no one else waiting (`den_hub families` and `den_hub status` say which, and why). The
+web app is the same at every address, with that address in its Content-Security-Policy.
 
 Rate limits, failed tries and wrong invite or recovery words count per client across the whole
 host, so spreading tries over families' addresses buys none. The limit on wrong words for
@@ -2129,19 +2132,23 @@ from joining.
 A family's hub reading another family's calendar link on the same host (`GET` of
 `/ics/<secret>/<file>` and its watch stream, at that family's https address) is answered in the
 host's own process, as a request from outside carrying only its secret, counted under the
-reading hub's own limits: no DNS, proxy or `DEN_PEER_HUBS` is involved. Every other request a
-hub makes goes out through NetGuard.
+reading hub's own limits: no DNS, proxy or `DEN_PEER_HUBS` is involved. Only the calendar feeds
+a family subscribes to are read that way; every other request a hub makes (an OAuth client's
+metadata document included, whatever address it names) goes out through NetGuard.
 
 ### The command line's endpoints
 
 `den_hub add-family`, `adopt`, `remove-family` and `families` ask the running host under
-`/api/v1/host`, only from the host's own machine (loopback, not through a proxy) and only with
-`X-Den-Host-Secret`, the secret the host writes to `<data>/host/cli-secret` each time it starts;
-anything else is `403 permission_denied`.
+`/api/v1/host`, only from the host's own machine (loopback, with none of the headers a proxy or
+CDN adds: any `X-Forwarded-*`, `Forwarded`, `Via`, `X-Real-IP`, `CF-Connecting-IP`,
+`True-Client-IP` and the like) and only with `X-Den-Host-Secret`, the secret the host writes to
+`<data>/host/cli-secret` each time it starts; anything else is `403 permission_denied`. (A request
+whose `Host` or `X-Forwarded-Proto` makes no address is `400` anywhere on the host.)
 
 | Method and path | What |
 | --- | --- |
-| `GET /api/v1/host` | `{"families": [{"id", "first", "public_url", "device", "family", "family_name", "ready", "stage", "setup_code"}]}` |
+| `GET /api/v1/host` | `{"families": [{"id", "first", "public_url", "device", "family", "family_name", "ready", "stage", "setup_code"}], "waiting": [{"id", "public_url", "error", "retry_seconds"}]}`: `waiting` lists the families in `host.json` that aren't open, and why |
 | `POST /api/v1/host/families {"public_url", "id"?}` | A new family at that address, waiting for its first parent's phone (`setup_code`, `device`); an address a family was taken off brings that family back (`id` says which, when more than one was: else `409 ambiguous` with `details.ids`). `409 conflict` for an address any family on the host has, open or not |
 | `POST /api/v1/host/logs {"id", "public_url", "adopted_from"}` | Serves the hub `den_hub adopt` copied into `logs/<id>/`. `409 conflict` when the host already serves its hub, its family or its address |
 | `DELETE /api/v1/host/families/{id or address}` | Stops serving that family; its data stays |
+| `DELETE /api/v1/host/families/{id or address}?delete_data=1` | Stops serving it and deletes its data and its record, in the running host. A family still on the host only by its id (`409 in_use` by its address); `409 busy` when something (a backup) has its data open |

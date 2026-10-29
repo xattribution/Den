@@ -488,6 +488,8 @@ else
     run docker compose up -d --build --wait --wait-timeout 1200
   fi
   docker compose ps
+  # A family on the Den host whose data didn't open is tried again; the others are served.
+  families_not_open
 fi
 
 # ---------------------------------------------------------------------------------------------

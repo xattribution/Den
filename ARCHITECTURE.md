@@ -892,14 +892,15 @@ the hub filters because it computes them over every space it holds.
 `DenHost` (`den_hub/lib/src/host.dart`) is one process serving several families' logs, one
 server's worth, so one app at one origin can later hold several families. It owns the HTTP server, admission and
 rate limits (per client across the whole host), the web app, NetGuard and the outgoing clients,
-and what is host-wide (`<data>/host/`: which logs it serves at which addresses, `host.json`; every
-Web Push key by its public half, `vapid.json`). Each family is a tenant, a `DenHub` with its own
+and what is host-wide (`<data>/host/`: which logs it serves at which addresses, `host.json`; no
+family's keys). Each family is a tenant, a `DenHub` with its own
 engine, keys and device id, `SyncNode`, `HubContext`, state and services, the services started in
 its own guarded zones. `DenHub.start` is a host configured for one family, which answers any
 address as a hub always has; the app's in-process hub and every existing caller use that. Whether
-a host is one family's is configuration, never how many families happen to be open: an address
-the host is configured for whose family isn't open yet (starting, or tried again after it failed
-to open) answers `503` with `Retry-After`, and `/health` fails until every family is open.
+a host is one family's is configuration, never how many families happen to be open, and a host
+that has had another family never goes back (`host.json` remembers): an address the host is
+configured for whose family isn't open yet (starting, or tried again after it failed to open)
+answers `503` with `Retry-After`, and `/health` fails until every family has had its first try.
 
 `TenantRouter` picks a request's family and fails closed (a request two families could answer,
 or none, gets none, never "the first one"): `/ws` by the family in the client's hello, which
@@ -919,8 +920,9 @@ add-family` starts a fresh family on the running host; `den_hub adopt` moves a h
 own in, keys and all, so it keeps its device id and its phones keep syncing; `--family` picks a
 family for the per-family commands (backups are per family). Every family's Web Push goes out
 under its own VAPID key only. A family reading another family's calendar link on the same host
-(`GET /ics/...` only) is answered in-process, under the reading hub's own rate limits; anything
-else goes out through NetGuard.
+(`GET /ics/...` only, and only by the calendar feed service, `HubContext.feedFetch`) is answered
+in-process, under the reading hub's own rate limits; anything else, OAuth client metadata
+included, goes out through NetGuard.
 
 ## Actions
 

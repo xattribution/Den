@@ -389,7 +389,9 @@ What it does, family by family:
 
 **Run it again** whenever it stopped: before it stops or starts any family's container it asks
 the host whether it already has that family, so a family the host took on is never started in
-its old container again, even when the move was cut short after the copy.
+its old container again, even when the move was cut short after the copy (it still leaves the
+note in the old volume that keeps that hub from writing, should it ever start). When the host
+can't be asked, the merge stops and leaves the container as it is, stopped if it was stopping.
 
 **What changes for phones and computers: nothing.** The same address (Caddy now sends it to the
 host), the same hub (its keys moved with it, so it has the same device id), so every app keeps
@@ -452,16 +454,23 @@ its homes out of the firewall, and keeps its data (in the hub's volume under `lo
 volume for a container): `add-family smith` with the same address brings the same hub back,
 family and all (when more than one family was taken off that address, it lists their ids: `docker
 compose exec hub /app/bin/den_hub add-family --hostname den-smith.example.com --id <id>` picks
-one, then `add-family smith` again). `remove-family smith --delete-data` deletes it; for a family taken off the host
-earlier, `remove-family smith den-smith.example.com --delete-data`. Either way the backups stay
-in `backups/smith/`, and its DNS record, split-DNS entry and Tailscale group are yours to delete.
+one, then `add-family smith` again). `remove-family smith --delete-data` deletes it, once you
+type its name (`--yes` instead, where there is no terminal to ask on); for a family taken off the
+host earlier, `remove-family smith den-smith.example.com --delete-data`, which refuses an address
+a family in `.env` still has. Either way the backups stay in `backups/smith/`, and its DNS
+record, split-DNS entry and Tailscale group are yours to delete.
+
+By hand, `den_hub remove-family` deletes the data of a family still on the host only by its id
+(`--id`, which `den_hub families` lists), never by its address, so a mistyped name never deletes
+a family in use. The running host lets the family go and deletes its data itself.
 
 **A family that won't open.** When the hub starts, a family whose data doesn't open (its lock
 held by a backup that is still running, say) is left out and tried again every 30 seconds; its
 address answers "starting" meanwhile, never another family's page, and its calendar's
-subscribers keep their copies. `docker compose ps` shows the hub unhealthy until every family is
-open (Caddy and the other families keep running), `den_hub families` lists it as not open, and
-`docker compose logs hub` says why.
+subscribers keep their copies. The hub reports healthy once every family has had its first try,
+so `install.sh` and the other families aren't held up; `install.sh`, `den_hub families` and
+`den_hub status --family ...` say which family isn't open and why (`docker compose logs hub` has
+the rest).
 
 #### What keeps families apart
 

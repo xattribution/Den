@@ -75,9 +75,9 @@ services:
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]
     security_opt: ["no-new-privileges:true"]
-    # Started with the hub, not after it is healthy: the hub reports unhealthy while any family
-    # on it hasn't opened (and answers that family's address 503 meanwhile), and one family that
-    # won't open must not keep Caddy, and every other family, down.
+    # Started with the hub, not after it is healthy: the hub reports unhealthy while it starts
+    # (until every family on it has had its first try at opening), and Caddy needn't wait for that
+    # to serve the families that are open.
     depends_on:
       hub:
         condition: service_started
