@@ -76,7 +76,9 @@ final class PasteProblem extends PastedInvite {
 /// origin share the app, its storage and its push subscription): a Den host finds an invite
 /// whichever family's address its link names, and says it has none for a family on another
 /// server, which the app then says plainly (until families on different servers come, phase 9).
-/// The native apps join a family on any server, at its link's address.
+/// The native apps join a family on any server, at its link's address or the one typed, never
+/// simply the server of the family the device shows: four words alone don't say whose they are,
+/// and are never sent anywhere their invite's link didn't name.
 class AnotherFamilyPairing extends PairingService {
   AnotherFamilyPairing(this.home, {Uri? servedBy, bool? web})
       : _servedBy = servedBy,
@@ -95,7 +97,11 @@ class AnotherFamilyPairing extends PairingService {
   /// The family being joined, while it is.
   FamilyLog? _joining;
 
-  /// The pairing of the family the device shows, which asks the hub about invites.
+  /// Whether a join is under way, from its first step (before the family's engine exists).
+  bool _busy = false;
+
+  /// The pairing of the family the device shows, used only as a client to ask the hub [_hubFor]
+  /// names about an invite; nothing of that family's goes with it.
   NetPairing get _probe {
     final pairing = home.active.pairing;
     if (pairing is NetPairing) return pairing;
@@ -109,17 +115,20 @@ class AnotherFamilyPairing extends PairingService {
     return Uri(scheme: base.scheme, host: base.host, port: base.hasPort ? base.port : null);
   }
 
+  /// Why four words alone can't be joined in the native apps.
+  static const needServer = "Four words alone don't say which server the family is on. Paste the whole invite "
+      "(its link names the server), or type the start of the invite's link too.";
+
   /// Where the invite is asked about: on the web the app's own server, always; in the native
-  /// apps the link's address, or for words alone the server the family shown is on, where a Den
-  /// host keeps every family's invites.
+  /// apps the link's address or the one typed. Never the server of the family the device shows:
+  /// that family's hub has no business seeing another family's invite words.
   Future<String?> _hubFor(String? hubUrl) async {
     final typed = hubUrl == null || hubUrl.trim().isEmpty ? null : HubClient.baseFor(hubUrl);
     final page = _page;
     if (_web) return page?.toString();
     if (typed != null) return typed.toString();
     if (page != null) return page.toString();
-    final bases = await home.active.network?.hubBases() ?? const <Uri>[];
-    return bases.firstOrNull?.toString();
+    throw const PairingException(needServer);
   }
 
   /// The family [words] invite to, refused when this device holds it already. In the web app,
@@ -147,6 +156,22 @@ class AnotherFamilyPairing extends PairingService {
     final hub = await _hubFor(hubUrl);
     await _target(words, hub, hubUrl);
     return _probe.peekInvite(words, hubUrl: hub);
+  }
+
+  /// What a QR invite (`den://join...`) is to, before anything is started: the server it names,
+  /// for "Join a family on den.example.com"; refused when this device holds the family already.
+  @override
+  Future<InvitePeek> peekQr(String uri) async {
+    final net.Invite invite;
+    try {
+      invite = await net.Invite.parse(uri);
+    } on Object {
+      throw const PairingException("That isn't a Den invite, or it has expired. Ask for a new code.");
+    }
+    final here = home.byId(invite.familyId);
+    if (here != null) throw PairingException('This device is in ${here.name} already.');
+    final sync = invite.hubs.firstOrNull;
+    return InvitePeek(server: sync == null ? null : HubClient.baseFor(sync.toString())?.host);
   }
 
   @override
@@ -180,29 +205,60 @@ class AnotherFamilyPairing extends PairingService {
   }
 
   /// Starts the family's own engine, joins through it, and takes it in; takes it away again when
-  /// joining fails.
+  /// joining fails. One join at a time, counted from the first step, so two taps can't start two.
   Future<JoinTicket> _join(String familyId, Uri? hub, String? name, Future<JoinTicket> Function(NetPairing pairing) send) async {
-    if (_joining != null) throw const PairingException('Already joining a family. Wait a moment.');
-    final FamilyLog log;
+    if (_busy) throw const PairingException('Already joining a family. Wait a moment.');
+    _busy = true;
     try {
-      log = await home.prepare(familyId, hub: hub, label: name);
-    } on StateError catch (e) {
-      throw PairingException(e.message);
-    }
-    _joining = log;
-    try {
-      final pairing = log.pairing;
-      if (pairing is! NetPairing) throw const PairingException("This device can't reach that family's hub.");
-      final ticket = await send(pairing);
-      if (ticket.familyId != familyId) throw const PairingException('That invite led to another family. Ask for a new one.');
-      await home.adopt(log);
-      if (_web) unawaited(MembershipActions.shareReminders(log));
-      return ticket;
-    } catch (_) {
-      await home.discard(log);
-      rethrow;
+      final FamilyLog log;
+      try {
+        log = await home.prepare(familyId, hub: hub, label: name);
+      } on StateError catch (e) {
+        throw PairingException(e.message);
+      } on Object catch (e) {
+        // [Household.prepare] took away what it made already.
+        throw PairingException("Den couldn't make room for that family on this device (${e.runtimeType}). Try again.");
+      }
+      _joining = log;
+      var sent = false;
+      try {
+        final pairing = log.pairing;
+        if (pairing is! NetPairing) throw const PairingException("This device can't reach that family's hub.");
+        final ticket = await send(pairing);
+        sent = true;
+        // The engine joined the family it was made for, or [Household.adopt] refuses it.
+        await home.adopt(log);
+        if (_web) unawaited(MembershipActions.shareReminders(log));
+        return ticket;
+      } catch (e) {
+        if (sent) await _withdraw(log);
+        await home.discard(log);
+        if (!sent || e is PairingException) rethrow;
+        // The request reached the family: its parents may see it, with nobody to answer.
+        throw const PairingException(
+          "Den couldn't keep that family on this device. If its parents see a request from this device, they can turn it away.",
+        );
+      } finally {
+        _joining = null;
+      }
     } finally {
-      _joining = null;
+      _busy = false;
+    }
+  }
+
+  /// Takes back a join request that reached [log]'s family, best effort: the device removes
+  /// itself (which a device may) and gives that a moment to go out, so the family's parents
+  /// aren't left a request from a device that is gone. Out of reach, they see a request nobody
+  /// answers, and can turn it away.
+  static Future<void> _withdraw(FamilyLog log, {Duration flush = const Duration(seconds: 1)}) async {
+    final den = log.den;
+    final me = den.thisDevice;
+    if (!den.hasFamily || me == null || me.revoked) return;
+    try {
+      await den.revokeDevice(den.deviceId);
+      if (log.network?.connecting ?? false) await Future<void>.delayed(flush);
+    } on Object {
+      // Out of reach, or not let in far enough to remove itself.
     }
   }
 
@@ -234,13 +290,21 @@ abstract final class MembershipActions {
   static bool canLeave(Household home, FamilyLog log) =>
       home.families.length > 1 && home.families.contains(log);
 
-  /// Leaves [log]'s family on this device: the device takes itself out of the family (a device
-  /// may remove itself, so the family's other devices see it gone and History says so), waits a
-  /// moment for that to reach the family's hub, then closes the family's engine and deletes its
-  /// log, keys and settings from this device. Another family shows.
-  static Future<void> leave(Household home, FamilyLog log, {Duration flush = const Duration(seconds: 2)}) async {
+  /// Leaves [log]'s family on this device: first this device's reminders from that family stop
+  /// (its hub forgets the push subscription, while the device may still ask), then the device
+  /// takes itself out of the family (a device may remove itself, so the family's other devices
+  /// see it gone and History says so), waits a moment for that to reach the family's hub, then
+  /// closes the family's engine and deletes its log, keys and settings from this device. Another
+  /// family shows.
+  static Future<void> leave(
+    Household home,
+    FamilyLog log, {
+    Duration flush = const Duration(seconds: 2),
+    Duration unsubscribe = const Duration(seconds: 5),
+  }) async {
     if (!canLeave(home, log)) throw StateError('This is the only family on this device');
     final den = log.den;
+    await _stopReminders(log, unsubscribe);
     if (den.isApproved && !(den.thisDevice?.revoked ?? true)) {
       try {
         await den.revokeDevice(den.deviceId);
@@ -277,6 +341,22 @@ abstract final class MembershipActions {
       await client.subscribe(subscription, key: host);
     } on Object {
       // Settings shows where reminders stand, and turns them on with a tap.
+    } finally {
+      client.close();
+    }
+  }
+
+  /// `DELETE /api/v1/push` at [log]'s hub: the family stops sending this device reminders. Best
+  /// effort: a hub out of reach drops the subscription itself once the device is gone (it sends
+  /// nothing to a revoked device), and a browser shows nothing from a family it doesn't hold.
+  static Future<void> _stopReminders(FamilyLog log, Duration wait) async {
+    final network = log.network;
+    if (network == null || !log.den.isApproved || network.hubDevice == null) return;
+    final client = HubPushClient(network);
+    try {
+      await client.unsubscribe().timeout(wait);
+    } on Object {
+      // Out of reach, or nothing to forget.
     } finally {
       client.close();
     }

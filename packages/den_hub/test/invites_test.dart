@@ -58,6 +58,21 @@ void main() {
     await attempt.cancel();
   });
 
+  test('words the hub picked answer their slot too, so the app never sends the words', () async {
+    final zoe = f.id('Zoe');
+    final made = await f.call('POST', '/api/v1/invites', body: await grant(f.phone, context: 'invite:$zoe'));
+    expect(made.status, 201, reason: made.text);
+    final code = made.body['code']! as String;
+    final bySlot = await f.call('POST', '/api/v1/invites/redeem', body: {'slot': await InviteWords.slot(code)});
+    expect(bySlot.status, 200, reason: bySlot.text);
+    expect(bySlot.body['member'], zoe);
+    expect(f.hub.invites.holds('slot:${await InviteWords.slot(code)}'), isTrue);
+    // The same invite, typed as words into an older app.
+    final byWords = await f.call('POST', '/api/v1/invites/redeem', body: {'code': code});
+    expect(byWords.status, 200, reason: byWords.text);
+    expect(byWords.body['invite'], bySlot.body['invite']);
+  });
+
   test('wrong words, too many of them, and a kid inviting are refused', () async {
     expect((await f.call('POST', '/api/v1/invites/redeem', body: {'code': 'not four words'})).status, 400);
     final wrong = await f.call('POST', '/api/v1/invites/redeem', body: {'code': 'maple river canoe tiger'});

@@ -433,8 +433,10 @@ class NetPairing extends PairingService {
   /// doesn't ask again.
   final Map<String, RedeemedInvite> _redeemed = {};
 
-  /// What [code] opens at [base]: first by the slot the words stretch to (the app's own
-  /// invites), then by the words themselves (an invite whose words the hub chose).
+  /// What [code] opens at [base]: by the slot the words stretch to, which every hub that keeps
+  /// slots answers (the app's own invites, and words a hub chose, which it stretches itself).
+  /// The words themselves go only to an older hub that says it doesn't know slots: a hub that
+  /// knows them but holds no such slot never sees the words, which carry the invite's key.
   Future<RedeemedInvite> _redeem(Uri base, String code) async {
     final at = '$base $code';
     final known = _redeemed[at];
@@ -443,8 +445,14 @@ class NetPairing extends PairingService {
     try {
       redeemed = await _client.redeemInvite(base, slot: await net.InviteWords.slot(code));
     } on HubException catch (e) {
-      // Not kept by a slot, or an older hub that only knows words.
-      if (e.code != 'not_found' && e.code != 'invalid_input') rethrow;
+      if (e.code == 'not_found') {
+        throw const PairingException(
+          "That code isn't right, or the invite has expired. Ask for a new invite.",
+          reason: PairingException.unknownCode,
+        );
+      }
+      // An older hub that only knows words.
+      if (e.code != 'invalid_input') rethrow;
       try {
         redeemed = await _client.redeemInvite(base, code: code);
       } on HubException catch (again) {
@@ -496,13 +504,15 @@ class NetPairing extends PairingService {
     if (code == null) {
       throw const PairingException("Those aren't the four words from an invite. Check them against the message.");
     }
-    final redeemed = await _redeem(_inviteBase(hubUrl), code);
+    final base = _inviteBase(hubUrl);
+    final redeemed = await _redeem(base, code);
     return InvitePeek(
       familyName: redeemed.familyName,
       memberName: redeemed.memberName,
       marker: Marker.parse(redeemed.memberMarker),
       picture: redeemed.memberPicture,
       letsIn: redeemed.preapproved,
+      server: base.host,
     );
   }
 

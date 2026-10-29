@@ -94,10 +94,18 @@ class _FamiliesSheetState extends State<FamiliesSheet> {
         final home = widget.home;
         final now = home.active.den.now();
         final families = home.families;
+        // Two families of one name: each says which server it is on.
+        String? twinOf(FamilyLog log) {
+          final name = log.name.trim().toLowerCase();
+          if (families.where((l) => l.name.trim().toLowerCase() == name).length < 2) return null;
+          final host = Uri.tryParse(log.membership.hub ?? '')?.host;
+          return host == null || host.isEmpty ? null : host;
+        }
         final rows = <Widget>[
           for (final log in families)
             _FamilyRow(
               log: log,
+              server: twinOf(log),
               chosen: !home.showingAll && identical(log, home.active),
               needs: needsSomeone(log, now),
               onTap: () => _choose(() => home.choose(log)),
@@ -155,9 +163,12 @@ class _FamiliesSheetState extends State<FamiliesSheet> {
 /// A family in the switcher: up to four of its people's faces, its name, how many people or that
 /// a parent hasn't let this device in yet, the Needs-you dot and a check on the one showing.
 class _FamilyRow extends StatelessWidget {
-  const _FamilyRow({required this.log, required this.chosen, required this.needs, required this.onTap});
+  const _FamilyRow({required this.log, required this.chosen, required this.needs, required this.onTap, this.server});
 
   final FamilyLog log;
+
+  /// The server it is on, said when another family on this device has the same name.
+  final String? server;
   final bool chosen;
   final bool needs;
   final VoidCallback onTap;
@@ -166,11 +177,12 @@ class _FamilyRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final den = log.den;
     final people = den.members;
-    final detail = log.waiting
+    final count = log.waiting
         ? 'Waiting for a parent to let this device in'
         : people.length == 1
             ? '1 person'
             : '${people.length} people';
+    final detail = server == null ? count : '$count · on $server';
     // The family's faces in the family's own colors.
     final faces = LogScope(
       log: log,
