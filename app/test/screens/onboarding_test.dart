@@ -123,7 +123,7 @@ void main() {
     expect(findWords('Set up Den'), findsOneWidget);
   });
 
-  testWidgets('Creating a family moves on to Add people', (tester) async {
+  testWidgets('Creating a family moves on to the recovery words, then Add people', (tester) async {
     final state = await empty(tester);
     final router = buildRouter(state);
     await loadFonts();
@@ -139,6 +139,9 @@ void main() {
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
     await tester.pumpAndSettle();
     expect(state.den.family?.name, 'The Riveras');
+    expect(findWords('Save these 12 words'), findsOneWidget);
+    await tester.tap(find.text('Not now'));
+    await tester.pumpAndSettle();
     expect(findWords('Add people'), findsOneWidget);
     expect(find.text('Sam (you)'), findsOneWidget);
   });

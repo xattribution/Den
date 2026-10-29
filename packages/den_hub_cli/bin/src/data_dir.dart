@@ -84,7 +84,7 @@ class DataDir {
 
   /// Everything a backup holds, relative to [path]: keys, `notify.json`, the change log and the
   /// hub's own state (OAuth clients and refresh tokens, the capture reader, feeds, reminders
-  /// sent). Read so the copy is consistent even while a hub runs and writes, without its lock:
+  /// sent, the server recovery key). Read so the copy is consistent even while a hub runs and writes, without its lock:
   /// the log's metadata before the log (what the metadata says the hub holds, the log copied
   /// after it holds too), the log cut after its last complete line (a change being appended
   /// right now waits for the next backup), and every other file whole, since each is replaced
@@ -113,7 +113,15 @@ class DataDir {
     if (await hub.exists()) {
       for (final f in await _filesIn(hub)) {
         final name = f.uri.pathSegments.last;
-        if (name.endsWith('.tmp') || name == 'setup-code' || name == linkOpenFile) continue;
+        // Left out: what lasts minutes or is made again at start (setup and recovery codes, the
+        // recovery command's secret, the link window).
+        if (name.endsWith('.tmp') ||
+            name == 'setup-code' ||
+            name == linkOpenFile ||
+            name == recoveryCliFile ||
+            name == '$recoveryTicketsDoc.json') {
+          continue;
+        }
         out['hub/$name'] = await f.readAsBytes();
       }
     }

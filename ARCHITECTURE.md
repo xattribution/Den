@@ -76,8 +76,8 @@ removes the old one.
 **Validity.** A change counts only if, replayed in HLC order:
 
 1. Its signature verifies against the author device's public key.
-2. The author device is approved and not revoked at that HLC, except the genesis changes and a
-   device's own pending join record (below).
+2. The author device is approved and not revoked at that HLC, except the genesis changes, a
+   device's own pending join record, and a new device letting itself in by recovery (below).
 3. The acting member may make it (permissions below), and the device may act for that member.
 4. Its fields pass the type's schema (types, lengths, enums).
 
@@ -116,7 +116,9 @@ signed by an already approved, non-shared device whose actor is a parent; the ap
 the device's `mode` and `member`. An approved device's `member` never changes while it stays
 approved: what it holds follows its owner, so a device handed to someone else is removed (revoked,
 which rotates the keys of what it held) and added again. **A device can never approve itself**: a change approving device
-X signed by device X is invalid (Sett's self-approval bug, closed by construction), and no device
+X signed by device X is invalid (Sett's self-approval bug, closed by construction), with one narrow
+exception, recovery with a proof from a parent's recovery key or the key the family lets its hub
+use (see "Recovery" below), and no device
 may change its own `approved`, `approvedBy` or `member`, or un-revoke itself. A device may revoke
 itself. A parent acting on their own approved device (its owner, or a parent who verified on it)
 may change that device's `mode`, `name` and `display`: this is how "Keep the family online" turns
@@ -137,9 +139,10 @@ re-approval.
 
 **Trust decisions are made only on a parent's own device.** Approving, revoking or changing
 another device; removing or restoring a member, or changing an existing member's `role`,
-`grants`, `signIn` (their own included) or `until` (a sitter's last day); the family's
-`oversight` (every entry) and `assistant` (which AI
-reads the family's day, for whom, and what it may spend); and creating, activating,
+`grants`, `signIn` (their own included) or `until` (a sitter's last day); a parent's recovery
+key (`member.recovery`, set only by that parent, removable by any) and whether the hub may help
+a parent back in (`family.recovery`); the family's `oversight` (every entry) and `assistant`
+(which AI reads the family's day, for whom, and what it may spend); and creating, activating,
 re-scoping or deleting an AI connection are valid only from a personal device, or from a
 hub-mode device whose actor is that device's own owner (a parent's phone running "Keep the
 family online") with no `_via`. A shared display never makes them, whoever verified on it, and
@@ -173,6 +176,74 @@ read. The winner may have been handed to the device the other parent revoked, so
 device that holds a key listing a revoked device the key in use doesn't list rotates again
 (`staleSpaceKeys`). The new key lists both revocations, and the family settles one epoch later.
 
+### Recovery
+
+A parent whose phone is lost, wiped or replaced, with no other parent device left to approve a
+new one, would otherwise leave the family with nobody able to make a trust decision again, and
+by design the hub can't make one either. Recovery lets a new device in as that parent's own,
+with one change to its own device record: `approved: true`, `mode: personal`, `member: <the
+parent>`, no actor, and a `recovery` field holding a proof. It is the only change a device may
+use to approve itself, and validity (`den_core`'s recovery.dart, one hook in validity.dart)
+accepts it only when all of this holds, at its place in the log:
+
+- it writes nothing but the device's own `name`, `kind`, `pubkey` (which must hash to its id and
+  match any earlier request), `xpub`, `member`, `mode`, `approved`, `revoked: false` and
+  `recovery`, and the device isn't approved, revoked or removed already;
+- `member` is a live member who is a **parent**: recovery never makes anyone a parent, or lets in
+  a device for anyone else;
+- the proof's `key` is that parent's current `member.recovery.key` (kind `words`), or the
+  family's current `family.recovery.serverKey` (kind `hub`), which is null unless a parent turned
+  server help on;
+- the proof hasn't expired at the change's clock, and claims at most an hour;
+- its nonce is on no device record in the log, so a proof is used once.
+
+The proof is `{kind, member, key, nonce, expires, sig}`: `sig` is `key`'s Ed25519 signature over
+`"den/recovery/v1" 0x00 | canonical JSON [family, kind, member, device pubkey, nonce, expires]`,
+with a 16-byte random nonce. Like the change's own signature, it is checked when the change
+arrives, before it is stored (`Den.ingest`); a forged proof is refused and never stored. The
+serving device that admits the join also refuses a proof already expired by its own clock.
+
+A device sets its own clock, so whoever still holds old words, or a hub's key after the family
+turned it off, could sign a recovery change dated before the key changed. So a change that
+replaces a key (new words, server help off or another key) lists in `kept` the devices the old
+key let in that its author holds, and a recovery change made with the old key and clocked before
+the replacement counts only for those. The materializer finds replaced keys in its first pass and
+applies them in its second, the way it applies revocation cutoffs, both from the log alone. A
+device let in by the old key that the replacing parent never heard of is out, like changes of a
+revoked device the revoker never held.
+
+- **Recovery words** (works without the server's help). On the parent's own device, during
+  family setup and on their page ("Recovery words"), Den shows 12 words: 128 random bits and a
+  4-bit checksum written with the BIP-39 English list (den_net's `RecoveryWords`), so a mistyped
+  word is caught at once. They stretch with Argon2id (8 MiB, 3 passes, 1 lane, 32 bytes, fixed
+  salt `den/recovery-words/v1`) to the seed of an Ed25519 key, whose public half the parent's
+  device writes into `member.recovery.key`. "Make new words" replaces it. On a new phone, "I lost
+  my phone" takes the words (pasted with spaces, new lines, dashes, numbers or a title around
+  them), stretches them, and pairs with the hub (pairing kind `recovery`, below); the hub says
+  whose they are, the person says it's them, and the phone signs its own proof with the words'
+  key and is in.
+- **The hub's help**, only if the family opts in. A parent turns on "Let the hub help us get back
+  in" (Settings, Family, their own device): it asks the hub for the public half of its server
+  recovery key (`GET /api/v1/recovery/key`) and writes it into `family.recovery.serverKey`.
+  Whoever runs the hub then runs `den_hub recover --person "Alex"`, which prints a one-time link
+  and four words, good for one phone for 30 minutes. The new phone redeems them with its key
+  (`POST /api/v1/recovery/redeem`, limited per client like invites); the hub signs a proof for
+  that parent, that device, a fresh nonce and the code's expiry, and the phone joins over `/ws`
+  with it. Turning server help off writes `serverKey: null`, after which the hub's key lets
+  nobody in, backdated or not.
+
+Every device sees it: History renders such a change as "Alex's new iPhone was let in with Alex's
+recovery words" (or "by the hub's recovery"), and every other parent's own device shows it in
+Needs you, with "Got it" or "That wasn't us" (an ordinary revocation), until someone there puts
+it away. The parent's new phone offers "Remove your old phone" on their page. Recovery is never
+an action: no MCP client, API token or assistant can set up, turn on or use it
+(`not_exposed.dart`).
+
+What whoever runs the hub can do: with server help **off**, read what the hub holds (every space,
+as always) and stop it serving, but make no trust decision and let in no device, and a key the
+family turned off stays useless; with server help **on**, also let in a phone as any parent, which
+every device shows and any parent can remove.
+
 ### Record types and fields
 
 Times are UTC milliseconds unless noted. Local dates are `YYYY-MM-DD` strings in the family's
@@ -194,9 +265,9 @@ commit too (`Den.restoreAll`).
 
 | Type | Space | Fields |
 | --- | --- | --- |
-| `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map: memberId -> `{parentsSeePrivate: bool}`, and `<memberId>.rewardsNeedOk` and `<memberId>.ownPicture` -> bool or null; see "Parental controls"), `assistant` (`{enabled, members, kidDailyLimit, budgetCents}`: the in-app assistant, off until a parent turns it on; parents and the members listed may use it, never a little kid or a pre-reader; default 20 questions a day for a kid and $5 a month) |
-| `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, `initial`, or `photo:<id>` naming one of their `photo` records), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `until` (a sitter's last day with access, a local date, or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order` |
-| `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`) |
+| `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map: memberId -> `{parentsSeePrivate: bool}`, and `<memberId>.rewardsNeedOk` and `<memberId>.ownPicture` -> bool or null; see "Parental controls"), `assistant` (`{enabled, members, kidDailyLimit, budgetCents}`: the in-app assistant, off until a parent turns it on; parents and the members listed may use it, never a little kid or a pre-reader; default 20 questions a day for a kid and $5 a month), `recovery` (`{serverKey, kept}`: the hub key the family lets help a parent back in, null while off; see "Recovery") |
+| `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, `initial`, or `photo:<id>` naming one of their `photo` records), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `until` (a sitter's last day with access, a local date, or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order`, `recovery` (a parent's `{key, kept}`: their recovery key, base64url Ed25519, or null; see "Recovery") |
+| `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`), `recovery` (written once, by a device letting itself in: `{kind: words\|hub, member, key, nonce, expires, sig}`; see "Recovery") |
 | `category` | `f` | `name`, `icon` |
 | `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `rides` (list of `{leg: to\|from, driver: memberId\|null}`), `countdown` (bool) |
 | `eventException` | same as event | id `"<eventId>@<occurrence>"`: `event`, `occurrence` (original start), `cancelled`, `patch` (map of event fields: `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `assignees`, `reminders`, `rides`) |
@@ -450,6 +521,18 @@ receive; the session's limit then applies.
   to be that person's device; a parent approves with one tap on their own device. Wrong words count against every
   invite: 10 in 10 minutes and the hub stops answering for a while. The hub drops an invite
   whose parent device has since been revoked or no longer belongs to a parent.
+- **Recovery words** ("I lost my phone"): the joiner connects to a device that serves sessions
+  (the hub) with no family, and sends `pair {kind: recovery, key, proof}`: `key` is hex SHA-256
+  of its recovery key's public half, `proof` that key's signature over `den/pair/v1/recovery` 0x00
+  | transcript hash | its own key. The serving side finds the parent whose `member.recovery.key`
+  hashes to it, checks the signature, and answers `pair_ok` with the family, its founder key,
+  that parent's id, name, color and picture, and its own proof: HMAC-SHA256 keyed by the
+  recovery key's public half over `den/pair/v1/recovery-host` 0x00 | transcript hash | its key.
+  Only the family's devices hold that key, so a stranger answering can't pose as the family; the
+  joiner trusts nothing before it checks out. After the person confirms, the joiner writes its
+  recovery change (`Den.requestRecovery`, which this device can't check yet: it holds none of the
+  log) and sends it as its `join`; the serving side lets it in at once. With the hub's help, the
+  joiner joins with the invite and proof `POST /api/v1/recovery/redeem` gave it instead.
 - **Waiting for approval** survives the app closing: the joining device remembers the device it
   joined through and, while unapproved, connects to it again (pinned to that device id). It
   asks nothing on those connections, so it needs no new invite: the device it waits on tells it
@@ -548,6 +631,9 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `GET`/`POST /api/v1/connections/clients`, `DELETE /api/v1/connections/clients/{id}` | signed by a parent's own device | OAuth clients a parent sets up for assistants that can't register (Alexa+); the secret is shown once |
 | `GET`/`PUT /api/v1/assistant`, `POST /api/v1/assistant/model` | signed by a device; `PUT` by a parent's own | The in-app assistant's provider and key, kept on the hub; model requests forwarded under `family.assistant` and the month's budget |
 | `POST /api/v1/link/window` | signed by a parent's own device | Opens "Add a device" for 10 minutes; in the public posture browsers can ask to link only then |
+| `GET /api/v1/recovery/key` | signed by a parent's own device | The hub's server recovery key, for "Let the hub help us get back in" |
+| `POST /api/v1/recovery/tickets` | `den_hub recover` on the hub's machine (a secret in the data directory) | A one-time link and four words for one parent, 30 minutes, only while the family has server help on |
+| `POST /api/v1/recovery/redeem` | the four words and the new device's key | The hub's recovery proof for that device and an invite to join with it |
 
 The hub is a device in the family: it holds its own key and every space, signs the changes it
 makes for API and MCP callers with `actor` set to the token's member (or null with the token
@@ -594,10 +680,11 @@ method of `Den` from its source and fails unless each is called by some action o
 records its calls and checks they stay within the spec's `engine` and that the answer fits its
 output schema; `den_hub/test/mcp_parity_test.dart` checks MCP against the specs.
 Not exposed, by design: trust decisions (devices, AI access, roles, permissions, sign-in,
-removing people, oversight, a sitter's last day and ending it), founding, joining or leaving a
-family, sync and keys, the hub's own bookkeeping, and adding a photo (made small on the device
-that takes it; MCP and the assistant see `picture: "photo:<id>"` and a sitter's `until`, and
-change pictures only to the pack or an initial with `set_picture`).
+removing people, oversight, a sitter's last day and ending it, recovery keys and the hub's help),
+founding, joining, recovering or leaving a family, sync and keys, the hub's own bookkeeping, and
+adding a photo (made small on the device that takes it; MCP and the assistant see
+`picture: "photo:<id>"` and a sitter's `until`, and change pictures only to the pack or an
+initial with `set_picture`).
 
 ## MCP
 

@@ -51,6 +51,10 @@ covers `/health`, everything under `/api/v1`, and the mDNS advertisement.
   [`PUT /api/v1/assistant`](#put-apiv1assistant) ·
   [`POST /api/v1/assistant/model`](#post-apiv1assistantmodel)
 - [Invites by message](#invites-by-message)
+- [Getting back in: server-assisted recovery](#getting-back-in-server-assisted-recovery):
+  [`GET /api/v1/recovery/key`](#get-apiv1recoverykey) ·
+  [`POST /api/v1/recovery/tickets`](#post-apiv1recoverytickets) ·
+  [`POST /api/v1/recovery/redeem`](#post-apiv1recoveryredeem)
 - [Web Push: reminders in browsers](#web-push-reminders-in-browsers)
 
 ## Conventions
@@ -169,7 +173,7 @@ The hub counts what each client does, by IP address (an IPv6 address by its /64)
 | --- | --- |
 | Requests with neither a token nor a device signature (health, status, the web app's files, OAuth metadata and polling) | 600 a minute. Requests from this machine itself (loopback, not through a proxy) aren't counted |
 | Tokens or device signatures that don't work, link codes that don't match | 30 in 5 minutes; then every authenticated request from that client gets `429` until the budget refills |
-| Browser link slots and link grants | 20 in 10 minutes |
+| Browser link slots and link grants, invite and recovery redemptions | 20 in 10 minutes |
 | Wrong setup codes | 5, then that client waits a minute, doubling to an hour with each further wrong code |
 | OAuth: registrations, sign-in requests, token requests | 10 an hour, 10 in 15 minutes, 60 in 5 minutes |
 | WebSocket connections (`/ws`, `/api/v1/hub/setup/ws`) | 120 new a minute, 64 open at once. A message may be 2 MiB (a session frame, base64 encoded); a frame announcing more closes the socket as its header arrives, before any of it is buffered |
@@ -1694,6 +1698,87 @@ invite; and per client, redeeming counts against the browser link budget and a w
 against the failed-tries budget, see [Limits per client](#limits-per-client)), `503 not_ready`.
 Redeeming needs no open "Add a device" window in the public posture: the invite is a parent's
 consent already.
+
+## Getting back in: server-assisted recovery
+
+When a parent's phone is lost and no other parent's device is left to approve a new one, the
+parent gets back in with their 12 recovery words, which need nothing from the hub but a place to
+connect (`/ws`, pairing kind `recovery`, ARCHITECTURE.md, "Recovery"). These endpoints are the
+other way in, **only for a family that turned it on**: in Settings, Family, "Let the hub help us
+get back in", on a parent's own phone. Whoever runs the hub can then let in a new phone for a
+parent; every device of the family shows that it happened.
+
+The hub's server recovery key is an Ed25519 key pair made on first use and kept in
+`<data>/hub/recovery.json` (its user only, in backups). It lets nobody in until a parent's own
+device writes its public half into the family record (`family.recovery.serverKey`), and nobody
+once a parent takes it out again.
+
+### `GET /api/v1/recovery/key`
+
+Signed by a parent's own device (`DeviceRequest`, as for capture). Answer `200`
+`{"key": "<base64url Ed25519 public key>", "on": false}`, where `on` says whether the family
+record already names this key. Errors: `401 unauthorized` (unsigned, or not a device of this
+family), `403 permission_denied` (not a parent's own device), `409 unavailable` (a hub with no
+data directory, which couldn't keep the key), `503 not_ready`.
+
+### `POST /api/v1/recovery/tickets`
+
+What `den_hub recover --person "Alex"` calls on the running hub. Only that command can: the
+request comes from the hub's own machine (loopback, not through a proxy) and carries
+`X-Den-Recovery-Secret`, a secret the hub writes to `<data>/hub/recovery-cli` (its user only)
+each time it starts. Body `{"person": "Alex"}`: the parent's name in Den (case doesn't matter).
+Answer `201`:
+
+```json
+{
+  "words": ["maple", "river", "canoe", "tiger"],
+  "code": "maple river canoe tiger",
+  "link": "https://den.example.com/#/recover/maple-river-canoe-tiger",
+  "member": "M3ALEX7QK4MXN3TB",
+  "member_name": "Alex",
+  "expires": "2026-10-28T15:42:00.000Z",
+  "expires_ms": 1793202120000
+}
+```
+
+The code works once, for one phone, for 30 minutes. The hub keeps only its hash, in
+`<data>/hub/recovery-tickets.json` (left out of backups), at most 10 at a time. `link` is built
+on `DEN_PUBLIC_URL`, and is `null` without one. Errors: `403 permission_denied` (not the
+command), `403 off` (the family hasn't turned server help on; the message says how), `400
+nobody` (no one by that name; the message lists the parents), `400 not_parent`, `429 busy`, `503
+not_ready`. With no hub running, the command makes the code in the data directory itself, and
+the hub honors it when it starts.
+
+### `POST /api/v1/recovery/redeem`
+
+Body `{"code": "maple river canoe tiger", "pubkey": "<the new device's Ed25519 key>"}`, the code
+typed any way people type it. Answer `200`:
+
+```json
+{
+  "invite": "den://join?f=...&d=<hub>&k=<hub key>&s=...&x=1793202120",
+  "member": "M3ALEX7QK4MXN3TB",
+  "member_name": "Alex",
+  "family": "The Carters",
+  "proof": {"kind": "hub", "member": "M3ALEX7QK4MXN3TB", "key": "<server key>",
+            "nonce": "<16 random bytes>", "expires": 1793202120000, "sig": "<base64url Ed25519>"},
+  "expires": "2026-10-28T15:42:00.000Z",
+  "expires_ms": 1793202120000
+}
+```
+
+`proof` is the hub's signature, with its server recovery key, over `"den/recovery/v1" 0x00 |
+canonical JSON [family, "hub", member, device pubkey, nonce, expires]` (den_core's
+`RecoveryProof`). The device joins over `/ws` with the invite, pinning the hub's key, and asks
+with a change to its own device record that carries the proof; the hub and every other device
+let it in as that parent's own device, at once, only while `family.recovery.serverKey` is this
+key. The first redemption binds the code to that device key: the same device asking again (a
+dropped connection) gets the same proof, any other gets `404`. Errors: `400 invalid_input` (not
+four words, not a key), `403 permission_denied` (the family turned server help off since; the
+code is dropped), `404 not_found` (wrong, used, expired, or no longer for a parent), `429
+rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from anywhere; and per client,
+the same budget as invites and browser links, see [Limits per client](#limits-per-client)),
+`503 not_ready`.
 
 ## Web Push: reminders in browsers
 
