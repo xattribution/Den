@@ -67,6 +67,34 @@ Future<void> prepareDemo(Den den) async {
   await den.addSubscription(url: 'https://calendar.invalid/school.ics', label: 'School calendar');
 }
 
+/// A hub-mode device that [phone] (a parent's) approved, holding every space: where actions run
+/// for a connection acting as someone ([Den.actAs]).
+Future<Den> hubFor(Den phone) async {
+  final hub = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
+  await hub.requestJoin(
+    familyId: phone.familyId!,
+    founderPubkey: phone.founderPubkey!,
+    deviceName: 'Hub',
+    kind: DeviceKind.hub,
+    mode: DeviceMode.hub,
+  );
+  await phone.ingest(hub.changesSince(const {}));
+  await phone.approveDevice(hub.deviceId, mode: DeviceMode.hub);
+  await hub.ingest(phone.changesSince(const {}));
+  for (final space in phone.spacesForDevice(hub.deviceId)) {
+    final key = await phone.spaceKey(space);
+    if (key != null) await hub.setSpaceKey(space, key);
+  }
+  return hub;
+}
+
+/// A context on [hub] for a connection acting as [member] (nobody when null), as the hub's
+/// MCP server makes one, with [hub] acting for them.
+ActionContext connectionOn(Den hub, String? member, {String label = 'Bot', String? viewZone}) {
+  if (member != null) hub.actAs(member, via: label, window: const Duration(minutes: 10));
+  return ActionContext(hub, member: member, surface: Surface.mcp, caller: 'conn-$label', via: label, viewZone: viewZone);
+}
+
 /// A member id by name.
 String idOf(Den den, String name) => den.members.firstWhere((m) => m.name == name).id;
 

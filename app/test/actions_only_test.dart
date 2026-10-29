@@ -46,6 +46,7 @@ const Set<String> trust = {
   'updateDevice',
   'addTokenConnection',
   'approveConnection',
+  'updateConnection',
   'revokeConnection',
   'endExpiredAccess',
   'endAccessNow',

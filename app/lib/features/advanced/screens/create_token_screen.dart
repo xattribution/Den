@@ -26,7 +26,7 @@ class CreateTokenScreen extends StatefulWidget {
 class _CreateTokenScreenState extends State<CreateTokenScreen> {
   late final _label = TextEditingController(text: widget.label);
   Set<Scope> _scopes = {Scope.read};
-  String? _member;
+  late String? _member = DenScope.read(context).me?.id;
   late String? _token = widget.token;
   bool _copied = false;
   bool _tried = false;
@@ -39,7 +39,6 @@ class _CreateTokenScreenState extends State<CreateTokenScreen> {
     // What each usual one needs, so the switches start right.
     if (label.contains('home assistant')) _scopes = {Scope.read, Scope.calendar, Scope.chores, Scope.lists};
     if (label.contains('siri')) _scopes = {Scope.read, Scope.calendar, Scope.chores, Scope.lists};
-    if (label.contains('siri')) _member = DenScope.read(context).me?.id;
   }
 
   @override
@@ -51,11 +50,12 @@ class _CreateTokenScreenState extends State<CreateTokenScreen> {
   Future<void> _create() async {
     setState(() => _tried = true);
     final label = _label.text.trim();
-    if (label.isEmpty || _scopes.isEmpty) return;
+    final member = _member;
+    if (label.isEmpty || _scopes.isEmpty || member == null) return;
     setState(() => _busy = true);
     final connections = context.connectionActions;
     String? token;
-    await attempt(context, () async => token = await connections.addToken(label: label, scopes: _scopes, member: _member));
+    await attempt(context, () async => token = await connections.addToken(label: label, scopes: _scopes, member: member));
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -123,7 +123,7 @@ class _CreateTokenScreenState extends State<CreateTokenScreen> {
           ),
         ),
         ScopePicker(value: _scopes, onChanged: (s) => setState(() => _scopes = s)),
-        ActsAsPicker(value: _member, onChanged: (m) => setState(() => _member = m)),
+        ActsAsPicker(value: _member ?? '', onChanged: (m) => setState(() => _member = m)),
       ],
     );
   }

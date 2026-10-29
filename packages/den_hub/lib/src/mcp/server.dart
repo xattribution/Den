@@ -175,6 +175,7 @@ class McpServer {
         readable: access.readable(hub.den),
         reader: reader?.call(),
         via: access.label,
+        viewZone: access.timezone,
       );
 
   /// The tools [access] may use, as `tools/list` shows them.
@@ -448,14 +449,19 @@ class McpServer {
     };
   }
 
-  /// The `tools/call` result for [result]: one speakable text, and the same facts as JSON.
-  static Map<String, Object?> toolResult(ActionResult result) => {
-        'content': [
-          {'type': 'text', 'text': result.text},
-        ],
-        'structuredContent': result.structured,
-        'isError': result.isError,
-      };
+  /// The `tools/call` result for [result]: one speakable text, and the same facts as JSON. A
+  /// change's receipt is in the text too, so a client that reads only text can undo exactly it.
+  static Map<String, Object?> toolResult(ActionResult result) {
+    final receipt = result.receipt;
+    final text = receipt == null || !receipt.undoable ? result.text : '${result.text}\n[receipt ${receipt.id}: undo takes this back]';
+    return {
+      'content': [
+        {'type': 'text', 'text': text},
+      ],
+      'structuredContent': result.structured,
+      'isError': result.isError,
+    };
+  }
 
   /// Runs read action [action] with [args] for [access], as its member.
   Future<ActionResult> read(Access access, String action, Map<String, Object?> args) async {

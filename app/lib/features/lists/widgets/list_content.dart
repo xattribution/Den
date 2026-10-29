@@ -92,9 +92,17 @@ class _ListContentState extends State<ListContent> {
     final typed = read.lastWhere((i) => i.store != null, orElse: () => read.last).store;
     final stores = {for (final i in items) i.store};
     final at = shopping && stores.length == 1 && stores.single != null ? ' at ${stores.single}' : '';
+    // What's already on the list isn't added twice; its quantity says how many.
+    NewItem named(Object? i) => (text: '${(i as Map)['text']}', qty: null, store: null);
+    final already = [for (final i in result.data['already'] as List? ?? const []) named(i)];
+    final added = [for (final i in result.data['items'] as List? ?? const []) named(i)];
+    final message = [
+      if (added.isNotEmpty || already.isEmpty) 'Added ${itemNames(added.isEmpty ? read : added)}$at',
+      if (already.isNotEmpty) '${itemNames(already)} ${already.length == 1 ? 'is' : 'are'} already on the list',
+    ].join('. ');
     setState(() {
       if (shopping && typed != null) _addTo = typed;
-      _added = (message: 'Added ${itemNames(read)}$at', receipt: result.receipt);
+      _added = (message: message, receipt: result.receipt);
     });
     return true;
   }

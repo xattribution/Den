@@ -59,6 +59,10 @@ bool can(Member? member, DenAction action, {bool openCheckoff = false}) {
   }
 }
 
+/// Whether [member] may drive someone to or from an event: parents and adults. A kid or a guest
+/// is never offered a ride to give, in the app or anywhere else.
+bool canDrive(Member member) => member.role == Role.parent || member.role == Role.adult;
+
 /// Whether [actor] may change [target]'s picture (a photo included): a parent anyone's, and
 /// anyone their own, except a kid whose parents haven't allowed it ([Family.ownsPicture]).
 bool canChangePicture(Member? actor, Member target, Family? family) {

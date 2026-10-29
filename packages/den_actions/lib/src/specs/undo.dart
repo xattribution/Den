@@ -66,7 +66,8 @@ Future<ActionResult> _undo(ActionContext c, ActionInput a) async {
     throw ActionError.denied('Undoing ${receipt.tool} needs the scope it needed.');
   }
   final result = await c.den.undo(receipt.changes);
-  runner.markUndone(receipt.id);
+  // A preview runs on a copy of the family: the receipt still works afterwards.
+  if (!c.previewing) runner.markUndone(receipt.id);
   final skipped = [
     for (final s in result.skipped)
       {'type': s.type, 'id': s.id, 'title': s.title, 'field': s.field, 'reason': s.reason},
@@ -95,7 +96,7 @@ Future<ActionResult> _restore(ActionContext c, ActionInput a) async {
     if (event == null) throw ActionError.notFound('That event isn\'t on the calendar; put it back without "occurrence".');
     final occurrence = _cancelledOccurrence(c, event, a.raw['occurrence']);
     await c.den.restoreEvent(event.id, scope: EditScope.one, occurrence: occurrence);
-    return ActionResult('Put back ${event.title} on ${shortDate(dateIn(c.zone, occurrence))}.', {
+    return ActionResult('Put back ${event.title} on ${c.day(dateIn(c.zone, occurrence))}.', {
       'undone': null,
       'restored': ['${event.id}@$occurrence'],
       'changes': <String>[],
@@ -134,7 +135,7 @@ int _cancelledOccurrence(ActionContext c, Event event, Object? value) {
   final text = '$value'.trim();
   final exact = int.tryParse(text);
   if (exact != null) return exact;
-  final at = toolInstant(value, c.zone, 'occurrence');
+  final at = c.instant(value, 'occurrence');
   if (isDate(text)) {
     final day = <int>[];
     for (final s in seriesStartsOf(event, c.zone, notBefore: at)) {

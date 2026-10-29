@@ -7,7 +7,8 @@
   it while the inviting parent is still a parent with that approved device. `withdrawInviteKey`,
   and removing or demoting the parent or revoking their device, retire the key with a `kept` set,
   like recovery keys. `disownInvite` ("That wasn't them") revokes the device and the key.
-  `snapshotFormat` is 4.
+  `snapshotFormat` is 5 (4 was used by both this and the connection time zones on separate
+  branches, so the merged rules start from a fresh cache).
 
 - `family.colors` (optional, `ColorPack`: `bright`, `deep`, `soft` or `bold`; `Family.colors`
   reads `bright` when it's unset or unknown): which shades of the eight person colors the whole

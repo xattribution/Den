@@ -1,3 +1,4 @@
+import 'package:den_actions/den_actions.dart' show adjustmentWarning;
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 
@@ -147,6 +148,12 @@ class _GiveStarsFormState extends State<GiveStarsForm> {
               TagChip(label: '$n', selected: _amount == n, onTap: () => setState(() => _amount = n)),
           ],
         ),
+        // Below zero, or a lot at once: said before the tap, as assistants are asked.
+        if (_member case final m? when adjustmentWarning(den, m, _take ? -_amount : _amount) != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, Sp.s, 0, 0),
+            child: Text(adjustmentWarning(den, m, _take ? -_amount : _amount)!, style: t.meta(c.ink2)),
+          ),
         label0('Why'),
         TextField(
           controller: _reason,

@@ -14,6 +14,7 @@ import 'ids.dart';
 import 'invite_keys.dart';
 import 'materializer.dart';
 import 'model.dart';
+import 'names.dart';
 import 'order_keys.dart';
 import 'parallel.dart';
 import 'permissions.dart';
@@ -1312,7 +1313,7 @@ class Den {
   /// and AI-access changes, and asking for a reward.
   Future<UndoResult> undo(Iterable<String> changeIds) => _locked(() async {
         final plan = _planUndo(changeIds);
-        final made = await _commitNow(plan.drafts);
+        final made = await _commitNow(_closingRequests(plan.drafts));
         return UndoResult(changes: [for (final c in made) c.id], skipped: plan.skipped);
       });
 
@@ -1941,10 +1942,15 @@ class Den {
     ]);
   }
 
-  /// Sets the driver of a ride leg for one occurrence (null releases it).
+  /// Sets the driver of a ride leg for one occurrence (null releases it). Only a parent or an
+  /// adult drives ([canDrive]).
   Future<void> claimRide(String eventId, {required int occurrence, required String leg, String? driver}) async {
     if (leg != 'to' && leg != 'from') throw const InvalidInput('A ride leg is "to" or "from"');
-    if (driver != null && member(driver) == null) throw const InvalidInput('That person isn\'t in the family');
+    if (driver != null) {
+      final m = member(driver);
+      if (m == null) throw const InvalidInput('That person isn\'t in the family');
+      if (!canDrive(m)) throw InvalidInput('${m.name} can\'t drive: in Den, parents and adults drive');
+    }
     final entry = _requireLive(RecordType.event, eventId, 'That event doesn\'t exist');
     final event = Event(entry.rec);
     if (event.rrule == null) {
@@ -2184,6 +2190,16 @@ class Den {
     await _commit([_Draft(RecordType.chore, id, entry.space, {'_deleted': true})]);
   }
 
+  /// Refuses checking off a day still to come for anyone who may complete only their own chores
+  /// (a kid, a guest, open check-off): its stars would count now. Someone who may complete
+  /// anyone's can, when a chore really was done early.
+  void _notAhead(String date) {
+    if (date.compareTo(todayDate()) <= 0) return;
+    final a = actor;
+    if (a != null && can(a, DenAction.completeAnyChore)) return;
+    throw const InvalidInput('That day hasn\'t come yet; a chore is checked off on its day');
+  }
+
   /// Who gets credit for a step checked on a shared screen with nobody signed in.
   String _anonymousChecker(ChoreStep step, String? owner) => step.owner ?? owner ?? '';
 
@@ -2198,6 +2214,7 @@ class Den {
   Future<void> setChoreDoneBy(String choreId, String date, bool done, String? doneBy) async {
     if (!isLocalDate(date)) throw const InvalidInput('That isn\'t a date');
     if (doneBy != null && member(doneBy) == null) throw const InvalidInput('That person isn\'t in the family');
+    if (done) _notAhead(date);
     final chore = _requireChore(choreId);
     final completion = _completionOf(chore, date);
     final me = doneBy;
@@ -2230,6 +2247,7 @@ class Den {
   Future<void> setStepBy(String choreId, String date, String stepId, bool checked, String? checkedBy) async {
     if (!isLocalDate(date)) throw const InvalidInput('That isn\'t a date');
     if (checkedBy != null && member(checkedBy) == null) throw const InvalidInput('That person isn\'t in the family');
+    if (checked) _notAhead(date);
     final chore = _requireChore(choreId);
     final step = chore.steps.firstWhereOrNull((s) => s.id == stepId);
     if (step == null) throw const InvalidInput('That chore has no such step');
@@ -2604,12 +2622,38 @@ class Den {
     return id;
   }
 
+  /// Changes a reward. Retiring it (`active: false`) declines the requests for it still waiting
+  /// for a parent, so nobody waits on a reward that's gone; bringing it back doesn't reopen
+  /// them (undo does).
   Future<void> updateReward(String id, Map<String, Object?> patch) async {
     _requireLive(RecordType.reward, id, 'That reward doesn\'t exist');
-    await _commit([
+    await _commit(_closingRequests([
       _Draft(RecordType.reward, id, Space.family,
           _cleanPatch(patch, typeSpecs[RecordType.reward]!.fields.keys.toSet())),
-    ]);
+    ]));
+  }
+
+  /// [drafts], plus a decline for every request waiting on a reward they retire or remove. A
+  /// request the actor made for themselves stays: nobody decides their own.
+  List<_Draft> _closingRequests(List<_Draft> drafts) {
+    final closing = {
+      for (final d in drafts)
+        if (d.type == RecordType.reward && (d.fields['active'] == false || d.fields['_deleted'] == true)) d.rid,
+    };
+    if (closing.isEmpty) return drafts;
+    final who = actor?.id;
+    return [
+      ...drafts,
+      for (final e in _mat.store.liveOfType(RecordType.redemption))
+        if (e.space == Space.family &&
+            closing.contains(e.fields['reward']) &&
+            e.fields['status'] == RedemptionStatus.requested.name &&
+            (who == null || e.fields['member'] != who))
+          _Draft(RecordType.redemption, e.id, Space.family, {
+            'status': RedemptionStatus.declined.name,
+            'decidedBy': who,
+          }),
+    ];
   }
 
   /// Asks to spend points on a reward for [member] (default: the actor). Rewards that don't
@@ -2649,8 +2693,17 @@ class Den {
 
   /// Approving is refused when the balance no longer covers the request, so approving several
   /// requests made at once can't overdraw it.
+  /// Approving needs someone other than the person it's for and the person who asked for it
+  /// (a parent asking on a kid's behalf waits for the other parent, like anyone): otherwise a
+  /// connection acting as a parent could ask and approve in two calls.
   Future<void> decideRedemption(String id, {required bool approve}) async {
     final r = Redemption(_requireLive(RecordType.redemption, id, 'That request doesn\'t exist').rec);
+    final who = actor?.id;
+    if (approve && r.status == RedemptionStatus.requested && who != null && (r.member == who || r.rec.createdBy == who)) {
+      throw PermissionDenied(r.member == who
+          ? 'Someone else needs to approve ${member(who)?.name ?? 'your'}\'s reward'
+          : '${member(who)?.name ?? 'Whoever'} asked for this, so someone else needs to approve it');
+    }
     final balance = points().totals[r.member] ?? 0;
     if (approve && r.status == RedemptionStatus.requested && balance < r.cost) {
       throw InvalidInput('${member(r.member)?.name ?? 'They'} has $balance stars, not the ${r.cost} this costs');
@@ -2671,28 +2724,41 @@ class Den {
       });
 
   /// Creates an active token connection and returns the bearer token, which is shown once and
-  /// stored only as a hash. Parents only.
+  /// stored only as a hash. Parents only. It acts as [member], by default the parent making it:
+  /// every connection acts as someone, so "me" means a person and a request and its approval
+  /// can be told apart. [tz] is the time zone its person lives in, when not the family's.
   Future<String> addTokenConnection({
     required String label,
     required Set<Scope> scopes,
     String? member,
     int? expires,
+    String? tz,
   }) async {
     if (member != null && this.member(member) == null) throw const InvalidInput('That person isn\'t in the family');
+    final who = member ?? actor?.id;
     final token = newBearerToken();
     await _commit([
       _Draft(RecordType.connection, newId(), Space.parents, {
         'label': label,
         'kind': ConnectionKind.token.name,
         'scopes': _scopeNames(scopes),
-        'member': member,
+        'member': ?who,
         'tokenHash': hashToken(token),
         'client': null,
         'status': ConnectionStatus.active.name,
         'expires': expires,
+        'tz': ?_connectionZone(tz),
       }),
     ]);
     return token;
+  }
+
+  /// [tz] as a connection keeps it: null for none or the family's own zone.
+  String? _connectionZone(String? tz) {
+    final t = tz?.trim();
+    if (t == null || t.isEmpty || t == _zone) return null;
+    if (!isKnownZone(t)) throw InvalidInput('Den doesn\'t know the time zone "$t"');
+    return t;
   }
 
   List<String> _scopeNames(Set<Scope> scopes) => [for (final s in Scope.values) if (scopes.contains(s)) s.name];
@@ -2715,18 +2781,50 @@ class Den {
     return id;
   }
 
-  /// Parents approve a pending connection, optionally narrowing its scopes and choosing whose
-  /// permissions it acts with.
-  Future<void> approveConnection(String id, {Set<Scope>? scopes, String? member}) async {
+  /// Parents approve a pending connection, optionally narrowing its scopes, and choose who it acts
+  /// as: [member], by default the parent approving it. [tz] is the time zone its person lives
+  /// in, when not the family's.
+  Future<void> approveConnection(String id, {Set<Scope>? scopes, String? member, String? tz}) async {
     _requireLive(RecordType.connection, id, 'That connection doesn\'t exist');
     if (member != null && this.member(member) == null) throw const InvalidInput('That person isn\'t in the family');
+    final who = member ?? actor?.id;
     await _commit([
       _Draft(RecordType.connection, id, Space.parents, {
         'status': ConnectionStatus.active.name,
         if (scopes != null) 'scopes': _scopeNames(scopes),
-        'member': ?member,
+        'member': ?who,
+        'tz': ?_connectionZone(tz),
       }),
     ]);
+  }
+
+  /// Changes who an approved connection acts as, or the time zone its person lives in (an empty
+  /// [tz] for the family's). Parents, on their own device.
+  Future<void> updateConnection(String id, {String? member, String? tz}) async {
+    final entry = _requireLive(RecordType.connection, id, 'That connection doesn\'t exist');
+    if (member != null && this.member(member) == null) throw const InvalidInput('That person isn\'t in the family');
+    final current = Connection(entry.rec);
+    final zone = tz == null ? current.tz : _connectionZone(tz);
+    final fields = <String, Object?>{
+      if (member != null && member != current.member) 'member': member,
+      if (zone != current.tz) 'tz': zone,
+    };
+    if (fields.isEmpty) return;
+    await _commit([_Draft(RecordType.connection, id, Space.parents, fields)]);
+  }
+
+  /// Who [c] acts as: its member, or, for a connection approved before every connection was
+  /// bound to a person, the parent who let it in (the owner of the device that made it active;
+  /// only a parent's own device can). Null when that parent is no longer a parent in the
+  /// family, or [c] isn't active: such a connection only reads.
+  String? connectionActsAs(Connection c) {
+    final named = c.member;
+    if (named != null) return member(named) == null ? null : named;
+    if (c.status != ConnectionStatus.active) return null;
+    final at = c.rec.fieldTimes['status'];
+    final owner = at == null ? null : device(at.device)?.member;
+    final m = owner == null ? null : member(owner);
+    return m != null && m.isParent ? m.id : null;
   }
 
   /// Records the hash of an OAuth access token issued for an approved connection, or clears it
@@ -3124,9 +3222,24 @@ class Den {
         e.diffs.any((d) => has(d.after) || has(d.before));
   }
 
-  List<SearchHit> search(String query, {int limit = 50}) {
+  /// Words a question asked of search carries that don't name anything.
+  static const Set<String> _searchFiller = {
+    'a', 'an', 'the', 'is', 'are', 'when', 'what', 'where', 'who', 'at', 'on', 'in', 'for', 'to', 'of', 'my', 'our',
+    'and', 'with', 'next', 'this', 'whats', "what's", 'find',
+  };
+
+  /// Finds people, events, chores, lists and items by words, best first. A record matches when
+  /// the whole query is in its title (best), in its place or notes, or when every word of the
+  /// query is somewhere in it: its title, place, notes, store, list, or the people it's for (so
+  /// "dentist jimmy" finds Jimmy's dentist visit, and "Jimmy" his events and chores too). A word
+  /// of four letters or more also matches one a letter or two off ("socer"). Removed things,
+  /// which History keeps, are left out unless [includeHistory].
+  List<SearchHit> search(String query, {int limit = 50, bool includeHistory = false}) {
     final q = query.trim().toLowerCase();
     if (q.isEmpty) return const [];
+    final all = searchWords(q);
+    final content = [for (final w in all) if (!_searchFiller.contains(w)) w];
+    final words = content.isEmpty ? all : content;
     final hits = <(int, int, SearchHit)>[];
     final seen = <String>{};
     int rank(String text) {
@@ -3137,39 +3250,60 @@ class Den {
       return t.contains(q) ? 3 : -1;
     }
 
-    void add(int typeOrder, String text, SearchHit hit, [List<String> also = const []]) {
+    void add(int typeOrder, String text, SearchHit hit, [List<String> also = const [], List<String> people = const []]) {
       var r = rank(text);
       for (final extra in also) {
         final ar = rank(extra);
         if (ar >= 0 && (r < 0 || ar + 4 < r)) r = ar + 4;
       }
+      if (r < 0 && words.isNotEmpty) {
+        // People's names count from three letters on: "ma" typed on the way to "Maya" shouldn't
+        // list everything of hers yet.
+        final named = words.every((w) => w.length >= 3) ? people : const <String>[];
+        final hay = searchWords([text, ...also, ...named].join(' ').toLowerCase());
+        final exact = words.every((w) => hay.any((h) => h.startsWith(w) || (w.length >= 3 && h.contains(w))));
+        if (exact) {
+          r = 8;
+        } else if (words.every((w) => hay.any((h) => h.startsWith(w) || nearlySame(w, h)))) {
+          r = 10;
+        }
+      }
       if (r < 0 || !seen.add('${hit.type}/${hit.id}')) return;
       hits.add((r, typeOrder, hit));
     }
 
+    List<String> names(Iterable<String> ids) => [for (final id in ids) ?member(id)?.name];
     for (final m in members) {
       add(0, m.name, SearchHit(type: RecordType.member, id: m.id, title: m.name));
     }
     final now = _now();
     for (final e in events) {
       final next = seriesStarts(e, _zone, notBefore: now).firstOrNull ?? e.start;
-      add(1, e.title, SearchHit(type: RecordType.event, id: e.id, title: e.title, detail: e.location.isEmpty ? null : e.location, when: next), [e.location, e.notes]);
+      add(1, e.title, SearchHit(type: RecordType.event, id: e.id, title: e.title, detail: e.location.isEmpty ? null : e.location, when: next),
+          [e.location, e.notes], names(e.assignees));
     }
     for (final c in chores) {
-      add(2, c.title, SearchHit(type: RecordType.chore, id: c.id, title: c.title), [c.notes]);
+      final owners = switch (c.owner) {
+        OwnerMember(:final id) => [id],
+        OwnerRotation(:final ids) => ids,
+        OwnerAnyone() => const <String>[],
+      };
+      add(2, c.title, SearchHit(type: RecordType.chore, id: c.id, title: c.title), [c.notes], names(owners));
     }
     for (final l in lists) {
       add(3, l.list.title, SearchHit(type: RecordType.list, id: l.list.id, title: l.list.title));
       for (final i in l.items) {
-        add(4, i.text, SearchHit(type: RecordType.item, id: i.id, title: i.text, detail: l.list.title), [i.store ?? '']);
+        add(4, i.text, SearchHit(type: RecordType.item, id: i.id, title: i.text, detail: l.list.title), [i.store ?? ''], [l.list.title]);
       }
     }
-    final readable = readableSpaces;
-    for (final a in _mat.applied.reversed) {
-      final c = a.change;
-      if (!readable.contains(c.space) || a.title.isEmpty) continue;
-      if (!const {RecordType.event, RecordType.chore, RecordType.list, RecordType.item}.contains(c.type)) continue;
-      add(5, a.title, SearchHit(type: c.type, id: c.rid, title: a.title, detail: 'History', when: c.hlc.millis));
+    if (includeHistory) {
+      final readable = readableSpaces;
+      for (final a in _mat.applied.reversed) {
+        final c = a.change;
+        if (!readable.contains(c.space) || a.title.isEmpty) continue;
+        if (!const {RecordType.event, RecordType.chore, RecordType.list, RecordType.item}.contains(c.type)) continue;
+        add(12, a.title, SearchHit(type: c.type, id: c.rid, title: a.title, detail: 'History', when: c.hlc.millis));
+      }
     }
     hits.sort((a, b) {
       if (a.$1 != b.$1) return a.$1.compareTo(b.$1);
@@ -3224,12 +3358,49 @@ class Den {
         ));
       }
     }
+    out.addAll(_busyDrivers(occ));
     final today = todayDate();
     if (dayStart(today) < end && dayStart(addDays(today, 1)) > start) {
       for (final cd in _choresOn(today)) {
         if (cd.date == today && cd.owner == null && !cd.done) {
           out.add(Gap(kind: GapKind.unowned, message: '${cd.chore.title} is up for grabs', occurrences: const []));
         }
+      }
+    }
+    return out;
+  }
+
+  /// How close two rides by one driver may be, from different places: a leg is driven at its
+  /// event's start (to) or end (from).
+  static const int rideGap = 30 * 60 * 1000;
+
+  /// Someone driving two places at once: two ride legs of different occurrences, less than
+  /// [rideGap] apart, with the same driver, unless both events are at the same place.
+  List<Gap> _busyDrivers(List<Occurrence> occ) {
+    final legs = <(String, int, Occurrence)>[
+      for (final o in occ)
+        if (!o.allDay)
+          for (final r in o.rides)
+            if (r.driver != null) (r.driver!, r.leg == 'from' ? o.end : o.start, o),
+    ]..sort((a, b) => a.$2.compareTo(b.$2));
+    final out = <Gap>[];
+    final seen = <String>{};
+    String key(Occurrence o) => '${o.event.id}@${o.seriesStart}';
+    for (var i = 0; i < legs.length; i++) {
+      for (var j = i + 1; j < legs.length && legs[j].$2 - legs[i].$2 < rideGap; j++) {
+        final (driver, _, a) = legs[i];
+        final (other, _, b) = legs[j];
+        if (driver != other || key(a) == key(b)) continue;
+        final place = a.location.trim().toLowerCase();
+        if (place.isNotEmpty && place == b.location.trim().toLowerCase()) continue;
+        final pair = [key(a), key(b)]..sort();
+        if (!seen.add('$driver|${pair.join('|')}')) continue;
+        out.add(Gap(
+          kind: GapKind.driverBusy,
+          message: '${member(driver)?.name ?? 'Someone'} is driving two places at once: ${a.title} and ${b.title}',
+          occurrences: [a, b],
+          members: [driver],
+        ));
       }
     }
     return out;

@@ -275,6 +275,7 @@ final Map<String, Object?> historyShape = S.object({
   'device': _str('Device id.'),
   'device_name': _str('Device.'),
   'via': _strOrNull('The connection that made it through the hub.'),
+  'when_local': _strOrNull('When, in the zone asked for or where the person lives, if not the family\'s.'),
   'type': _str('Record type.'),
   'rid': _str('Record id.'),
   'title': _str('What people call it.'),

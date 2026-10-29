@@ -187,3 +187,133 @@ String parseDateLike(Object? value, String zone) {
   if (value is String && isDate(value.trim())) return value.trim();
   return dateIn(zone, parseInstant(value, zone));
 }
+
+/// The wall-clock time a local ISO 8601 time without an offset names ("2026-11-01T01:30"), or
+/// null for anything else.
+DateTime? localWallOf(Object? value) {
+  if (value is! String) return null;
+  final m = _instantRe.firstMatch(value.trim());
+  if (m == null || m[8] != null) return null;
+  return DateTime.utc(int.parse(m[1]!), int.parse(m[2]!), int.parse(m[3]!), int.parse(m[4]!), int.parse(m[5]!));
+}
+
+/// "1 star", "3 stars".
+String stars(int n) => '$n ${n == 1 || n == -1 ? 'star' : 'stars'}';
+
+/// What people call [zone]: "New York" for America/New_York, "Honolulu" for Pacific/Honolulu.
+String zoneLabel(String zone) => zone.split('/').last.replaceAll('_', ' ');
+
+/// The zone's abbreviation at an instant: "EDT", "EST".
+String zoneAbbreviation(String zone, int utcMillis) =>
+    tz.TZDateTime.fromMillisecondsSinceEpoch(zoneOf(zone), utcMillis).timeZone.abbreviation;
+
+/// "Fri, Oct 17", or "Fri, Oct 17, 2025" when [date] isn't in [today]'s year.
+String dayText(String date, String today) =>
+    date.substring(0, 4) == today.substring(0, 4) ? shortDate(date) : '${shortDate(date)}, ${date.substring(0, 4)}';
+
+/// "Friday, October 17", or "Friday, October 17, 2025" when [date] isn't in [today]'s year.
+String longDayText(String date, String today) =>
+    date.substring(0, 4) == today.substring(0, 4) ? longDate(date) : '${longDate(date)}, ${date.substring(0, 4)}';
+
+/// What to tell someone whose wall-clock time [wall] in [zone] isn't one instant: the clocks
+/// sprang forward past it (Den moves it forward, to [utc]), or fell back over it (it happens
+/// twice, and Den takes the first). Null for an ordinary time.
+String? wallNote(String zone, DateTime wall, int utc) {
+  final got = wallOf(zone, utc);
+  final asked = clockText(wall);
+  final day = '${shortDate(dateOfWall(wall))}, ${wall.year}';
+  if (got.hour != wall.hour || got.minute != wall.minute) {
+    return '$asked doesn\'t happen on $day: the clocks spring forward, so Den used ${clockText(got)}.';
+  }
+  final again = wallOf(zone, utc + Duration.millisecondsPerHour);
+  if (again.hour == wall.hour && again.minute == wall.minute && again.day == wall.day) {
+    return '$asked happens twice on $day (the clocks fall back); Den used the first, ${zoneAbbreviation(zone, utc)}.';
+  }
+  return null;
+}
+
+const Map<String, int> _weekdayNumbers = {
+  'mon': 1, 'monday': 1, 'tue': 2, 'tues': 2, 'tuesday': 2, 'wed': 3, 'weds': 3, 'wednesday': 3, //
+  'thu': 4, 'thur': 4, 'thurs': 4, 'thursday': 4, 'fri': 5, 'friday': 5, 'sat': 6, 'saturday': 6, //
+  'sun': 7, 'sunday': 7,
+};
+
+/// The local date [text] names relative to [today]: "today", "tonight", "tomorrow",
+/// "yesterday", a weekday ("Friday" or "this Friday" is the next one, today included; "next
+/// Friday" is the one in next week, as den_capture reads it; "last Friday" the one before
+/// today), or "in 3 days" / "in 2 weeks". [weekStart] is the family's (0 Sunday, 1 Monday).
+/// Null when it's none of these.
+String? relativeDate(String text, String today, {int weekStart = 0}) {
+  final t = text.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  if (t == 'today' || t == 'tonight' || t == 'now') return today;
+  if (t == 'tomorrow') return addDays(today, 1);
+  if (t == 'yesterday') return addDays(today, -1);
+  final within = RegExp(r'^in (\d{1,3}) (day|days|week|weeks)$').firstMatch(t);
+  if (within != null) {
+    final n = int.parse(within[1]!);
+    return addDays(today, within[2]!.startsWith('week') ? 7 * n : n);
+  }
+  final m = RegExp(r'^(?:(this|next|coming|last|on) )?([a-z]+)\.?$').firstMatch(t);
+  final weekday = m == null ? null : _weekdayNumbers[m[2]];
+  if (m == null || weekday == null) return null;
+  final todayDay = weekdayOfDate(today);
+  switch (m[1]) {
+    case 'last':
+      final back = (todayDay - weekday) % 7;
+      return addDays(today, -(back == 0 ? 7 : back));
+    case 'next':
+      // The family's week starts on Sunday (0) or Monday (1); ISO weekdays put Sunday at 7.
+      final startIso = weekStart == 0 ? 7 : weekStart;
+      final nextWeek = addDays(today, 7 - (todayDay - startIso) % 7);
+      return addDays(nextWeek, (weekday - startIso) % 7);
+    default:
+      return addDays(today, (weekday - todayDay) % 7);
+  }
+}
+
+/// Minutes after midnight [text] names: "3pm", "3:30 p.m.", "15:00", "noon", "midnight", or a
+/// bare hour ("3", read the way a family's day goes: 1 to 6 in the afternoon, 7 to 11 in the
+/// morning). Null when it's none of these.
+int? clockMinutes(String text) {
+  final t = text.trim().toLowerCase();
+  if (t == 'noon' || t == 'midday') return 12 * 60;
+  if (t == 'midnight') return 0;
+  final m = RegExp(r'^(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?|a|p)?$').firstMatch(t);
+  if (m == null) return null;
+  var h = int.parse(m[1]!);
+  final min = int.parse(m[2] ?? '0');
+  if (min > 59) return null;
+  final half = m[3];
+  if (half != null) {
+    if (h < 1 || h > 12) return null;
+    h = h % 12 + (half.startsWith('p') ? 12 : 0);
+  } else if (m[2] == null) {
+    if (h >= 13 && h <= 23) return h * 60;
+    if (h < 1 || h > 12) return null;
+    if (h <= 6) h += 12;
+  } else if (h > 23) {
+    return null;
+  }
+  return h * 60 + min;
+}
+
+final RegExp _trailingTime = RegExp(
+  r'^(.*?)(?:,?\s+(?:at|@)\s+|,?\s+)(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|a|p)?|noon|midday|midnight)$',
+  caseSensitive: false,
+);
+
+/// A day and a wall-clock time in words ("next Friday 3pm", "tomorrow at 9:30", "Friday at
+/// noon", "2026-11-06 3pm"), or a day alone ("next Friday": midnight starting it), relative to
+/// [today]. Null when [text] is neither.
+DateTime? relativeWall(String text, String today, {int weekStart = 0}) {
+  final t = text.trim();
+  final date = isDate(t) ? t : relativeDate(t, today, weekStart: weekStart);
+  if (date != null) return wallOfDate(date);
+  final m = _trailingTime.firstMatch(t);
+  if (m == null) return null;
+  final dayPart = m[1]!.trim();
+  final day = isDate(dayPart) ? dayPart : relativeDate(dayPart, today, weekStart: weekStart);
+  final minutes = clockMinutes(m[2]!);
+  if (day == null || minutes == null) return null;
+  return wallOfDate(day).add(Duration(minutes: minutes));
+}

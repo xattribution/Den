@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/shots.dart';
 import 'chores_shots.dart';
+import 'family_fakes.dart' show pumpScreen;
 
 /// Lets a sheet close on the test's clock, then the write it started finish on the real one.
 Future<void> settle(WidgetTester tester) async {
@@ -47,6 +48,19 @@ void main() {
     final state = await demo(tester);
     final kid = state.den.members.firstWhere((m) => m.isKid);
     await shoot(tester, 'points_adjust_phone', AdjustScreen(member: kid.id), state: state);
+  });
+
+  testWidgets('Taking more stars than someone has says where it leaves them, as assistants are asked (MCP eval #11)', (tester) async {
+    final state = await demo(tester);
+    final kid = state.den.members.firstWhere((m) => m.isKid);
+    final balance = state.den.points().totals[kid.id] ?? 0;
+    if (balance != 1) await tester.runAsync(() => state.den.adjustPoints(kid.id, 1 - balance, 'Spent'));
+    await pumpScreen(tester, AdjustScreen(member: kid.id), state: state);
+    expect(find.textContaining('leaves'), findsNothing);
+    await tester.tap(find.text('Take'));
+    await tester.tap(find.text('5').last);
+    await tester.pumpAndSettle();
+    expect(find.text('${kid.name} has 1 star; taking 5 leaves -4.'), findsOneWidget);
   });
 
   testWidgets('Give points needs a reason', (tester) async {

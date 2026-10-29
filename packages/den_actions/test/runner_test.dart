@@ -55,8 +55,10 @@ void main() {
     final preview = (r.data['preview'] as Map).cast<String, Object?>();
     expect((preview['changes'] as List).single, containsPair('verb', 'added'));
     expect(den.versionVector, before);
-    final again = await runner.run(parentOn(den), 'add_items', {'list': 'Groceries', 'items': ['Eggs']}, mode: RunMode.preview);
-    expect((again.data['preview'] as Map)['warnings'], contains('Eggs is already on that list.'));
+    // An item already on the list isn't added twice (MCP eval #10): the preview says so.
+    final again = await runner.run(parentOn(den), 'add_items', {'list': 'Groceries', 'items': ['eggs']}, mode: RunMode.preview);
+    expect(again.text, contains('Eggs is already on Groceries'));
+    expect((again.data['preview'] as Map)['changes'], isEmpty);
   });
 
   test('input is checked against the schema, and names resolve', () async {

@@ -18,6 +18,7 @@ export 'src/invite_keys.dart'
         inviteKeyMaxUses,
         inviteOf;
 export 'src/model.dart';
+export 'src/names.dart';
 export 'src/permissions.dart';
 export 'src/recovery.dart'
     show

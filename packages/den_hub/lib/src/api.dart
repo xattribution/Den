@@ -92,6 +92,7 @@ class RestApi {
         readable: access.readable(hub.den),
         reader: reader?.call(),
         via: access.label,
+        viewZone: access.timezone,
       );
 
   /// The REST error for a failed action.
@@ -251,7 +252,7 @@ class RestApi {
       'family': c.wire.family(),
       'token': {
         'label': connection.label,
-        'member': connection.member,
+        'member': c.access.member,
         'scopes': [for (final s in Scope.values) if (connection.scopes.contains(s)) s.name],
         ...c.wire.instant('expires', connection.expires),
       },
@@ -382,7 +383,7 @@ class RestApi {
     if (q.isEmpty || q.length > 200) throw ApiError.invalid('"q" must be 1 to 200 characters.', field: 'q');
     final limit = queryInt(c.request, 'limit', 50, min: 1, max: 100);
     final hits = [
-      for (final h in c.den.search(q, limit: limit + 50))
+      for (final h in c.den.search(q, limit: limit + 50, includeHistory: queryBool(c.request, 'include_removed', false)))
         if (searchHitVisible(c.den, h, c.readable)) h,
     ];
     return jsonResponse({

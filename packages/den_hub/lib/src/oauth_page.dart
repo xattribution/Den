@@ -53,7 +53,8 @@ String authorizePage({
       : '<h1>Approve $name in the Den app</h1>\n'
           '${host.isEmpty ? '' : loopback ? '<p class="from">It signs in for <strong>a program on this computer</strong> (${_html.convert(host)}). Any program here could ask, so only approve it if you just started it.</p>\n' : '<p class="from">It signs in for <strong>${_html.convert(host)}</strong>. Only approve it if that is where you started.</p>\n'}'
           '${describedAt == null ? '' : '<p class="meta">It describes itself at ${_html.convert(describedAt)}.</p>\n'}'
-          '<p>A parent needs to say yes on their phone before $name can use your family\'s Den.</p>\n'
+          '<p>A parent needs to say yes on their phone before $name can use your family\'s Den. It will act as that '
+              'parent, unless they choose someone else.</p>\n'
           '<p class="where">Settings &rarr; Advanced &rarr; AI and automations</p>\n'
           '${code.isEmpty ? '' : '<p>Den shows this request with the code <strong class="code">${_html.convert(code)}</strong>. Approve the one with the same code.</p>\n'}'
           '${scopes.isEmpty ? '' : '<p class="meta">It asked to: ${_html.convert(_scopeWords(scopes))}.</p>'}';
@@ -117,7 +118,7 @@ String _scopeWords(List<String> scopes) {
     'chores': 'check off chores',
     'lists': 'change lists',
     'points': 'give stars and handle rewards',
-    'admin': 'do everything a parent can, except family settings',
+    'admin': 'do everything the person it acts as can, the family\'s people and settings included',
   };
   final parts = [for (final s in scopes) words[s] ?? s];
   if (parts.length <= 1) return parts.join();

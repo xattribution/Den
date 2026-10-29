@@ -93,7 +93,7 @@ void main() {
     final session = await initialize(admin);
     final (r, _) = await rpc(admin, {'id': 2, 'method': 'tools/list'}, session: session);
     final tools = (result(r)['tools'] as List).cast<Map<String, Object?>>();
-    // A token with no member acts at a parent's level except for the family's people and settings.
+    // A token acts as the parent who made it (MCP eval #4): with admin, everything that parent may.
     expect(tools.map((t) => t['name']).toSet(), {
       'get_overview', 'get_family', 'list_events', 'list_chores', 'get_lists', 'get_points', 'search', 'get_history',
       'create_event', 'update_event', 'delete_event', 'set_ride',
@@ -101,6 +101,7 @@ void main() {
       'create_list', 'update_list', 'delete_list', 'add_items', 'update_items', 'remove_items',
       'adjust_points', 'save_goal', 'delete_goal', 'save_reward', 'request_reward', 'decide_reward_request',
       'add_from_text', 'undo', 'save_category', 'delete_category',
+      'update_family_settings', 'save_member', 'set_picture', 'save_calendar_feed', 'remove_calendar_feed',
     });
     Map<String, Object?> tool(String name) => tools.firstWhere((t) => t['name'] == name);
     expect((tool('create_event')['inputSchema'] as Map)['required'], ['title', 'start']);

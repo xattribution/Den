@@ -548,6 +548,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'client': text(max: maxTitle, nullable: true),
     'status': names(ConnectionStatus.values),
     'expires': number(min: 0, nullable: true),
+    'tz': zoneName(nullable: true),
   }, required: {'label', 'kind', 'scopes', 'status'}, space: Space.parents),
   RecordType.photo: TypeSpec({
     'member': id(),

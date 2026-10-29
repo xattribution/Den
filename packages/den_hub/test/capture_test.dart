@@ -219,7 +219,8 @@ void main() {
     // An assistant reading through the API's add_from_text is held to the same budget: Den's
     // own reader reads it instead of Claude.
     final token = await f.token(scopes: {Scope.read, Scope.lists});
-    final api = await f.call('POST', '/api/v1/actions/add_from_text', token: token, body: {'text': 'milk'});
+    final api = await f.call('POST', '/api/v1/actions/add_from_text', token: token, body: {'text': 'popcorn and apple juice'});
+    expect(api.status, 200, reason: api.text);
     expect((api.body['result'] as Map)['reader'], 'Den', reason: api.text);
     expect(anthropic.sent, hasLength(2));
   });

@@ -46,7 +46,10 @@ class ActionError implements Exception {
 String _norm(String s) => s.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 
 /// Finds one of [items] by id or name: an exact id, an exact name (ignoring case), then a
-/// unique name that starts with or contains the query. Throws [ActionError] listing the choices.
+/// unique name that starts with or contains the query. When several match, each of [narrow]
+/// in turn may settle it (keeping those of one person, or of one date); one that keeps exactly
+/// one wins, and one that keeps several narrows what the next one sees. Throws [ActionError]
+/// listing the choices.
 T pick<T>(
   String query,
   List<T> items, {
@@ -54,6 +57,7 @@ T pick<T>(
   required String Function(T) name,
   required String kind,
   String Function(T)? describe,
+  List<List<T> Function(List<T> found)> narrow = const [],
 }) {
   final q = _norm(query);
   final byId = items.firstWhereOrNull((i) => id(i) == query.trim());
@@ -63,11 +67,18 @@ T pick<T>(
     (n) => n.startsWith(q),
     (n) => n.contains(q),
   ]) {
-    final found = items.where((i) => test(_norm(name(i)))).toList();
+    var found = items.where((i) => test(_norm(name(i)))).toList();
     if (found.length == 1) return found.single;
+    for (final settle in narrow) {
+      if (found.length < 2) break;
+      final kept = settle(found);
+      if (kept.length == 1) return kept.single;
+      if (kept.isNotEmpty) found = kept;
+    }
     if (found.length > 1) {
       final label = describe ?? (T i) => '${name(i)} (id ${id(i)})';
-      throw ActionError('More than one $kind matches "$query": ${found.map(label).join('; ')}. Use the id.');
+      throw ActionError('More than one $kind matches "$query": ${found.map(label).join('; ')}. Use the id, or say whose '
+          'it is or which day.');
     }
   }
   if (items.isEmpty) throw ActionError('There are no ${kind}s to choose from.');
@@ -111,28 +122,46 @@ class People {
   String names(Iterable<String> ids) => joinNames([for (final id in ids) name(id)]);
 }
 
-/// Reads an action's time input: ISO 8601 with an offset, ISO without (in [zone]), or a local date
-/// (midnight starting it). Throws [ActionError].
-int toolInstant(Object? value, String zone, String field) {
+/// Reads an action's time input: ISO 8601 with an offset, ISO without (in [zone]), a local date
+/// (midnight starting it), or words relative to [today] ("next Friday 3pm", "tomorrow at 9",
+/// "Friday"; see [relativeWall]). A wall-clock time the clocks skip or repeat that day is
+/// told to [note]. Throws [ActionError].
+int toolInstant(Object? value, String zone, String field, {String? today, int weekStart = 0, void Function(String)? note}) {
+  void check(DateTime? wall, int at) {
+    if (wall == null || note == null) return;
+    final said = wallNote(zone, wall, at);
+    if (said != null) note(said);
+  }
+
   try {
-    return parseInstant(value, zone, allowDate: true);
+    final at = parseInstant(value, zone, allowDate: true);
+    check(localWallOf(value), at);
+    return at;
   } on FormatException {
-    throw ActionError('"$field" must be a time like 2026-10-20T15:00 or a date like 2026-10-20.');
+    if (value is String) {
+      final wall = relativeWall(value, today ?? dateIn(zone, DateTime.now().millisecondsSinceEpoch), weekStart: weekStart);
+      if (wall != null) {
+        final at = utcOfWall(zone, wall);
+        check(wall, at);
+        return at;
+      }
+    }
+    throw ActionError('"$field" must be a time like 2026-10-20T15:00, a date like 2026-10-20, or words like '
+        '"next Friday 3pm".', field: field);
   }
 }
 
-/// Reads an action's date input (a local date, or the date of a time). Throws [ActionError].
-String toolDate(Object? value, String zone, String field) {
+/// Reads an action's date input: a local date, the date of a time, or words relative to
+/// [today] ("today", "tomorrow", "yesterday", "Friday", "next Friday", "in 3 days"). Throws
+/// [ActionError].
+String toolDate(Object? value, String zone, String field, {String? today, int weekStart = 0}) {
   if (value is String) {
-    final t = value.trim().toLowerCase();
-    final today = dateIn(zone, DateTime.now().millisecondsSinceEpoch);
-    if (t == 'today') return today;
-    if (t == 'tomorrow') return addDays(today, 1);
-    if (t == 'yesterday') return addDays(today, -1);
+    final day = relativeDate(value, today ?? dateIn(zone, DateTime.now().millisecondsSinceEpoch), weekStart: weekStart);
+    if (day != null) return day;
   }
   try {
     return parseDateLike(value, zone);
   } on FormatException {
-    throw ActionError('"$field" must be a date like 2026-10-20.');
+    throw ActionError('"$field" must be a date like 2026-10-20, or words like "tomorrow" or "next Friday".', field: field);
   }
 }

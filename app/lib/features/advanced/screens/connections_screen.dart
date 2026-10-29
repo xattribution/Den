@@ -241,13 +241,20 @@ class _WaitingState extends State<_Waiting> {
   }
 
   Future<void> _approve(BuildContext context, Connection x) async {
-    final result = await showDenSheet<(Set<Scope>, String?)>(context, builder: (_) => _ApproveSheet(x));
+    final result = await showDenSheet<_Who>(context, builder: (_) => _ApproveSheet(x));
     if (result == null || !context.mounted) return;
-    await attempt(context, () => context.connectionActions.approve(x.id, scopes: result.$1, member: result.$2));
+    await attempt(
+      context,
+      () => context.connectionActions.approve(x.id, scopes: result.scopes!, member: result.member, tz: result.tz),
+    );
   }
 }
 
-/// Approving a request: keep or narrow what it asked for, and choose whose permissions it uses.
+/// What a parent chose for a connection: what it may do, who it acts as, where they live.
+typedef _Who = ({Set<Scope>? scopes, String member, String? tz});
+
+/// Approving a request: keep or narrow what it asked for, choose who it acts as (the parent
+/// approving, unless they pick someone), and where that person lives.
 class _ApproveSheet extends StatefulWidget {
   const _ApproveSheet(this.connection);
   final Connection connection;
@@ -258,11 +265,13 @@ class _ApproveSheet extends StatefulWidget {
 
 class _ApproveSheetState extends State<_ApproveSheet> {
   late Set<Scope> _scopes = {...widget.connection.scopes};
-  String? _member;
+  late String? _member = DenScope.read(context).me?.id;
+  String? _tz;
 
   @override
   Widget build(BuildContext context) {
     final x = widget.connection;
+    final member = _member;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l),
       child: Column(
@@ -271,10 +280,14 @@ class _ApproveSheetState extends State<_ApproveSheet> {
           SheetHeader(title: 'Approve ${x.label}'),
           ScopePicker(value: _scopes, allowed: x.scopes, onChanged: (s) => setState(() => _scopes = s)),
           const SizedBox(height: DenLayout.sectionGap),
-          ActsAsPicker(value: _member, onChanged: (m) => setState(() => _member = m)),
+          ActsAsPicker(value: member ?? '', onChanged: (m) => setState(() => _member = m)),
+          const SizedBox(height: DenLayout.sectionGap),
+          ConnectionZonePicker(value: _tz, onChanged: (z) => setState(() => _tz = z)),
           const SizedBox(height: DenLayout.sectionGap),
           FilledButton(
-            onPressed: _scopes.isEmpty ? null : () => Navigator.of(context).pop((_scopes, _member)),
+            onPressed: _scopes.isEmpty || member == null
+                ? null
+                : () => Navigator.of(context).pop((scopes: _scopes, member: member, tz: _tz)),
             style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
             child: Text('Approve ${x.label}'),
           ),
@@ -284,10 +297,52 @@ class _ApproveSheetState extends State<_ApproveSheet> {
   }
 }
 
-/// "Acts as Mia", or "As a parent" when the connection uses no one person's permissions.
-String actsAs(BuildContext context, String? memberId) {
-  if (memberId == null) return 'As a parent';
-  return 'As ${DenScope.read(context).den.member(memberId)?.name ?? 'a removed person'}';
+/// Changing who an approved connection acts as, and where they live.
+class _ChangeSheet extends StatefulWidget {
+  const _ChangeSheet(this.connection, this.member);
+  final Connection connection;
+  final String? member;
+
+  @override
+  State<_ChangeSheet> createState() => _ChangeSheetState();
+}
+
+class _ChangeSheetState extends State<_ChangeSheet> {
+  late String? _member = widget.member ?? DenScope.read(context).me?.id;
+  late String? _tz = widget.connection.tz;
+
+  @override
+  Widget build(BuildContext context) {
+    final x = widget.connection;
+    final member = _member;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SheetHeader(title: x.label),
+          ActsAsPicker(value: member ?? '', onChanged: (m) => setState(() => _member = m)),
+          const SizedBox(height: DenLayout.sectionGap),
+          ConnectionZonePicker(value: _tz, onChanged: (z) => setState(() => _tz = z)),
+          const SizedBox(height: DenLayout.sectionGap),
+          FilledButton(
+            onPressed: member == null ? null : () => Navigator.of(context).pop((scopes: null, member: member, tz: _tz)),
+            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "As Mia": who a connection acts as. One approved before every connection acted as someone
+/// acts as the parent who approved it; "Reads only" when that parent is gone.
+String actsAs(BuildContext context, Connection connection) {
+  final den = DenScope.read(context).den;
+  final id = den.connectionActsAs(connection);
+  if (id == null) return 'Reads only';
+  return 'As ${den.member(id)?.name ?? 'a removed person'}';
 }
 
 /// One connection: what it is, what it may do and as whom, and Remove, said in place first.
@@ -318,15 +373,25 @@ class _ConnectionRowState extends State<_ConnectionRow> {
     });
   }
 
+  Future<void> _change() async {
+    final x = widget.connection;
+    final member = DenScope.read(context).den.connectionActsAs(x);
+    final result = await showDenSheet<_Who>(context, builder: (_) => _ChangeSheet(x, member));
+    if (result == null || !mounted) return;
+    await attempt(context, () => context.connectionActions.update(x.id, member: result.member, tz: result.tz));
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final t = context.text;
     final x = widget.connection;
     final expires = x.expires;
+    final zone = x.tz;
     final detail = [
       FamilyWords.scopes(x.scopes),
-      actsAs(context, x.member),
+      actsAs(context, x),
+      if (zone != null) zone.split('/').last.replaceAll('_', ' '),
       if (expires != null) 'Until ${DateFormat.MMMd().format(context.watch(const {}).formats.at(expires))}',
     ].join(' · ');
     return Column(
@@ -347,12 +412,14 @@ class _ConnectionRowState extends State<_ConnectionRow> {
                   ),
                 ),
               ),
-              if (widget.trusted && !_removing)
+              if (widget.trusted && !_removing) ...[
+                TextButton(onPressed: _change, child: const Text('Change')),
                 TextButton(
                   onPressed: () => setState(() => _removing = true),
                   style: TextButton.styleFrom(foregroundColor: c.destructive),
                   child: const Text('Remove'),
                 ),
+              ],
             ],
           ),
         ),

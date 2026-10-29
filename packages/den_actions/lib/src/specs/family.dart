@@ -29,8 +29,13 @@ List<ActionSpec> familyActions() => [
         scopes: const {Scope.calendar},
         needs: const [DenAction.editEvents],
         effect: Effect.destructive,
-        confirm: Confirm.client,
-        confirmWhen: (c, a) => a.has('category'),
+        confirm: Confirm.server,
+        // The assistant asks before renaming one; anyone is asked before a second of one name.
+        confirmWhen: (c, a) => _sameCategory(c, a) != null || (a.has('category') && c.surface == Surface.assistant),
+        ask: (c, a) {
+          final same = _sameCategory(c, a);
+          return same == null ? 'Change the category ${_category(c, a.str('category')!).name}?' : '$same Use that name anyway?';
+        },
         engine: const {'addCategory', 'updateCategory'},
         example: const {'name': 'Music', 'icon': 'music'},
         run: _saveCategory,
@@ -191,7 +196,18 @@ Subscription _feed(ActionContext c, String query) => pick(
       kind: 'calendar subscription',
     );
 
+/// "There's already a category called Sports." when a save gives a category a name (any case)
+/// another has, so the two couldn't be told apart by name; else null.
+String? _sameCategory(ActionContext c, ActionInput a) {
+  final name = a.str('name');
+  if (name == null) return null;
+  final self = a.has('category') ? _category(c, a.str('category')!).id : null;
+  final same = c.den.categories.where((x) => x.id != self && sameName(x.name, name)).firstOrNull;
+  return same == null ? null : 'There\'s already a category called ${same.name} [category ${same.id}].';
+}
+
 Future<ActionResult> _saveCategory(ActionContext c, ActionInput a) async {
+  final same = _sameCategory(c, a);
   final String id;
   if (a.has('category')) {
     final category = _category(c, a.str('category')!);
@@ -209,7 +225,10 @@ Future<ActionResult> _saveCategory(ActionContext c, ActionInput a) async {
   final category = c.den.category(id)!;
   return ActionResult(
     '${a.has('category') ? 'Changed' : 'Added'} the category ${category.name} [category $id].',
-    {'category': Wire.category(category)},
+    {
+      'category': Wire.category(category),
+      if (same != null) 'warnings': [same],
+    },
   );
 }
 
@@ -270,7 +289,7 @@ Future<ActionResult> _saveMember(ActionContext c, ActionInput a) async {
       if (tierText != null) 'tier': tier?.name,
       if (a.has('color')) 'marker': a.str('color'),
       if (a.has('picture')) 'picture': a.str('picture'),
-      if (birthday != null) 'birthday': birthday.isEmpty ? null : toolDate(birthday, c.zone, 'birthday'),
+      if (birthday != null) 'birthday': birthday.isEmpty ? null : c.date(birthday, 'birthday'),
       if (a.has('order')) 'order': a.integer('order'),
     };
     if (patch.isEmpty) throw ActionError('Nothing to change: give a field such as name, color or birthday.');
@@ -284,7 +303,7 @@ Future<ActionResult> _saveMember(ActionContext c, ActionInput a) async {
       tier: tier,
       marker: _named(Marker.values, a.str('color')),
       picture: a.str('picture') ?? Picture.initial,
-      birthday: birthday == null || birthday.isEmpty ? null : toolDate(birthday, c.zone, 'birthday'),
+      birthday: birthday == null || birthday.isEmpty ? null : c.date(birthday, 'birthday'),
     );
     if (a.has('order')) await c.den.updateMember(id, {'order': a.integer('order')});
   }

@@ -95,7 +95,8 @@ void main() {
       final body = r.body;
       expect(body['hub'], {'device': f.hubDen.deviceId, 'name': 'Kitchen hub', 'version': hubVersion});
       expect((body['family'] as Map)['timezone'], 'America/Chicago');
-      expect(body['token'], {'label': 'Home Assistant', 'member': null, 'scopes': ['admin'], 'expires': null, 'expires_ms': null});
+      // A token acts as the parent who made it (MCP eval #4).
+      expect(body['token'], {'label': 'Home Assistant', 'member': f.id('Alex'), 'scopes': ['admin'], 'expires': null, 'expires_ms': null});
       final members = (body['members'] as List).cast<Map<String, Object?>>();
       expect(members.map((m) => m['name']), ['Alex', 'Priya', 'Maya', 'Leo', 'Zoe', 'Grandma Rosa']);
       expect(members.first.keys.toSet(), {'id', 'name', 'role', 'tier', 'marker', 'picture', 'animal', 'birthday', 'until', 'grants', 'order'});
@@ -384,7 +385,7 @@ void main() {
       expect(adjusted.status, 201);
       expect(adjusted.body['balance'], before + 5);
       expect((adjusted.body['adjustment'] as Map)['id'], isA<String>());
-      expect((adjusted.body['adjustment'] as Map)['by'], isNull);
+      expect((adjusted.body['adjustment'] as Map)['by'], f.id('Alex'), reason: 'the token acts as the parent who made it');
       final zero = await f.call('POST', '/api/v1/points/adjust', token: all, body: {'member': f.id('Leo'), 'delta': 0, 'reason': 'x'});
       expect(zero.error['details'], {'field': 'delta'});
     });
@@ -395,7 +396,7 @@ void main() {
       final entry = ((r.body['entries'] as List).first as Map).cast<String, Object?>();
       expect(entry['via'], 'Home Assistant');
       expect(entry['device'], f.hubDen.deviceId);
-      expect(entry['actor'], isNull);
+      expect(entry['actor'], f.id('Alex'), reason: 'the token acts as the parent who made it');
       expect(entry['hlc'], startsWith('${entry['when_ms']}'.padLeft(13, '0')));
       final leo = await f.token(member: f.id('Leo'), label: 'Leo reader');
       final kid = await f.call('GET', '/api/v1/history?limit=200', token: leo);
