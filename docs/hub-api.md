@@ -1771,8 +1771,11 @@ family, or not naming this hub), `429 rate_limited` (50 invites waiting), `503 n
 Body `{"slot": "<64 hex>"}` (the app stretches the words itself), or
 `{"code": "maple river canoe tiger"}`, typed any way people type it (case, commas, hyphens; each
 word may be its first four letters). A `code` the hub keeps no invite under is stretched to its
-slot on the hub, so words typed into an older app still find the app's own invites. Answer
-`200`:
+slot on the hub, so words typed into an older app still find the app's own invites. Words the
+hub picked itself (for an older app that sent no slot) are kept with their slot too, so the app
+asks for every invite by its slot alone: it sends the words themselves only to an older hub that
+answers a slot with `400 invalid_input`, never to one that answers `404` (it holds no such
+invite, and the words carry the invite's key). Answer `200`:
 
 ```json
 {
@@ -2099,9 +2102,11 @@ and `Urgency`. The plaintext is JSON the service worker shows:
 A browser holds one push subscription, bound to one `applicationServerKey`. One Home Screen app
 at one address holding several families of a Den host (FAMILY-LINKS-PLAN §3.5) therefore needs
 one key that every one of those families sends with, while no family may ever send with another
-family's key. The host keeps one of its own for that, `<data>/host/push.json` (its user only;
-no family's key), and a family uses it only when the operator opted that family in
-(`DEN_HOST_PUSH`):
+family's key. The host keeps one of its own for that, `<data>/host/push.json` (its user only:
+`host/` is made 0700 and the key file 0600 before the key is written; a host that can't make
+them so, or can't read the key it has, refuses to start the families that use it rather than
+quietly making another; no family's key), and a family uses it only when the operator opted that
+family in (`DEN_HOST_PUSH`):
 
 - the family hands out `host_key` beside its own `key`;
 - the app, holding several families that all hand out the same `host_key`, subscribes once with
