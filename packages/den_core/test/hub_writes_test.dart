@@ -43,6 +43,41 @@ void main() {
     expect(phone.history(type: RecordType.event).first.via, 'Home Assistant');
   });
 
+  test('acting for a connection, a hub writes only where the person it acts for could read', () async {
+    final maya = await phone.addMember(name: 'Maya', role: Role.kid, tier: Tier.teen, grants: {Grant.events});
+    await phone.updateMember(leo, {'grants': [Grant.events]});
+    await phone.updateFamily({'oversight.$maya': {'parentsSeePrivate': false}});
+    await sync(phone, hub);
+    Future<String> add(String space) => hub.addEvent(title: 'Note', start: clock.now, end: clock.now + 1, space: space);
+    // Leo's token: his own space and everyone's, never the parents' or his sister's.
+    hub.actAs(leo, via: 'Leo\'s assistant');
+    await add(Space.member(leo));
+    await add(Space.family);
+    await expectLater(add(Space.parents), throwsA(isA<PermissionDenied>()));
+    await expectLater(add(Space.member(maya)), throwsA(isA<PermissionDenied>()));
+    // A parent-level connection: everything parents see, not a teen's own space when parents
+    // don't see it.
+    hub.actAs(null, via: 'Home Assistant');
+    await add(Space.parents);
+    await add(Space.member(leo));
+    await expectLater(add(Space.member(maya)), throwsA(isA<PermissionDenied>()));
+    // The hub's own writes (feeds, say) name no connection and go anywhere.
+    hub.actAs(null);
+    await add(Space.member(maya));
+    // A forged one says the same on every replica.
+    final forged = await forge(
+      hub.keys,
+      counter: 900,
+      millis: clock.now + 5,
+      type: RecordType.event,
+      rid: 'forgedintoparents',
+      space: Space.parents,
+      actor: leo,
+      fields: {'title': 'Sneaky', 'start': clock.now, 'end': clock.now + 1, '_via': 'Leo\'s assistant'},
+    );
+    expect((await phone.ingest([forged])).invalid[forged.id], contains('can\'t see that'));
+  });
+
   test('imported events carry their source and stay readable as such', () async {
     final id = await hub.addEvent(
       title: 'Picture day',

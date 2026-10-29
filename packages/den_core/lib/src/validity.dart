@@ -188,6 +188,14 @@ class Validator {
       return _deny('Only parents can add or change parents-only things');
     }
     final privateOwner = Space.memberOf(c.space);
+    // Acting for a connection, the hub writes only where the person it acts for could read
+    // (or, for a connection with no person, where a parent could): what den_actions checks.
+    if (hub && c.fields.containsKey('_via')) {
+      final readable = actor != null
+          ? canRead(actor, c.space, family)
+          : privateOwner == null || (family?.parentsSeePrivate(privateOwner) ?? true);
+      if (!readable) return _deny('This connection can\'t see that, so it can\'t put things there');
+    }
     if (privateOwner != null) {
       final owner = store.liveAt(Space.family, RecordType.member, privateOwner);
       if (owner == null) return _schema('That person isn\'t in the family');

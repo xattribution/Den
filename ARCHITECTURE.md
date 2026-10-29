@@ -433,7 +433,9 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
   the price it had there, sets none: every replica holding the copy holds `f` too. Moving one
   into `f` still needs it, since a replica holding `f` may not hold where it came from.
 - Writes into `p` need a parent or a hub; writes into `m:X` need X, a parent the oversight policy
-  allows, or a hub.
+  allows, or a hub. A hub acting for a connection (`_via`) writes only into spaces the person it
+  acts for could read, or, for a connection with no person, a parent could: the check
+  den_actions makes, held by validity too.
 - Kids complete only chores they own that day, "anyone" chores, and steps they own (checking the
   last one may complete the chore); they swap only their own chores and name only themselves as
   `doneBy`, step checker or reward requester. A redemption is created `requested`, or `approved`
