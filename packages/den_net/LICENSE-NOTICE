@@ -2,9 +2,10 @@ Third-party material in den_net
 
 lib/src/wordlist.dart
 
-The 2048-word list used for spoken pairing codes and matching words is the English word list
-of Bitcoin Improvement Proposal 39 (BIP-39), by Marek Palatinus, Pavol Rusnak, Aaron Voisine
-and Sean Bowe: https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt
+The 2048-word list used for spoken pairing codes, matching words and parents' recovery words
+(lib/src/recovery_words.dart) is the English word list of Bitcoin Improvement Proposal 39
+(BIP-39), by Marek Palatinus, Pavol Rusnak, Aaron Voisine and Sean Bowe:
+https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt
 
 It is included unchanged, one word per entry, in its original order. The file's SHA-256 (each
 word followed by a newline) is

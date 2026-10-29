@@ -6,6 +6,7 @@ import 'package:stream_channel/stream_channel.dart';
 
 import 'change_index.dart';
 import 'invite.dart';
+import 'recovery_words.dart';
 import 'relay_client.dart';
 import 'seal.dart';
 import 'session.dart';
@@ -105,24 +106,91 @@ class PendingJoin {
   SyncPeer get peer => _peer;
 }
 
+/// Who a parent's recovery words belong to, as the family's device said once it checked them.
+class RecoveringAs {
+  /// Creates the answer.
+  const RecoveringAs({
+    required this.familyId,
+    required this.familyName,
+    required this.member,
+    required this.name,
+    this.marker,
+    this.picture,
+  });
+
+  /// The family.
+  final String familyId;
+
+  /// The family's name, when the other side said.
+  final String? familyName;
+
+  /// The parent's member id.
+  final String member;
+
+  /// The parent's name.
+  final String name;
+
+  /// Their color (den_core's `Marker`), to draw their face before this device holds their record.
+  final String? marker;
+
+  /// Their picture (den_core's `Picture`).
+  final String? picture;
+}
+
 /// The joining device's view of a join request.
 class JoinAttempt {
   JoinAttempt._(this.peer, this.via) {
     _completed.future.ignore();
+    _recoveringAs.future.ignore();
   }
 
   /// The session to the inviting device.
   final SyncPeer peer;
 
-  /// `qr` or `code`.
+  /// `qr`, `code`, or `recovery` (a parent's recovery words).
   final String via;
 
   final StreamController<JoinStage> _stages = StreamController.broadcast();
   final Completer<void> _completed = Completer();
+  final Completer<RecoveringAs> _recoveringAs = Completer();
   JoinStage _stage = JoinStage.proving;
   String? _code;
   Invite? _invite;
   _JoinRequest? _request;
+  RecoveryKey? _recoveryKey;
+  bool _confirmed = false;
+
+  /// With recovery words: whose they are, once the family's device has checked them. The person
+  /// says it's them ([confirmRecovery]) before this device asks to be let in.
+  Future<RecoveringAs> get recoveringAs => _recoveringAs.future;
+
+  /// With recovery words, after [recoveringAs]: lets this device in as that parent's own. It
+  /// signs a recovery proof with the words' key for this family, this device's key, a fresh
+  /// nonce and an expiry [recoveryWordsProofLife] on, writes the change that carries it
+  /// (`den.requestRecovery`), and sends it; the family's device lets it in at once.
+  Future<void> confirmRecovery() async {
+    final key = _recoveryKey;
+    if (key == null || !_recoveringAs.isCompleted || _confirmed) throw StateError('nothing to confirm');
+    _confirmed = true;
+    final who = await _recoveringAs.future;
+    final den = peer._den;
+    final proof = await key.prove(
+      family: who.familyId,
+      kind: RecoveryKind.words,
+      member: who.member,
+      devicePubkey: den.keys.pubkey,
+      expires: DateTime.now().toUtc().add(recoveryWordsProofLife).millisecondsSinceEpoch,
+    );
+    final request = _request!;
+    await den.requestRecovery(
+      familyId: who.familyId,
+      founderPubkey: peer._founder!,
+      deviceName: request.deviceName,
+      kind: request.kind,
+      proof: proof,
+    );
+    await peer._send({'t': 'join', 'changes': peer._node._ownJoinChanges()});
+  }
 
   /// The three words to compare with the inviting screen.
   List<String> get matchingWords => peer.session.matchingWords;
@@ -152,6 +220,7 @@ class JoinAttempt {
   }
 
   void _fail(JoinStage stage, String reason) {
+    if (!_recoveringAs.isCompleted) _recoveringAs.completeError(JoinException(reason));
     if (_stage == JoinStage.done || _stage == JoinStage.rejected || _stage == JoinStage.failed) return;
     _stage = stage;
     if (!_stages.isClosed) _stages.add(stage);
@@ -159,6 +228,9 @@ class JoinAttempt {
     unawaited(_stages.close());
   }
 }
+
+/// How long the proof a device signs with recovery words is good for.
+const Duration recoveryWordsProofLife = Duration(minutes: 15);
 
 class _JoinRequest {
   _JoinRequest(this.deviceName, this.kind, this.mode, this.memberId);
@@ -390,6 +462,79 @@ class SyncNode {
       'kind': 'code',
       'proof': await joinerCodeProof(normalized, session.transcriptHash, den.keys.pubkey),
     });
+    return attempt;
+  }
+
+  /// Joins as a parent who lost their phone, with their twelve recovery [words]
+  /// ([RecoveryWords]), over [channel] to a device of the family that serves sessions (the hub).
+  /// The words stretch to the parent's recovery key; this device proves it holds the key, and
+  /// the other side proves it holds the family's record of it. Then
+  /// [JoinAttempt.recoveringAs] says whose words they are, and [JoinAttempt.confirmRecovery]
+  /// lets this device in as theirs, with no parent's device needed.
+  Future<JoinAttempt> joinWithRecoveryWords(
+    StreamChannel<dynamic> channel,
+    List<String> words, {
+    required String deviceName,
+    required DeviceKind kind,
+    FrameEncoding? encoding,
+  }) async {
+    final key = await RecoveryWords.key(words);
+    final session = await Session.connect(
+      channel,
+      keys: den.keys,
+      familyId: den.familyId,
+      encoding: encoding,
+      timeout: handshakeTimeout,
+    );
+    final peer = _attach(session);
+    final attempt = JoinAttempt._(peer, 'recovery')
+      .._recoveryKey = key
+      .._request = _JoinRequest(deviceName, kind, DeviceMode.personal, null);
+    peer._join = attempt;
+    peer._start();
+    await peer._send({
+      't': 'pair',
+      'kind': 'recovery',
+      'key': await recoveryKeyHash(key.publicKey),
+      'proof': await recoveryPairProof(key, session.transcriptHash, den.keys.pubkey),
+    });
+    return attempt;
+  }
+
+  /// Joins as [proof]'s parent with a recovery proof the family's hub signed with its server
+  /// recovery key (`POST /api/v1/recovery/redeem`), over [channel] to the hub [invite] names.
+  /// Writes the recovery change (`den.requestRecovery`) and asks with it; the hub lets this
+  /// device in at once while the family has server help on.
+  Future<JoinAttempt> joinWithRecoveryProof(
+    StreamChannel<dynamic> channel,
+    Invite invite,
+    RecoveryProof proof, {
+    required String deviceName,
+    required DeviceKind kind,
+    FrameEncoding? encoding,
+  }) async {
+    await den.requestRecovery(
+      familyId: invite.familyId,
+      founderPubkey: invite.founderPubkey,
+      deviceName: deviceName,
+      kind: kind,
+      proof: proof,
+    );
+    final session = await Session.connect(
+      channel,
+      keys: den.keys,
+      familyId: invite.familyId,
+      expectDevice: invite.inviterDevice,
+      expectPubkey: invite.inviterPubkey,
+      encoding: encoding,
+      timeout: handshakeTimeout,
+    );
+    final peer = _attach(session);
+    final attempt = JoinAttempt._(peer, 'qr').._invite = invite;
+    peer._join = attempt;
+    peer._start();
+    await peer._send({'t': 'pair', 'kind': 'qr', 'proof': await invite.proofFor(den.keys.pubkey)});
+    await peer._send({'t': 'join', 'changes': _ownJoinChanges()});
     return attempt;
   }
 
@@ -733,6 +878,8 @@ class SyncPeer {
   bool _trusted = false;
   bool _awaitingApproval = false;
   String? _pairedVia;
+  String? _recoveryKey;
+  String? _founder;
   String? _closeReason;
   Timer? _pairingTimer;
   JoinAttempt? _join;
@@ -1254,6 +1401,7 @@ class SyncPeer {
       return;
     }
     String? hostProof;
+    Member? recovering;
     var ok = false;
     if (kind == 'qr') {
       ok = session.peerFamily == _den.familyId && await _node.invites.redeem(pubkey, proof) != null;
@@ -1262,6 +1410,14 @@ class SyncPeer {
       if (code != null) {
         ok = true;
         hostProof = await hostCodeProof(code.text, session.transcriptHash, _den.keys.pubkey);
+      }
+    } else if (kind == 'recovery') {
+      final parent = await _recoveringParent(m['key'], proof);
+      if (parent != null) {
+        ok = true;
+        _recoveryKey = recoveryKeyOf(parent);
+        recovering = parent;
+        hostProof = await recoveryHostProof(_recoveryKey!, session.transcriptHash, _den.keys.pubkey);
       }
     }
     if (!ok) {
@@ -1285,7 +1441,28 @@ class SyncPeer {
       'family': _den.familyId,
       'founder': founder,
       'proof': ?hostProof,
+      if (recovering != null) ...{
+        'name': family?.name,
+        'member': {
+          'id': recovering.id,
+          'name': recovering.name,
+          'marker': recovering.marker.name,
+          'picture': recovering.picture,
+        },
+      },
     });
+  }
+
+  /// The parent whose recovery key hashes to [keyHash] and signed [proof] for this session and
+  /// the joiner's key; null for anyone else.
+  Future<Member?> _recoveringParent(Object? keyHash, String proof) async {
+    if (keyHash is! String) return null;
+    for (final m in _den.members) {
+      final key = recoveryKeyOf(m);
+      if (!m.isParent || key == null || await recoveryKeyHash(key) != keyHash) continue;
+      return await checkRecoveryPairProof(proof, key, session.transcriptHash, pubkey) ? m : null;
+    }
+    return null;
   }
 
   Future<void> _onJoin(Map<String, Object?> m) async {
@@ -1339,11 +1516,23 @@ class SyncPeer {
       return false;
     }
     final f = c.fields;
+    if (f.containsKey('recovery')) return _isRecoveryRequest(c);
     if (f.containsKey('approved') && f['approved'] != false) return false;
     if (f['approvedBy'] != null) return false;
     if (f.containsKey('revoked') && f['revoked'] != false) return false;
     if (f.containsKey('pubkey') && f['pubkey'] != pubkey) return false;
     if (f['_deleted'] == true) return false;
+    return verifySignature(c.signedBytes, c.sig, pubkey);
+  }
+
+  /// A join that lets the device in with a recovery proof: its own record, unexpired by this
+  /// device's clock and, after recovery words, with the key the pairing proved. den_core decides
+  /// the rest, the same on every replica.
+  Future<bool> _isRecoveryRequest(Change c) async {
+    final proof = RecoveryProof.parse(c.fields['recovery']);
+    if (proof == null || c.fields['pubkey'] != pubkey || c.fields['_deleted'] == true) return false;
+    if (proof.expires <= DateTime.now().toUtc().millisecondsSinceEpoch) return false;
+    if (_pairedVia == 'recovery' && (proof.kind != RecoveryKind.words || proof.key != _recoveryKey)) return false;
     return verifySignature(c.signedBytes, c.sig, pubkey);
   }
 
@@ -1383,6 +1572,8 @@ class SyncPeer {
       if (family != invite.familyId || founder != invite.founderPubkey) throw _Violation('wrong-family');
       return;
     }
+    final key = attempt._recoveryKey;
+    if (key != null) return _onRecoveryPairOk(attempt, key, family, founder, m);
     final code = attempt._code!;
     final proof = m['proof'];
     final expected = await hostCodeProof(code, session.transcriptHash, pubkey);
@@ -1407,6 +1598,42 @@ class SyncPeer {
       throw _Violation('wrong-family');
     }
     await _send({'t': 'join', 'changes': _node._ownJoinChanges()});
+  }
+
+  /// The family's device knew the recovery words and proved it holds the family's record of
+  /// them: say whose they are, and wait for the person to confirm.
+  Future<void> _onRecoveryPairOk(
+    JoinAttempt attempt,
+    RecoveryKey key,
+    String family,
+    String founder,
+    Map<String, Object?> m,
+  ) async {
+    final proof = m['proof'];
+    final expected = await recoveryHostProof(key.publicKey, session.transcriptHash, pubkey);
+    final member = asJsonObject(m['member']);
+    if (proof is! String ||
+        !constantTimeEquals(utf8.encode(proof), utf8.encode(expected)) ||
+        member == null ||
+        member['id'] is! String ||
+        member['name'] is! String) {
+      _closeReason = 'host-proof';
+      attempt._fail(JoinStage.rejected, 'host-proof');
+      await session.close();
+      return;
+    }
+    if (_den.hasFamily && _den.familyId != family) throw _Violation('wrong-family');
+    _trusted = true;
+    _founder = founder;
+    final name = m['name'];
+    attempt._recoveringAs.complete(RecoveringAs(
+      familyId: family,
+      familyName: name is String ? name : null,
+      member: member['id']! as String,
+      name: member['name']! as String,
+      marker: member['marker'] is String ? member['marker'] as String : null,
+      picture: member['picture'] is String ? member['picture'] as String : null,
+    ));
   }
 }
 
