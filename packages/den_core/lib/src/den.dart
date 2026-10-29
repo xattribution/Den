@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
@@ -6,6 +7,7 @@ import 'package:collection/collection.dart';
 import 'calendar.dart';
 import 'change.dart';
 import 'chores.dart';
+import 'family_controls.dart';
 import 'hlc.dart';
 import 'ids.dart';
 import 'materializer.dart';
@@ -571,7 +573,7 @@ class Den {
 
   Future<void> updateMember(String id, Map<String, Object?> patch) async {
     if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
-    final fields = _cleanPatch(patch, {'name', 'role', 'tier', 'marker', 'animal', 'picture', 'birthday', 'grants', 'order'});
+    final fields = _cleanPatch(patch, {'name', 'role', 'tier', 'marker', 'animal', 'picture', 'birthday', 'until', 'grants', 'order'});
     final grants = fields['grants'];
     if (grants is Iterable) fields['grants'] = [for (final g in grants) g is Enum ? g.name : g];
     await _commit([_Draft(RecordType.member, id, Space.family, fields)]);
@@ -2016,8 +2018,9 @@ class Den {
   }
 
   /// Asks to spend points on a reward for [member] (default: the actor). Rewards that don't
-  /// need approval are approved at once. Refused when the balance, less what requests still
-  /// waiting for a parent would spend, is short.
+  /// need approval, and anyone's whose parents turned off "Rewards need my OK"
+  /// ([Family.rewardsNeedOk]), are approved at once. Refused when the balance, less what
+  /// requests still waiting for a parent would spend, is short.
   Future<String> requestReward(String rewardId, {String? member}) async {
     final rewardEntry = _requireLive(RecordType.reward, rewardId, 'That reward doesn\'t exist');
     final reward = Reward(rewardEntry.rec);
@@ -2036,7 +2039,10 @@ class Den {
         'reward': rewardId,
         'member': who,
         'cost': reward.cost,
-        'status': reward.needsApproval ? RedemptionStatus.requested.name : RedemptionStatus.approved.name,
+        // No OK is needed when the reward says so or a parent let this person trade without asking.
+        'status': reward.needsApproval && (family?.rewardsNeedOk(who) ?? true)
+            ? RedemptionStatus.requested.name
+            : RedemptionStatus.approved.name,
         'decidedBy': null,
       }),
     ]);
@@ -2151,6 +2157,135 @@ class Den {
       if (c.tokenHash != hash || c.status != ConnectionStatus.active) continue;
       if (c.expires != null && c.expires! <= now) continue;
       return c;
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------- pictures, sitters, privacy
+
+  /// A person's photo record, or null.
+  Photo? photo(String id) {
+    final e = _mat.store.liveAt(Space.family, RecordType.photo, id);
+    return e == null ? null : Photo(e.rec);
+  }
+
+  /// Makes [bytes] (a [Photo.side]-pixel square JPEG or WebP of at most [Photo.maxBytes], made
+  /// small on this device) [memberId]'s picture: a new photo record in the family space and
+  /// their `picture` naming it, in one commit. A parent may set anyone's; a person their own,
+  /// a kid when a parent allows it ([Family.ownsPicture]). Returns the photo's id.
+  Future<String> setPhoto(String memberId, List<int> bytes) async {
+    final m = member(memberId);
+    if (m == null) throw const InvalidInput('That person isn\'t in the family');
+    final format = photoFormat(bytes);
+    if (format == null) throw const InvalidInput('A photo must be a JPEG or WebP');
+    if (bytes.length > Photo.maxBytes) throw InvalidInput('That photo is too big (${Photo.maxBytes ~/ 1024} KB at most)');
+    if (!canChangePicture(actor, m, family)) {
+      throw PermissionDenied('${actor?.name ?? 'This screen'} can\'t change ${m.name}\'s picture');
+    }
+    final id = newId();
+    await _commit([
+      _Draft(RecordType.photo, id, Space.family, {'member': memberId, 'mime': format.mime, 'data': base64.encode(bytes)}),
+      _Draft(RecordType.member, memberId, Space.family, {'picture': Picture.photo(id)}),
+    ]);
+    return id;
+  }
+
+  /// Sets [memberId]'s picture to one from the pack or their initial (or back to a photo of
+  /// theirs). A parent may set anyone's; a person their own, a kid when a parent allows it.
+  Future<void> setPicture(String memberId, String picture) async {
+    final m = member(memberId);
+    if (m == null) throw const InvalidInput('That person isn\'t in the family');
+    if (!Picture.valid(picture)) throw const InvalidInput('That isn\'t a picture Den knows');
+    if (!canChangePicture(actor, m, family)) {
+      throw PermissionDenied('${actor?.name ?? 'This screen'} can\'t change ${m.name}\'s picture');
+    }
+    await _commit([_Draft(RecordType.member, memberId, Space.family, {'picture': picture})]);
+  }
+
+  /// Whether [deviceId] belongs to a sitter whose last day ([Member.until]) has passed, by this
+  /// device's clock: a device serving sync stops syncing with it, whether or not a parent's
+  /// device has removed it yet.
+  bool accessEnded(String deviceId) {
+    final d = device(deviceId);
+    final m = d?.member == null ? null : member(d!.member!);
+    return m != null && m.accessEndedOn(todayDate());
+  }
+
+  /// Removes the devices of every sitter whose last day has passed, the usual way (a
+  /// revocation naming the last change held from each, and new keys for what they held).
+  /// Only a parent's own device does this, when Den opens there; anywhere else it does
+  /// nothing. Returns the sitters whose devices it removed.
+  Future<List<String>> endExpiredAccess() => _locked(() async {
+        if (!_parentsOwnDevice) return const <String>[];
+        final today = todayDate();
+        final ended = <String>[];
+        final owned = <String>[];
+        for (final m in members) {
+          if (!m.accessEndedOn(today)) continue;
+          final theirs = _liveDevicesOf(m.id);
+          if (theirs.isEmpty) continue;
+          ended.add(m.id);
+          owned.addAll(theirs);
+        }
+        if (owned.isEmpty) return const <String>[];
+        final held = {for (final d in owned) ...spacesForDevice(d)};
+        await _commitNow([for (final d in owned) _revocation(d)]);
+        await _rotateNow(held);
+        return ended;
+      });
+
+  /// Ends a sitter's access now: their last day becomes yesterday and their devices are
+  /// removed, as [endExpiredAccess] would. To let them back in, a parent sets a later day and
+  /// invites them again.
+  Future<void> endAccessNow(String memberId) => _locked(() async {
+        final m = member(memberId);
+        if (m == null) throw const InvalidInput('That person isn\'t in the family');
+        if (m.role != Role.guest) throw const InvalidInput('Only a sitter\'s access has a last day');
+        final today = todayDate();
+        final theirs = _liveDevicesOf(memberId);
+        final held = {for (final d in theirs) ...spacesForDevice(d)};
+        await _commitNow([
+          if (!m.accessEndedOn(today)) _Draft(RecordType.member, memberId, Space.family, {'until': addDays(today, -1)}),
+          for (final d in theirs) _revocation(d),
+        ]);
+        await _rotateNow(held);
+      });
+
+  /// [memberId]'s approved devices that aren't removed, besides this one.
+  List<String> _liveDevicesOf(String memberId) => [
+        for (final d in devices)
+          if (d.member == memberId && d.approved && !d.revoked && d.id != deviceId) d.id,
+      ];
+
+  /// A parent acting on their own device: a personal one, or the hub its owner is using.
+  bool get _parentsOwnDevice {
+    final d = thisDevice, a = actor;
+    if (d == null || a == null || !a.isParent || !isApproved) return false;
+    return d.mode == DeviceMode.personal || (d.mode == DeviceMode.hub && d.member == a.id && actingVia == null);
+  }
+
+  /// The latest change that turned whether parents see [memberId]'s "Just me" items one way or
+  /// the other, or null when nobody ever has: what that person's Today and History tell them.
+  PrivacyChange? privacyChange(String memberId) {
+    final entry = 'oversight.$memberId';
+    bool sees(Object? v) => (v is Map ? v['parentsSeePrivate'] : null) as bool? ?? true;
+    final applied = _mat.applied;
+    for (var i = applied.length - 1; i >= 0; i--) {
+      final a = applied[i];
+      final c = a.change;
+      if (c.type != RecordType.family) continue;
+      final Object? before, after;
+      if (c.fields.containsKey(entry)) {
+        before = a.before[entry];
+        after = c.fields[entry];
+      } else if (c.fields['oversight'] is Map) {
+        before = (a.before['oversight'] as Map?)?[memberId];
+        after = (c.fields['oversight']! as Map)[memberId];
+      } else {
+        continue;
+      }
+      if (sees(before) == sees(after)) continue;
+      return PrivacyChange(change: c.id, member: memberId, by: c.actor, at: c.hlc.millis, parentsSee: sees(after));
     }
     return null;
   }

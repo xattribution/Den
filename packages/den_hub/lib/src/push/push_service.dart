@@ -245,7 +245,11 @@ class WebPushService implements HubService, ReminderSink {
     return [
       for (final id in _devices.keys)
         if (den.device(id) case final Device d
-            when d.approved && !d.revoked && d.mode == DeviceMode.personal && members.contains(d.member))
+            when d.approved &&
+                !d.revoked &&
+                d.mode == DeviceMode.personal &&
+                members.contains(d.member) &&
+                !den.accessEnded(id))
           id,
     ];
   }

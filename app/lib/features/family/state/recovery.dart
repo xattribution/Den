@@ -1,7 +1,5 @@
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart' show RecoveryWords;
-import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 /// A parent's recovery words: the 12 words that let a new phone in as them when theirs is lost
 /// and no other parent's device is left to (den_core's recovery.dart). Only the parent keeps the
@@ -34,38 +32,14 @@ abstract final class Recovery {
         for (final d in den.devices)
           if (d.member == member && d.id != den.deviceId && d.mode == DeviceMode.personal && d.approved && !d.revoked) d,
       ];
-}
 
-/// Which recoveries this device has already shown in Needs you, kept on the device: every
-/// device says once that a parent's new phone was let in, until someone here says OK.
-abstract final class RecoveryNotices {
-  static const _key = 'den.recovery.seen';
+  /// The key Needs you puts a recovery away under on this device (`AppState.markSeen`): every
+  /// other parent's own device says once that a phone got in, until someone there says so.
+  static String noticeKey(Device d) => 'recovered:${d.id}';
 
-  /// Device ids already acknowledged here.
-  static final ValueNotifier<Set<String>> seen = ValueNotifier(const {});
-
-  static bool _loaded = false;
-
-  /// Reads what this device acknowledged before; once.
-  static Future<void> load() async {
-    if (_loaded) return;
-    _loaded = true;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      seen.value = {...seen.value, ...?prefs.getStringList(_key)};
-    } on Object {
-      // No storage (a test, a private window): the notice shows until OK on this run.
-    }
-  }
-
-  /// Remembers that someone here saw [device]'s recovery.
-  static Future<void> acknowledge(String device) async {
-    seen.value = {...seen.value, device};
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList(_key, seen.value.toList()..sort());
-    } on Object {
-      // Kept for this run.
-    }
-  }
+  /// Phones recovery let in that this device hasn't put away yet, this one aside.
+  static List<Device> unseen(Den den, bool Function(String key) seen) => [
+        for (final d in letIn(den))
+          if (d.id != den.deviceId && !seen(noticeKey(d))) d,
+      ];
 }

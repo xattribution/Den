@@ -37,13 +37,13 @@ final class ConnectionAsk extends FamilyNeed {
 }
 
 /// A parent's new phone that recovery let in, said on every other parent's own device until
-/// someone there says OK, so nobody gets in unseen: OK, or That wasn't us (remove it).
+/// someone there puts it away, so nobody gets in unseen: Got it, or That wasn't us (remove it).
 final class RecoveredNotice extends FamilyNeed {
   const RecoveredNotice(this.device);
   final Device device;
 
   @override
-  String get key => 'recovered:${device.id}';
+  String get key => Recovery.noticeKey(device);
 }
 
 /// The family has a shared screen and this parent has no PIN, so they can't act there and
@@ -72,8 +72,7 @@ List<FamilyNeed> familyNeeds(AppState app, List<PendingJoin> joins) {
         JoinAsk(device: j.deviceId, name: j.deviceName, kind: j.kind, words: j.words),
     for (final c in den.connections)
       if (c.status == ConnectionStatus.pending) ConnectionAsk(c),
-    for (final d in Recovery.letIn(den))
-      if (d.id != den.deviceId && !RecoveryNotices.seen.value.contains(d.id)) RecoveredNotice(d),
+    for (final d in Recovery.unseen(den, app.seen)) RecoveredNotice(d),
   ];
   final me = app.me;
   final display = sharedDisplays(den).firstOrNull;

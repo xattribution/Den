@@ -155,6 +155,10 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
     final busy = _busy.contains(key);
     final failed = _failed[key];
     Widget act(String label, VoidCallback run) => FilledButton(onPressed: busy ? null : run, child: Text(label, maxLines: 1, softWrap: false));
+    Widget gotIt() => OutlinedButton(
+          onPressed: () => app.markSeen(key),
+          child: const Text('Got it', maxLines: 1, softWrap: false),
+        );
     Widget go(String label, String route) => OutlinedButton(
           onPressed: () => context.push(route),
           child: Text(label, maxLines: 1, softWrap: false),
@@ -216,9 +220,25 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
           _face(app, recoveryOf(device)?.member, PhosphorIconsRegular.key),
           RecoveryLines.sentence(app, device),
           RecoveryLines.detail(app, device),
-          act('OK', () => _acknowledge(device)),
+          gotIt(),
           null,
           () => context.push('/family/member/${recoveryOf(device)?.member ?? ''}'),
+        ),
+      PrivacyNeed(:final change) => (
+          _face(app, change.by, PhosphorIconsRegular.lockKey),
+          privacyNotice(app.memberById(change.by)?.name ?? 'A parent', parentsSee: change.parentsSee),
+          app.formats.relative(app.formats.localDate(change.at), app.today),
+          gotIt(),
+          null,
+          null,
+        ),
+      AccessEndedNeed(:final member, :final until) => (
+          _face(app, member.id, PhosphorIconsRegular.calendarX),
+          accessEndedWords(member.name, until, app.formats, app.today),
+          "${FamilyWords.possessive(member.name)} devices no longer sync",
+          gotIt(),
+          null,
+          () => context.push('/family/member/${member.id}'),
         ),
       ListNeed(:final list) => (
           _glyph(context, Pictograms.listKind(list.list.kind)),
@@ -285,12 +305,6 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
       () => context.choreActions.setDone(need.day, true),
       owner == null ? '${need.day.chore.title} marked done' : '${need.day.chore.title} marked done for $owner',
     );
-  }
-
-  /// Someone here saw a parent's new phone come in by recovery: this device stops saying so.
-  Future<void> _acknowledge(Device device) async {
-    await RecoveryNotices.acknowledge(device.id);
-    if (mounted) setState(() => _settled['recovered:${device.id}'] = _Settled('${device.name} stays in the family', null));
   }
 
   /// A device whose invite named someone joins as theirs in one tap; one that names nobody

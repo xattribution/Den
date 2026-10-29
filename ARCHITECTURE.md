@@ -65,7 +65,8 @@ state.
 A field named `"<field>.<key>"` sets one entry of a map field, so concurrent edits of different
 entries merge instead of overwriting each other. Den writes `completion.steps` (`steps.<stepId>`),
 `eventException.patch` (`patch.<eventField>`, null clears an override) and `family.oversight`
-(`oversight.<memberId>`) this way; a write of the whole map replaces it.
+(`oversight.<memberId>` for privacy, `oversight.<memberId>.<setting>` for each other per-person
+setting, a key with a dot in it) this way; a write of the whole map replaces it.
 
 A record is identified by `(space, type, id)`: a change's validity depends only on its own space
 and `f`, which every replica holding it also holds. Changing who can see an event, chore or list
@@ -138,10 +139,10 @@ re-approval.
 
 **Trust decisions are made only on a parent's own device.** Approving, revoking or changing
 another device; removing or restoring a member, or changing an existing member's `role`,
-`grants` or `signIn` (their own included); a parent's recovery key (`member.recovery`, set only
-by that parent, removable by any) and whether the hub may help a parent back in
-(`family.recovery`); the family's `oversight` and `assistant` (which AI
-reads the family's day, for whom, and what it may spend); and creating, activating,
+`grants`, `signIn` (their own included) or `until` (a sitter's last day); a parent's recovery
+key (`member.recovery`, set only by that parent, removable by any) and whether the hub may help
+a parent back in (`family.recovery`); the family's `oversight` (every entry) and `assistant`
+(which AI reads the family's day, for whom, and what it may spend); and creating, activating,
 re-scoping or deleting an AI connection are valid only from a personal device, or from a
 hub-mode device whose actor is that device's own owner (a parent's phone running "Keep the
 family online") with no `_via`. A shared display never makes them, whoever verified on it, and
@@ -263,8 +264,8 @@ commit too (`Den.restoreAll`).
 
 | Type | Space | Fields |
 | --- | --- | --- |
-| `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map memberId -> `{parentsSeePrivate: bool}`), `assistant` (`{enabled, members, kidDailyLimit, budgetCents}`: the in-app assistant, off until a parent turns it on; parents and the members listed may use it, never a little kid or a pre-reader; default 20 questions a day for a kid and $5 a month), `recovery` (`{serverKey, kept}`: the hub key the family lets help a parent back in, null while off; see "Recovery") |
-| `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, or `initial`; room for `photo:<id>` later), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order`, `recovery` (a parent's `{key, kept}`: their recovery key, base64url Ed25519, or null; see "Recovery") |
+| `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map: memberId -> `{parentsSeePrivate: bool}`, and `<memberId>.rewardsNeedOk` and `<memberId>.ownPicture` -> bool or null; see "Parental controls"), `assistant` (`{enabled, members, kidDailyLimit, budgetCents}`: the in-app assistant, off until a parent turns it on; parents and the members listed may use it, never a little kid or a pre-reader; default 20 questions a day for a kid and $5 a month), `recovery` (`{serverKey, kept}`: the hub key the family lets help a parent back in, null while off; see "Recovery") |
+| `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, `initial`, or `photo:<id>` naming one of their `photo` records), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `until` (a sitter's last day with access, a local date, or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order`, `recovery` (a parent's `{key, kept}`: their recovery key, base64url Ed25519, or null; see "Recovery") |
 | `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`), `recovery` (written once, by a device letting itself in: `{kind: words\|hub, member, key, nonce, expires, sig}`; see "Recovery") |
 | `category` | `f` | `name`, `icon` |
 | `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `rides` (list of `{leg: to\|from, driver: memberId\|null}`), `countdown` (bool) |
@@ -278,6 +279,7 @@ commit too (`Den.restoreAll`).
 | `list` | any | `title`, `icon`, `kind` (`shopping`\|`checklist`\|`packing`\|`meal`), `lifecycle` (`running`\|`dated`\|`event`), `needBy` (local date), `event` (id), `pinned`, `order` |
 | `item` | same as list | `list`, `text`, `qty`, `store`, `checked`, `checkedBy`, `order` (fractional index string), `toGroceries` (meal items) |
 | `subscription` | `p` | ICS feed: `url`, `label`, `category`, `assignee`, `space` for imported events, `include`, `exclude`, `skipAllDay`, `status` |
+| `photo` | `f` | A person's photo: `member`, `mime` (`image/jpeg`\|`image/webp`), `data` (base64). The schema reads the format and size from the headers: a 256 px square of at most 40 KB, its `mime` matching its bytes. Never changed: a new picture is a new record |
 | `connection` | `p` | AI or automation access: `label`, `kind` (`token`\|`oauth`), `scopes`, `member` (whose permissions it uses; null = parent-level), `tokenHash` (SHA-256 hex), `client` (OAuth client id), `status` (`pending`\|`active`\|`revoked`), `expires`. A hub may create `pending` OAuth connections and set `tokenHash` on approved ones; only a parent's device may set `active` or change scopes. The hub writes a `pending` one only after a parent's own device admits the sign-in request (a request needs no credentials, so the hub holds it until then), and turns down pending ones nobody approved within 15 minutes |
 
 **Points are derived, not stored.** A done completion awards the chore's points to the day's owner
@@ -341,7 +343,8 @@ moving a record to another space drops it.
 | Swap a chore for a day | yes | yes | yes (their own) | no | as the verified member |
 | Check list items | yes | yes | yes | yes | yes |
 | Points: adjust, goals, rewards, decide redemptions, set what a chore or step is worth | yes | no | grant `points` | no | as a verified parent |
-| Request a redemption | yes | yes | yes (for themselves) | no | as the verified member |
+| Request a redemption | yes | yes | yes (for themselves; granted at once when a parent turned off their "Rewards need my OK") | no | as the verified member |
+| Change their own picture (a photo too) | yes | yes | when a parent allows it (teens by default) | yes | as the verified member |
 | Members, devices, family settings, approve or revoke devices | yes (trust decisions on their own device only, see "Genesis and trust") | no | no | no | no |
 
 The same `can()` function runs in the UI (to hide what you can't do), on every replica when
@@ -362,7 +365,11 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
 - Kids complete only chores they own that day, "anyone" chores, and steps they own (checking the
   last one may complete the chore); they swap only their own chores and name only themselves as
   `doneBy`, step checker or reward requester. A redemption is created `requested`, or `approved`
-  when its reward needs no approval; only points managers decide it.
+  when its reward needs no approval or the requester's `oversight.<id>.rewardsNeedOk` is false
+  (either is enough); only points managers decide it.
+- Someone who may not manage the family changes only their own `picture`, and a kid only while
+  `Family.ownsPicture` allows it; a `photo` record follows the same rule, and a picture naming
+  `photo:<id>` must name one of that person's.
 - Nobody gives or takes their own points or decides their own reward request (a points manager
   asking for themselves waits for someone else like anyone). Balances can't be checked here, since
   they derive from completions in spaces a replica may not hold, so `Den` checks them: a request
@@ -372,6 +379,84 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
   display a parent with no PIN or pattern never verifies (`Den.verifySignIn`), so once a family
   has a shared display its parents need one to act there; the app asks for one when a parent
   makes a device a shared display.
+
+## Parental controls
+
+Four settings a parent sets on a person's page, each enforced where Den can enforce it.
+
+**Rewards without asking** (`oversight.<kid>.rewardsNeedOk`, default true). Off, a kid's request
+for a reward is `approved` when made, if their balance less their requests still waiting covers
+it (`Den.requestReward`; validation can't check a balance). A reward marked "no asking"
+(`needsApproval: false`) is the other way to the same thing: no OK is needed if either says so.
+It gives the kid nothing else: validity still refuses a kid deciding any request (their own
+included) or giving or taking stars, since those need `Grant.points`, which the switch never
+grants. Turning the switch back on also takes away `Grant.points` if a kid had it.
+
+**A sitter's last day** (`member.until`, a local date in the family's time zone). A sitter's
+clock can't be trusted, so three things enforce it, none of them on the sitter's device:
+
+1. A parent's own device with Den open removes the devices of every sitter whose last day has
+   passed (`Den.endExpiredAccess`, run by the app's `AccessWatch` whenever people change and
+   every quarter hour): the usual revocation with `revokedAfter`, and new keys for every space
+   they held. Needs you says so ("Sam's access ended Sunday", until put away), and so does
+   History ("removed Sam's phone: Sam's access ended Sunday"). If no parent's device opens Den,
+   nothing is revoked, and the sitter keeps the keys they had.
+2. Every device serving sync stops syncing with a sitter's device once the day has passed by the
+   serving device's clock (`Den.accessEnded`): a session ends with `access-ended`, at once or at
+   the next change; the hub also refuses its signed requests and sends it no Web Push. This is a
+   serving decision, not a change in the log, so it needs no parent and lifts itself if a parent
+   sets a later day. Until a parent's device removes it, the sitter's device still holds the
+   family space's key and could read new relay mailbox posts.
+3. The sitter's own app shows "Your access ended" once its clock passes the day, or once it is
+   removed. Only this part trusts the sitter's clock, and it enforces nothing.
+
+A parent can set a later day, or end access now (`Den.endAccessNow`: yesterday becomes the last
+day and the devices are removed at once). A removed device stays removed: after a later day is
+set the sitter is invited again, which the page says.
+
+**Telling a teen their privacy changed.** `parentsSeePrivate` decides who receives the space
+`m:<id>`: parents' devices hold it only while it is true (a device never receives records it
+can't read). `Den.privacyChange(id)` finds, in the log, the latest change that turned it one way
+or the other; that person's Today shows "Mom changed this: parents can now see things you mark
+Just me" until they put it away (remembered on that device), and History says the same. What
+happens to the data:
+
+- Turned off (parents may see again): the records stay where they are, in `m:<id>` with their
+  ids; that space simply becomes one parents' devices hold. Through a hub, parents' devices are
+  sent its whole history and its key at once (sync works per space, so the counters they skipped
+  aren't taken as held). Without a hub, a device holding the space (the teen's, or a hub using
+  the relay) notices the change on its next mailbox round, posts the space's whole history once
+  (older than the 30 days the mailbox keeps) and leaves its key in each parent device's inbox.
+  A device first notes how privacy stands when it first runs this version, so a change made
+  before then isn't re-shared this way.
+- Turned on (private): only what the teen marks Just me from then on is kept from parents.
+  Parents' devices stop receiving the space and stop showing it, but keep in their logs what they
+  already received: what they saw can't be unseen, and the confirm card says so. The space key
+  isn't rotated; parents' devices are trusted not to read a space they no longer receive.
+- Moving the records to another space wouldn't do: `p` hides them from the teen and `f` shows
+  them to everyone.
+
+A limit found on the way and left as it was: with no hub, a teen's device that joins while
+privacy is already on never gets its own space's key (only a device that may hold a space passes
+its key on, and parents' devices don't hold it then), so its Just me items stay on that device.
+
+**Photos.** A person's picture can be `photo:<id>`: a `photo` record in `f`, so every device of
+the family and nothing else has it, synced and sealed like any record. The device that takes or
+picks it makes it small first: in a browser, a file input taking `image/*` (on an iPhone or iPad
+it offers Take Photo and Photo Library; Camera adds `capture`), drawn center-cropped onto a 256 px
+canvas and encoded as a JPEG under 40 KB (`web/den_web.js`); on a phone the system camera or
+library (`image_picker`), on a computer the file chooser, then cropped and encoded in Dart
+(`package:image`, off the UI thread). `DenAvatar` draws it in the person's ring, the silhouette
+until it arrives. A parent sets anyone's; a person their own; a kid only while
+`oversight.<kid>.ownPicture` allows it, which defaults to yes for a teen and no for a younger kid.
+Every photo stays in the log for good; the cap keeps that small.
+
+**Older versions.** Every new field is optional. A version from before these settings refuses,
+as invalid, the changes that carry them (`oversight.<id>.<setting>`, `until`, `photo` records),
+so on such a device a kid's instant reward doesn't count and a photo isn't drawn (the member's
+`photo:<id>` passes its picture check there and draws the initial) until it updates; then it
+replays the log and counts them. Privacy keeps its old shape (`oversight.<id>:
+{parentsSeePrivate}`), so older devices still follow it.
 
 ## Network
 
@@ -594,8 +679,11 @@ method of `Den` from its source and fails unless each is called by some action o
 records its calls and checks they stay within the spec's `engine` and that the answer fits its
 output schema; `den_hub/test/mcp_parity_test.dart` checks MCP against the specs.
 Not exposed, by design: trust decisions (devices, AI access, roles, permissions, sign-in,
-removing people, oversight, recovery keys and the hub's help), founding, joining, recovering or
-leaving a family, sync and keys, and the hub's own bookkeeping.
+removing people, oversight, a sitter's last day and ending it, recovery keys and the hub's help),
+founding, joining, recovering or leaving a family, sync and keys, the hub's own bookkeeping, and
+adding a photo (made small on the device that takes it; MCP and the assistant see
+`picture: "photo:<id>"` and a sitter's `until`, and change pictures only to the pack or an
+initial with `set_picture`).
 
 ## MCP
 
@@ -610,7 +698,7 @@ annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint
 `update_chore`, `delete_chore`, `complete_chore`, `swap_chore`, `create_list`, `update_list`,
 `delete_list`, `add_items`, `update_items`, `remove_items`, `adjust_points`, `save_goal`,
 `delete_goal`, `save_reward`, `request_reward`, `decide_reward_request`, `add_from_text`, `undo`,
-`save_category`, `delete_category`, `update_family_settings`, `save_member`,
+`save_category`, `delete_category`, `update_family_settings`, `save_member`, `set_picture`,
 `save_calendar_feed`, `remove_calendar_feed`. The 2025 names (`get_today`, `get_week`,
 `list_members`, `list_lists`, `list_rewards`, `check_step`, `check_item`, `remove_item`,
 `clear_checked`, `create_goal`, `decide_redemption`) still run for one release, unlisted. REST
@@ -725,7 +813,7 @@ app/               den_app.dart, router.dart (composes the features' routes), re
 design/            tokens, theme, type, motion, layout, pictures, pictograms; widgets.dart,
                    feedback.dart, forms/ (forms.dart), pickers/
 platform/          capabilities.dart, storage/, sync/, notifications/, background/, calendars/,
-                   capture/, web/, time_zone.dart
+                   capture/, photos/, web/, time_zone.dart
 features/<bucket>/ screens/, widgets/, state/, words/, routes.dart, <bucket>.dart
                    today, calendar, chores, rewards, lists, add, assistant, family,
                    onboarding, shared_screens, settings, advanced
@@ -747,7 +835,8 @@ their own questions first, so it runs confirmed. Screens call their feature's ac
 `state/` (`ChoreActions`, `ListActions`, `RewardActions`, `EventActions`, `FamilyActions`), never
 the engine. The writes no action offers on purpose go to the engine from `state/` only: trust
 decisions (`TrustActions`, `ConnectionActions`), who is acting on a shared screen
-(`SignInActions`) and founding a family (`OnboardingActions`); what Add read is written by
+(`SignInActions`), adding a photo (`PictureActions`) and founding a family (`OnboardingActions`);
+what Add read is written by
 den_capture inside `AppActions.record`. Undo takes back a write's receipt with `Den.undo`.
 `app/test/actions_only_test.dart` fails on any other direct write, so every app action is also a
 REST, MCP and assistant action by construction.
@@ -806,7 +895,8 @@ proxy in front of the hub, where it has the hub as its own origin.
 - **What the browser can't do** is left out rather than offered: scanning, phone calendars, the
   share extension and on-device speech. Photos and PDFs come through the browser's file picker
   (which offers the camera), the share sheet goes through the Web Share API, reminders through
-  Web Push.
+  Web Push. A person's photo comes through a file input too, made small on a canvas in the page
+  (see "Parental controls").
 
 ## Security fixes from Sett, by design
 

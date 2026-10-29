@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:den_core/den_core.dart' show DeviceKind;
 
@@ -18,6 +19,7 @@ class WebAppInfo {
     this.permission = 'unsupported',
     this.share = false,
     this.ready = false,
+    this.mobile = false,
   });
 
   factory WebAppInfo.fromJson(Map<String, Object?> json) {
@@ -35,6 +37,7 @@ class WebAppInfo {
       permission: json['permission'] as String? ?? 'unsupported',
       share: json['share'] == true,
       ready: json['ready'] == true,
+      mobile: json['mobile'] == true,
     );
   }
 
@@ -61,6 +64,9 @@ class WebAppInfo {
 
   /// The service worker is running, so a tap can subscribe to pushes at once.
   final bool ready;
+
+  /// A phone or tablet's browser, whose file picker can open the camera.
+  final bool mobile;
 
   /// Safari on an iPhone or iPad, not opened from the Home Screen. Den belongs on the Home
   /// Screen there: the Home Screen app keeps its own storage, separate from Safari's, and only
@@ -243,6 +249,18 @@ abstract final class WebApp {
       // Nothing readable.
     }
     return const WebPaste.none();
+  }
+
+  /// A photo from the browser's picker (a file input taking `image/*`, which on an iPhone or
+  /// iPad offers Take Photo and Photo Library), made small in the page: its center square at
+  /// 256 pixels as a JPEG under 40 KB. [camera] opens the camera straight away where the
+  /// browser can. Null when nothing was picked. Call it straight from a tap. Throws
+  /// [FormatException] when the image couldn't be read.
+  static Future<Uint8List?> pickPhoto({bool camera = false}) async {
+    final answer = await impl.pickPhoto(camera);
+    if (answer.isEmpty) return null;
+    if (answer == 'error') throw const FormatException('unreadable');
+    return base64Decode(answer);
   }
 
   /// The safe areas (top, right, bottom, left) in logical pixels.

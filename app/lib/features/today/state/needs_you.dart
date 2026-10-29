@@ -2,7 +2,7 @@ import 'package:den_core/den_core.dart';
 
 import '../../../app/app_state.dart';
 import '../../calendar/calendar_words.dart';
-import '../../family/family.dart' show Recovery, RecoveryNotices;
+import '../../family/family.dart' show Recovery;
 
 /// Something on Today that waits for the person using the device, with one action that settles
 /// it. Each has a [key] that stays the same while it waits, so a settled one keeps its place.
@@ -70,13 +70,13 @@ final class ConnectionNeed extends Need {
   String get key => 'connection:${connection.id}';
 }
 
-/// A parent's new phone that recovery let in, on another parent's own device: "OK".
+/// A parent's new phone that recovery let in, on another parent's own device: "Got it".
 final class RecoveredNeed extends Need {
   const RecoveredNeed(this.device);
   final Device device;
 
   @override
-  String get key => 'recovered:${device.id}';
+  String get key => Recovery.noticeKey(device);
 }
 
 /// A dated list due today or tomorrow with things left on it: "Open".
@@ -88,16 +88,49 @@ final class ListNeed extends Need {
   String get key => 'list:${list.list.id}';
 }
 
+/// A parent changed whether parents see this person's "Just me" items: "Got it".
+final class PrivacyNeed extends Need {
+  const PrivacyNeed(this.change);
+  final PrivacyChange change;
+
+  @override
+  String get key => 'privacy:${change.change}';
+}
+
+/// A sitter's last day has passed and this device removed their devices: "Got it".
+final class AccessEndedNeed extends Need {
+  const AccessEndedNeed(this.member, this.until);
+  final Member member;
+  final String until;
+
+  @override
+  String get key => 'ended:${member.id}:$until';
+}
+
+/// How long a privacy change or a sitter's ended access stays in Needs you unless put away.
+const int noticeDays = 14;
+
 /// How many late chores Needs you lists one by one before it sums them up.
 const int lateShown = 3;
 
-/// What waits for whoever is using the device, most pressing first: rides in the next 48 hours,
-/// reward requests (when stars are on), late chores (today's and yesterday's), devices and AI
-/// connections asking to join, and lists due. Each only for someone who may settle it.
+/// What waits for whoever is using the device, most pressing first: a change a parent made to
+/// their privacy, rides in the next 48 hours, reward requests (when stars are on), late chores
+/// (today's and yesterday's), sitters whose access ended, devices and AI connections asking to
+/// join, and lists due. Each only for someone who may settle it.
 List<Need> needsYou(AppState app, {required int now}) {
   final den = app.den;
   if (app.me == null) return const [];
   final out = <Need>[];
+
+  // Someone told that a parent changed their privacy, until they say they've seen it.
+  final me = app.me!;
+  final privacy = den.privacyChange(me.id);
+  if (privacy != null &&
+      privacy.by != me.id &&
+      now - privacy.at < noticeDays * 86400000 &&
+      !app.seen(PrivacyNeed(privacy).key)) {
+    out.add(PrivacyNeed(privacy));
+  }
 
   if (canTakeRide(app)) {
     for (final gap in den.gaps(now, now + 48 * 3600000)) {
@@ -129,12 +162,16 @@ List<Need> needsYou(AppState app, {required int now}) {
   }
 
   if (app.allowsTrust(DenAction.manageFamily)) {
+    final since = app.formats.addDays(app.today, -noticeDays);
+    for (final m in den.members) {
+      final until = m.until;
+      if (until == null || !m.accessEndedOn(app.today) || until.compareTo(since) < 0) continue;
+      final need = AccessEndedNeed(m, until);
+      if (!app.seen(need.key)) out.add(need);
+    }
     out.addAll(den.pendingDevices.map(DeviceNeed.new));
     out.addAll([for (final c in den.connections) if (c.status == ConnectionStatus.pending) ConnectionNeed(c)]);
-    out.addAll([
-      for (final d in Recovery.letIn(den))
-        if (d.id != den.deviceId && !RecoveryNotices.seen.value.contains(d.id)) RecoveredNeed(d),
-    ]);
+    out.addAll(Recovery.unseen(den, app.seen).map(RecoveredNeed.new));
   }
 
   final today = app.today;
@@ -167,10 +204,11 @@ class NeedsModel extends DenView<List<Need>> {
         RecordType.list,
         RecordType.item,
         RecordType.connection,
+        Changes.notices,
       };
 
   @override
-  Object get key => (NeedsModel, now ~/ 3600000, RecoveryNotices.seen.value.length);
+  Object get key => (NeedsModel, now ~/ 3600000);
 
   @override
   List<Need> compute(AppState app) => needsYou(app, now: now);

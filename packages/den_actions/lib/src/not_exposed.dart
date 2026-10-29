@@ -28,6 +28,11 @@ const Map<String, String> notExposed = {
   'addTokenConnection': '$_trust: an AI can\'t make itself or another one a token',
   'approveConnection': '$_trust: an AI can\'t approve itself or widen its own access',
   'revokeConnection': _trust,
+  'endExpiredAccess': '$_trust; a parent\'s own device removes a sitter\'s devices after their last day, when Den opens there',
+  'endAccessNow': '$_trust; it also removes the sitter\'s devices and rotates keys',
+  // Photos.
+  'setPhoto': 'A photo is taken or chosen on a device and made small there before it is saved; an AI connection or '
+      'the assistant sees that someone has one (their picture reads "photo:<id>") but can\'t add one',
   // Recovery: a parent's new phone let in by their recovery words or the hub's key. Never an
   // assistant's or MCP client's to set up, turn on or use, whoever it acts for.
   'setRecoveryKey': '$_trust: a parent\'s recovery words are set up on their own phone, and only they keep them',

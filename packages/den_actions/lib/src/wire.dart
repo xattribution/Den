@@ -53,6 +53,7 @@ class Wire {
         'picture': m.picture,
         'animal': m.animal.name,
         'birthday': m.birthday,
+        'until': m.until,
         'grants': [for (final g in Grant.values) if (m.grants.contains(g)) g.name],
         'order': m.order,
       };

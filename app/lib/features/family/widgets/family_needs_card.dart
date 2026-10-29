@@ -135,10 +135,10 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
           RecoveryLines.sentence(app, device),
           RecoveryLines.detail(app, device),
           TwoButtons(
-            primary: 'OK',
-            onPrimary: busy ? null : () => _acknowledge(device),
+            primary: 'Got it',
+            onPrimary: busy ? null : () => _acknowledge(app, device),
             secondary: "That wasn't us",
-            onSecondary: busy ? null : () => _removeRecovered(device),
+            onSecondary: busy ? null : () => _removeRecovered(app, device),
           ),
         ),
       PinAsk(:final display, :final parent) => (
@@ -247,21 +247,21 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
   }
 
   /// Someone here saw it: it stays, and this device stops saying so.
-  Future<void> _acknowledge(Device device) async {
-    await RecoveryNotices.acknowledge(device.id);
-    if (mounted) setState(() => _settled['recovered:${device.id}'] = _Settled('${device.name} stays in the family', null));
+  void _acknowledge(AppState app, Device device) {
+    setState(() => _settled[Recovery.noticeKey(device)] = _Settled('${device.name} stays in the family', null));
+    app.markSeen(Recovery.noticeKey(device));
   }
 
   /// A phone let in by recovery that nobody here recognizes: removed, like any other device.
-  Future<void> _removeRecovered(Device device) async {
-    final key = 'recovered:${device.id}';
+  Future<void> _removeRecovered(AppState app, Device device) async {
+    final key = Recovery.noticeKey(device);
     final trust = context.trustActions;
     setState(() {
       _busy.add(key);
       _failed.remove(key);
     });
     final problem = await tryWrite(() => trust.revokeDevice(device.id));
-    if (problem == null) await RecoveryNotices.acknowledge(device.id);
+    if (problem == null) app.markSeen(key);
     if (!mounted) return;
     setState(() {
       _busy.remove(key);

@@ -70,6 +70,7 @@
       push: pushCapable(),
       permission: 'Notification' in window ? Notification.permission : 'unsupported',
       share: typeof nav.share === 'function',
+      mobile: isIos() || /Android/.test(ua()),
       ready: registration !== null,
     });
   }
@@ -346,6 +347,104 @@
     });
   }).observe(document.head, { childList: true });
 
+  // ------------------------------------------------------------------ photos
+
+  var PHOTO_SIDE = 256;
+  var PHOTO_MAX = 40 * 1024;
+
+  /** The picked file as something a canvas can draw, turned the way the photo was taken. */
+  function photoSource(file) {
+    function viaImage() {
+      return new Promise(function (resolve, reject) {
+        var url = URL.createObjectURL(file);
+        var img = new Image();
+        img.onload = function () { resolve(img); };
+        img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('unreadable')); };
+        img.src = url;
+      });
+    }
+    if (typeof window.createImageBitmap !== 'function') return viaImage();
+    return window.createImageBitmap(file, { imageOrientation: 'from-image' }).catch(viaImage);
+  }
+
+  /** A canvas of [side] pixels with [source]'s center square drawn into it. */
+  function square(source, sx, sy, size, side) {
+    var canvas = document.createElement('canvas');
+    canvas.width = side;
+    canvas.height = side;
+    var ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source, sx, sy, size, size, 0, 0, side, side);
+    return canvas;
+  }
+
+  /** The center square of the photo at 256 pixels, as JPEG under 40 KB, in base64. */
+  function smallPhoto(file) {
+    return photoSource(file).then(function (source) {
+      var w = source.width || source.naturalWidth;
+      var h = source.height || source.naturalHeight;
+      if (!w || !h) throw new Error('empty');
+      var size = Math.min(w, h);
+      // Halve in steps first, so a large photo doesn't shimmer when it's made small.
+      var canvas = square(source, (w - size) / 2, (h - size) / 2, size, Math.max(PHOTO_SIDE, Math.min(size, 2048)));
+      while (canvas.width / 2 >= PHOTO_SIDE) canvas = square(canvas, 0, 0, canvas.width, Math.floor(canvas.width / 2));
+      if (canvas.width !== PHOTO_SIDE) canvas = square(canvas, 0, 0, canvas.width, PHOTO_SIDE);
+      if (source.close) source.close();
+      function encode(quality) {
+        return new Promise(function (resolve, reject) {
+          canvas.toBlob(function (blob) {
+            if (!blob) { reject(new Error('encode')); return; }
+            if (blob.size > PHOTO_MAX && quality > 0.35) { resolve(encode(quality - 0.1)); return; }
+            if (blob.size > PHOTO_MAX) { reject(new Error('too big')); return; }
+            blob.arrayBuffer().then(function (buffer) {
+              var bytes = new Uint8Array(buffer);
+              var binary = '';
+              for (var k = 0; k < bytes.length; k += 0x8000) {
+                binary += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000));
+              }
+              resolve(btoa(binary));
+            }, reject);
+          }, 'image/jpeg', quality);
+        });
+      }
+      return encode(0.85);
+    });
+  }
+
+  /**
+   * Opens the browser's picker for one image (accept="image/*": on an iPhone or iPad that offers
+   * Take Photo and Photo Library) and answers with the photo made small: its center square at
+   * 256 pixels as a JPEG under 40 KB, in base64. With [camera], the camera opens straight away
+   * where the browser can. '' when nothing was picked, 'error' when the image couldn't be read.
+   * Must be the first thing a tap does.
+   */
+  function pickPhoto(camera) {
+    return new Promise(function (resolve) {
+      var input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      if (camera) input.setAttribute('capture', 'user');
+      input.style.position = 'fixed';
+      input.style.left = '-1000px';
+      var settled = false;
+      function finish(value) {
+        if (settled) return;
+        settled = true;
+        input.remove();
+        resolve(value);
+      }
+      input.addEventListener('change', function () {
+        var file = input.files && input.files[0];
+        if (!file) { finish(''); return; }
+        smallPhoto(file).then(finish, function () { finish('error'); });
+      });
+      input.addEventListener('cancel', function () { finish(''); });
+      document.body.appendChild(input);
+      input.click();
+    });
+  }
+
   window.denWeb = {
     start: start,
     info: info,
@@ -359,6 +458,7 @@
     share: share,
     copy: copy,
     paste: paste,
+    pickPhoto: pickPhoto,
     insets: insets,
     reload: function () { window.location.reload(); },
   };

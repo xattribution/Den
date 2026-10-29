@@ -20,7 +20,6 @@ import 'app/app_state.dart';
 import 'platform/web/web_app.dart';
 import 'platform/capabilities.dart';
 import 'features/add/add.dart';
-import 'features/family/family.dart' show RecoveryNotices;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -43,7 +42,6 @@ Future<void> main() async {
   Capture.service = CaptureService(settings: await CaptureSettings.load(), hubClient: hubCaptureClient(network));
   final reminders = ReminderScheduler(den, OsNotifications(), enabled: await remindersEnabled());
   final phoneCalendars = PhoneCalendars.supported ? PhoneCalendars(den, DeviceCalendarSource()) : null;
-  await RecoveryNotices.load();
   runApp(DenApp(
     state: await AppState.load(den, network: network, reminders: reminders, phoneCalendars: phoneCalendars),
   ));
