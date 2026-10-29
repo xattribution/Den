@@ -7,6 +7,12 @@
 #                               each step looks first and changes only what isn't right yet
 #   sudo ./install.sh --check   say what it would do, check what it can, and change nothing
 #
+# More families on the same server, each with its own hub, data and address (families.sh;
+# docs/hosting.md, "Several families"):
+#   sudo ./install.sh add-family smith den-smith.example.com "home.smith.example.net"
+#   sudo ./install.sh remove-family smith [--delete-data]
+#   sudo ./install.sh families  which families, at which address, port, volume and backups
+#
 # The steps, in order:
 #   1. packages: nftables, python3, unattended-upgrades; Docker from Docker's own repository;
 #      Tailscale from its install script
@@ -18,16 +24,18 @@
 #   6. the firewall: table inet den_fw, den-allowlist and its timer. SSH from the internet closes
 #      only once you've said SSH over Tailscale works; until then the address you're connected
 #      from stays allowed
-#   7. Den: builds and starts the hub, Caddy and dnsmasq
+#   7. Den: builds and starts the hub (and the other families' hubs), Caddy and dnsmasq
 #   8. prints what's left to do by hand
 set -euo pipefail
 
 CHECK=0
+FAMILY_COMMAND=
 case "${1:-}" in
   "") ;;
   --check) CHECK=1 ;;
-  -h | --help) sed -n '2,22p' "$0"; exit 0 ;;
-  *) echo "Usage: sudo ./install.sh [--check]" >&2; exit 64 ;;
+  add-family | remove-family | families) FAMILY_COMMAND=$1; shift ;;
+  -h | --help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
+  *) echo "Usage: sudo ./install.sh [--check | add-family NAME ADDRESS [HOMES] | remove-family NAME [--delete-data] | families]" >&2; exit 64 ;;
 esac
 
 cd "$(dirname "$(readlink -f "$0")")"
@@ -88,6 +96,14 @@ env_set() {
 in_network() { # in_network ADDRESS NETWORK: is the address in it?
   python3 -c 'import ipaddress, sys; sys.exit(ipaddress.ip_address(sys.argv[1]) not in ipaddress.ip_network(sys.argv[2]))' "$1" "$2" 2>/dev/null
 }
+
+# Several families on one server: add-family, remove-family, families, and the generated files
+# (families.sh).
+. ./families.sh
+if [ -n "$FAMILY_COMMAND" ]; then
+  families_command "$FAMILY_COMMAND" "$@"
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------------------------
 step "0. This server"
@@ -448,6 +464,8 @@ swap_kb=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)
 if [ -z "$(env_get DEN_IMAGE)" ] && [ "$((mem_kb + swap_kb))" -lt 1800000 ]; then
   later "Building the hub needs about 1.5 GB of memory, and this server has less (with swap). If the build stops with 'exit code -9', add swap (docs/hosting.md, \"Building on a small server\") and run this again."
 fi
+# The other families' hubs, sites and names, from their lines in .env (families.sh).
+families_render
 if [ "$CHECK" = 1 ]; then
   if command -v docker >/dev/null && [ -f .env ]; then
     if docker compose config --quiet; then
@@ -496,6 +514,7 @@ cat <<EOF
 
    4. Who can reach this server, any time: sudo den-allowlist --dry-run
 EOF
+families_whats_left
 if [ ${#LATER[@]} -gt 0 ]; then
   printf '\n   And:\n'
   for line in "${LATER[@]}"; do printf '   - %s\n' "$line"; done

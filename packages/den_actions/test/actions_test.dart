@@ -167,6 +167,23 @@ void main() {
     expect((ok.data['feed'] as Map)['url'], 'https://school.example.org/cal.ics');
   });
 
+  test('family colors: a parent picks the pack for everyone, and people keep their colors', () async {
+    final leo = den.members.firstWhere((m) => m.name == 'Leo');
+    final app = await runner.run(on(Surface.app), 'update_family_settings', {'colors': 'deep'});
+    expect(app.isError, isFalse, reason: app.text);
+    expect(app.text, 'Set the family\'s colors to deep.');
+    expect((app.data['family'] as Map)['colors'], 'deep');
+    expect(den.family!.colors, ColorPack.deep);
+    expect(den.member(leo.id)!.marker, leo.marker, reason: 'Leo keeps his place in the pack');
+    final mcp = await runner.run(on(Surface.mcp), 'update_family_settings', {'colors': 'soft'}, mode: RunMode.confirmed);
+    expect(mcp.isError, isFalse, reason: mcp.text);
+    expect(den.family!.colors, ColorPack.soft);
+    final unknown = await runner.run(on(Surface.app), 'update_family_settings', {'colors': 'neon'});
+    expect(unknown.isError, isTrue);
+    final family = await runner.run(on(Surface.mcp), 'get_family', const {});
+    expect((family.data['family'] as Map)['colors'], 'soft');
+  });
+
   test('pictures: from the pack or an initial, never a photo; photos show as "photo:<id>"', () async {
     final app = on(Surface.app);
     final mine = await runner.run(app, 'set_picture', {'picture': 'owl'});

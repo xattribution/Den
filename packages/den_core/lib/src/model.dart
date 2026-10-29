@@ -135,6 +135,24 @@ enum Marker {
   }
 }
 
+/// Which shades of the eight [Marker] colors a family sees (`family.colors`), the same for
+/// everyone in it. Each person keeps their color's place, so changing packs changes shades, never
+/// who has which color. The app holds each pack's validated hexes; [bright] is the default.
+enum ColorPack {
+  bright,
+  deep,
+  soft,
+  bold;
+
+  /// The pack [raw] names; [bright] for anything else.
+  static ColorPack parse(Object? raw) {
+    for (final p in values) {
+      if (p.name == raw) return p;
+    }
+    return bright;
+  }
+}
+
 /// The animals earlier versions offered as a person's look. Members now have a [Picture]; an
 /// older member's animal is read as the matching picture.
 enum Animal { cat, dog, rabbit, bird, butterfly, fish, horse, cow, bug }
@@ -303,6 +321,10 @@ class Family extends RecordView {
   String get founderDevice => rec.str('founderDevice');
   bool get captureNeedsReview => rec.str('capture', 'direct') == 'review';
   bool get pointsEnabled => rec.flag('pointsEnabled', true);
+
+  /// The shades of people's colors everyone in the family sees; [ColorPack.bright] until a
+  /// parent picks another.
+  ColorPack get colors => ColorPack.parse(rec.fields['colors']);
 
   /// Whether parents can read this member's "Just me" items. Defaults to true.
   bool parentsSeePrivate(String memberId) =>

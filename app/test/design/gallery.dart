@@ -4,12 +4,15 @@
 /// pieces in design/widgets.
 library;
 
+import 'dart:math' as math;
+
 import 'package:den_app/design/layout.dart';
 import 'package:den_app/design/motion.dart';
 import 'package:den_app/design/pictures.dart';
 import 'package:den_app/design/tokens.dart';
 import 'package:den_app/design/widgets.dart';
 import 'package:den_app/design/words.dart';
+import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -27,7 +30,7 @@ const mia = Person('Mia', PersonColor.bubblegum);
 const leo = Person('Leo', PersonColor.grass);
 
 Widget face(Person p, double size) =>
-    DenAvatar.initial(p.name, color: p.color.color, size: size, semanticLabel: p.name);
+    Builder(builder: (context) => DenAvatar.initial(p.name, color: context.colors.marker(p.color.marker), size: size, semanticLabel: p.name));
 
 /// Today, as Main.dc.html draws its top: the greeting, Needs you, today's events, chores and
 /// the grocery bar, over the tab bar. Built from the shared pieces in design/widgets, the same
@@ -198,7 +201,7 @@ class _KidChores extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   for (final (title, stars, done) in chores)
-                    CheckPill(label: title, stars: stars, done: done, color: person.color.color, onCheck: () {}, onOpen: () {}),
+                    CheckPill(label: title, stars: stars, done: done, color: context.colors.marker(person.color.marker), onCheck: () {}, onOpen: () {}),
                 ],
               ),
             ),
@@ -372,10 +375,10 @@ class ControlsSample extends StatelessWidget {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        CheckPill(label: 'Dishes', stars: 2, done: false, color: mia.color.color, onCheck: () {}),
-                        CheckPill(label: 'Feed the cat', stars: 1, done: true, color: mia.color.color, onCheck: () {}),
-                        CheckPill(label: 'Tidy room', steps: (1, 4), done: false, color: leo.color.color, onOpen: () {}),
-                        CheckPill(label: 'Dishes', steps: (0, 3), done: false, color: leo.color.color, onOpen: () {}),
+                        CheckPill(label: 'Dishes', stars: 2, done: false, color: context.colors.marker(mia.color.marker), onCheck: () {}),
+                        CheckPill(label: 'Feed the cat', stars: 1, done: true, color: context.colors.marker(mia.color.marker), onCheck: () {}),
+                        CheckPill(label: 'Tidy room', steps: (1, 4), done: false, color: context.colors.marker(leo.color.marker), onOpen: () {}),
+                        CheckPill(label: 'Dishes', steps: (0, 3), done: false, color: context.colors.marker(leo.color.marker), onOpen: () {}),
                       ],
                     ),
                   ),
@@ -435,17 +438,33 @@ class _SwitchRow extends StatelessWidget {
   }
 }
 
-/// Palette.dc.html: the eight family colors, by day and at night.
+/// Palette.dc.html: the eight family colors of the family's pack (the theme's), by day and at
+/// night, with what was measured: the dark text's contrast on the palest-for-it color.
 class PaletteSample extends StatelessWidget {
   const PaletteSample({super.key});
 
   static String hex(Color color) =>
       '#${(color.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
 
+  /// WCAG contrast of [a] on [b].
+  static double contrast(Color a, Color b) {
+    final la = a.computeLuminance(), lb = b.computeLuminance();
+    return (math.max(la, lb) + 0.05) / (math.min(la, lb) + 0.05);
+  }
+
+  static String _about(ColorPack pack) => switch (pack) {
+        ColorPack.bright => 'Eight bright, happy colors, one for each person.',
+        ColorPack.deep => 'Deeper and richer, as dark as dark text allows, with a clear gold.',
+        ColorPack.soft => 'Light and cheerful sorbet shades that keep their color: never cream or a wash.',
+        ColorPack.bold => 'The crayon box: each color as strong as the screen draws it.',
+      };
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final t = context.text;
+    final pack = c.pack;
+    final worst = pack.colors.map((p) => contrast(c.onMarker, p.color)).reduce(math.min);
     return ColoredBox(
       color: c.bg,
       child: Padding(
@@ -453,13 +472,13 @@ class PaletteSample extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Family colors', style: t.screenTitle(c.ink)),
+            Text('Family colors: ${pack.label}', style: t.screenTitle(c.ink)),
             const SizedBox(height: 4),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 620),
               child: Text(
-                tidy('Eight bright, happy colors, one for each person. The same color in the light and the '
-                    'black theme, with dark text on every one.'),
+                tidy('${_about(pack)} The same color in the light and the black theme, with dark text on every '
+                    'one. Everyone keeps their place when the family changes packs.'),
                 style: t.meta(c.ink2),
               ),
             ),
@@ -471,7 +490,7 @@ class PaletteSample extends StatelessWidget {
                   spacing: 12,
                   runSpacing: 12,
                   children: [
-                    for (final p in PersonColor.assignmentOrder)
+                    for (final p in pack.colors)
                       SizedBox(
                         width: width,
                         child: ClipRRect(
@@ -516,8 +535,9 @@ class PaletteSample extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             Text(
-              tidy('Checked, not guessed: dark text reads at 5.4:1 or better on every color, and in this order '
-                  'every pair of neighbors stays clearly different, including for color-blind eyes.'),
+              tidy('Checked, not guessed: dark text reads at ${((worst * 10).floor() / 10).toStringAsFixed(1)}:1 or '
+                  'better on every color, and in this order every pair of neighbors stays clearly different, '
+                  'including for color-blind eyes.'),
               style: t.meta(c.ink2),
             ),
             const SizedBox(height: 6),
@@ -571,9 +591,9 @@ class PackSample extends StatelessWidget {
                     ],
                   ),
                 ),
-                labeled(DenAvatar.photo(null, color: PersonColor.sky.color, size: 64), 'Photo'),
+                labeled(DenAvatar.photo(null, color: c.marker(Marker.sky), size: 64), 'Photo'),
                 const SizedBox(width: 16),
-                labeled(DenAvatar.initial('M', color: PersonColor.aqua.color, size: 64), 'Initial'),
+                labeled(DenAvatar.initial('M', color: c.marker(Marker.aqua), size: 64), 'Initial'),
               ],
             ),
             for (final g in DenPictures.groups) ...[
@@ -590,7 +610,7 @@ class PackSample extends StatelessWidget {
                         for (final (i, p) in g.pictures.indexed)
                           Expanded(
                             child: labeled(
-                              DenAvatar.picture(p.id, color: PersonColor.values[i % 8].color, size: 76),
+                              DenAvatar.picture(p.id, color: c.marker(Marker.values[i % 8]), size: 76),
                               p.name,
                             ),
                           ),
@@ -612,7 +632,7 @@ class PickerSheet extends StatelessWidget {
   const PickerSheet({super.key});
 
   static const _chosen = 'fox';
-  static const _color = PersonColor.bubblegum;
+  static const _color = Marker.bubblegum;
 
   @override
   Widget build(BuildContext context) {
@@ -651,7 +671,7 @@ class PickerSheet extends StatelessWidget {
           const SizedBox(height: 16),
           Row(
             children: [
-              DenAvatar.picture(_chosen, color: _color.color, size: 96, semanticLabel: 'Mia'),
+              DenAvatar.picture(_chosen, color: c.marker(_color), size: 96, semanticLabel: 'Mia'),
               const SizedBox(width: 16),
               Expanded(
                 child: Row(
@@ -671,7 +691,7 @@ class PickerSheet extends StatelessWidget {
           const SizedBox(height: 8),
           Wrap(
             children: [
-              for (final p in PersonColor.assignmentOrder) _Swatch(color: p, selected: p == _color),
+              for (final m in Marker.values) _Swatch(color: c.pack.of(m), selected: m == _color),
             ],
           ),
           const SizedBox(height: 16),
@@ -692,7 +712,7 @@ class PickerSheet extends StatelessWidget {
             Row(
               children: [
                 for (final p in row)
-                  Expanded(child: _PickerItem(picture: p, color: _color.color, selected: p.id == _chosen)),
+                  Expanded(child: _PickerItem(picture: p, color: c.marker(_color), selected: p.id == _chosen)),
               ],
             ),
             const SizedBox(height: 12),
@@ -707,7 +727,7 @@ class PickerSheet extends StatelessWidget {
 class _Swatch extends StatelessWidget {
   const _Swatch({required this.color, required this.selected});
 
-  final PersonColor color;
+  final PackColor color;
   final bool selected;
 
   @override

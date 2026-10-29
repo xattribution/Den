@@ -25,4 +25,8 @@ void listen(void Function(String route) onOpen) {}
 
 List<double> insets() => const [0, 0, 0, 0];
 
+String? viewport() => null;
+
+void onViewport(void Function(String json) onChange) {}
+
 void reload() {}

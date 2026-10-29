@@ -9,8 +9,10 @@ import '../../../app/app_state.dart';
 import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
+import '../calendar_look.dart';
 import '../state/calendar_models.dart';
 import '../widgets/calendar_parts.dart';
+import '../widgets/calendar_surface.dart';
 import '../widgets/date_strip.dart';
 import '../widgets/day_list.dart';
 import '../widgets/family_week.dart';
@@ -111,17 +113,39 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final app = context.watch(calendarReads);
     final today = app.today;
     final date = _date ?? today;
-    return SafeArea(
-      bottom: false,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final pad = constraints.maxWidth >= DenLayout.compactMax;
-          final view = _fit(_view, pad);
-          return pad ? _pad(context, view, date, today) : _phone(context, view, date, today);
-        },
+    return CalendarSurface(
+      child: SafeArea(
+        bottom: false,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final pad = constraints.maxWidth >= DenLayout.compactMax;
+            final view = _fit(_view, pad);
+            return pad ? _pad(context, view, date, today) : _phone(context, view, date, today);
+          },
+        ),
       ),
     );
   }
+
+  /// The month's view options: how its days show who has something (also in Settings,
+  /// Appearance). Kept on this device.
+  Widget _options(BuildContext context) => RoundButton(
+    icon: PhosphorIconsBold.slidersHorizontal,
+    label: 'View options',
+    onTap: () async {
+      final app = DenScope.read(context);
+      final picked = await showChoiceSheet<CalendarDays>(
+        context,
+        title: 'Show days as',
+        choices: calendarDaysChoices,
+        value: app.calendarDays,
+      );
+      if (picked != null) app.calendarDays = picked;
+    },
+    fill: context.colors.card,
+    color: context.colors.ink,
+    size: Targets.adult,
+  );
 
   /// The iPad's ‹ and ›: the shared round button on the card color.
   static Widget _arrow(BuildContext context, IconData icon, String label, VoidCallback onTap) => RoundButton(
@@ -150,10 +174,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final header = <Widget>[
       gutter(TitleRow(title: monthTitle(f, date, today), trailing: [_today(date, view, today)])),
       const SizedBox(height: Sp.m),
+      // The month's view options sit beside the views while both fit, under them at large text.
       gutter(
-        Align(
-          alignment: Alignment.centerLeft,
-          child: ViewSwitch<CalendarView>(options: phoneViews, value: view, onChanged: (v) => _show(v, date)),
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          spacing: Sp.s,
+          runSpacing: Sp.s,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            ViewSwitch<CalendarView>(options: phoneViews, value: view, onChanged: (v) => _show(v, date)),
+            if (view == CalendarView.month) _options(context),
+          ],
         ),
       ),
       gutter(OfflineNote(force: widget.offline)),
@@ -254,6 +285,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 cardThumb: true,
                 onChanged: (v) => _show(v, date),
               ),
+              if (view == CalendarView.month) _options(context),
               _arrow(context, PhosphorIconsBold.caretLeft, back, () => _show(view, step(-1))),
               _arrow(context, PhosphorIconsBold.caretRight, forward, () => _show(view, step(1))),
             ],

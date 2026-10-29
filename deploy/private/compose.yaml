@@ -12,6 +12,11 @@
 #   hub      listens on 127.0.0.1:47733 only
 #   caddy    TCP 443, for the homes and the tailnet; the certificate through Cloudflare's DNS
 #   dnsmasq  port 53 on the Tailscale address only: den.<domain> through the tunnel
+#
+# More families on the same server (sudo ./install.sh add-family smith den-smith.example.com):
+# compose.families.yaml, which install.sh writes and .env's COMPOSE_FILE adds to this file, gives
+# each its own hub (hub-smith, on 47735, 47737, ...) with its own volume, and adds its address to
+# Caddy and dnsmasq. docs/hosting.md, "Several families".
 name: den
 
 x-logging: &logging
@@ -80,6 +85,8 @@ services:
     image: den-dnsmasq
     restart: unless-stopped
     network_mode: host
+    # With more families, compose.families.yaml replaces this with the same two lines for each
+    # family's address.
     command:
       - --interface-name=${DEN_DOMAIN},tailscale0/4
       - --local=/${DEN_DOMAIN}/
@@ -90,16 +97,17 @@ services:
     security_opt: ["no-new-privileges:true"]
     logging: *logging
 
-  # An encrypted backup of the hub into ./backups, keeping the newest DEN_BACKUP_KEEP (14):
-  #   docker compose run --rm backup
+  # Encrypted backups of every family's hub into ./backups, keeping the newest DEN_BACKUP_KEEP
+  # (14) of each (backup.sh):
+  #   docker compose run --rm backup                   every family; one: ... backup smith
   #   docker compose run --rm backup restore backups/den-2026-10-28-0317.denbackup   # hub stopped
   # Root in a short-lived container with no network, so it can write to ./backups and give
-  # restored files back to the hub's user (deploy/hub/den-backup.sh).
+  # restored files back to the hub's user. compose.families.yaml mounts the other families'
+  # volumes in /families.
   backup:
     profiles: [backup]
     image: ${DEN_IMAGE:-den-hub}
-    entrypoint: ["/app/bin/den-backup"]
-    command: ["backup"]
+    entrypoint: ["sh", "/den/backup.sh"]
     user: root
     network_mode: none
     environment:
@@ -108,6 +116,7 @@ services:
     volumes:
       - den-hub:/data
       - ./backups:/backups
+      - ./backup.sh:/den/backup.sh:ro
 
 volumes:
   den-hub:

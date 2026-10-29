@@ -12,12 +12,13 @@ import '../../../platform/capabilities.dart';
 import '../../../platform/notifications/reminder_scheduler.dart';
 import '../../advanced/advanced.dart';
 import '../../onboarding/onboarding.dart';
+import '../widgets/calendar_look_choice.dart';
 import '../widgets/text_size_choice.dart';
 import 'web_reminders.dart';
 
 /// Settings: how this device syncs in one line; for parents the family's settings, calendars
-/// and the AI helper; Day, Night or Auto and the text size; reminders on this device; Advanced
-/// for parents; and About.
+/// and the AI helper; Day, Night or Auto, the text size and how the calendar looks; reminders on
+/// this device; Advanced for parents; and About.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, this.version, this.web});
 
@@ -137,6 +138,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: Sp.l),
               const TextSizeChoice(),
+              const SizedBox(height: Sp.l),
+              const CalendarLookChoice(),
             ],
           ),
         ),

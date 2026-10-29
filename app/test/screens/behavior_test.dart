@@ -201,7 +201,7 @@ void main() {
       final done = [for (final i in before) if (i.checked) i.id];
       expect(done, isNotEmpty);
       await pumpScreen(tester, ListDetailScreen(id: list), state: state, size: _tall);
-      await _tapAndWait(tester, find.text('Clear ${done.length}'));
+      await _tapAndWait(tester, find.text('Clear checked (${done.length})'));
       expect(state.den.list(list)!.items.where((i) => i.checked), isEmpty);
       final changes = state.den.history(limit: 1 << 20).length;
       await _tapAndWait(tester, find.text('Undo'));

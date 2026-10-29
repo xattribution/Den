@@ -13,6 +13,12 @@
 		// 6 users, each with as many devices as they like.
 		"group:family": ["parent-one@example.com", "parent-two@example.com"],
 
+		// Each other family on this server (install.sh add-family) gets a group of its own, and
+		// the group goes in the first grant's src below. The groups say who is whose and make
+		// removing a family one edit; they don't wall families off from each other, as every
+		// family reaches the same server on 443 (docs/hosting.md, "Several families").
+		// "group:family-smith": ["smith-parent@example.com"],
+
 		// Whoever looks after the server: also SSH to it.
 		"group:admins": ["owner@example.com"],
 	},
@@ -25,7 +31,8 @@
 	},
 
 	"grants": [
-		// Den itself, and the DNS answer that sends den.<domain> through the tunnel.
+		// Den itself, and the DNS answer that sends den.<domain> through the tunnel. With other
+		// families: "src": ["group:family", "group:family-smith", "group:admins"].
 		{
 			"src": ["group:family", "group:admins"],
 			"dst": ["tag:den-server"],
@@ -57,5 +64,8 @@
 			"src":    "owner@example.com",
 			"accept": ["tag:den-server:22", "tag:den-server:443"],
 		},
+		// And one like the first for someone in each other family:
+		// {"src": "smith-parent@example.com", "accept": ["tag:den-server:443", "tag:den-server:53"],
+		//  "deny": ["tag:den-server:22", "tag:den-server:47735", "tag:den-server:80"]},
 	],
 }

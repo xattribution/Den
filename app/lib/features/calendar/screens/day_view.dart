@@ -339,7 +339,7 @@ class _DayViewState extends State<DayView> {
                   final minute = ((details.localPosition.dy / hourHeight * 60) ~/ 30 * 30).clamp(0, 23 * 60 + 30);
                   final member = column.member ?? (widget.person == null ? null : app.memberById(widget.person));
                   final who = member == null ? '' : '&who=${member.id}';
-                  context.push('/event/new?date=$date&time=${f.hhmm(minute)}$who');
+                  context.push('/event/new?date=$date&time=${f.hhmm(minute)}$who&from=calendar');
                 },
               ),
             ),

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
@@ -5,17 +7,28 @@ import 'layout.dart';
 import 'motion.dart';
 import 'tokens.dart';
 
-/// Opens [builder] in a Den sheet and completes with what the sheet pops.
+/// Opens [builder] in a Den sheet and completes with what the sheet pops. A sheet opened from
+/// a part of the app drawn in another theme than the app's (the calendar kept light at night)
+/// takes that theme: its surface, handle, scrim and everything in it.
 Future<T?> showDenSheet<T>(
   BuildContext context, {
   required WidgetBuilder builder,
   bool dismissible = true,
   String closeLabel = 'Close',
   RouteSettings? settings,
-}) =>
-    Navigator.of(context).push<T>(
-      DenSheetRoute<T>(builder: builder, dismissible: dismissible, closeLabel: closeLabel, settings: settings),
-    );
+}) {
+  final navigator = Navigator.of(context);
+  final theme = Theme.of(context);
+  return navigator.push<T>(
+    DenSheetRoute<T>(
+      builder: builder,
+      dismissible: dismissible,
+      closeLabel: closeLabel,
+      settings: settings,
+      theme: identical(theme, Theme.of(navigator.context)) ? null : theme,
+    ),
+  );
+}
 
 /// A sheet: from the bottom edge on phones, a centered form sheet at most 560 wide on iPad, with
 /// 28 corners on the page's background and the page behind dimmed. It moves on the critically
@@ -24,9 +37,13 @@ Future<T?> showDenSheet<T>(
 /// it settles back. Every movement can be grabbed mid-flight. Under Reduce Motion it fades in
 /// and out in 100 ms and never slides.
 class DenSheetRoute<T> extends PopupRoute<T> {
-  DenSheetRoute({required this.builder, this.dismissible = true, this.closeLabel = 'Close', super.settings});
+  DenSheetRoute({required this.builder, this.dismissible = true, this.closeLabel = 'Close', this.theme, super.settings});
 
   final WidgetBuilder builder;
+
+  /// The theme of the whole sheet (surface, handle, scrim and content) when it isn't the app's:
+  /// a sheet opened from the calendar kept light in a dark app. Null follows the app.
+  final ThemeData? theme;
 
   /// Whether a drag, a tap outside or the back gesture closes it.
   final bool dismissible;
@@ -63,8 +80,10 @@ class DenSheetRoute<T> extends PopupRoute<T> {
   Duration get reverseTransitionDuration => transitionDuration;
 
   @override
-  Widget buildPage(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation) =>
-      _DenSheetPage<T>(route: this);
+  Widget buildPage(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation) {
+    final page = _DenSheetPage<T>(route: this);
+    return theme == null ? page : Theme(data: theme!, child: page);
+  }
 }
 
 class _DenSheetPage<T> extends StatefulWidget {
@@ -187,9 +206,10 @@ class _DenSheetPageState<T> extends State<_DenSheetPage<T>> with TickerProviderS
     final c = context.colors;
     final media = MediaQuery.of(context);
     _centered = DenLayout.forWidth(media.size.width).centersSheets;
+    // Over the keyboard too, a sheet stops short of the status bar.
     final maxHeight = _centered
         ? media.size.height * 0.86
-        : media.size.height - media.padding.top - Sp.s;
+        : math.max(0.0, media.size.height - media.viewInsets.bottom - media.padding.top - Sp.s);
     final radius = _centered
         ? const BorderRadius.all(Radius.circular(Radii.sheet))
         : const BorderRadius.vertical(top: Radius.circular(Radii.sheet));
@@ -203,10 +223,11 @@ class _DenSheetPageState<T> extends State<_DenSheetPage<T>> with TickerProviderS
         color: c.bg,
         shape: RoundedRectangleBorder(borderRadius: radius),
         clipBehavior: Clip.antiAlias,
-        child: MediaQuery.removePadding(
-          context: context,
-          removeTop: true,
-          removeBottom: true,
+        child: MediaQuery(
+          // The whole sheet is already lifted over the keyboard (the padding below), so what's
+          // inside lays out as if there were none. A field's own "keyboard height" padding then
+          // can't count it a second time and squeeze the sheet's words out of sight.
+          data: media.removePadding(removeTop: true, removeBottom: true).removeViewInsets(removeBottom: true),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,

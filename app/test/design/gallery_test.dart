@@ -3,6 +3,7 @@ import 'package:den_app/design/pictures.dart';
 import 'package:den_app/design/sheet.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
+import 'package:den_core/den_core.dart' show ColorPack;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -24,13 +25,14 @@ Future<void> shootDesign(
   bool night = false,
   double textScale = 1,
   WidgetBuilder? sheet,
+  ColorPack pack = ColorPack.bright,
 }) async {
   await loadFonts();
   await tester.runAsync(DenPictures.load);
   tester.view.physicalSize = size * 2;
   tester.view.devicePixelRatio = 2;
   addTearDown(tester.view.reset);
-  final colors = night ? DenColors.night : DenColors.day;
+  final colors = (night ? DenColors.night : DenColors.day).withPack(pack);
   final navigator = GlobalKey<NavigatorState>();
   await tester.pumpWidget(
     MaterialApp(
@@ -69,8 +71,15 @@ void main() {
     });
   }
 
-  testWidgets('family colors', (tester) {
-    return shootDesign(tester, 'palette', const PaletteSample(), size: const Size(760, 700));
+  for (final pack in ColorPack.values) {
+    testWidgets('family colors, ${pack.label}', (tester) {
+      final name = pack == ColorPack.bright ? 'palette' : 'palette_${pack.name}';
+      return shootDesign(tester, name, const PaletteSample(), size: const Size(760, 700), pack: pack);
+    });
+  }
+
+  testWidgets('picture sheet in the Deep pack, phone', (tester) {
+    return shootDesign(tester, 'sheet_phone_deep', const TodaySample(), sheet: (_) => const PickerSheet(), pack: ColorPack.deep);
   });
 
   testWidgets('form sheet, iPad', (tester) {

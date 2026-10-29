@@ -9,6 +9,7 @@ import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
 import '../state/calendar_models.dart';
 import '../words/calendar_time.dart';
+import 'day_colors.dart';
 
 /// Pages that settle on Den's UI spring, carrying the fling.
 class SpringPagePhysics extends PageScrollPhysics {
@@ -266,9 +267,13 @@ class _DayTile extends StatelessWidget {
   }
 }
 
-/// The month on a phone: the weekday letters and six weeks of day tiles in a card, the chosen
-/// day in ink, today ringed, people's dots under each day. The strip's month form: swipe for
-/// the next or the last month, tap a day to see it below.
+/// The month on a phone: the weekday letters and six weeks of day tiles in a card. The strip's
+/// month form: swipe for the next or the last month, tap a day to see it below.
+///
+/// With days shown as dots (the default), the chosen day is ink, today ringed, and people's dots
+/// sit under each day. With days shown as colors ([CalendarDays.colors]), each day is its
+/// people's colors at full strength ([DaySegments]); the chosen day has an ink ring, today's
+/// number sits in an ink disc, and days of the months around keep their dots.
 class MonthCard extends StatefulWidget {
   const MonthCard({super.key, required this.selected, required this.onPick, this.person});
 
@@ -324,13 +329,14 @@ class _MonthCardState extends State<MonthCard> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final colors = context.watch(const {Changes.prefs}).calendarDays == CalendarDays.colors;
     return MediaQuery.withClampedTextScaling(
       maxScaleFactor: 1.5,
       child: Builder(
         builder: (context) {
           final scaler = MediaQuery.textScalerOf(context);
           final letters = (scaler.scale(13) * 1.3).ceilToDouble() + Sp.s;
-          final height = Sp.s * 2 + letters + 6 * _MonthDay.heightFor(context) + 5 * Sp.xs;
+          final height = Sp.s * 2 + letters + 6 * _MonthDay.heightFor(context, colors: colors) + 5 * Sp.xs;
           return Semantics(
             label: 'Month',
             hint: 'Swipe for the next month or the last',
@@ -349,6 +355,7 @@ class _MonthCardState extends State<MonthCard> {
                       first: _monthAt(index),
                       selected: widget.selected,
                       person: widget.person,
+                      colors: colors,
                       onPick: widget.onPick,
                     ),
                   ),
@@ -363,11 +370,20 @@ class _MonthCardState extends State<MonthCard> {
 }
 
 class _MonthPage extends StatelessWidget {
-  const _MonthPage({required this.first, required this.selected, required this.person, required this.onPick});
+  const _MonthPage({
+    required this.first,
+    required this.selected,
+    required this.person,
+    required this.colors,
+    required this.onPick,
+  });
 
   final String first;
   final String selected;
   final String? person;
+
+  /// Days in their people's colors rather than dots.
+  final bool colors;
   final ValueChanged<String> onPick;
 
   @override
@@ -409,12 +425,15 @@ class _MonthPage extends StatelessWidget {
                   Expanded(
                     child: () {
                       final date = f.addDays(gridStart, w * 7 + d);
+                      final inMonth = date.startsWith(month);
                       return _MonthDay(
                         date: date,
-                        inMonth: date.startsWith(month),
+                        inMonth: inMonth,
                         selected: date == selected,
                         today: date == app.today,
                         dots: dayDots(app, c, occurrences, date, person: person),
+                        colors: colors,
+                        people: colors && inMonth ? dayPeople(app, occurrences, date, person: person) : null,
                         onTap: () => onPick(date),
                       );
                     }(),
@@ -437,6 +456,8 @@ class _MonthDay extends StatelessWidget {
     required this.today,
     required this.dots,
     required this.onTap,
+    this.colors = false,
+    this.people,
   });
 
   final String date;
@@ -446,13 +467,30 @@ class _MonthDay extends StatelessWidget {
   final List<Color> dots;
   final VoidCallback onTap;
 
-  static double heightFor(BuildContext context) {
+  /// The month shows days in their people's colors (their tiles are a little taller).
+  final bool colors;
+
+  /// Who has something this day, to draw in their colors; null draws dots (a day of the months
+  /// around, or the dots look).
+  final DayPeople? people;
+
+  static const double _corner = 14;
+
+  /// The selected day's ring and the gap inside it.
+  static const double _ring = 2.5;
+  static const double _gap = 2;
+
+  static double heightFor(BuildContext context, {bool colors = false}) {
     final scaler = MediaQuery.textScalerOf(context);
-    return math.max(Targets.adult + 4, (scaler.scale(17) * 1.25 + 4 + 5 + 12).ceilToDouble());
+    if (!colors) return math.max(Targets.adult + 4, (scaler.scale(17) * 1.25 + 4 + 5 + 12).ceilToDouble());
+    // Today's disc, then a line for "+2" or the dots, with room for the selected ring.
+    final disc = scaler.scale(17) * 1.25 + 4;
+    return math.max(Targets.adult + 4, (disc + 2 + scaler.scale(13) * 1.3 + 8).ceilToDouble());
   }
 
   @override
   Widget build(BuildContext context) {
+    if (colors) return _inColors(context);
     final app = context.watch(const {});
     final f = app.formats;
     final c = context.colors;
@@ -481,21 +519,112 @@ class _MonthDay extends StatelessWidget {
             children: [
               number,
               const SizedBox(height: 4),
-              SizedBox(
+              _dotRow(dots),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static Widget _dotRow(List<Color> dots) => SizedBox(
+        height: 5,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final (i, color) in dots.take(3).indexed) ...[
+              if (i > 0) const SizedBox(width: 2),
+              Container(
+                width: 5,
                 height: 5,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (final (i, color) in dots.take(3).indexed) ...[
-                      if (i > 0) const SizedBox(width: 2),
-                      Container(
-                        width: 5,
-                        height: 5,
-                        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                      ),
-                    ],
-                  ],
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+            ],
+          ],
+        ),
+      );
+
+  /// The day in its people's colors: the whole tile theirs, split into equal parts for two or
+  /// three, the first two and "+N" for more, ink with the family's dots for everyone. The chosen
+  /// day has an ink ring with a gap of the card's color; today's number sits in a disc.
+  Widget _inColors(BuildContext context) {
+    final app = context.watch(const {});
+    final f = app.formats;
+    final c = context.colors;
+    final day = people ?? DayPeople.none;
+    final filled = !day.isEmpty;
+    final onFill = filled ? dayInk(c, day) : (inMonth ? c.ink : c.ink3);
+    // Today's disc is the opposite of what's behind it, so it shows on ink as well as on color.
+    final disc = day.everyone ? c.onPrimary : c.ink;
+    final numberColor = today ? (day.everyone ? c.ink : c.onPrimary) : onFill;
+    final number = Text(
+      '${f.dateTime(date).day}',
+      style: filled || today || selected ? context.text.rowTitle(numberColor) : context.text.body(numberColor),
+      maxLines: 1,
+      softWrap: false,
+    );
+    final scaler = MediaQuery.textScalerOf(context);
+    final discSize = (scaler.scale(17) * 1.25 + 4).ceilToDouble();
+    final Widget lower;
+    if (!day.everyone && day.more > 0) {
+      lower = Text('+${day.more}', style: context.text.caption(onFill).bold, maxLines: 1, softWrap: false);
+    } else if (day.everyone || people == null) {
+      lower = _dotRow(dots);
+    } else {
+      lower = const SizedBox.shrink();
+    }
+    const outer = BorderRadius.all(Radius.circular(_corner));
+    final inset = selected ? _ring + _gap : 0.0;
+    final what = people == null
+        ? (dots.isEmpty ? '' : ', something planned')
+        : day.isEmpty
+            ? ''
+            : ', ${day.words}';
+    return DenPressable(
+      onTap: onTap,
+      color: c.card,
+      selected: selected,
+      shape: const RoundedRectangleBorder(borderRadius: outer),
+      semanticLabel: '${f.long(date)}${today ? ', today' : ''}$what',
+      child: ExcludeSemantics(
+        child: SizedBox(
+          height: heightFor(context, colors: true),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (filled)
+                Padding(
+                  padding: EdgeInsets.all(inset),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(_corner - inset),
+                    child: DaySegments(day: day),
+                  ),
                 ),
+              if (selected)
+                DecoratedBox(
+                  decoration: ShapeDecoration(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: outer,
+                      side: BorderSide(color: c.ink, width: _ring),
+                    ),
+                  ),
+                ),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  DecoratedBox(
+                    decoration: today ? ShapeDecoration(color: disc, shape: const StadiumBorder()) : const BoxDecoration(),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minWidth: discSize, minHeight: discSize),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Center(widthFactor: 1, child: number),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  lower,
+                ],
               ),
             ],
           ),

@@ -1,4 +1,4 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
 import 'sheet.dart';
 
@@ -10,11 +10,21 @@ import 'sheet.dart';
 /// GoRoute(path: '/event/new', pageBuilder: (context, s) => DenSheetPage(key: s.pageKey, child: const EventEditorSheet()))
 /// ```
 class DenSheetPage<T> extends Page<T> {
-  const DenSheetPage({super.key, required this.child, this.dismissible = true, this.closeLabel = 'Close', super.name});
+  const DenSheetPage({
+    super.key,
+    required this.child,
+    this.dismissible = true,
+    this.closeLabel = 'Close',
+    this.theme,
+    super.name,
+  });
 
   final Widget child;
   final bool dismissible;
   final String closeLabel;
+
+  /// The whole sheet's theme when it isn't the app's ([DenSheetRoute.theme]).
+  final ThemeData? theme;
 
   /// The sheet shows the page it was last given, so a route that updates in place (new query
   /// parameters) updates the sheet too.
@@ -25,6 +35,7 @@ class DenSheetPage<T> extends Page<T> {
       builder: (_) => (route.settings as DenSheetPage<T>).child,
       dismissible: dismissible,
       closeLabel: closeLabel,
+      theme: theme,
       settings: this,
     );
     return route;

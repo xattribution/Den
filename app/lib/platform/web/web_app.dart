@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:den_core/den_core.dart' show DeviceKind;
+import 'package:flutter/foundation.dart' show immutable;
 
 import 'web_app_stub.dart' if (dart.library.js_interop) 'web_app_web.dart' as impl;
 
@@ -161,6 +162,59 @@ class WebPushSubscription {
       };
 }
 
+/// How the page stands around the keyboard, as `window.denWeb.viewport()` says
+/// (web/den_web.js). All in CSS pixels, which are Flutter's logical pixels.
+@immutable
+class WebViewport {
+  const WebViewport({this.keyboard = 0, this.width = 0, this.height = 0, this.top = 0, this.scrolled = 0, this.editing = false});
+
+  /// Null when the answer isn't one.
+  static WebViewport? fromJson(Object? json) {
+    if (json is! Map) return null;
+    double n(String key) => json[key] is num ? (json[key] as num).toDouble() : 0;
+    return WebViewport(
+      keyboard: n('keyboard'),
+      width: n('width'),
+      height: n('height'),
+      top: n('top'),
+      scrolled: n('scrolled'),
+      editing: json['editing'] == true,
+    );
+  }
+
+  /// How much of the screen the on-screen keyboard covers; 0 when it's down, however the
+  /// browser's visual viewport was left after it closed.
+  final double keyboard;
+
+  /// The page's own size (the layout viewport), which is what Flutter lays out on.
+  final double width;
+  final double height;
+
+  /// How far the visual viewport is panned down the page, and the page scrolled; both 0 once
+  /// den_web.js has put the page back.
+  final double top;
+  final double scrolled;
+
+  /// A text field has the browser's focus.
+  final bool editing;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WebViewport &&
+      other.keyboard == keyboard &&
+      other.width == width &&
+      other.height == height &&
+      other.top == top &&
+      other.scrolled == scrolled &&
+      other.editing == editing;
+
+  @override
+  int get hashCode => Object.hash(keyboard, width, height, top, scrolled, editing);
+
+  @override
+  String toString() => 'WebViewport(keyboard: $keyboard, $width x $height, top: $top, scrolled: $scrolled, editing: $editing)';
+}
+
 /// Subscribing failed; [reason] is the browser's error name (`NotAllowedError` when the person
 /// said no) or `not-ready` / `unsupported`.
 class WebPushException implements Exception {
@@ -265,6 +319,29 @@ abstract final class WebApp {
 
   /// The safe areas (top, right, bottom, left) in logical pixels.
   static List<double> insets() => impl.insets();
+
+  /// How the page stands around the keyboard; null off the web or without den_web.js.
+  static WebViewport? viewport() {
+    final text = impl.viewport();
+    if (text == null) return null;
+    try {
+      return WebViewport.fromJson(jsonDecode(text));
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// Calls [onChange] now and whenever the keyboard or the page moves (after den_web.js has put
+  /// the page back at the top). Does nothing off the web or without den_web.js; one listener at
+  /// a time, the app's root.
+  static void onViewport(void Function(WebViewport viewport) onChange) => impl.onViewport((text) {
+        try {
+          final viewport = WebViewport.fromJson(jsonDecode(text));
+          if (viewport != null) onChange(viewport);
+        } on FormatException {
+          // Not an answer; the next change brings one.
+        }
+      });
 
   /// Loads the page again, as when Den opens.
   static void reload() => impl.reload();

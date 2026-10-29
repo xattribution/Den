@@ -11,6 +11,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../design/words.dart';
 import '../state/lists_model.dart';
+import '../widgets/clear_checked.dart';
 import '../widgets/list_content.dart';
 import '../widgets/list_menu.dart';
 import '../words/list_words.dart';
@@ -100,35 +101,39 @@ class _ListsHomeState extends State<ListsHome> {
         final two = constraints.maxWidth >= ListsHome.twoColumns;
         final side = two ? 32.0 : (compact ? DenLayout.gutter : 24.0);
         if (!two) {
-          return ListView(
-            padding: EdgeInsets.fromLTRB(0, Sp.l, 0, Sp.xxl),
-            children: [
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: side),
-                child: PageHeader(title: 'Lists', large: !compact, trailing: more),
-              ),
-              const SizedBox(height: Sp.m),
-              if (lists.isNotEmpty || canAdd)
-                ChipRow(
-                  inset: side,
-                  children: [
-                    for (final l in lists)
-                      TagChip(label: l.list.title, selected: l.list.id == current?.list.id, onTap: () => select(l)),
-                    if (canAdd) TagChip(label: 'New list', icon: PhosphorIconsBold.plus, selected: false, onTap: () => context.push('/lists/new')),
-                  ],
+          return ClearCheckedOver(
+            listId: current?.list.id,
+            end: side,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(0, Sp.l, 0, Sp.xxl + ClearChecked.room),
+              children: [
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: side),
+                  child: PageHeader(title: 'Lists', large: !compact, trailing: more),
                 ),
-              const SizedBox(height: 20),
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: side),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    deletedNote,
-                    if (current == null) empty else ListContent(key: ValueKey(current.list.id), list: current),
-                  ],
+                const SizedBox(height: Sp.m),
+                if (lists.isNotEmpty || canAdd)
+                  ChipRow(
+                    inset: side,
+                    children: [
+                      for (final l in lists)
+                        TagChip(label: l.list.title, selected: l.list.id == current?.list.id, onTap: () => select(l)),
+                      if (canAdd) TagChip(label: 'New list', icon: PhosphorIconsBold.plus, selected: false, onTap: () => context.push('/lists/new')),
+                    ],
+                  ),
+                const SizedBox(height: 20),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: side),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      deletedNote,
+                      if (current == null) empty else ListContent(key: ValueKey(current.list.id), list: current),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           );
         }
         return Padding(
@@ -169,23 +174,27 @@ class _ListsHomeState extends State<ListsHome> {
               ),
               const SizedBox(width: DenLayout.sectionGap),
               Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.only(top: 32, bottom: 40),
-                  children: [
-                    deletedNote,
-                    if (current == null)
-                      empty
-                    else ...[
-                      PageHeader(
-                        title: current.list.title,
-                        overline: kindWords(current.list.kind),
-                        large: true,
-                        trailing: more,
-                      ),
-                      const SizedBox(height: DenLayout.sectionGap),
-                      ListContent(key: ValueKey(current.list.id), list: current),
+                child: ClearCheckedOver(
+                  listId: current?.list.id,
+                  end: 0,
+                  child: ListView(
+                    padding: const EdgeInsets.only(top: 32, bottom: 40 + ClearChecked.room),
+                    children: [
+                      deletedNote,
+                      if (current == null)
+                        empty
+                      else ...[
+                        PageHeader(
+                          title: current.list.title,
+                          overline: kindWords(current.list.kind),
+                          large: true,
+                          trailing: more,
+                        ),
+                        const SizedBox(height: DenLayout.sectionGap),
+                        ListContent(key: ValueKey(current.list.id), list: current),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ],
