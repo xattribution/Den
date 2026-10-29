@@ -78,6 +78,30 @@ void main() {
       await phone.close();
     });
 
+    test('a hub adds as the person its connection acts for, and says why when nobody is acting (MCP eval #1)', () async {
+      final phone = await demo();
+      final hub = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate(), now: () => demoNow.millisecondsSinceEpoch);
+      await hub.requestJoin(
+        familyId: phone.familyId!,
+        founderPubkey: phone.founderPubkey!,
+        deviceName: 'Hub',
+        kind: DeviceKind.hub,
+        mode: DeviceMode.hub,
+      );
+      await phone.ingest(hub.changesSince(phone.versionVector));
+      await phone.approveDevice(hub.deviceId, mode: DeviceMode.hub);
+      await hub.ingest(phone.changesSince(hub.versionVector, spaces: phone.spacesForDevice(hub.deviceId)));
+
+      hub.actAs(null, via: 'GrokBot');
+      final nobody = draftOf(hub, {'events': [event({})]}).events.single.issues.single.message;
+      expect(nobody, isNot(contains('Sign in on this screen')));
+      expect(nobody, contains('a parent chooses who a connection acts as'));
+      hub.actAs(idOf(hub, 'Alex'), via: 'GrokBot');
+      expect(draftOf(hub, {'events': [event({})]}).events.single.issues, isEmpty, reason: 'it adds as Alex');
+      await hub.close();
+      await phone.close();
+    });
+
     test('fields are held to den_core\'s schema: an event for someone no longer in the family is refused', () async {
       final den = await demo();
       final wire = {...empty, 'events': [event({'people': ['Leo']})]};
