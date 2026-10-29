@@ -46,6 +46,7 @@ class DeviceAuth {
     if (at == null || (hub.now() - at).abs() > DeviceRequest.skew.inMilliseconds) throw _refuse(request, 'clock');
     final device = hub.den.device(id);
     if (device == null || !device.approved || device.revoked) throw _refuse(request, 'unknown-device');
+    if (hub.den.accessEnded(id)) throw _refuse(request, 'access-ended');
     final claimed = h(bodyHash)?.trim().toLowerCase();
     if (claimed == null) return null;
     if (!_hex.hasMatch(claimed)) throw _refuse(request, 'bad-hash');
