@@ -153,11 +153,13 @@ v2.windows.length = 0;
 await v2.dispatch('notificationclick', { notification: { close() {}, data: { route: '/today' } } });
 assert.equal(v2.self.opened, ORIGIN + '/#/today');
 
-// 6b. A push from one of several families this Den holds says whose it is and opens there; a
-// tap sends that family's route.
-await v2.dispatch('push', { data: { json: () => ({ title: 'Soccer at 5:30', body: 'Field 3', route: '/event/E2?at=9', tag: 'event:E2', family: 'smith2345', label: 'Smith family' }) } });
+// 6b. A push from one of several families this Den holds says whose it is, by the name the
+// app keeps for it (den_web.js setFamilies), never the name the push carries, and opens there;
+// a tap sends that family's route.
+await (await caches.open('den-families')).put(ORIGIN + '/families.json', new Response(JSON.stringify({ smith2345: 'Smith family', f: 'Kotvas' })));
+await v2.dispatch('push', { data: { json: () => ({ title: 'Soccer at 5:30', body: 'Field 3', route: '/event/E2?at=9', tag: 'event:E2', family: 'smith2345', label: 'Your bank' }) } });
 const smith = v2.notifications[v2.notifications.length - 1];
-assert.equal(smith[0], 'Smith family: Soccer at 5:30');
+assert.equal(smith[0], 'Smith family: Soccer at 5:30', "the device's own name for the family, not the payload's label");
 assert.equal(smith[1].data.route, '/l/smith2345/event/E2?at=9');
 assert.equal(smith[1].tag, 'smith2345|event:E2');
 v2.windows.push(client);
@@ -167,6 +169,15 @@ assert.equal(JSON.stringify(v2.posted), JSON.stringify([{ type: 'den-open', rout
 // A route that isn't the app's own is never followed.
 await v2.dispatch('push', { data: { json: () => ({ title: 'X', route: 'https://elsewhere.example/', family: 'f' }) } });
 assert.equal(v2.notifications[v2.notifications.length - 1][1].data.route, '/l/f/today');
+// A push from a family this Den doesn't hold (it left) shows nothing it carries, and opens Today.
+await v2.dispatch('push', { data: { json: () => ({ title: 'Pay now', body: 'secret', route: '/event/E9', tag: 'event:E9', family: 'leftfamily', label: 'Smith family' }) } });
+const left = v2.notifications[v2.notifications.length - 1];
+assert.equal(left[0], 'Den');
+assert.equal(left[1].body.includes('secret'), false);
+assert.equal(left[1].data.route, '/today');
+// The map outlives a version taking over, which clears every cache of the app's files.
+await v2.dispatch('activate', {});
+assert.equal(store.has('den-families'), true);
 v2.windows.length = 0;
 
 // 7. Skip waiting on request.

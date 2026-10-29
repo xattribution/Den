@@ -15,6 +15,9 @@ const VERSION = params.get('v') || 'dev';
 const CANVASKIT = params.get('ck') === 'chromium' ? 'canvaskit/chromium/' : 'canvaskit/';
 const PREFIX = 'den-app-';
 const CACHE = PREFIX + VERSION;
+// The families this Den holds, {"<family id>": "<name>"}, written by the app (den_web.js
+// setFamilies); kept apart from the app's files, so a new version doesn't drop it.
+const FAMILIES = 'den-families';
 const ENGINE = 'den-engine-revision';
 
 // What Den can't start without.
@@ -140,6 +143,19 @@ self.addEventListener('fetch', (event) => {
 
 // ------------------------------------------------------------------ notifications
 
+/** The families this Den holds, as the app last said: {"<id>": "<name>"}, or null if it never did. */
+async function knownFamilies() {
+  try {
+    const cache = await caches.open(FAMILIES);
+    const kept = await cache.match(new URL('families.json', self.registration.scope).href);
+    if (!kept) return null;
+    const map = await kept.json();
+    return map && typeof map === 'object' && !Array.isArray(map) ? map : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 self.addEventListener('push', (event) => {
   let data = {};
   try {
@@ -147,12 +163,31 @@ self.addEventListener('push', (event) => {
   } catch (e) {
     data = { body: event.data ? event.data.text() : '' };
   }
-  // Every push shows a notification: Safari stops delivering to pages whose pushes show nothing.
-  // A push from one of several families this Den holds names the family: its title says whose
-  // it is, and a tap opens it in that family (/l/<family>/...).
+  event.waitUntil(notify(data));
+});
+
+// Every push shows a notification: Safari stops delivering to pages whose pushes show nothing,
+// and this browser's one subscription is every family's. A push from one of several families
+// names the family by id: its title says whose it is, by the name this Den knows it by (never a
+// name the push carries), and a tap opens it in that family (/l/<family>/...). A push from a
+// family this Den doesn't hold shows nothing of what it carries, and opens Today.
+async function notify(data) {
   const route = typeof data.route === 'string' && data.route.startsWith('/') ? data.route : '/today';
   const family = typeof data.family === 'string' && data.family ? data.family : null;
-  const label = typeof data.label === 'string' && data.label ? data.label : null;
+  let label = null;
+  if (family) {
+    const families = await knownFamilies();
+    if (families && !Object.prototype.hasOwnProperty.call(families, family)) {
+      return self.registration.showNotification('Den', {
+        body: 'A reminder came from a family this device left.',
+        icon: 'icons/Icon-192.png',
+        tag: 'den-left-family',
+        data: { route: '/today' },
+      });
+    }
+    const name = families ? families[family] : null;
+    label = typeof name === 'string' && name ? name : null;
+  }
   const title = data.title || 'Den';
   const options = {
     body: data.body || '',
@@ -160,8 +195,8 @@ self.addEventListener('push', (event) => {
     data: { route: family ? '/l/' + encodeURIComponent(family) + route : route },
   };
   if (data.tag) options.tag = family ? family + '|' + data.tag : data.tag;
-  event.waitUntil(self.registration.showNotification(label ? label + ': ' + title : title, options));
-});
+  return self.registration.showNotification(label ? label + ': ' + title : title, options);
+}
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();

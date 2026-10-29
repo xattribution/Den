@@ -15,6 +15,8 @@ Future<String?> subscribe(String key) async => null;
 
 Future<void> unsubscribe() async {}
 
+Future<void> setFamilies(String json) async {}
+
 Future<String> share(String text) async => 'failed';
 
 Future<String> paste() async => '{"kind":"none"}';

@@ -281,6 +281,23 @@
       .catch(function () { return false; });
   }
 
+  // ------------------------------------------------------------------ families
+
+  /**
+   * Tells the service worker which families this Den holds, as JSON {"<family id>": "<name>"}:
+   * a push names its family by id, and the worker titles it with the name kept here, and shows
+   * nothing of a push from a family not in it.
+   */
+  function setFamilies(json) {
+    if (!('serviceWorker' in nav) || typeof caches === 'undefined') return Promise.resolve(false);
+    return nav.serviceWorker.ready.then(function (r) {
+      return caches.open('den-families').then(function (cache) {
+        var body = new Response(json, { headers: { 'content-type': 'application/json' } });
+        return cache.put(new URL('families.json', r.scope).href, body);
+      });
+    }).then(function () { return true; }, function () { return false; });
+  }
+
   // ------------------------------------------------------------------ sharing
 
   function copy(text) {
@@ -662,6 +679,7 @@
     pushState: pushState,
     subscribe: subscribe,
     unsubscribe: unsubscribe,
+    setFamilies: setFamilies,
     share: share,
     copy: copy,
     paste: paste,

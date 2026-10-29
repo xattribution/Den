@@ -13,6 +13,7 @@ import 'app_state.dart';
 import 'family_colors.dart';
 import 'household.dart';
 import 'log_scope.dart';
+import '../platform/capabilities.dart';
 import '../platform/sync/pairing.dart';
 import '../platform/web/web_app.dart';
 import '../platform/web/web_insets.dart';
@@ -57,9 +58,26 @@ class _DenAppState extends State<DenApp> {
     }
   }
 
+  /// What the service worker was told last: the families this browser holds, by id.
+  String? _told;
+
+  /// In a browser, tells the service worker which families this Den holds and their names: it
+  /// titles a family's push with the name kept here, and shows nothing of one from any other.
+  void _tellWorker() {
+    final families = {for (final l in _home.families) l.id: l.name};
+    final told = families.entries.map((e) => '${e.key}=${e.value}').join('\n');
+    if (told == _told) return;
+    _told = told;
+    unawaited(WebApp.setFamilies(families));
+  }
+
   @override
   void initState() {
     super.initState();
+    if (Capabilities.web) {
+      _home.addListener(_tellWorker);
+      _tellWorker();
+    }
     // A tapped reminder opens its event or chore over whatever is showing.
     _taps = _home.active.state.reminders?.taps.listen((route) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _open(route));
@@ -86,6 +104,7 @@ class _DenAppState extends State<DenApp> {
 
   @override
   void dispose() {
+    _home.removeListener(_tellWorker);
     _taps?.cancel();
     _shares?.cancel();
     super.dispose();

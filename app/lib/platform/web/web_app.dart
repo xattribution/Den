@@ -293,6 +293,10 @@ abstract final class WebApp {
 
   static Future<void> unsubscribe() => impl.unsubscribe();
 
+  /// Tells the service worker the families this browser holds, by id with their names: it titles
+  /// a family's push with the name kept here, and shows nothing of a push from any other.
+  static Future<void> setFamilies(Map<String, String> families) => impl.setFamilies(jsonEncode(families));
+
   /// Opens the share sheet with [text], or copies it where there is none. Call it straight from
   /// a tap.
   static Future<ShareOutcome> share(String text) async =>
