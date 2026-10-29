@@ -221,14 +221,6 @@ String choreMeta(ChoreDay d, {required String date, required String today, requi
   ].join(', ');
 }
 
-/// Reminder offsets offered for a chore, in minutes before its due time.
-const reminderChoices = <int, String>{
-  0: 'At due time',
-  15: '15 min before',
-  30: '30 min before',
-  60: '1 hour before',
-  120: '2 hours before',
-};
-
-String reminderWords(int minutes) =>
-    reminderChoices[minutes] ?? (minutes % 60 == 0 ? '${minutes ~/ 60} hours before' : '$minutes min before');
+/// Reminder offsets offered for a chore, in minutes before its due time. Their words are
+/// `reminderWords(m, due: true)` (app/words.dart), the way events say them.
+const List<int> choreReminders = [0, 15, 30, 60, 120];

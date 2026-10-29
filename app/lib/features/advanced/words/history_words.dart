@@ -1,6 +1,7 @@
 import 'package:den_core/den_core.dart';
 
 import '../../../app/family_reads.dart';
+import '../../../app/words.dart';
 import '../../calendar/calendar_words.dart';
 
 /// Kinds of record people filter History by.
@@ -142,7 +143,7 @@ String? valueWords(FamilyReads app, String type, String field, Object? value) {
       return den.category(value as String)?.name ?? 'A removed category';
     case 'reminders':
       final list = [...((value as List?) ?? const []).map((e) => (e as num).toInt())]..sort();
-      return list.isEmpty ? null : list.map(reminderWords).join(', ');
+      return list.isEmpty ? null : list.map((m) => reminderWords(m, due: type == RecordType.chore)).join(', ');
     case 'rides':
       final legs = ((value as List?) ?? const []).map((e) => Map<String, Object?>.from(e as Map));
       final words = [

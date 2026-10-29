@@ -2,22 +2,9 @@ import 'package:den_core/den_core.dart';
 
 import '../../../app/family_reads.dart';
 
-/// Reminder offsets offered first, in minutes before the start.
+/// Reminder offsets offered first, in minutes before the start. Their words are
+/// `reminderWords` (app/words.dart), which chores say too.
 const List<int> reminderPresets = [5, 15, 30, 60, 120, 1440];
-
-/// "At the start", "15 minutes before", "1 hour 30 minutes before", "2 days before".
-String reminderWords(int minutes) {
-  if (minutes <= 0) return 'At the start';
-  String unit(int n, String one) => '$n ${n == 1 ? one : '${one}s'}';
-  if (minutes % 10080 == 0) return '${unit(minutes ~/ 10080, 'week')} before';
-  if (minutes % 1440 == 0) return '${unit(minutes ~/ 1440, 'day')} before';
-  if (minutes >= 60) {
-    final h = minutes ~/ 60;
-    final m = minutes % 60;
-    return m == 0 ? '${unit(h, 'hour')} before' : '${unit(h, 'hour')} ${unit(m, 'minute')} before';
-  }
-  return '${unit(minutes, 'minute')} before';
-}
 
 /// A ride leg as parents say it: driving there is drop-off, coming back is pick-up.
 String legWords(String leg) => leg == 'from' ? 'Pick-up' : 'Drop-off';

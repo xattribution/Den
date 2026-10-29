@@ -4,10 +4,12 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../../../design/motion.dart';
 import '../../../design/pictograms.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
+import '../../../app/words.dart';
 import '../words/chore_words.dart';
 import '../../../design/chore_pictograms.dart';
 import '../../../design/forms/forms.dart';
@@ -257,11 +259,12 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
   Future<void> _pickDate(String initial, ValueChanged<String> onPicked) async {
     final f = context.watch(choreReads).formats;
     final d = f.dateTime(initial);
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime(d.year, d.month, d.day),
-      firstDate: DateTime(d.year - 1),
-      lastDate: DateTime(d.year + 3),
+    final picked = await showDayPicker(
+      context,
+      title: 'Starting',
+      initial: DateTime(d.year, d.month, d.day),
+      first: DateTime(d.year - 1),
+      last: DateTime(d.year + 3),
     );
     if (picked != null) onPicked(DateFormat('yyyy-MM-dd').format(picked));
   }
@@ -295,8 +298,7 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
       appBar: AppBar(
         title: Text(_isNew ? 'New chore' : 'Edit chore'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: Sp.s),
+          BarAction(
             child: FilledButton(onPressed: _saving ? null : _save, child: Text(_isNew ? 'Add chore' : 'Save chore')),
           ),
         ],
@@ -366,9 +368,10 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
                           icon: PhosphorIconsRegular.clock,
                           label: _due == null ? 'Any time that day' : _due!.format(context),
                           onTap: () async {
-                            final t = await showTimePicker(
-                              context: context,
-                              initialTime: _due ?? const TimeOfDay(hour: 18, minute: 0),
+                            final t = await showTimeWheel(
+                              context,
+                              title: 'Due by',
+                              initial: _due ?? const TimeOfDay(hour: 18, minute: 0),
                             );
                             if (t != null) setState(() => _due = t);
                           },
@@ -381,12 +384,12 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
                           spacing: Sp.s,
                           runSpacing: Sp.s,
                           children: [
-                            for (final entry in reminderChoices.entries)
+                            for (final minutes in choreReminders)
                               TagChip(
-                                label: entry.value,
-                                selected: _reminders.contains(entry.key),
+                                label: reminderWords(minutes, due: true),
+                                selected: _reminders.contains(minutes),
                                 onTap: () => setState(() {
-                                  if (!_reminders.remove(entry.key)) _reminders.add(entry.key);
+                                  if (!_reminders.remove(minutes)) _reminders.add(minutes);
                                 }),
                               ),
                           ],
@@ -474,14 +477,13 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
       ],
       if (_kind == _OwnerKind.turns) ...[
         const SizedBox(height: Sp.m),
-        Row(
-          children: [
-            DenSegmented<String>(
-              options: const {'day': 'Switch daily', 'week': 'Switch weekly'},
-              value: _every,
-              onChanged: (v) => setState(() => _every = v),
-            ),
-          ],
+        Align(
+          alignment: Alignment.centerLeft,
+          child: DenSegmented<String>(
+            options: const {'day': 'Switch daily', 'week': 'Switch weekly'},
+            value: _every,
+            onChanged: (v) => setState(() => _every = v),
+          ),
         ),
         if (preview != null)
           Padding(
@@ -782,49 +784,43 @@ class _StepEditor extends StatelessWidget {
                   spacing: Sp.s,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    PopupMenuButton<String>(
-                      tooltip: 'Who does this step',
-                      onSelected: (id) {
-                        step.owner = id.isEmpty ? null : id;
+                    _MenuFace(
+                      semanticLabel: 'Who does this step: ${owner?.name ?? 'whoever does the chore'}',
+                      onTap: () async {
+                        final pick = await showPeoplePicker(
+                          context,
+                          title: 'Who does step ${index + 1}?',
+                          people: people,
+                          current: step.owner,
+                          anyoneLabel: 'Whoever does the chore',
+                          anyoneCurrent: step.owner == null,
+                        );
+                        if (pick == null) return;
+                        step.owner = pick.member;
                         onChanged();
                       },
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(value: '', child: Text('Whoever does the chore')),
-                        for (final m in people)
-                          PopupMenuItem(
-                            value: m.id,
-                            child: Row(
-                              children: [
-                                DenAvatar(m, size: 22),
-                                const SizedBox(width: Sp.s),
-                                Text(m.name),
-                              ],
-                            ),
-                          ),
-                      ],
-                      child: _MenuFace(
-                        leading: owner == null ? const AnyoneMark(size: 22) : DenAvatar(owner, size: 22),
-                        label: owner?.name ?? 'Whoever does the chore',
-                      ),
+                      leading: owner == null ? const AnyoneMark(size: 22) : DenAvatar(owner, size: 22),
+                      label: owner?.name ?? 'Whoever does the chore',
                     ),
                     if (pointsOn)
-                      PopupMenuButton<int>(
-                        tooltip: 'Points for this step',
-                        onSelected: (p) {
-                          step.points = p;
+                      _MenuFace(
+                        semanticLabel: 'Stars for this step: ${step.points}',
+                        onTap: () async {
+                          final stars = await showChoiceSheet<int>(
+                            context,
+                            title: 'Stars for step ${index + 1}',
+                            value: step.points,
+                            choices: [
+                              for (final p in const [0, 1, 2, 3, 5, 10])
+                                Choice(p, p == 0 ? 'No stars' : '$p ${p == 1 ? 'star' : 'stars'}'),
+                            ],
+                          );
+                          if (stars == null) return;
+                          step.points = stars;
                           onChanged();
                         },
-                        itemBuilder: (_) => [
-                          for (final p in const [0, 1, 2, 3, 5, 10])
-                            PopupMenuItem(
-                              value: p,
-                              child: p == 0 ? const Text('No points') : StarCount(p, style: context.type.body(c.ink)),
-                            ),
-                        ],
-                        child: _MenuFace(
-                          label: step.points == 0 ? 'No points' : null,
-                          leading: step.points == 0 ? null : StarCount(step.points, style: context.type.body(c.ink)),
-                        ),
+                        label: step.points == 0 ? 'No stars' : null,
+                        leading: step.points == 0 ? null : StarCount(step.points, style: context.type.body(c.ink)),
                       ),
                   ],
                 ),
@@ -842,28 +838,36 @@ class _StepEditor extends StatelessWidget {
   }
 }
 
-/// What a small menu button shows: an optional leading mark, a label and a caret.
+/// A small button that opens a picker sheet: an optional leading mark, a label and a caret.
 class _MenuFace extends StatelessWidget {
-  const _MenuFace({this.leading, this.label});
+  const _MenuFace({required this.onTap, required this.semanticLabel, this.leading, this.label});
+  final VoidCallback onTap;
+  final String semanticLabel;
   final Widget? leading;
   final String? label;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: Targets.adult),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: Sp.xs),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ?leading,
-            if (leading != null && label != null) const SizedBox(width: Sp.s),
-            if (label != null) Text(label!, style: context.type.meta(c.ink)),
-            const SizedBox(width: Sp.xs),
-            Icon(PhosphorIconsRegular.caretDown, size: 14, color: c.ink2),
-          ],
+    return DenPressable(
+      onTap: onTap,
+      semanticLabel: semanticLabel,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: Targets.adult),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Sp.xs),
+          child: ExcludeSemantics(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ?leading,
+                if (leading != null && label != null) const SizedBox(width: Sp.s),
+                if (label != null) Flexible(child: Text(label!, style: context.type.meta(c.ink))),
+                const SizedBox(width: Sp.xs),
+                Icon(PhosphorIconsRegular.caretDown, size: 14, color: c.ink2),
+              ],
+            ),
+          ),
         ),
       ),
     );
