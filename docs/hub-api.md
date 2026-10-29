@@ -1544,7 +1544,7 @@ These endpoints take no token. Every request is signed with the device's own key
 | `X-Den-Actor` | The member acting on the device, when it names one |
 | `X-Den-Signature` | base64url Ed25519 over `"den/device-request/v1" 0x00` and the canonical JSON `[method, path with query, time, nonce, hex SHA-256 of the body, device, actor, hub device id]` |
 | `X-Den-Body-SHA256` | Recommended: the lowercase hex SHA-256 of the body, the same value the signature covers. With it the hub checks the signature from the headers alone and turns a forged request away before reading its body |
-| `X-Den-Hub` | The hub device id the request is addressed to, the same id the signature covers. A Den host serving several families hands the request to that family's hub by it ([One host, several families](#one-host-several-families)); without it, the family whose address the request came to. den_net's `DeviceRequest.sign` sends it |
+| `X-Den-Hub` | The hub device id the request is addressed to, the same id the signature covers. A Den host serving several families hands the request to that family's hub by it once the signature checks out there from the headers (with `X-Den-Body-SHA256`) ([One host, several families](#one-host-several-families)); otherwise, the family whose address the request came to. den_net's `DeviceRequest.sign` sends it, and the body hash |
 
 The hub accepts a request only from an approved, unrevoked device of its family, addressed to
 itself. A request with `X-Den-Body-SHA256` is verified before its body is read (`401` when the
@@ -2038,10 +2038,9 @@ only. Requests are signed with the device's own key, as for capture (`DeviceRequ
 
 Any approved device. `{"key": "<base64url uncompressed P-256 public key>", "subscribed": false}`:
 the key is the browser's `applicationServerKey`; `subscribed` says whether this device gets
-pushes. On a Den host it is the key of the family whose address the request came to (one origin
-hands every browser one key, whichever family's reminders it takes), which for a family at its
-own address is its own key, as it always was. The hub records the key with the subscription and
-signs every push to it with that key.
+pushes. It is always this family's own key, on a Den host too, whatever address the request came
+to: no family's subscriptions are ever signed with another family's key. The hub records the key
+with the subscription.
 
 ### `PUT /api/v1/push`
 
@@ -2097,29 +2096,41 @@ records alone.
 | A request | Goes to |
 | --- | --- |
 | `GET /ws` | The family the client's hello names (read before any family answers it). A hello that names none (a spoken-code or recovery-words joiner): the address's family |
-| Signed by a device | The hub `X-Den-Hub` names; without it, the address's family, else the one family that knows the signing device |
+| Signed by a device | The hub `X-Den-Hub` names, once the signature checks out there from the headers alone (`X-Den-Body-SHA256`); otherwise the address's family, like any request, so made-up headers reach nothing an address doesn't |
 | A bearer token (the API, `/api/v1/stream`, `/mcp`) | The address's family; at an address that is no family's, the one family whose token it is |
 | `/ics/<secret>/...` | The address's family; at an address that is no family's, the one family whose link it is |
 | `POST /api/v1/invites/redeem`, `POST /api/v1/recovery/redeem` | The one family that keeps those words or that slot: words are unique per host, so they work at any family's address |
 | `POST /api/v1/recovery/tickets` | The family whose secret `den_hub recover` shows |
 | `GET`/`POST /api/v1/link/{slot}` | The family that gave the browser that link code |
 | `POST /api/v1/invites` | The hub the grant's invite names |
-| `POST /api/v1/hub/setup` | The address's family; at an address that is no family's, the one hub waiting with that setup code |
+| `POST /api/v1/hub/setup` | The address's family only (the setup link names it); at an address that is no family's, `404 no_family` |
 | Anything else | The address's family |
 
 "The address's family" is the family whose public URL names the request's host (`Host`, or a
-trusted proxy's `X-Forwarded-Host`). A host with one family answers at any address, as a hub
-always has. With several, a request that names no family, at an address that is none of
-theirs, gets `404` with `error.code` `no_family`, and `GET /health` there says only `{"ok":
-true, "api": 1, "ready": <every family ready>}`: never the first family's answer. The web app is
-the same at every address, with that address in its Content-Security-Policy.
+trusted proxy's `X-Forwarded-Host`). A host configured for one family (a hub of its own, or
+`den_hub serve` while `host.json` lists no other family) answers at any address, as a hub always
+has. That is configuration, never how many families happen to be open. With several, a request
+that names no family, at an address that is none of theirs, gets `404` with `error.code`
+`no_family`, never another family's answer.
+
+An address the host is configured to serve whose family isn't open yet (the host is starting, or
+the family didn't open and is tried again every 30 seconds) answers `503` with `error.code`
+`not_ready` and `Retry-After`, whatever the request; a hello naming no family there is closed.
+A calendar's subscribers keep their copies through it (only `401` means a family stopped
+sharing). `GET /health` at an address that is no family's says only `{"ok", "api", "ready"}`,
+and fails (`503`, with `waiting`: how many families aren't open) until every configured family
+is. The web app is the same at every address, with that address in its Content-Security-Policy.
 
 Rate limits, failed tries and wrong invite or recovery words count per client across the whole
-host, so spreading tries over families' addresses buys none.
+host, so spreading tries over families' addresses buys none. The limit on wrong words for
+everyone together grows with the number of families, so a few clients can't keep every family
+from joining.
 
-A family's hub reading another family's shared calendar on the same host (`shared.ics` and its
-watch stream, at that family's https address) is answered in the host's own process, as a
-request from outside carrying only its secret: no DNS, proxy or `DEN_PEER_HUBS` is involved.
+A family's hub reading another family's calendar link on the same host (`GET` of
+`/ics/<secret>/<file>` and its watch stream, at that family's https address) is answered in the
+host's own process, as a request from outside carrying only its secret, counted under the
+reading hub's own limits: no DNS, proxy or `DEN_PEER_HUBS` is involved. Every other request a
+hub makes goes out through NetGuard.
 
 ### The command line's endpoints
 
@@ -2131,6 +2142,6 @@ anything else is `403 permission_denied`.
 | Method and path | What |
 | --- | --- |
 | `GET /api/v1/host` | `{"families": [{"id", "first", "public_url", "device", "family", "family_name", "ready", "stage", "setup_code"}]}` |
-| `POST /api/v1/host/families {"public_url"}` | A new family at that address, waiting for its first parent's phone (`setup_code`, `device`); an address a family was taken off brings that family back. `409 conflict` for an address in use |
+| `POST /api/v1/host/families {"public_url", "id"?}` | A new family at that address, waiting for its first parent's phone (`setup_code`, `device`); an address a family was taken off brings that family back (`id` says which, when more than one was: else `409 ambiguous` with `details.ids`). `409 conflict` for an address any family on the host has, open or not |
 | `POST /api/v1/host/logs {"id", "public_url", "adopted_from"}` | Serves the hub `den_hub adopt` copied into `logs/<id>/`. `409 conflict` when the host already serves its hub, its family or its address |
 | `DELETE /api/v1/host/families/{id or address}` | Stops serving that family; its data stays |

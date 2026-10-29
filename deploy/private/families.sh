@@ -48,6 +48,8 @@ Usage:
       keys and data; --container gives it a hub container of its own instead.
   sudo ./install.sh remove-family NAME [--delete-data]
       takes the family off this server; its data stays unless --delete-data
+  sudo ./install.sh remove-family NAME ADDRESS --delete-data
+      deletes the data the Den host kept for a family taken off it earlier
   sudo ./install.sh merge-families [--dry-run]
       moves every family that has a hub container of its own onto the Den host: a backup of
       every family first, then each hub's data, keys and all, so no phone pairs again
@@ -198,8 +200,12 @@ family_start() { # NAME: start (or keep) where its hub runs, and the shared serv
     run docker compose up -d --no-deps --wait --wait-timeout 300 "hub-$1" $(families_other_hubs "$1") dnsmasq caddy
   fi
 }
-families_on_host() { # the addresses the running host serves, one per line (as den_hub families says)
-  docker compose exec -T hub /app/bin/den_hub families 2>/dev/null | awk '{print $1}'
+families_on_host() { # the addresses the host has (serving, or opening again), one per line, as den_hub families lists them
+  docker compose exec -T hub /app/bin/den_hub families 2>/dev/null | awk '/^https?:\/\// && !/taken off/ {print $1}'
+}
+families_served() { # ADDRESS: does the host have it (serving it, or opening it again)?
+  [ "$CHECK" = 1 ] && return 1
+  families_on_host | grep -qx "https://$1"
 }
 families_container_hubs() { # every family's own hub container
   local f
@@ -490,18 +496,35 @@ families_add() {
 }
 
 families_remove() {
-  local name="" delete=0 a domain volume answer hosted=0
+  local name="" addr="" delete=0 a domain volume answer hosted=0
   for a in "$@"; do
     case $a in
       --delete-data) delete=1 ;;
       -*) families_usage ;;
-      *) [ -z "$name" ] || families_usage; name=$a ;;
+      *)
+        if [ -z "$name" ]; then name=$a
+        elif [ -z "$addr" ]; then addr=$a
+        else families_usage; fi
+        ;;
     esac
   done
   [ -n "$name" ] || families_usage
   families_ready
   families_check_name "$name"
   domain=$(family_domain "$name")
+  if [ -z "$domain" ] && [ -n "$addr" ]; then
+    # A family the Den host had, taken off earlier: only the data the host keeps is left.
+    [ "$delete" = 1 ] || stop "$name isn't on this server. To delete the data the host keeps for it: sudo ./install.sh remove-family $name $addr --delete-data"
+    if [ -t 0 ]; then
+      read -rp "   This deletes the hub the host kept for $addr for good: its keys and everything it holds. Type $name to go on: " answer
+      [ "$answer" = "$name" ] || stop "nothing changed"
+    fi
+    run docker compose exec -T hub /app/bin/den_hub remove-family --family "$addr" --delete-data ||
+      stop "the Den host didn't delete it (above says why; den_hub families lists what it keeps, with ids)."
+    info "Deleted the data the host kept for $addr."
+    return 0
+  fi
+  [ -z "$addr" ] || [ "$addr" = "$domain" ] || stop "$name is at $domain, not $addr"
   volume=$(families_volume "$name")
   family_hosted "$name" && hosted=1
   if [ -z "$domain" ] && ! docker volume inspect "$volume" >/dev/null 2>&1; then
@@ -534,7 +557,7 @@ families_remove() {
       info "Deleted $name's data from the Den host."
     else
       info "$name's data stays on the Den host (in the volume $(families_volume hub), under logs/):"
-      info "add-family $name $domain brings the same family back. To delete it: sudo ./install.sh remove-family $name --delete-data"
+      info "add-family $name $domain brings the same family back. To delete it: sudo ./install.sh remove-family $name $domain --delete-data"
     fi
   elif [ "$delete" = 1 ]; then
     if docker volume inspect "$volume" >/dev/null 2>&1; then
@@ -598,14 +621,17 @@ families_merge() {
    What it would do (--dry-run: nothing changed):
    1. docker compose run --rm backup             every family, into backups/
    2. for each of ${moving[*]}:
-        docker compose stop hub-<name>
+        docker compose stop hub-<name>             (only that, if the host has it already)
         docker compose run --rm --no-deps -v <its volume>:/adopt/<name> hub \\
           adopt /adopt/<name> --hostname <its address>
-        (the host serves it at once, as the same hub: no phone pairs again)
+        (the host serves it at once, as the same hub: no phone pairs again; if adopt fails,
+        hub-<name> starts again only if the host doesn't have it)
         DEN_FAMILY_<NAME>=<address> host ...       in .env
-   3. Caddyfile.families and compose.families.yaml again: every address to port $(families_host_port)
-   4. docker compose up -d --remove-orphans hub dnsmasq caddy    (the hub-<name> containers go)
+        Caddyfile.families and compose.families.yaml again, and Caddy and dnsmasq restarted:
+        its address to port $(families_host_port) at once
+   3. docker compose up -d --remove-orphans dnsmasq caddy    (the hub-<name> containers go)
    The volumes stay as they are. Phones and computers need nothing: same addresses, same hubs.
+   Safe to run again if it stops part way.
 EOF
     return 0
   fi
@@ -619,15 +645,31 @@ EOF
     domain=$(family_domain "$f")
     volume=$(families_volume "$f")
     step "$f: https://$domain onto the host"
-    run docker compose stop "hub-$f"
-    if ! run docker compose run --rm --no-deps -v "$volume:/adopt/$f" hub adopt "/adopt/$f" --hostname "$domain"; then
-      info "The host didn't take $f on; starting hub-$f again, as it was."
-      run docker compose start "hub-$f" || true
-      [ ${#moved[@]} -eq 0 ] || families_merge_finish
-      stop "merging $f didn't finish (above says why). ${moved[*]:+Moved: ${moved[*]}. }$f and the families after it keep their own containers; run this again once it's fixed."
+    # The host may serve it already (a merge that stopped after the copy, run again): then its
+    # container must never run again, whatever happens next. Two of the same hub would number
+    # their changes the same.
+    if families_served "$domain"; then
+      info "The host serves $f already."
+      run docker compose stop "hub-$f"
+    else
+      run docker compose stop "hub-$f"
+      if ! run docker compose run --rm --no-deps -v "$volume:/adopt/$f" hub adopt "/adopt/$f" --hostname "$domain"; then
+        # adopt can fail after the host took the family on (a connection cut after its answer):
+        # ask the host, never the exit code, before starting the container again.
+        if families_served "$domain"; then
+          info "The host took $f on all the same."
+        else
+          info "The host didn't take $f on; starting hub-$f again, as it was."
+          run docker compose start "hub-$f" || true
+          stop "merging $f didn't finish (above says why). ${moved[*]:+Moved: ${moved[*]}. }$f and the families after it keep their own containers; run this again once it's fixed."
+        fi
+      fi
     fi
     families_env_line "$(family_key "$f")" "$domain host$( [ -n "$(family_homes "$f")" ] && printf ' %s' "$(family_homes "$f")")"
     moved+=("$f")
+    # Its address to the host now, not at the end: each family is down only while it moves.
+    families_render
+    run docker compose up -d --no-deps --wait --wait-timeout 300 dnsmasq caddy
   done
   families_merge_finish
   step "Every family is on the Den host"
@@ -645,7 +687,7 @@ EOF
 EOF
 }
 
-families_merge_finish() { # after families moved: the new files, Caddy to the host, containers gone
+families_merge_finish() { # after families moved: the files again, and the containers gone
   families_render
   run docker compose up -d --remove-orphans --no-deps --wait --wait-timeout 300 $(families_other_hubs) dnsmasq caddy
 }

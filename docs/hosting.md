@@ -381,10 +381,15 @@ What it does, family by family:
    running host serve it at once. Smith's line in `.env` then says `host`. If the adopt fails,
    `hub-smith` starts again as it was, and the merge stops there (the families before it stay
    merged; run it again once it's fixed).
-3. `Caddyfile.families` again, with every address to the host's port, and
-   `compose.families.yaml` without the containers; Caddy and dnsmasq restart, and the
-   `hub-<name>` containers go. The first family's hub restarts too when it loses the calendar
-   settings the containers needed: every family's app reconnects within a moment.
+3. As soon as each family is on the host, Caddy sends its address there (Caddy and dnsmasq
+   restart, a moment for everyone), so a family is down only while it moves. At the end
+   `compose.families.yaml` drops the containers and the `hub-<name>` containers go. The first
+   family's hub restarts too when it loses the calendar settings the containers needed: every
+   family's app reconnects within a moment.
+
+**Run it again** whenever it stopped: before it stops or starts any family's container it asks
+the host whether it already has that family, so a family the host took on is never started in
+its old container again, even when the move was cut short after the copy.
 
 **What changes for phones and computers: nothing.** The same address (Caddy now sends it to the
 host), the same hub (its keys moved with it, so it has the same device id), so every app keeps
@@ -445,8 +450,18 @@ restore it.
 **Taking a family off** stops the host serving it, takes its address out of Caddy and dnsmasq and
 its homes out of the firewall, and keeps its data (in the hub's volume under `logs/`, or its own
 volume for a container): `add-family smith` with the same address brings the same hub back,
-family and all. `remove-family smith --delete-data` deletes it. Either way the backups stay in
-`backups/smith/`, and its DNS record, split-DNS entry and Tailscale group are yours to delete.
+family and all (when more than one family was taken off that address, it lists their ids: `docker
+compose exec hub /app/bin/den_hub add-family --hostname den-smith.example.com --id <id>` picks
+one, then `add-family smith` again). `remove-family smith --delete-data` deletes it; for a family taken off the host
+earlier, `remove-family smith den-smith.example.com --delete-data`. Either way the backups stay
+in `backups/smith/`, and its DNS record, split-DNS entry and Tailscale group are yours to delete.
+
+**A family that won't open.** When the hub starts, a family whose data doesn't open (its lock
+held by a backup that is still running, say) is left out and tried again every 30 seconds; its
+address answers "starting" meanwhile, never another family's page, and its calendar's
+subscribers keep their copies. `docker compose ps` shows the hub unhealthy until every family is
+open (Caddy and the other families keep running), `den_hub families` lists it as not open, and
+`docker compose logs hub` says why.
 
 #### What keeps families apart
 
@@ -1352,6 +1367,7 @@ The hosted compose file sets these from `.env`; the hub reads them from its envi
 | `DEN_CSP` | Replaces the web app's Content-Security-Policy, for a web build that needs a CDN after all |
 | `DEN_ALLOWED_ORIGINS` | Extra browser origins for `/mcp` and OAuth (`https://claude.ai` is allowed already) |
 | `DEN_FETCH_ALLOW` | Private networks the hub may fetch calendar feeds from; by default only the public internet |
+| `DEN_HOST_RETRY` | Seconds between tries at a family of a Den host that didn't open when the hub started (30) |
 | `DEN_PEER_HUBS` | The other families' addresses on this server in hubs of their own (names or `https://` addresses), whose shared calendars this hub may fetch through the server's own reverse proxy on loopback. Only these names (and the addresses of the families this hub serves), only over `https`. Families on the same Den host need none of it. The private setup's `install.sh` sets it while any family has a container of its own ([Calendars shared between families on this server](#calendars-shared-between-families-on-this-server)) |
 
 **The public posture.** A hub whose `DEN_PUBLIC_URL` is `https` assumes strangers can reach it:
