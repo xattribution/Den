@@ -74,7 +74,7 @@ second address would be a second app, and a second device in the family.
 ### What you need (private)
 
 - **A server**, as for the other setups ([What you need](#what-you-need)): 2 GB of memory,
-  Ubuntu 24.04 or Debian 12. If the provider puts a firewall of its own in front of it, open TCP
+  Ubuntu 24.04 or 26.04, or Debian 12. If the provider puts a firewall of its own in front of it, open TCP
   443 and UDP 41641 there (and TCP 22 while you set up), or leave it off: the server's own
   firewall is the one that decides.
 - **A domain on Cloudflare** (its DNS, on any plan). Den gets a name in it, like
@@ -92,8 +92,14 @@ second address would be a second app, and a second device in the family.
 
 ### Before you install: the tailnet
 
-1. Make a tailnet for the family at [tailscale.com](https://tailscale.com). If Den joins a tailnet
-   you already use, merge the policy below into yours instead of replacing it.
+1. Make a tailnet for the family at [tailscale.com](https://tailscale.com), or use the one you
+   already have. **In a tailnet you already use, merge** the policy below into yours (its
+   `groups`, `tagOwners`, `grants` and `tests` entries) **instead of replacing it**, and check one
+   thing before you invite anyone: if your policy still allows everyone everything (the default
+   `{"action": "accept", "src": ["*"], "dst": ["*:*"]}`, or a grant from `*` to `*`), replace that
+   with rules for your own devices first. Otherwise the family could reach your other machines.
+   If the server is already on your tailnet as one of your own devices, give it the tag in the
+   admin console: **Machines**, the server's menu, **Edit ACL tags**, `tag:den-server`.
 2. In the admin console, **Access controls**: paste `deploy/private/tailscale-acl.hujson`, put
    the family's sign-in emails in `group:family` and yours in `group:admins`, and save. Tailscale
    runs the tests at its end as it saves.

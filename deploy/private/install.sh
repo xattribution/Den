@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Den, private setup: makes a fresh Ubuntu 24.04 or Debian 12 server into the family's private
+# Den, private setup: makes a fresh Ubuntu 24.04 or 26.04, or Debian 12, server into the family's private
 # hub, reachable only from the family's homes and over Tailscale (docs/hosting.md, "Private: home
 # networks plus Tailscale"). From den/deploy/private:
 #
@@ -95,9 +95,9 @@ step "0. This server"
 [ "$(id -u)" = 0 ] || stop "run it as root: sudo ./install.sh"
 . /etc/os-release
 case "$ID:$VERSION_ID" in
-  ubuntu:24.04 | debian:12) info "$PRETTY_NAME" ;;
+  ubuntu:24.04 | ubuntu:26.04 | debian:12) info "$PRETTY_NAME" ;;
   *)
-    [ "${DEN_ANY_OS:-0}" = 1 ] || stop "this is written for Ubuntu 24.04 and Debian 12, and this is $PRETTY_NAME. To try anyway: sudo DEN_ANY_OS=1 ./install.sh"
+    [ "${DEN_ANY_OS:-0}" = 1 ] || stop "this is written for Ubuntu 24.04 and 26.04 and Debian 12, and this is $PRETTY_NAME. To try anyway: sudo DEN_ANY_OS=1 ./install.sh"
     info "$PRETTY_NAME (not tested; going on because DEN_ANY_OS=1)"
     ;;
 esac
