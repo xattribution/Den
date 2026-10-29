@@ -20,7 +20,7 @@ export 'src/recovery.dart'
         serverRecoveryKeyOf;
 export 'src/rrule.dart' show RecurrenceRule, Frequency, WeekdayNum, UntilKind;
 export 'src/schema.dart' show checkFields, photoFormat;
-export 'src/secrets.dart' show hashToken;
+export 'src/secrets.dart' show SignInKdf, hashToken;
 export 'src/space_keys.dart';
 export 'src/storage.dart';
 export 'src/views.dart';

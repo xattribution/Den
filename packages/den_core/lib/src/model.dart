@@ -414,11 +414,39 @@ class AssistantPolicy {
   int get hashCode => Object.hash(enabled, kidDailyLimit, budgetCents, Object.hashAllUnordered(members));
 }
 
+/// How someone signs in on shared screens (`member.signIn`): the kind, and for a PIN or picture
+/// pattern its salted hash and how that was stretched (secrets.dart).
 class SignIn {
-  const SignIn(this.kind, this.salt, this.hash);
+  const SignIn(this.kind, this.salt, this.hash, {this.digits = 4, this.kdf, this.memoryKiB, this.iterations, this.parallelism});
+
+  factory SignIn.fromMap(Map<String, Object?> raw) => SignIn(
+        raw['kind'] as String? ?? 'none',
+        raw['salt'] as String?,
+        raw['hash'] as String?,
+        digits: (raw['digits'] as num?)?.toInt() ?? 4,
+        kdf: raw['kdf'] as String?,
+        memoryKiB: (raw['memoryKiB'] as num?)?.toInt(),
+        iterations: (raw['iterations'] as num?)?.toInt(),
+        parallelism: (raw['parallelism'] as num?)?.toInt(),
+      );
+
   final String kind; // pin | pattern | none
   final String? salt;
   final String? hash;
+
+  /// How many digits a PIN has: 4, or 6.
+  final int digits;
+
+  /// How the hash was stretched: `argon2id-v1` with [memoryKiB], [iterations] and [parallelism],
+  /// or null for PBKDF2 (20,000 rounds), which sign-ins set before Argon2id still use.
+  final String? kdf;
+  final int? memoryKiB;
+  final int? iterations;
+  final int? parallelism;
+
+  /// Whether it is a PIN or pattern stretched the old, faster way: it still works, and is
+  /// stretched the new way when it is next set.
+  bool get stretchedOld => (kind == 'pin' || kind == 'pattern') && hash != null && kdf == null;
 }
 
 class Member extends RecordView {
@@ -455,10 +483,7 @@ class Member extends RecordView {
 
   Set<Grant> get grants =>
       rec.strings('grants').map((g) => _enum(Grant.values, g)).whereType<Grant>().toSet();
-  SignIn get signIn {
-    final raw = rec.map('signIn');
-    return SignIn(raw['kind'] as String? ?? 'none', raw['salt'] as String?, raw['hash'] as String?);
-  }
+  SignIn get signIn => SignIn.fromMap(rec.map('signIn'));
 
   int get order => rec.integer('order');
   bool get isParent => role == Role.parent;

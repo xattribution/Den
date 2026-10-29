@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'model.dart';
 import 'rrule.dart';
+import 'secrets.dart';
 import 'time.dart';
 
 /// Checks one field value; returns a message for people, or null when it's fine.
@@ -345,10 +346,18 @@ String? _photoData(String label, Object? v) {
   return null;
 }
 
+/// A PIN of 4 or 6 digits, or a picture pattern, salted and hashed (secrets.dart). Without
+/// `kdf` the hash is PBKDF2's, from before Argon2id; with it, its parameters are bounded so no
+/// sign-in makes a shared screen wait.
 final FieldCheck _signIn = shape({
   'kind': oneOf(['pin', 'pattern', 'none']),
   'salt': text(max: 100, nullable: true),
   'hash': text(max: 200, nullable: true),
+  'digits': number(min: 4, max: 6, nullable: true),
+  'kdf': oneOf([SignInKdf.argon2id], nullable: true),
+  'memoryKiB': number(min: 1024, max: 64 * 1024, nullable: true),
+  'iterations': number(min: 1, max: 10, nullable: true),
+  'parallelism': number(min: 1, max: 4, nullable: true),
 }, required: {'kind'});
 
 /// Stars a chore or step is worth.
