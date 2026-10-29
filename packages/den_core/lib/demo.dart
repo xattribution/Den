@@ -24,12 +24,12 @@ const Map<String, String> demoSignIns = {
 /// [demoTimeZone], so "today" doesn't depend on the machine's zone. Without [now] the demo is
 /// seeded around the real time and the engine follows the real clock. [storage] must be empty.
 ///
-/// Two parents (Alex, Priya), three kids (Maya 14, Leo 8, Zoe 4) and Grandma Rosa; a kitchen
-/// display that the kids check chores off on; this week's school runs, soccer practice with
-/// nobody picking up, a dentist visit, a birthday party, dinner at Grandma's, a parents-only
-/// dinner, a swim lesson today with no driver, and a beach trip countdown; daily and rotating
-/// chores with steps and points, completions through the week, groceries across three stores,
-/// a packing list, a meal plan and a dated list; goals, rewards and a pending request.
+/// Two parents (Alex, who saved recovery words, and Priya), three kids (Maya 14, Leo 8, Zoe 4) and
+/// Grandma Rosa; a kitchen display that the kids check chores off on; this week's school runs,
+/// soccer practice with nobody picking up, a dentist visit, a birthday party, dinner at Grandma's,
+/// a parents-only dinner, a swim lesson today with no driver, and a beach trip countdown; daily and
+/// rotating chores with steps and points, completions through the week, groceries across three
+/// stores, a packing list, a meal plan and a dated list; goals, rewards and a pending request.
 Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? now}) async {
   const zone = demoTimeZone;
   final fixedNow = now == null
@@ -109,6 +109,8 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
   for (final e in names.entries) {
     await phone.setSignIn(e.key, kind: e.key == zoe ? 'pattern' : 'pin', secret: demoSignIns[e.value]);
   }
+  // Alex saved recovery words when the family was set up; the demo keeps only their public half.
+  await phone.setRecoveryKey(alex, (await RecoveryKey.generate()).publicKey);
 
   final school = await phone.addCategory(name: 'School', icon: 'school');
   final sports = await phone.addCategory(name: 'Sports', icon: 'sports');

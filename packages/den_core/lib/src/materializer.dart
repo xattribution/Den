@@ -615,6 +615,8 @@ String verbFor(Change c, Map<String, Object?> before, bool created) {
       if (f['revoked'] == true) return 'removed';
       if (f['approved'] == true && before['approved'] != true) return 'approved';
       if (created && f['approved'] == false) return 'requested';
+    case RecordType.signInTries:
+      return 'counted';
     case RecordType.connection:
       if (f['status'] == ConnectionStatus.revoked.name) return 'removed';
       if (created && f['status'] == ConnectionStatus.pending.name) return 'requested';
@@ -651,6 +653,11 @@ String titleOf(Entry e, RecordStore store) {
     case RecordType.subscription:
     case RecordType.connection:
       return field(e, 'label');
+    case RecordType.signInTries:
+      final member = e.fields['member'];
+      final m = member is String ? store.at(Space.family, RecordType.member, member) : null;
+      final kind = (m?.fields['signIn'] as Map?)?['kind'] == 'pattern' ? 'pattern' : 'PIN';
+      return '${e.fields['tries']} wrong tries at ${field(m, 'name')}\'s $kind';
     default:
       return field(e, 'title');
   }

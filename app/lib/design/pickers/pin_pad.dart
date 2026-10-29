@@ -6,13 +6,15 @@ import '../motion.dart';
 import '../tokens.dart';
 
 /// A 4-digit PIN pad for shared screens: four dots and a phone-style keypad with 72-dp keys, so
-/// kids and grandparents can use it on the wall. Calls [onComplete] on the last digit.
+/// kids and grandparents can use it on the wall. Calls [onComplete] on the last digit. Not
+/// [enabled] (while a wrong try makes someone wait), the keys stay in view but can't be pressed.
 class PinPad extends StatefulWidget {
-  const PinPad({super.key, required this.onComplete, this.length = 4, this.keySize = 76});
+  const PinPad({super.key, required this.onComplete, this.length = 4, this.keySize = 76, this.enabled = true});
 
   final ValueChanged<String> onComplete;
   final int length;
   final double keySize;
+  final bool enabled;
 
   @override
   State<PinPad> createState() => PinPadState();
@@ -25,7 +27,7 @@ class PinPadState extends State<PinPad> {
   void clear() => setState(() => _digits = '');
 
   void _press(String d) {
-    if (_digits.length >= widget.length) return;
+    if (_digits.length >= widget.length || !widget.enabled) return;
     HapticFeedback.selectionClick();
     setState(() => _digits += d);
     if (_digits.length == widget.length) widget.onComplete(_digits);
@@ -35,11 +37,12 @@ class PinPadState extends State<PinPad> {
   Widget build(BuildContext context) {
     final c = context.colors;
     final size = widget.keySize < Targets.kid ? Targets.kid : widget.keySize;
+    final on = widget.enabled;
     Widget key(String d) => _Key(
           size: size,
           label: d,
-          onTap: () => _press(d),
-          child: Text(d, style: context.type.heading(c.ink)),
+          onTap: on ? () => _press(d) : null,
+          child: Text(d, style: context.type.heading(on ? c.ink : c.ink3)),
         );
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -91,10 +94,10 @@ class PinPadState extends State<PinPad> {
               size: size,
               label: 'Delete',
               filled: false,
-              onTap: _digits.isEmpty
+              onTap: _digits.isEmpty || !on
                   ? null
                   : () => setState(() => _digits = _digits.substring(0, _digits.length - 1)),
-              child: Icon(PhosphorIconsRegular.backspace, size: 28, color: _digits.isEmpty ? c.ink3 : c.ink),
+              child: Icon(PhosphorIconsRegular.backspace, size: 28, color: _digits.isEmpty || !on ? c.ink3 : c.ink),
             ),
           ],
         ),

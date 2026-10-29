@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
 import '../../../design/layout.dart';
@@ -10,10 +13,12 @@ import '../../../design/pickers/pattern_pad.dart';
 import '../../../design/pickers/pin_pad.dart';
 import '../../family/family.dart';
 import '../state/sign_in_actions.dart';
+import '../state/sign_in_guard.dart';
 
 /// Asks who is acting on a shared screen: the family's avatars, then that person's PIN or
 /// picture pattern, then [Den.actAs] for [window]. Returns the member, or null if dismissed.
-/// [likely] puts one person first, such as the owner of the chore being checked.
+/// [likely] puts one person first, such as the owner of the chore being checked. After a wrong
+/// try the pad waits a moment, and says for how long ([SignInWait]).
 Future<Member?> showWhoSheet(
   BuildContext context, {
   String title = "Who's doing this?",
@@ -47,6 +52,9 @@ class _WhoSheetState extends State<_WhoSheet> {
   Member? _chosen;
   String? _error;
   bool _checking = false;
+
+  /// What the last wrong try was, said with the wait ("That's not Alex's PIN.").
+  String? _wrong;
   final _pin = GlobalKey<PinPadState>();
   final _pattern = GlobalKey<PatternPadState>();
 
@@ -65,6 +73,7 @@ class _WhoSheetState extends State<_WhoSheet> {
     setState(() {
       _chosen = m;
       _error = null;
+      _wrong = null;
     });
     if (m.signIn.kind != 'pin' && m.signIn.kind != 'pattern') await _verify('');
   }
@@ -72,18 +81,19 @@ class _WhoSheetState extends State<_WhoSheet> {
   Future<void> _verify(String secret) async {
     final m = _chosen!;
     final den = context.den;
+    final actions = context.signInActions;
     setState(() => _checking = true);
-    final ok = await SignInActions(den).verify(m.id, secret);
+    final check = await actions.verify(m.id, secret);
     if (!mounted) return;
     setState(() => _checking = false);
-    if (ok) {
+    if (check.ok) {
       final owner = den.owner;
       if (owner != null && owner.id != m.id) {
         setState(() => _error = 'This is ${FamilyWords.possessive(owner.name)} device, so only ${owner.name} can act here.');
         return;
       }
       try {
-        SignInActions(den).actAs(m.id, window: widget.window);
+        actions.actAs(m.id, window: widget.window);
       } on PermissionDenied catch (e) {
         setState(() => _error = e.message);
         return;
@@ -92,7 +102,13 @@ class _WhoSheetState extends State<_WhoSheet> {
       return;
     }
     setState(() {
-      _error = switch (m.signIn.kind) {
+      // A wrong PIN or pattern is said with the wait, plainly, under the pad.
+      _wrong = switch (m.signIn.kind) {
+        'pin' => "That's not ${FamilyWords.possessive(m.name)} PIN.",
+        'pattern' => "That's not ${FamilyWords.possessive(m.name)} pattern.",
+        _ => null,
+      };
+      _error = check.wait > Duration.zero ? null : switch (m.signIn.kind) {
         'pin' => "That's not ${FamilyWords.possessive(m.name)} PIN. Try again.",
         'pattern' => "That's not ${FamilyWords.possessive(m.name)} pattern. Try again.",
         _ when m.isParent => '${m.name} needs a PIN or pattern to act on a shared screen. Add one in Family on your phone.',
@@ -129,6 +145,7 @@ class _WhoSheetState extends State<_WhoSheet> {
     }
 
     final kind = chosen.signIn.kind;
+    final waiting = context.signInActions.waitFor(chosen.id) > Duration.zero;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -138,6 +155,7 @@ class _WhoSheetState extends State<_WhoSheet> {
               onTap: () => setState(() {
                 _chosen = null;
                 _error = null;
+                _wrong = null;
               }),
             ),
             const SizedBox(width: Sp.m),
@@ -156,17 +174,70 @@ class _WhoSheetState extends State<_WhoSheet> {
           ],
         ),
         const SizedBox(height: Sp.l),
-        if (kind == 'pin') PinPad(key: _pin, onComplete: _verify),
-        if (kind == 'pattern') PatternPad(key: _pattern, onComplete: _verify, hidden: true),
+        if (kind == 'pin') PinPad(key: _pin, onComplete: _verify, enabled: !waiting),
+        if (kind == 'pattern') PatternPad(key: _pattern, onComplete: _verify, hidden: true, enabled: !waiting),
         if (_checking && kind != 'pin' && kind != 'pattern')
           const Padding(padding: EdgeInsets.all(Sp.xl), child: CircularProgressIndicator()),
-        if (_error != null)
+        if (waiting)
+          Padding(
+            padding: const EdgeInsets.only(top: Sp.m),
+            child: SignInWait(member: chosen.id, lead: _wrong, onDone: () => setState(() => _wrong = null)),
+          )
+        else if (_error != null)
           Padding(
             padding: const EdgeInsets.only(top: Sp.m),
             child: AttentionLine(message: _error!, bad: true),
           ),
       ],
     );
+  }
+}
+
+/// "That's not Alex's PIN. Try again in 20 seconds" while a wrong try makes [member] wait here,
+/// counting down, then [onDone]. Ink words and an hourglass: nothing red, nothing that blames
+/// anyone.
+class SignInWait extends StatefulWidget {
+  const SignInWait({super.key, required this.member, required this.onDone, this.lead});
+
+  final String member;
+  final VoidCallback onDone;
+
+  /// What went wrong, said first; null when the wait was there before this try.
+  final String? lead;
+
+  @override
+  State<SignInWait> createState() => _SignInWaitState();
+}
+
+class _SignInWaitState extends State<SignInWait> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (context.signInActions.waitFor(widget.member) > Duration.zero) {
+        setState(() {});
+      } else {
+        _tick?.cancel();
+        widget.onDone();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final left = context.signInActions.waitFor(widget.member);
+    if (left == Duration.zero) return const SizedBox.shrink();
+    final lead = widget.lead;
+    return NoticeLine(icon: PhosphorIconsBold.hourglassMedium, message: lead == null ? tryAgainIn(left) : '$lead ${tryAgainIn(left)}');
   }
 }
 

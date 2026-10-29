@@ -111,6 +111,7 @@ class _FamilySettingsScreenState extends State<FamilySettingsScreen> {
             onChanged: (review) => _write(() => actions.setCaptureReview(review)),
           ),
         ),
+        const Ungapped(RecoveryWordsReminder()),
         const Ungapped(HubHelpSwitch()),
       ],
     );

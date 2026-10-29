@@ -2,7 +2,7 @@ import 'package:den_core/den_core.dart';
 
 import '../../../app/app_state.dart';
 import '../../calendar/calendar_words.dart';
-import '../../family/family.dart' show Recovery;
+import '../../family/family.dart' show Recovery, RecoveryReminder;
 
 /// Something on Today that waits for the person using the device, with one action that settles
 /// it. Each has a [key] that stays the same while it waits, so a settled one keeps its place.
@@ -107,6 +107,26 @@ final class AccessEndedNeed extends Need {
   String get key => 'ended:${member.id}:$until';
 }
 
+/// A shared screen saw someone get a person's PIN or pattern wrong ten times in a row, said on
+/// a parent's own phone: "Got it".
+final class SignInTriesNeed extends Need {
+  const SignInTriesNeed(this.told);
+  final SignInTries told;
+
+  @override
+  String get key => 'tries:${told.id}';
+}
+
+/// This parent hasn't saved their recovery words and no other parent has a device of their own
+/// (`RecoveryReminder`): "Save them", or "Remind me later".
+final class RecoveryWordsNeed extends Need {
+  const RecoveryWordsNeed(this.member);
+  final String member;
+
+  @override
+  String get key => RecoveryReminder.snoozeKey(member);
+}
+
 /// How long a privacy change or a sitter's ended access stays in Needs you unless put away.
 const int noticeDays = 14;
 
@@ -172,6 +192,8 @@ List<Need> needsYou(AppState app, {required int now}) {
     out.addAll(den.pendingDevices.map(DeviceNeed.new));
     out.addAll([for (final c in den.connections) if (c.status == ConnectionStatus.pending) ConnectionNeed(c)]);
     out.addAll(Recovery.unseen(den, app.seen).map(RecoveredNeed.new));
+    out.addAll(_triesToTell(app, now).map(SignInTriesNeed.new));
+    if (RecoveryReminder.due(app, now: now)) out.add(RecoveryWordsNeed(me.id));
   }
 
   final today = app.today;
@@ -183,6 +205,20 @@ List<Need> needsYou(AppState app, {required int now}) {
     out.add(ListNeed(l));
   }
   return out;
+}
+
+/// What shared screens said about wrong tries in the last [noticeDays] that this device hasn't
+/// put away: the newest for each screen and person.
+List<SignInTries> _triesToTell(AppState app, int now) {
+  final newest = <(String, String), SignInTries>{};
+  for (final t in app.den.signInTries) {
+    if (now - t.at > noticeDays * 86400000) continue;
+    newest.putIfAbsent((t.device, t.member), () => t);
+  }
+  return [
+    for (final t in newest.values)
+      if (app.memberById(t.member) != null && !app.seen(SignInTriesNeed(t).key)) t,
+  ];
 }
 
 /// [needsYou], computed again only when what it reads changes or the hour turns.
@@ -204,6 +240,7 @@ class NeedsModel extends DenView<List<Need>> {
         RecordType.list,
         RecordType.item,
         RecordType.connection,
+        RecordType.signInTries,
         Changes.notices,
       };
 

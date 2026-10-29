@@ -487,6 +487,28 @@ class Den {
     return verifySignInHash(secret, signIn.salt!, signIn.hash!);
   }
 
+  /// On a shared screen: tells the family's parents that someone got [memberId]'s PIN or picture
+  /// pattern wrong [tries] times in a row here (a `signInTries` record in the family space, so
+  /// it travels like any change and History shows it). Written for nobody, whoever is acting:
+  /// it is the screen that saw it.
+  Future<void> noteSignInTries(String memberId, int tries) async {
+    if (thisDevice?.mode != DeviceMode.shared) throw const PermissionDenied('Only a shared screen says that');
+    if (member(memberId) == null) throw const InvalidInput('That person isn\'t in the family');
+    await _commit([
+      _Draft(RecordType.signInTries, newId(), Space.family, {'device': deviceId, 'member': memberId, 'tries': tries},
+          actor: null, setsActor: true),
+    ]);
+  }
+
+  /// What shared screens said about wrong PIN and pattern tries ([noteSignInTries]), newest
+  /// first.
+  List<SignInTries> get signInTries => _memo('signInTries', const {RecordType.signInTries}, visible: false, () {
+        return [
+          for (final e in _mat.store.liveOfType(RecordType.signInTries))
+            if (e.space == Space.family) SignInTries(e.rec),
+        ]..sort((a, b) => b.rec.created.compareTo(a.rec.created));
+      });
+
   /// Writes the genesis changes: the family, the founding parent and this device, approved.
   Future<void> createFamily({
     required String familyName,

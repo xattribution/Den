@@ -11,11 +11,13 @@ import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../state/family_needs.dart';
 import '../state/recovery.dart';
+import '../state/recovery_reminder.dart';
 import '../state/trust_actions.dart';
 import '../words/family_words.dart';
 import '../words/recovery_lines.dart';
 import 'family_parts.dart';
 import 'person_sheets.dart';
+import 'recovery_reminder.dart';
 
 /// Needs you at the top of Family (Family.dc.html): devices asking to join, assistants asking
 /// to connect, and a parent's PIN once there's a shared screen, each with its one answer, which
@@ -152,6 +154,12 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
               child: const Text('Set PIN', maxLines: 1, softWrap: false),
             ),
           ),
+        ),
+      RecoveryWordsAsk() => (
+          faceOr(null, PhosphorIconsRegular.key, context, size: 44),
+          RecoveryReminder.title,
+          RecoveryReminder.detail,
+          RecoveryWordsButtons(onDone: (message) => setState(() => _settled[key] = _Settled(message, null))),
         ),
     };
     return Padding(
