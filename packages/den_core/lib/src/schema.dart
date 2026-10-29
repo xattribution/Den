@@ -153,17 +153,30 @@ class TypeSpec {
 /// Checks one entry of a map field written on its own, as `"<field>.<key>"`.
 typedef EntryCheck = String? Function(String key, Object? value);
 
-/// One overridden event field of an occurrence; null clears the override.
+/// One overridden event field of an occurrence; null clears the override. `drivers.<leg>`
+/// overrides one ride leg's driver: a member id, or `""` for nobody this time.
 String? _patchEntry(String key, Object? value) {
+  if (key.startsWith('drivers.')) {
+    final leg = key.substring(8);
+    if (!rideLegs.contains(leg)) return 'A ride leg is "to" or "from"';
+    if (value == null || value == '') return null;
+    return id()('Driver', value);
+  }
   if (!patchableEventFields.contains(key)) return 'An occurrence can\'t change "$key" on its own';
   return value == null ? null : eventFields[key]!(_label(key), value);
 }
 
+/// One leg of `event.drivers`, written on its own as `drivers.<leg>`: who drives, or null for
+/// nobody yet.
+String? _driverEntry(String key, Object? value) =>
+    rideLegs.contains(key) ? id(nullable: true)('Driver', value) : 'A ride leg is "to" or "from"';
+
 final FieldCheck _reminders = listOf(number(min: 0, max: 40320), max: 10);
 final FieldCheck _rides = listOf(
-  shape({'leg': oneOf(['to', 'from']), 'driver': id(nullable: true)}, required: {'leg'}),
+  shape({'leg': oneOf(rideLegs), 'driver': id(nullable: true)}, required: {'leg'}),
   max: 4,
 );
+final FieldCheck _drivers = shape({for (final leg in rideLegs) leg: id(nullable: true)});
 final FieldCheck _memberIds = listOf(id(), max: 50, unique: true);
 
 final Map<String, FieldCheck> eventFields = {
@@ -184,6 +197,7 @@ final Map<String, FieldCheck> eventFields = {
     'label': text(max: maxTitle, nullable: true),
   }, required: {'kind'}),
   'rides': _rides,
+  'drivers': _drivers,
   'countdown': flag(),
 };
 
@@ -439,7 +453,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'name': text(min: 1, max: maxName),
     'icon': text(max: 40),
   }, required: {'name'}, space: Space.family),
-  RecordType.event: TypeSpec(eventFields, required: {'title', 'start', 'end'}),
+  RecordType.event: TypeSpec(eventFields, required: {'title', 'start', 'end'}, entries: {'drivers': _driverEntry}),
   RecordType.eventException: TypeSpec({
     'event': id(),
     'occurrence': number(min: 0),
