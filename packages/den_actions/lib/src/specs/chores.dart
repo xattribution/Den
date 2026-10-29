@@ -3,6 +3,7 @@ import 'package:den_core/den_core.dart';
 import '../context.dart';
 import '../input.dart';
 import '../resolve.dart';
+import '../runner.dart';
 import '../schema.dart';
 import '../shapes.dart';
 import '../spec.dart';
@@ -68,6 +69,9 @@ List<ActionSpec> choreActions() => [
         scopes: const {Scope.chores},
         needs: const [DenAction.editChores],
         effect: Effect.write,
+        confirm: Confirm.server,
+        confirmWhen: (c, a) => _sameChore(c, a) != null,
+        ask: (c, a) => '${_sameChore(c, a)} Add another one anyway?',
         engine: const {'addChore'},
         example: const {'title': 'Water the tomatoes', 'owner': 'Maya', 'repeat': 'FREQ=WEEKLY;BYDAY=SA', 'points': 2},
         prepare: stepsAsObjects,
@@ -119,7 +123,9 @@ List<ActionSpec> choreActions() => [
         mcpName: 'complete_chore',
         title: 'Mark a chore done',
         description: 'Marks a chore done (or not done) on a day; done also checks every step. With "step", checks '
-            'or unchecks just that step (checking the last one completes the chore).',
+            'or unchecks just that step (checking the last one completes the chore). A chore already that way '
+            'says so and changes nothing. A day still to come asks first, since its stars count now; a kid '
+            'checks off a chore only on its day. The answer says who the stars went to.',
         input: S.input({
           'chore': S.string('The chore\'s title or id.'),
           'step': S.string('Just this step (its text or id).'),
@@ -128,11 +134,20 @@ List<ActionSpec> choreActions() => [
           'person': S.person('Who did it (default this connection\'s person, "nobody" for no one in particular); also '
               'picks between chores with the same title.'),
         }, required: ['chore']),
-        output: S.output(choreDayOutput),
+        output: S.output({...choreDayOutput, 'stars_to': Out.strOrNull('Who its stars went to, when it was just done.')}),
         scopes: const {Scope.chores},
         needs: const [DenAction.completeOwnChore],
         effect: Effect.write,
         idempotent: true,
+        confirm: Confirm.server,
+        confirmWhen: _ahead,
+        ask: (c, a) {
+          final date = c.date(a.raw['date'], 'date');
+          final chore = c.chore(a.str('chore', required: true)!, owner: _credit(c, a), date: date);
+          final days = daysBetween(c.today, date);
+          return 'Mark ${chore.title} done for ${c.longDay(date)}, ${days == 1 ? 'a day' : '$days days'} ahead? Its '
+              'stars count now.';
+        },
         engine: const {'setChoreDone', 'setChoreDoneBy', 'setStep', 'setStepBy'},
         example: const {'chore': 'Bring in the mail'},
         run: _complete,
@@ -161,7 +176,7 @@ List<ActionSpec> choreActions() => [
 ChoreOwner? _owner(ActionContext c, ActionInput a, String start) {
   final rotation = a.list('rotation');
   if (rotation != null && rotation.isNotEmpty) {
-    final from = a.has('rotation_start') ? toolDate(a.raw['rotation_start'], c.zone, 'rotation_start') : start;
+    final from = a.has('rotation_start') ? c.date(a.raw['rotation_start'], 'rotation_start') : start;
     return OwnerRotation(c.people.many(rotation, 'rotation'), a.str('rotate_every') ?? 'week', from);
   }
   final owner = a.str('owner');
@@ -171,13 +186,13 @@ ChoreOwner? _owner(ActionContext c, ActionInput a, String start) {
 }
 
 ChoreSchedule? _schedule(ActionContext c, ActionInput a) {
-  if (a.has('once')) return ChoreSchedule.once(toolDate(a.raw['once'], c.zone, 'once'));
+  if (a.has('once')) return ChoreSchedule.once(c.date(a.raw['once'], 'once'));
   if (!a.has('repeat') && !a.has('start')) return null;
   final rule = (a.str('repeat') ?? 'FREQ=DAILY').trim();
   if (!RecurrenceRule.isValid(rule)) {
     throw ActionError('"$rule" isn\'t a repeat rule Den understands, such as FREQ=DAILY.', field: 'repeat');
   }
-  return ChoreSchedule.repeating(rule, a.has('start') ? toolDate(a.raw['start'], c.zone, 'start') : c.today);
+  return ChoreSchedule.repeating(rule, a.has('start') ? c.date(a.raw['start'], 'start') : c.today);
 }
 
 /// The steps given, or null when there are none. A step given by the id of one [before] has
@@ -205,10 +220,28 @@ String? _due(ActionInput a) {
   return due;
 }
 
+/// "There's already a chore called Make bed for Elsie." when the chore a create call describes
+/// has the name (any case) and owner of one the family has, else null.
+String? _sameChore(ActionContext c, ActionInput a) {
+  final title = a.str('title', required: true)!;
+  final schedule = _schedule(c, a) ?? ChoreSchedule.repeating('FREQ=DAILY', c.today);
+  final owner = _owner(c, a, schedule.start ?? schedule.once ?? c.today) ?? const OwnerAnyone();
+  final key = owner.toJson().toString();
+  final same = c.chores.where((x) => sameName(x.title, title) && x.owner.toJson().toString() == key).firstOrNull;
+  if (same == null) return null;
+  final whose = owner is OwnerAnyone ? ' for anyone' : ' for ${c.ownerText(same)}';
+  return 'There\'s already a chore called ${same.title}$whose [chore ${same.id}].';
+}
+
 Future<ActionResult> _create(ActionContext c, ActionInput a) async {
   final title = a.str('title', required: true)!.trim();
   final schedule = _schedule(c, a) ?? ChoreSchedule.repeating('FREQ=DAILY', c.today);
   final owner = _owner(c, a, schedule.start ?? schedule.once ?? c.today) ?? const OwnerAnyone();
+  final warnings = [
+    ?_sameChore(c, a),
+    if (schedule.once != null && schedule.once!.compareTo(c.today) < 0)
+      '${c.longDay(schedule.once!)} has passed, so it shows as late until someone does it.',
+  ];
   final id = await c.den.addChore(
     title: title,
     owner: owner,
@@ -222,7 +255,13 @@ Future<ActionResult> _create(ActionContext c, ActionInput a) async {
     space: c.space(a.raw['who_can_see']),
   );
   final chore = c.den.chore(id)!;
-  return ActionResult('Added the chore ${chore.title} [chore $id].', {'chore_id': id, 'owner': owner.toJson(), 'schedule': schedule.toJson()});
+  final seen = c.audienceText(chore.space);
+  return ActionResult('Added the chore ${chore.title} for ${c.ownerText(chore)}${seen.isEmpty ? '' : ' ($seen)'} [chore $id].', {
+    'chore_id': id,
+    'owner': owner.toJson(),
+    'schedule': schedule.toJson(),
+    if (warnings.isNotEmpty) 'warnings': warnings,
+  });
 }
 
 Future<ActionResult> _update(ActionContext c, ActionInput a) async {
@@ -256,11 +295,62 @@ String? _credit(ActionContext c, ActionInput a) {
   return c.people.one(name);
 }
 
-/// [chore] as it stands on [date], or an [ActionError] when it isn't on that day.
+/// [chore] as it stands on [date], or an [ActionError] when it isn't on that day (saying so
+/// when it's paused).
 ChoreDay choreOnDay(ActionContext c, Chore chore, String date) {
   final day = c.den.choresOn(date).where((cd) => cd.chore.id == chore.id && cd.date == date).firstOrNull;
-  if (day == null) throw ActionError.notFound('${chore.title} isn\'t on ${longDate(date)}.', type: 'chore', id: chore.id);
-  return day;
+  if (day != null) return day;
+  if (!chore.active) {
+    throw ActionError.notFound('${chore.title} is paused, so it isn\'t on any day; update_chore with "active": true '
+        'starts it again.', type: 'chore', id: chore.id);
+  }
+  throw ActionError.notFound('${chore.title} isn\'t on ${c.longDay(date)}.', type: 'chore', id: chore.id);
+}
+
+/// Refuses, before saying a chore is already that way, what the engine would refuse anyway:
+/// someone who may complete only their own chores checking off another's, or naming someone
+/// else as who did it.
+void _mayComplete(ActionContext c, ChoreDay day, String? who, {ChoreStep? step}) {
+  if (c.can(DenAction.completeAnyChore)) return;
+  final me = c.member;
+  final owner = step?.owner ?? day.owner;
+  if ((owner != null && owner != me) || (who != null && who != me)) {
+    throw ActionError.denied(ActionRunner.cannot(c.who, DenAction.completeAnyChore));
+  }
+}
+
+/// Whether a completion is for a day still to come, by someone who may complete anyone's chore
+/// (anyone else is refused by the engine, so isn't asked).
+bool _ahead(ActionContext c, ActionInput a) {
+  if (!a.has('date') || a.flag('done') == false || !c.can(DenAction.completeAnyChore)) return false;
+  return c.date(a.raw['date'], 'date').compareTo(c.today) > 0;
+}
+
+/// "4:10 PM on Thursday, October 29" (or "Thursday, October 29"), when [field] of [chore]'s
+/// completion on [date] was last set.
+String _whenSet(ActionContext c, Chore chore, String date, String field) {
+  final completion = c.den.completionsFor(chore.id).where((x) => x.date == date).firstOrNull;
+  final at = completion?.rec.fieldTimes[field]?.millis;
+  final day = c.longDay(date);
+  if (at == null) return 'on $day';
+  return dateIn(c.zone, at) == date ? 'at ${c.clockAt(at, zoneName: c.historyZone)} on $day' : 'on $day';
+}
+
+/// Who a chore done on [day] pays, with a way to pay whoever did it instead when that's
+/// someone else: its stars go to the day's owner (else whoever did it).
+(String?, String?) _paid(ActionContext c, ChoreDay day) {
+  final worth = day.pointsAvailable;
+  final to = day.owner ?? day.doneBy;
+  if (!day.done || worth == 0 || to == null || c.den.family?.pointsEnabled == false) return (null, null);
+  final doer = day.doneBy;
+  if (doer != null && doer != to) {
+    return (
+      to,
+      '${stars(worth)} go to ${c.people.name(to)}, whose chore it is that day. To pay ${c.people.name(doer)} instead, '
+          'mark it not done, swap_chore it to ${c.people.name(doer)} for that day, and mark it done again.',
+    );
+  }
+  return (to, '${stars(worth)} to ${c.people.name(to)}.');
 }
 
 /// Older chore tools.
@@ -287,44 +377,70 @@ Future<ActionResult> _delete(ActionContext c, ActionInput a) async {
 
 Future<ActionResult> _complete(ActionContext c, ActionInput a) async {
   if (a.has('step')) return _step(c, a);
-  final date = a.has('date') ? toolDate(a.raw['date'], c.zone, 'date') : c.today;
+  final date = a.has('date') ? c.date(a.raw['date'], 'date') : c.today;
   final who = _credit(c, a);
   final chore = c.chore(a.str('chore', required: true)!, owner: who, date: date);
-  choreOnDay(c, chore, date);
+  final before = choreOnDay(c, chore, date);
+  _mayComplete(c, before, who);
   final done = a.flag('done') ?? true;
+  if (before.done == done) {
+    // Already that way: nothing is written, so there's no receipt to undo.
+    final by = before.doneBy == null ? '' : ' by ${c.people.name(before.doneBy)}';
+    return ActionResult(
+      done
+          ? '${chore.title} was already done$by ${_whenSet(c, chore, date, 'done')}; nothing changed.'
+          : '${chore.title} isn\'t done on ${c.longDay(date)}; nothing changed.',
+      {'chore': c.wire.choreDay(before), 'stars_to': null},
+    );
+  }
   if (who == c.member) {
     await c.den.setChoreDone(chore.id, date, done);
   } else {
     await c.den.setChoreDoneBy(chore.id, date, done, who);
   }
   final day = choreOnDay(c, chore, date);
+  final (to, paid) = _paid(c, day);
   return ActionResult(
-    '${chore.title} is ${day.done ? 'done' : 'not done'} on ${longDate(date)}${day.done && who != null ? ', by ${c.people.name(who)}' : ''}.',
-    {'chore': c.wire.choreDay(day)},
+    '${chore.title} is ${day.done ? 'done' : 'not done'} on ${c.longDay(date)}'
+    '${day.done && who != null ? ', by ${c.people.name(who)}' : ''}.${paid == null ? '' : ' $paid'}',
+    {'chore': c.wire.choreDay(day), 'stars_to': to},
   );
 }
 
 Future<ActionResult> _step(ActionContext c, ActionInput a) async {
-  final date = a.has('date') ? toolDate(a.raw['date'], c.zone, 'date') : c.today;
+  final date = a.has('date') ? c.date(a.raw['date'], 'date') : c.today;
   final who = _credit(c, a);
   final chore = c.chore(a.str('chore', required: true)!, owner: who, date: date);
   final step = pick(a.str('step', required: true)!, chore.steps, id: (s) => s.id, name: (s) => s.text, kind: 'step');
-  choreOnDay(c, chore, date);
+  final before = choreOnDay(c, chore, date);
+  _mayComplete(c, before, who, step: step);
   final checked = a.flag('done') ?? true;
+  if ((before.steps[step.id] != null) == checked) {
+    final by = before.steps[step.id];
+    return ActionResult(
+      checked
+          ? '"${step.text}" on ${chore.title} was already checked${by == null || by.isEmpty ? '' : ' by ${c.people.name(by)}'} '
+              '${_whenSet(c, chore, date, 'steps.${step.id}')}; nothing changed.'
+          : '"${step.text}" on ${chore.title} isn\'t checked on ${c.longDay(date)}; nothing changed.',
+      {'chore': c.wire.choreDay(before), 'stars_to': null},
+    );
+  }
   if (who == c.member) {
     await c.den.setStep(chore.id, date, step.id, checked);
   } else {
     await c.den.setStepBy(chore.id, date, step.id, checked, who);
   }
   final day = choreOnDay(c, chore, date);
+  final (to, paid) = day.done && !before.done ? _paid(c, day) : (null, null);
   return ActionResult(
-    '${checked ? 'Checked' : 'Unchecked'} "${step.text}" on ${chore.title}: ${day.stepsDone} of ${day.stepCount} steps${day.done ? ', chore done' : ''}.',
-    {'chore': c.wire.choreDay(day)},
+    '${checked ? 'Checked' : 'Unchecked'} "${step.text}" on ${chore.title}: ${day.stepsDone} of ${day.stepCount} steps'
+    '${day.done ? ', chore done' : ''}.${paid == null ? '' : ' $paid'}',
+    {'chore': c.wire.choreDay(day), 'stars_to': to},
   );
 }
 
 Future<ActionResult> _swap(ActionContext c, ActionInput a) async {
-  final date = a.has('date') ? toolDate(a.raw['date'], c.zone, 'date') : c.today;
+  final date = a.has('date') ? c.date(a.raw['date'], 'date') : c.today;
   final chore = c.chore(a.str('chore', required: true)!, date: date);
   choreOnDay(c, chore, date);
   final to = a.str('to', required: true)!;
@@ -332,5 +448,5 @@ Future<ActionResult> _swap(ActionContext c, ActionInput a) async {
   await c.den.swapForDay(chore.id, date, member);
   final day = choreOnDay(c, chore, date);
   final whose = member == null ? 'for anyone' : '${c.people.name(member)}\'s';
-  return ActionResult('${chore.title} on ${longDate(date)} is now $whose.', {'chore': c.wire.choreDay(day)});
+  return ActionResult('${chore.title} on ${c.longDay(date)} is now $whose.', {'chore': c.wire.choreDay(day)});
 }

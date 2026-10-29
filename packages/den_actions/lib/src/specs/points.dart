@@ -16,7 +16,8 @@ List<ActionSpec> pointsActions() => [
         name: 'points.adjust',
         mcpName: 'adjust_points',
         title: 'Give or take stars',
-        description: 'Gives (positive) or takes (negative) stars from a person, with a reason.',
+        description: 'Gives (positive) or takes (negative) stars from a person, with a reason. Asks first when it '
+            'would leave them below zero, or moves $bigAdjustment stars or more at once.',
         input: S.input({
           'person': S.person('Who.'),
           'delta': S.integer('Stars to give (positive) or take (negative).', min: -10000, max: 10000),
@@ -31,7 +32,10 @@ List<ActionSpec> pointsActions() => [
         scopes: const {Scope.points},
         needs: const [DenAction.managePoints],
         effect: Effect.destructive,
-        confirm: Confirm.client,
+        confirm: Confirm.server,
+        confirmWhen: (c, a) => adjustmentWarning(c.den, c.people.one(a.str('person', required: true)!), a.integer('delta') ?? 0) != null,
+        ask: (c, a) => '${adjustmentWarning(c.den, c.people.one(a.str('person', required: true)!), a.integer('delta') ?? 0)} '
+            'Go ahead?',
         engine: const {'adjustPoints'},
         example: const {'person': 'Leo', 'delta': 3, 'reason': 'Helped carry the groceries'},
         run: _adjust,
@@ -85,7 +89,8 @@ List<ActionSpec> pointsActions() => [
         mcpName: 'save_reward',
         title: 'Add or change a reward',
         description: 'Adds a reward people can spend stars on, or with "reward" changes one; "active": false '
-            'retires it and true brings it back.',
+            'retires it (declining the requests waiting on it) and true brings it back. A name the family already '
+            'has (in any case) asks first.',
         input: S.input({
           'reward': S.string('The reward to change (title or id); leave out to add one.'),
           'title': S.string('What it is.', maxLength: 200),
@@ -98,8 +103,13 @@ List<ActionSpec> pointsActions() => [
         scopes: const {Scope.points},
         needs: const [DenAction.managePoints],
         effect: Effect.destructive,
-        confirm: Confirm.client,
-        confirmWhen: (c, a) => a.has('reward'),
+        confirm: Confirm.server,
+        // The assistant asks before changing a reward; anyone is asked before a second of one name.
+        confirmWhen: (c, a) => _sameReward(c, a) != null || (a.has('reward') && c.surface == Surface.assistant),
+        ask: (c, a) {
+          final same = _sameReward(c, a);
+          return same == null ? 'Change the reward ${_reward(c, a.str('reward')!).title}?' : '$same Add it anyway?';
+        },
         engine: const {'addReward', 'updateReward'},
         example: const {'title': 'Ice cream trip', 'cost': 40, 'icon': 'treat'},
         run: _saveReward,
@@ -152,18 +162,43 @@ List<ActionAlias> pointsAliases() => const [
       ActionAlias('decide_redemption', 'decide_reward_request'),
     ];
 
+/// How many stars given or taken at once make Den ask first (a typo of 1000 for 10, say).
+const int bigAdjustment = 100;
+
+/// What to know before giving or taking [delta] stars from [member]: that it leaves them below
+/// zero ("Jimmy has 1 star; taking 10 leaves -9."), or that it's a lot at once. Null when
+/// neither. The app shows it on its give-stars sheet; actions ask first.
+String? adjustmentWarning(Den den, String member, int delta) {
+  final name = den.member(member)?.name ?? 'They';
+  final balance = den.points().totals[member] ?? 0;
+  if (delta < 0 && balance + delta < 0) {
+    return '$name has ${stars(balance)}; taking ${delta.abs()} leaves ${balance + delta}.';
+  }
+  if (delta.abs() >= bigAdjustment) {
+    return '${delta > 0 ? 'Giving' : 'Taking'} ${stars(delta.abs())} at once is a lot; $name has ${stars(balance)} now.';
+  }
+  return null;
+}
+
 Future<ActionResult> _adjust(ActionContext c, ActionInput a) async {
   final member = c.people.one(a.str('person', required: true)!);
   final delta = a.integer('delta', required: true)!;
   if (delta == 0) throw ActionError('"delta" can\'t be zero.', field: 'delta');
   final reason = a.str('reason', required: true)!.trim();
   if (c.den.family?.pointsEnabled == false) throw ActionError('Points are turned off for this family.');
+  final warning = adjustmentWarning(c.den, member, delta);
   await c.den.adjustPoints(member, delta, reason);
   final balance = c.den.points().totals[member] ?? 0;
   final name = c.people.name(member);
   return ActionResult(
-    '${delta > 0 ? 'Gave' : 'Took'} ${delta.abs()} star${delta.abs() == 1 ? '' : 's'} ${delta > 0 ? 'to' : 'from'} $name. $name has $balance.',
-    {'member': member, 'delta': delta, 'reason': reason, 'balance': balance},
+    '${delta > 0 ? 'Gave' : 'Took'} ${stars(delta.abs())} ${delta > 0 ? 'to' : 'from'} $name. $name has ${stars(balance)}.',
+    {
+      'member': member,
+      'delta': delta,
+      'reason': reason,
+      'balance': balance,
+      if (warning != null && balance < 0) 'warnings': ['$name is below zero now.'],
+    },
   );
 }
 
@@ -183,8 +218,8 @@ Future<ActionResult> _saveGoal(ActionContext c, ActionInput a) async {
       if (a.has('target')) 'target': a.integer('target'),
       if (a.has('mode')) 'mode': a.str('mode'),
       if (people != null) 'members': people.isEmpty ? null : people,
-      if (a.has('start')) 'start': toolDate(a.raw['start'], c.zone, 'start'),
-      if (end != null) 'end': end.isEmpty ? null : toolDate(end, c.zone, 'end'),
+      if (a.has('start')) 'start': c.date(a.raw['start'], 'start'),
+      if (end != null) 'end': end.isEmpty ? null : c.date(end, 'end'),
       if (a.has('repeat')) 'repeat': a.str('repeat'),
       if (a.has('reward')) 'reward': a.str('reward'),
     };
@@ -199,8 +234,8 @@ Future<ActionResult> _saveGoal(ActionContext c, ActionInput a) async {
       target: a.integer('target')!,
       mode: a.str('mode') == 'race' ? GoalMode.race : GoalMode.target,
       members: people == null || people.isEmpty ? null : people,
-      start: a.has('start') ? toolDate(a.raw['start'], c.zone, 'start') : null,
-      end: end == null || end.isEmpty ? null : toolDate(end, c.zone, 'end'),
+      start: a.has('start') ? c.date(a.raw['start'], 'start') : null,
+      end: end == null || end.isEmpty ? null : c.date(end, 'end'),
       repeat: GoalRepeat.values.firstWhere((r) => r.name == (a.str('repeat') ?? 'none')),
       reward: a.str('reward') ?? '',
     );
@@ -219,7 +254,20 @@ Future<ActionResult> _deleteGoal(ActionContext c, ActionInput a) async {
   return ActionResult('Removed the goal ${goal.title}.', {'ok': true, 'goal_id': goal.id});
 }
 
+/// "There's already a reward called Movie night." when a save gives a reward a name (any case)
+/// another reward has, else null.
+String? _sameReward(ActionContext c, ActionInput a) {
+  final title = a.str('title');
+  if (title == null) return null;
+  final self = a.has('reward') ? _reward(c, a.str('reward')!).id : null;
+  final same = c.den.rewards.where((r) => r.id != self && sameName(r.title, title)).firstOrNull;
+  if (same == null) return null;
+  return 'There\'s already a reward called ${same.title}${same.active ? '' : ' (retired)'} [reward ${same.id}].';
+}
+
 Future<ActionResult> _saveReward(ActionContext c, ActionInput a) async {
+  final same = _sameReward(c, a);
+  final waiting = c.den.points().pending;
   final String id;
   if (a.has('reward')) {
     final reward = _reward(c, a.str('reward')!);
@@ -245,10 +293,16 @@ Future<ActionResult> _saveReward(ActionContext c, ActionInput a) async {
     if (a.flag('active') == false) await c.den.updateReward(id, {'active': false});
   }
   final reward = c.den.rewards.firstWhere((r) => r.id == id);
-  final how = reward.active ? '${reward.cost} stars${reward.needsApproval ? ', a parent approves it' : ''}' : 'retired';
+  final how = reward.active ? '${stars(reward.cost)}${reward.needsApproval ? ', a parent approves it' : ''}' : 'retired';
+  final stillWaiting = {for (final p in c.den.points().pending) p.id};
+  final declined = [for (final p in waiting) if (p.reward == id && !stillWaiting.contains(p.id)) c.people.name(p.member)];
   return ActionResult(
-    '${a.has('reward') ? 'Changed' : 'Added'} the reward ${reward.title} ($how) [reward $id].',
-    {'reward': Wire.reward(reward)},
+    '${a.has('reward') ? 'Changed' : 'Added'} the reward ${reward.title} ($how) [reward $id].'
+    '${declined.isEmpty ? '' : ' Declined what ${joinNames(declined)} asked for, since nobody can get it now.'}',
+    {
+      'reward': Wire.reward(reward),
+      if (same != null) 'warnings': [same],
+    },
   );
 }
 
@@ -259,10 +313,12 @@ Future<ActionResult> _request(ActionContext c, ActionInput a) async {
   final id = await c.den.requestReward(reward.id, member: who);
   final r = c.den.points();
   final pending = r.pending.any((p) => p.id == id);
+  // Whoever asks doesn't approve: a parent asking for a kid waits for someone else.
+  final approver = c.member != null && c.can(DenAction.managePoints) ? 'a parent other than ${c.who}' : 'a parent';
   return ActionResult(
     pending
-        ? '${c.people.name(who)} asked for ${reward.title}; a parent needs to approve it [request $id].'
-        : '${c.people.name(who)} got ${reward.title} for ${reward.cost} stars.',
+        ? '${c.people.name(who)} asked for ${reward.title}; $approver needs to approve it [request $id].'
+        : '${c.people.name(who)} got ${reward.title} for ${stars(reward.cost)}.',
     {'request_id': id, 'status': pending ? 'requested' : 'approved', 'balance': r.totals[who] ?? 0},
   );
 }
@@ -288,7 +344,7 @@ Future<ActionResult> _decide(ActionContext c, ActionInput a) async {
   await c.den.decideRedemption(request.id, approve: approve);
   return ActionResult(
     '${approve ? 'Approved' : 'Declined'} ${titles[request.reward] ?? 'the reward'} for ${c.people.name(request.member)}'
-    ' (${shortDate(dateIn(c.zone, request.rec.created.millis))}).',
+    ' (asked ${c.day(dateIn(c.zone, request.rec.created.millis))}).',
     {'request_id': request.id, 'status': approve ? 'approved' : 'declined'},
   );
 }

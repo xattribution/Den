@@ -17,7 +17,8 @@ List<ActionSpec> captureActions() => [
         description: 'Reads a sentence ("soccer every Wednesday at 5 for Leo", "milk, eggs and bread", "remind me '
             'to call the dentist tomorrow at 9"), an email or the text of a flyer, and adds the events, chores, '
             'reminders and list items in it. What Den isn\'t sure of (a guessed time, something already there, '
-            'a name nobody has) is left for a person to look at, unless "include_unsure" is true.',
+            'a name nobody has) is left for a person to look at, unless "include_unsure" is true. "Me" is the person '
+            'this connection acts for. When nothing could be added, the call fails and says why.',
         input: S.input({
           'text': S.string('What to read.', maxLength: 20000),
           'kind': S.string('Where it came from (default typed).', oneOf: ['typed', 'voice', 'email', 'message']),
@@ -30,7 +31,12 @@ List<ActionSpec> captureActions() => [
             'What was added.',
           ),
           'left': S.array(
-            S.object({'title': Out.str('What it is.'), 'reason': Out.str('Why it wasn\'t added.')}),
+            S.object({
+              'title': Out.str('What it is.'),
+              'reason': Out.str('Why it wasn\'t added.'),
+              'unsure': Out.flag('Den wasn\'t sure of it; "include_unsure" adds it.'),
+              'denied': Out.flag('This connection may not add it.'),
+            }),
             'What wasn\'t added, and why.',
           ),
           'unclear': Out.strings('What Den saw but couldn\'t place.'),
@@ -85,11 +91,11 @@ Future<ActionResult> _addFromText(ActionContext c, ActionInput a) async {
     final scope = _scopeOf(e);
     final blocking = e.issues.where((i) => i.blocking).firstOrNull;
     if (!c.has(scope)) {
-      left.add({'title': e.title, 'reason': 'This connection doesn\'t have the "${scope.name}" scope.'});
+      left.add({'title': e.title, 'reason': 'This connection doesn\'t have the "${scope.name}" scope.', 'denied': true});
     } else if (blocking != null) {
-      left.add({'title': e.title, 'reason': blocking.message});
+      left.add({'title': e.title, 'reason': blocking.message, if (blocking.kind == IssueKind.notAllowed) 'denied': true});
     } else if (!e.ready && !unsure) {
-      left.add({'title': e.title, 'reason': e.issues.where((i) => i.holds).map((i) => i.message).join('; ')});
+      left.add({'title': e.title, 'reason': e.issues.where((i) => i.holds).map((i) => i.message).join('; '), 'unsure': true});
     } else {
       keys.add(e.key);
     }
@@ -99,16 +105,28 @@ Future<ActionResult> _addFromText(ActionContext c, ActionInput a) async {
     left.add({'title': draft.entry(f.key)?.title ?? '', 'reason': f.value});
   }
   final added = receipt?.added ?? const <Added>[];
-  final said = [
-    if (added.isNotEmpty) 'Added ${added.map((x) => x.title).join(', ')}.',
-    if (added.isEmpty) 'Nothing was added.',
-    for (final l in left) 'Not added: ${l['title']} (${l['reason']}).',
-    if (draft.unclear.isNotEmpty) 'Den couldn\'t place: ${draft.unclear.join('; ')}.',
-  ];
-  return ActionResult(said.join(' '), {
+  final data = <String, Object?>{
     'added': [for (final x in added) {'type': x.type, 'id': x.id, 'title': x.title}],
     'left': left,
     'unclear': draft.unclear,
     'reader': reader.info.name,
-  });
+  };
+  final said = [
+    if (added.isNotEmpty) 'Added ${added.map((x) => x.title).join(', ')}.',
+    for (final l in left) 'Not added: ${l['title']} (${l['reason']}).',
+    if (draft.unclear.isNotEmpty) 'Den couldn\'t place: ${draft.unclear.join('; ')}.',
+    if (added.isEmpty && left.any((l) => l['unsure'] == true))
+      'To add what Den wasn\'t sure of anyway, call again with "include_unsure": true, or add it with the tool for '
+          'its kind (create_event, create_chore, add_items).',
+  ];
+  if (added.isNotEmpty) return ActionResult(said.join(' '), data);
+  // Nothing added is a failure the caller should see as one, with the reasons.
+  final denied = left.isNotEmpty && left.every((l) => l['denied'] == true);
+  return ActionResult.failed(
+    draft.entries.isEmpty && draft.unclear.isEmpty
+        ? 'Den found nothing to add in that. Say what and when, like "dentist for Jimmy next Friday at 3".'
+        : 'Nothing was added. ${said.join(' ')}',
+    code: denied ? 'permission_denied' : 'not_added',
+    details: data,
+  );
 }

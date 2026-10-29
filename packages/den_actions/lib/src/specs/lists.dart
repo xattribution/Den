@@ -52,6 +52,9 @@ List<ActionSpec> listActions() => [
         scopes: const {Scope.lists},
         needs: const [DenAction.editLists],
         effect: Effect.write,
+        confirm: Confirm.server,
+        confirmWhen: (c, a) => _sameList(c, a.str('title', required: true)!) != null,
+        ask: (c, a) => '${_sameList(c, a.str('title', required: true)!)} Add another list called ${a.str('title')!.trim()} anyway?',
         engine: const {'addList'},
         example: const {'title': 'Camping trip', 'kind': 'packing', 'event': 'Beach trip'},
         run: _createList,
@@ -106,7 +109,8 @@ List<ActionSpec> listActions() => [
         name: 'lists.add_items',
         mcpName: 'add_items',
         title: 'Add items to a list',
-        description: 'Adds items to the end of a list.',
+        description: 'Adds items to the end of a list. An item already on it and not checked off (in any case, at '
+            'the same store) isn\'t added twice: change its "qty" with update_items to get more.',
         input: S.input({
           'list': S.string('The list\'s title or id.'),
           'items': S.array(
@@ -121,7 +125,11 @@ List<ActionSpec> listActions() => [
             maxItems: 100,
           ),
         }, required: ['list', 'items']),
-        output: S.output({'list_id': Out.str('The list.'), 'items': S.array(itemShape, 'The items added.')}),
+        output: S.output({
+          'list_id': Out.str('The list.'),
+          'items': S.array(itemShape, 'The items added.'),
+          'already': S.array(itemShape, 'Items asked for that were on the list already, not added again.'),
+        }),
         scopes: const {Scope.lists},
         needs: const [DenAction.editLists],
         effect: Effect.write,
@@ -235,10 +243,22 @@ String? _eventId(ActionContext c, String? query) {
   return c.event(q).id;
 }
 
+/// "There's already a list called Groceries." when the family has a list of that name (any
+/// case) the caller can see, else null.
+String? _sameList(ActionContext c, String title, {String? except}) {
+  final same = c.lists.where((l) => l.list.id != except && sameName(l.list.title, title)).firstOrNull;
+  return same == null ? null : 'There\'s already a list called ${same.list.title} [list ${same.list.id}].';
+}
+
+/// A note when a list is needed by a day already past.
+String? _pastNeed(ActionContext c, String? needBy) =>
+    needBy != null && needBy.compareTo(c.today) < 0 ? 'It was needed by ${c.longDay(needBy)}, which has passed.' : null;
+
 Future<ActionResult> _createList(ActionContext c, ActionInput a) async {
   final title = a.str('title', required: true)!.trim();
   final kind = ListKind.values.firstWhere((k) => k.name == (a.str('kind') ?? 'checklist'));
-  final needBy = a.has('need_by') ? toolDate(a.raw['need_by'], c.zone, 'need_by') : null;
+  final needBy = a.has('need_by') ? c.date(a.raw['need_by'], 'need_by') : null;
+  final warnings = [?_sameList(c, title), ?_pastNeed(c, needBy)];
   final event = _eventId(c, a.str('event'));
   final id = await c.den.addList(
     title: title,
@@ -254,7 +274,12 @@ Future<ActionResult> _createList(ActionContext c, ActionInput a) async {
     pinned: a.flag('pinned') ?? false,
     space: c.space(a.raw['who_can_see']),
   );
-  return ActionResult('Added the list $title [list $id].', {'list': Wire.list(c.den.list(id)!)});
+  final made = c.den.list(id)!;
+  final seen = c.audienceText(made.list.space);
+  return ActionResult('Added the list $title${seen.isEmpty ? '' : ' ($seen)'} [list $id].', {
+    'list': Wire.list(made),
+    if (warnings.isNotEmpty) 'warnings': warnings,
+  });
 }
 
 Future<ActionResult> _updateList(ActionContext c, ActionInput a) async {
@@ -266,7 +291,7 @@ Future<ActionResult> _updateList(ActionContext c, ActionInput a) async {
     if (a.has('kind')) ...{'kind': a.str('kind'), 'icon': a.str('kind')},
     if (a.has('pinned')) 'pinned': a.flag('pinned'),
     if (needBy != null) ...{
-      'needBy': needBy.isEmpty ? null : toolDate(needBy, c.zone, 'need_by'),
+      'needBy': needBy.isEmpty ? null : c.date(needBy, 'need_by'),
       'lifecycle': needBy.isEmpty ? ListLifecycle.running.name : ListLifecycle.dated.name,
     },
     if (event != null) ...{
@@ -277,9 +302,16 @@ Future<ActionResult> _updateList(ActionContext c, ActionInput a) async {
     if (a.has('who_can_see')) 'audience': audienceFor(c, a.raw['who_can_see']),
   };
   if (patch.isEmpty) throw ActionError('Nothing to change: give a field such as title or pinned.');
+  final warnings = [
+    if (a.has('title')) ?_sameList(c, a.str('title')!, except: l.list.id),
+    ?_pastNeed(c, patch['needBy'] as String?),
+  ];
   await c.den.updateList(l.list.id, patch);
   final after = c.den.list(l.list.id)!;
-  return ActionResult('Changed the list ${after.list.title} [list ${after.list.id}].', {'list': Wire.list(after)});
+  return ActionResult('Changed the list ${after.list.title} [list ${after.list.id}].', {
+    'list': Wire.list(after),
+    if (warnings.isNotEmpty) 'warnings': warnings,
+  });
 }
 
 Future<ActionResult> _deleteList(ActionContext c, ActionInput a) async {
@@ -293,24 +325,48 @@ Future<ActionResult> _addItems(ActionContext c, ActionInput a) async {
   final raw = a.objects('items') ?? const [];
   if (raw.isEmpty) throw ActionError('"items" needs at least one item.', field: 'items');
   final added = <String>[];
+  final already = <Item>[];
+  final asked = <String>{};
   for (final m in raw) {
     final text = '${m['text'] ?? ''}'.trim();
     if (text.isEmpty) throw ActionError('Each item needs text of 1 to 200 characters.', field: 'items');
+    final store = _blank(m['store']);
+    // "Milk", "milk" and "Milk " are one item: once on the list and not checked off, it isn't
+    // added again (unless it's for another store); its quantity says how many.
+    if (!asked.add('${nameKey(text)}|${nameKey(store ?? '')}')) continue;
+    final there = itemAlreadyOn(c.den.list(list.list.id)!, text, store: store);
+    if (there != null) {
+      already.add(there);
+      continue;
+    }
     added.add(await c.den.addItem(
       list.list.id,
       text: text,
       qty: m['qty'] as String?,
-      store: m['store'] as String?,
+      store: store,
       toGroceries: m['to_groceries'] as bool? ?? false,
     ));
   }
   final after = c.den.list(list.list.id)!;
   final items = [for (final i in after.items) if (added.contains(i.id)) i];
-  return ActionResult('Added ${items.map((i) => i.text).join(', ')} to ${list.list.title}.', {
+  final said = [
+    if (items.isNotEmpty) 'Added ${items.map((i) => i.text).join(', ')} to ${list.list.title}.',
+    for (final i in already)
+      '${i.text} is already on ${list.list.title}${i.qty == null ? '' : ' (${i.qty})'}; to get more, change its quantity '
+          '(update_items with "qty") [item ${i.id}].',
+  ];
+  return ActionResult(said.join(' '), {
     'list_id': list.list.id,
     'items': [for (final i in items) Wire.item(i)],
+    'already': [for (final i in already) Wire.item(i)],
   });
 }
+
+/// The item on [list], not checked off, that [text] names again (any case, the same store
+/// when [store] is given), or null.
+Item? itemAlreadyOn(ListState list, String text, {String? store}) => list.items
+    .where((i) => !i.checked && sameName(i.text, text) && (store == null || i.store == null || sameName(i.store!, store)))
+    .firstOrNull;
 
 String? _blank(Object? v) {
   final s = (v as String?)?.trim();
