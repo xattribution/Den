@@ -33,6 +33,17 @@ void main() {
       expect(split.accept([1, 2, 3]), isFalse, reason: 'and stays refused');
     });
 
+    test('holds the first message to its own limit (a hello), and the rest to the usual one', () {
+      final guard = WebSocketFrameGuard(100000, maxFirstMessageBytes: 1000);
+      expect(guard.accept([...header(1000), ...List.filled(1000, 1)]), isTrue);
+      expect(guard.accept([...header(50000), ...List.filled(50000, 1)]), isTrue, reason: 'after the first message');
+      expect(WebSocketFrameGuard(100000, maxFirstMessageBytes: 1000).accept(header(1001)), isFalse);
+      final fragments = WebSocketFrameGuard(100000, maxFirstMessageBytes: 1000);
+      expect(fragments.accept([...header(600, fin: false), ...List.filled(600, 1)]), isTrue);
+      expect(fragments.accept([...header(10, opcode: 9), ...List.filled(10, 1)]), isTrue, reason: 'a ping is no message');
+      expect(fragments.accept(header(500, opcode: 0)), isFalse, reason: 'the first message, in fragments, as a whole');
+    });
+
     test('counts a fragmented message as a whole, and control frames separately', () {
       final guard = WebSocketFrameGuard(1000);
       expect(guard.accept([...header(600, fin: false), ...List.filled(600, 1)]), isTrue);

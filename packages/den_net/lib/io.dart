@@ -168,6 +168,9 @@ Handler helloWebSocketHandler(
         }));
       },
       maxMessageBytes: maxMessageBytes,
+      // The hello is small: a first message announcing more than a handshake may hold ends the
+      // connection at its header, before the peek buffers any of it.
+      maxFirstMessageBytes: maxHandshakeBytes,
       pingInterval: pingInterval,
     );
 
@@ -176,10 +179,12 @@ Handler helloWebSocketHandler(
 /// fragments of one message, announce more than [maxMessageBytes] of payload, so an oversized
 /// message is refused before any of it is buffered. (dart:io and browser
 /// WebSockets, on the client side, have no such hook: they buffer each whole message, and
-/// sessions refuse an oversized frame before decrypting it.)
+/// sessions refuse an oversized frame before decrypting it.) With [maxFirstMessageBytes], the
+/// connection's first message is held to that instead (a session's hello).
 Handler boundedWebSocketHandler(
   void Function(WebSocketChannel socket) onConnection, {
   required int maxMessageBytes,
+  int? maxFirstMessageBytes,
   Duration? pingInterval,
 }) {
   final upgrade = webSocketHandler(
@@ -206,7 +211,7 @@ Handler boundedWebSocketHandler(
           callback(channel);
           return;
         }
-        final bounded = _BoundedSocket(socket, maxMessageBytes);
+        final bounded = _BoundedSocket(socket, maxMessageBytes, maxFirstMessageBytes);
         callback(StreamChannel<List<int>>(bounded, bounded));
       })),
     );
@@ -224,7 +229,8 @@ Handler boundedWebSocketHandler(
 /// the first frame over the limit, where they end, and nothing more is read. Everything else is
 /// the socket's own.
 class _BoundedSocket extends Stream<Uint8List> implements Socket {
-  _BoundedSocket(this._socket, int maxMessageBytes) : _guard = WebSocketFrameGuard(maxMessageBytes);
+  _BoundedSocket(this._socket, int maxMessageBytes, int? maxFirstMessageBytes)
+      : _guard = WebSocketFrameGuard(maxMessageBytes, maxFirstMessageBytes: maxFirstMessageBytes);
 
   final Socket _socket;
   final WebSocketFrameGuard _guard;
@@ -329,11 +335,17 @@ class _BoundedSocket extends Stream<Uint8List> implements Socket {
 /// [maxMessageBytes] of payload, or a control frame more than the 125 bytes it may have. It
 /// keeps only the header bytes it is reading, never payload.
 class WebSocketFrameGuard {
-  /// Creates a guard for one connection's incoming bytes.
-  WebSocketFrameGuard(this.maxMessageBytes);
+  /// Creates a guard for one connection's incoming bytes; with [maxFirstMessageBytes], the
+  /// first message may hold no more than that.
+  WebSocketFrameGuard(this.maxMessageBytes, {this.maxFirstMessageBytes});
 
   /// Largest payload of one message.
   final int maxMessageBytes;
+
+  /// Largest payload of the first message, when it is held to less (a session's hello).
+  final int? maxFirstMessageBytes;
+
+  int _messages = 0;
 
   final List<int> _header = [];
   int _headerLength = 2;
@@ -370,13 +382,17 @@ class WebSocketFrameGuard {
       final fin = (_header[0] & 0x80) != 0;
       _header.clear();
       _headerLength = 2;
-      final over = length == null ||
-          (opcode >= 8 ? length > 125 : (opcode != 0 ? 0 : _message) + length > maxMessageBytes);
+      final first = maxFirstMessageBytes;
+      final limit = _messages == 0 && first != null && first < maxMessageBytes ? first : maxMessageBytes;
+      final over = length == null || (opcode >= 8 ? length > 125 : (opcode != 0 ? 0 : _message) + length > limit);
       if (over) {
         _over = true;
         return frameStart;
       }
-      if (opcode < 8) _message = fin ? 0 : (opcode != 0 ? 0 : _message) + length;
+      if (opcode < 8) {
+        _message = fin ? 0 : (opcode != 0 ? 0 : _message) + length;
+        if (fin) _messages++;
+      }
       _payloadLeft = length;
     }
     return chunk.length;

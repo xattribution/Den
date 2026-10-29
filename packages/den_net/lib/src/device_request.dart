@@ -12,9 +12,10 @@ import 'util.dart';
 /// Headers: `X-Den-Device` (device id), `X-Den-Time` (UTC ms), `X-Den-Nonce`, optional
 /// `X-Den-Actor` (the member acting on that device), `X-Den-Signature`: base64url Ed25519
 /// over `"den/device-request/v1" 0x00 | canonical JSON [method, path, time, nonce,
-/// sha256(body) hex, device, actor, hub]`, and `X-Den-Hub`, the hub device it is addressed to
-/// (the same id the signature covers), so a server holding several families' logs (a Den host)
-/// hands it to that family's hub without guessing. The hub ([DeviceRequest.verify]) accepts it
+/// sha256(body) hex, device, actor, hub]`, with `X-Den-Body-SHA256` (the body hash it covers,
+/// so the signature checks out from the headers alone) and `X-Den-Hub`, the hub device it is
+/// addressed to (the same id the signature covers), so a server holding several families' logs
+/// (a Den host) hands it to that family's hub once the headers check out there. The hub ([DeviceRequest.verify]) accepts it
 /// only from an approved, unrevoked device of its family, addressed to itself, within five
 /// minutes of its own clock, with a nonce it hasn't seen. A request without `X-Den-Hub` (an
 /// older app) goes to the family whose address it came to.
@@ -38,6 +39,11 @@ abstract final class DeviceRequest {
   /// the same id, so a header naming another hub makes the signature fail there.
   static const hubHeader = 'x-den-hub';
 
+  /// The lowercase hex SHA-256 of the body, the value the signature covers, so the hub (or a
+  /// host choosing the family by [hubHeader]) checks the signature from the headers alone,
+  /// before reading the body.
+  static const bodyHash = 'x-den-body-sha256';
+
   /// How far a request's time may be from the hub's.
   static const Duration skew = Duration(minutes: 5);
 
@@ -57,9 +63,8 @@ abstract final class DeviceRequest {
     final deviceId = await keys.deviceId();
     final at = now ?? DateTime.now().toUtc().millisecondsSinceEpoch;
     final n = b64e(List.generate(16, (_) => _random.nextInt(256)));
-    final sig = await keys.sign(
-      await _bytes(method.toUpperCase(), _path(url), at, n, body, deviceId, actorId, hub),
-    );
+    final hash = hexEncode(await sha256(body));
+    final sig = await keys.sign(_signed(method.toUpperCase(), _path(url), at, n, hash, deviceId, actorId, hub));
     return {
       device: deviceId,
       time: '$at',
@@ -67,6 +72,7 @@ abstract final class DeviceRequest {
       actor: ?actorId,
       signature: sig,
       hubHeader: hub,
+      bodyHash: hash,
     };
   }
 
@@ -127,10 +133,13 @@ abstract final class DeviceRequest {
     String? actor,
     String hub,
   ) async =>
+      _signed(method, path, at, nonce, hexEncode(await sha256(body)), device, actor, hub);
+
+  static Uint8List _signed(String method, String path, int at, String nonce, String bodyHash, String device, String? actor, String hub) =>
       concatBytes([
         utf8Bytes('den/device-request/v1'),
         [0],
-        utf8Bytes(canonicalJson([method, path, at, nonce, hexEncode(await sha256(body)), device, actor, hub])),
+        utf8Bytes(canonicalJson([method, path, at, nonce, bodyHash, device, actor, hub])),
       ]);
 }
 
