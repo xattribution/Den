@@ -81,4 +81,27 @@ void main() {
     expect(connected, [kotvas]);
     expect(outlet.held.values.map((r) => r.title), ['Soccer']);
   });
+
+  test("a family whose keys can't be read this time keeps its reminders, and the rest still say whose", () async {
+    final kotvas = await _family('Kotvas');
+    final smith = await _family('Smith family');
+    final start = _clock() + 2 * _hour;
+    await kotvas.addEvent(title: 'Soccer', start: start, end: start + _hour, reminders: const [30]);
+    // What the OS holds from the last pass: the Smiths' swim (from their engine), and a Kotvas
+    // reminder for an event since deleted.
+    final outlet = FakeOutlet()
+      ..leftover = {111, 222}
+      ..leftoverRoutes = {111: '/l/${smith.familyId}/event/E9?at=1', 222: '/l/${kotvas.familyId}/event/GONE?at=1'};
+    await BackgroundRefresh.logs(
+      [RefreshLog(kotvas, log: Membership(id: kotvas.familyId!, primary: true))],
+      outlet: outlet,
+      now: _clock,
+      // The Smiths are on this device, but their keychain item can't be read yet.
+      unopened: [smith.familyId!],
+    ).run();
+    expect(outlet.cancelled, [222], reason: "the Kotvas' stale one goes; the Smiths' stays with the OS");
+    expect(outlet.held.values.map((r) => r.title), ['Kotvas: Soccer'], reason: 'still several families: it says whose');
+    expect(outlet.held.values.single.route, startsWith('/l/${kotvas.familyId}/event/'));
+    expect(outlet.held.keys, isNot(contains(111)));
+  });
 }

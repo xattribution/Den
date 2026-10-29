@@ -117,18 +117,26 @@ class ReminderLog {
 /// ([planReminders]), soonest first, at most [limit] in all. With one family it is exactly that
 /// family's plan. With several, a family's reminders other than the first's have ids made with
 /// its id, every title starts with the family's name, and a tap opens the family's own page.
+///
+/// [others] counts families this device holds whose engines aren't among [logs] this time (a
+/// keychain not readable yet): the device still holds several, so titles and routes stay as
+/// they are. [taken] are ids the OS holds for those, which no reminder here takes.
 List<PlannedReminder> planHouseholdReminders(
   List<ReminderLog> logs, {
   required int now,
   Duration window = reminderWindow,
   int limit = maxScheduledReminders,
+  int others = 0,
+  Set<int> taken = const {},
 }) {
   final families = [for (final l in logs) if (l.den.hasFamily && l.den.isApproved) l];
-  if (families.isEmpty) return const [];
-  if (families.length == 1 && families.single.first) {
+  if (families.isEmpty || limit <= 0) return const [];
+  // Every family the device holds counts, one still waiting for a parent too: a tap must open
+  // the family it came from whichever one the device shows.
+  final several = logs.where((l) => l.den.hasFamily).length + others > 1;
+  if (!several && families.single.first && taken.isEmpty) {
     return planReminders(families.single.den, now: now, window: window, limit: limit);
   }
-  final several = families.length > 1;
   final all = <PlannedReminder>[];
   for (final log in families) {
     for (final r in planReminders(log.den, now: now, window: window, limit: limit)) {
@@ -145,7 +153,7 @@ List<PlannedReminder> planHouseholdReminders(
     }
   }
   all.sort((a, b) => a.at != b.at ? a.at.compareTo(b.at) : a.key.compareTo(b.key));
-  final ids = <int>{};
+  final ids = <int>{...taken};
   final out = <PlannedReminder>[];
   for (final r in all) {
     if (out.length >= limit) break;

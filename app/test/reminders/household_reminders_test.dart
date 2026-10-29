@@ -79,6 +79,45 @@ void main() {
     expect(plan.firstWhere((r) => r.title.startsWith('Kotvas: ')).route, startsWith('/l/${kotvas.familyId}/event/'));
   });
 
+  test('a family still waiting for a parent plans nothing, but the rest still say whose', () async {
+    final kotvas = await family('Kotvas');
+    final smith = await family('Smith family');
+    await events(kotvas, 'Soccer', 1, from: const Duration(hours: 1), every: const Duration(hours: 1));
+    final waiting = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate(), now: () => _start);
+    await waiting.requestJoin(familyId: smith.familyId!, founderPubkey: smith.founderPubkey!, deviceName: 'iPhone', kind: DeviceKind.phone);
+    expect(waiting.hasFamily && !waiting.isApproved, isTrue);
+    final plan = planHouseholdReminders([
+      ReminderLog(den: kotvas, id: kotvas.familyId!, label: 'Kotvas'),
+      ReminderLog(den: waiting, id: smith.familyId!, label: 'Smith family', first: false),
+    ], now: _start);
+    expect(plan.map((r) => r.title), ['Kotvas: Soccer 1']);
+    expect(plan.single.route, startsWith('/l/${kotvas.familyId}/event/'),
+        reason: 'the device may be showing the Smiths: a tap opens the Kotvases');
+  });
+
+  test("with a family that didn't open, the budget leaves room for what the OS holds for it", () async {
+    final kotvas = await family('Kotvas');
+    await events(kotvas, 'Kotvas', 70, from: const Duration(hours: 1), every: const Duration(minutes: 30));
+    final kept = {for (var i = 0; i < 10; i++) 1000 + i};
+    final outlet = FakeOutlet()
+      ..leftover = {...kept}
+      ..leftoverRoutes = {for (final id in kept) id: '/l/smithfamily23456/event/E$id'};
+    final scheduler = ReminderScheduler.logs(
+      () => [ReminderLog(den: kotvas, id: kotvas.familyId!, label: 'Kotvas')],
+      outlet,
+      enabled: true,
+      unopened: () => ['smithfamily23456'],
+      now: () => _start,
+      settle: Duration.zero,
+    );
+    await scheduler.start();
+    expect(outlet.cancelled, isEmpty);
+    expect(outlet.held.length, maxScheduledReminders - kept.length, reason: 'one budget, theirs counted');
+    expect(outlet.held.keys.toSet().intersection(kept), isEmpty, reason: 'no id of theirs taken');
+    expect(outlet.held.values.first.title, startsWith('Kotvas: '));
+    await scheduler.dispose();
+  });
+
   test('the scheduler follows families as they join and leave the device', () async {
     final kotvas = await family('Kotvas');
     final smith = await family('Smith family');

@@ -33,6 +33,9 @@ abstract class ReminderOutlet {
   /// Ids the OS still holds from an earlier run of the app.
   Future<Set<int>> pending();
 
+  /// The same, with the route each one opens (its payload), so a family's can be told apart.
+  Future<Map<int, String?>> pendingRoutes();
+
   /// Asks the person to allow notifications, where the platform asks.
   Future<void> askPermission();
 }
@@ -64,21 +67,26 @@ class ReminderScheduler {
         );
 
   /// Reminders across the families [logs] names, read again whenever [logsChanged] fires (a
-  /// family joined or left).
+  /// family joined or left). [unopened] names the families this device holds whose engines
+  /// didn't open this time: the reminders the OS holds for them stay as they are (their own
+  /// engine plans them when it opens), and the device still counts as in several families.
   ReminderScheduler.logs(
     this._logs,
     this._outlet, {
     required bool enabled,
     Listenable? logsChanged,
+    Iterable<String> Function()? unopened,
     int Function()? now,
     this.window = reminderWindow,
     this.refresh = const Duration(minutes: 30),
     this.settle = const Duration(milliseconds: 400),
   })  : _enabled = enabled,
         _logsChanged = logsChanged,
+        _unopened = unopened ?? (() => const []),
         _now = now ?? (() => DateTime.now().millisecondsSinceEpoch);
 
   List<ReminderLog> Function() _logs;
+  Iterable<String> Function() _unopened;
   Listenable? _logsChanged;
   final ReminderOutlet _outlet;
   final int Function() _now;
@@ -98,7 +106,11 @@ class ReminderScheduler {
   bool get enabled => _enabled;
 
   final Map<int, PlannedReminder> _scheduled = {};
-  Set<int> _leftover = const {};
+  Map<int, String?> _leftover = const {};
+
+  /// What the OS holds for families whose engines didn't open: left alone, and counted against
+  /// the budget.
+  Set<int> _kept = const {};
   bool _started = false;
   bool _asked = false;
   final List<StreamSubscription<Set<String>>> _changes = [];
@@ -125,7 +137,7 @@ class ReminderScheduler {
     try {
       final launched = await _outlet.start(_taps.add);
       if (launched != null) _taps.add(launched);
-      _leftover = await _outlet.pending();
+      _leftover = await _outlet.pendingRoutes();
     } on Object catch (e) {
       debugPrint('Reminders are off on this device: $e');
       return;
@@ -138,10 +150,11 @@ class ReminderScheduler {
 
   /// Follows the families [logs] names from now on, in place of the ones it followed, whenever
   /// [changed] fires: the app's household, once it is open.
-  void followLogs(List<ReminderLog> Function() logs, {Listenable? changed}) {
+  void followLogs(List<ReminderLog> Function() logs, {Listenable? changed, Iterable<String> Function()? unopened}) {
     _logsChanged?.removeListener(_logsMoved);
     _logs = logs;
     _logsChanged = changed;
+    if (unopened != null) _unopened = unopened;
     if (!_started) return;
     _logsChanged?.addListener(_logsMoved);
     _logsMoved();
@@ -171,7 +184,7 @@ class ReminderScheduler {
   Future<void> runOnce() async {
     _asked = true;
     await _outlet.start((_) {});
-    _leftover = await _outlet.pending();
+    _leftover = await _outlet.pendingRoutes();
     await reschedule();
   }
 
@@ -212,12 +225,29 @@ class ReminderScheduler {
 
   Future<void> _apply() async {
     final now = _now();
+    final closed = {for (final id in _unopened()) id.toLowerCase()};
+    if (_leftover.isNotEmpty) {
+      _kept = {
+        if (_enabled)
+          for (final e in _leftover.entries)
+            if (closed.contains(_familyOf(e.value))) e.key,
+      };
+    }
+    if (closed.isEmpty) _kept = const {};
     final want = <int, PlannedReminder>{
       if (_enabled)
-        for (final r in planHouseholdReminders(_logs(), now: now, window: window)) r.id: r,
+        for (final r in planHouseholdReminders(
+          _logs(),
+          now: now,
+          window: window,
+          others: closed.length,
+          limit: maxScheduledReminders - _kept.length,
+          taken: _kept,
+        ))
+          r.id: r,
     };
-    for (final id in _leftover) {
-      if (!want.containsKey(id)) await _quietly(() => _outlet.cancel(id));
+    for (final id in _leftover.keys) {
+      if (!want.containsKey(id) && !_kept.contains(id)) await _quietly(() => _outlet.cancel(id));
     }
     _leftover = const {};
     for (final entry in _scheduled.entries.toList()) {
@@ -236,6 +266,19 @@ class ReminderScheduler {
     for (final r in want.values) {
       if (_scheduled[r.id] == r) continue;
       if (await _quietly(() => _outlet.schedule(r))) _scheduled[r.id] = r;
+    }
+  }
+
+  /// The family a reminder's route is in (`/l/<family>/...`), lower case; null for one that
+  /// names none.
+  static String? _familyOf(String? route) {
+    if (route == null || !route.startsWith('/l/')) return null;
+    final rest = route.substring(3);
+    final end = rest.indexOf(RegExp('[/?]'));
+    try {
+      return Uri.decodeComponent(end < 0 ? rest : rest.substring(0, end)).toLowerCase();
+    } on Object {
+      return null;
     }
   }
 

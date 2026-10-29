@@ -45,6 +45,8 @@ Future<void> main() async {
         ReminderLog(den: l.den, id: l.id, label: l.name, first: l.membership.primary),
     ],
     changed: household,
+    // A family whose engine didn't open keeps the reminders the OS holds for it.
+    unopened: () => [for (final m in household.unopened) m.id],
   );
   Pairing.service = household.active.pairing ?? const LocalOnlyPairing();
   Capture.service = CaptureService(

@@ -66,6 +66,7 @@ Future<bool> refreshInBackground() async {
     return true;
   }
   final open = <RefreshLog>[];
+  final closed = <String>[];
   try {
     tzdata.initializeTimeZones();
     final listed = await Memberships.load();
@@ -76,7 +77,9 @@ Future<bool> refreshInBackground() async {
         try {
           open.add(RefreshLog(await Boot.startLog(m, background: true), log: m));
         } on Object catch (e) {
-          // That family's keys can't be read yet (a locked phone): the others go on.
+          // That family's keys can't be read yet (a locked phone): the others go on, and its
+          // reminders stay with the OS as they are.
+          closed.add(m.id);
           debugPrint('The background refresh left out ${m.label ?? m.id}: $e');
         }
       }
@@ -86,6 +89,7 @@ Future<bool> refreshInBackground() async {
       outlet: OsNotifications(),
       calendars: PhoneCalendars.supported ? DeviceCalendarSource() : null,
       connect: connectBriefly,
+      unopened: closed,
     ).run();
   } on Object catch (e) {
     debugPrint('The background refresh stopped early: $e');
@@ -140,11 +144,17 @@ class BackgroundRefresh {
     this.calendars,
     this.connect,
     this.connectLimit = const Duration(seconds: 20),
+    this.unopened = const [],
     int Function()? now,
   }) : _now = now;
 
   /// Every family's engine, the first family's first.
   final List<RefreshLog> engines;
+
+  /// The families this device holds whose engines didn't open for this pass: their reminders
+  /// stay with the OS as they are, and the device still counts as in several families (titles
+  /// and taps keep naming the family).
+  final List<String> unopened;
 
   /// The first family's engine, which the phone's calendars come into.
   Den get den => engines.firstWhere((l) => l.first, orElse: () => engines.first).den;
@@ -182,11 +192,19 @@ class BackgroundRefresh {
         });
       }
       await _guard('Planning reminders', () async {
+        // Every family this device holds, so the titles and taps say whose while there are
+        // several (one waiting for a parent plans nothing, but counts).
         final logs = [
-          for (final l in live)
-            ReminderLog(den: l.den, id: l.den.familyId ?? '', label: l.den.family?.name, first: l.first),
+          for (final l in engines)
+            if (l.den.hasFamily) ReminderLog(den: l.den, id: l.den.familyId ?? '', label: l.den.family?.name, first: l.first),
         ];
-        final reminders = ReminderScheduler.logs(() => logs, outlet, enabled: await remindersEnabled(), now: _now);
+        final reminders = ReminderScheduler.logs(
+          () => logs,
+          outlet,
+          enabled: await remindersEnabled(),
+          unopened: () => unopened,
+          now: _now,
+        );
         await reminders.runOnce();
         await reminders.dispose();
       });
