@@ -2,6 +2,7 @@ import 'package:den_core/den_core.dart';
 
 import '../../../app/app_state.dart';
 import '../../calendar/calendar_words.dart';
+import '../../family/family.dart' show Recovery, RecoveryNotices;
 
 /// Something on Today that waits for the person using the device, with one action that settles
 /// it. Each has a [key] that stays the same while it waits, so a settled one keeps its place.
@@ -69,6 +70,15 @@ final class ConnectionNeed extends Need {
   String get key => 'connection:${connection.id}';
 }
 
+/// A parent's new phone that recovery let in, on another parent's own device: "OK".
+final class RecoveredNeed extends Need {
+  const RecoveredNeed(this.device);
+  final Device device;
+
+  @override
+  String get key => 'recovered:${device.id}';
+}
+
 /// A dated list due today or tomorrow with things left on it: "Open".
 final class ListNeed extends Need {
   const ListNeed(this.list);
@@ -121,6 +131,10 @@ List<Need> needsYou(AppState app, {required int now}) {
   if (app.allowsTrust(DenAction.manageFamily)) {
     out.addAll(den.pendingDevices.map(DeviceNeed.new));
     out.addAll([for (final c in den.connections) if (c.status == ConnectionStatus.pending) ConnectionNeed(c)]);
+    out.addAll([
+      for (final d in Recovery.letIn(den))
+        if (d.id != den.deviceId && !RecoveryNotices.seen.value.contains(d.id)) RecoveredNeed(d),
+    ]);
   }
 
   final today = app.today;
@@ -156,7 +170,7 @@ class NeedsModel extends DenView<List<Need>> {
       };
 
   @override
-  Object get key => (NeedsModel, now ~/ 3600000);
+  Object get key => (NeedsModel, now ~/ 3600000, RecoveryNotices.seen.value.length);
 
   @override
   List<Need> compute(AppState app) => needsYou(app, now: now);

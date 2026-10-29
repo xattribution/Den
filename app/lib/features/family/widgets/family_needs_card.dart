@@ -10,8 +10,10 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../state/family_needs.dart';
+import '../state/recovery.dart';
 import '../state/trust_actions.dart';
 import '../words/family_words.dart';
+import '../words/recovery_lines.dart';
 import 'family_parts.dart';
 import 'person_sheets.dart';
 
@@ -128,6 +130,17 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
             ),
           ),
         ),
+      RecoveredNotice(:final device) => (
+          faceOr(app.memberById(recoveryOf(device)?.member), PhosphorIconsRegular.key, context, size: 44),
+          RecoveryLines.sentence(app, device),
+          RecoveryLines.detail(app, device),
+          TwoButtons(
+            primary: 'OK',
+            onPrimary: busy ? null : () => _acknowledge(device),
+            secondary: "That wasn't us",
+            onSecondary: busy ? null : () => _removeRecovered(device),
+          ),
+        ),
       PinAsk(:final display, :final parent) => (
           faceOr(null, PhosphorIconsRegular.lockKey, context, size: 44),
           'Set your PIN for shared screens',
@@ -229,6 +242,33 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
         _failed[key] = problem;
       } else {
         _settled[key] = _Settled('${need.name} is in the family', receipt);
+      }
+    });
+  }
+
+  /// Someone here saw it: it stays, and this device stops saying so.
+  Future<void> _acknowledge(Device device) async {
+    await RecoveryNotices.acknowledge(device.id);
+    if (mounted) setState(() => _settled['recovered:${device.id}'] = _Settled('${device.name} stays in the family', null));
+  }
+
+  /// A phone let in by recovery that nobody here recognizes: removed, like any other device.
+  Future<void> _removeRecovered(Device device) async {
+    final key = 'recovered:${device.id}';
+    final trust = context.trustActions;
+    setState(() {
+      _busy.add(key);
+      _failed.remove(key);
+    });
+    final problem = await tryWrite(() => trust.revokeDevice(device.id));
+    if (problem == null) await RecoveryNotices.acknowledge(device.id);
+    if (!mounted) return;
+    setState(() {
+      _busy.remove(key);
+      if (problem != null) {
+        _failed[key] = problem;
+      } else {
+        _settled[key] = _Settled('${device.name} was removed from the family', null);
       }
     });
   }

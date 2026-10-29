@@ -100,6 +100,7 @@ bool hiddenField(String field) =>
       'chore',
       'date',
       'patch',
+      'recovery',
     }.contains(field);
 
 /// Before and after of one change, in words; null means "none".
@@ -250,6 +251,8 @@ bool _same(Object? a, Object? b) => a == b || (a != null && b != null && a.toStr
 /// Soccer practice on Oct 20" with the fields it overrode; "canceled" when it was removed.
 HistoryLine historyLine(FamilyReads app, HistoryEntry e) {
   final f = app.formats;
+  final recovered = _recoveryLine(app, e);
+  if (recovered != null) return recovered;
   if (e.type == RecordType.eventException) {
     FieldDiff? find(String field) {
       for (final d in e.diffs) {
@@ -324,6 +327,30 @@ HistoryLine historyLine(FamilyReads app, HistoryEntry e) {
     if (ride != null) return ride;
   }
   return HistoryLine(e.verb, e.title, diffs);
+}
+
+/// Recovery, said so nobody gets in unseen (den_core's recovery.dart): a parent's new phone
+/// "was let in with Alex's recovery words" or "by the hub's recovery" (the row's name is the
+/// new phone's, since nobody acted for it); a parent "set up new recovery words"; the hub's help
+/// turned on or off.
+HistoryLine? _recoveryLine(FamilyReads app, HistoryEntry e) {
+  final value = _after(e, 'recovery');
+  if (value is! Map) return null;
+  switch (e.type) {
+    case RecordType.device:
+      if (value['kind'] == 'hub') return const HistoryLine('was let in by', "the hub's recovery", []);
+      final name = app.memberById(value['member'] as String?)?.name;
+      return HistoryLine('was let in with', name == null ? 'recovery words' : "$name's recovery words", const []);
+    case RecordType.member:
+      final own = e.actor == e.rid;
+      if (value['on'] == true) return HistoryLine('set up', own ? 'new recovery words' : 'recovery words for ${e.title}', const []);
+      return HistoryLine('took away', own ? 'their recovery words' : "${e.title}'s recovery words", const []);
+    case RecordType.family:
+      return value['on'] == true
+          ? const HistoryLine('let', 'the hub help a parent get back in', [])
+          : const HistoryLine('stopped', 'the hub helping a parent get back in', []);
+  }
+  return null;
 }
 
 /// "took the drop-off for Swim lesson", "let go of the pick-up for Soccer practice": a change

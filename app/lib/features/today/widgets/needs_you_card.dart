@@ -212,6 +212,14 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
           null,
           null,
         ),
+      RecoveredNeed(:final device) => (
+          _face(app, recoveryOf(device)?.member, PhosphorIconsRegular.key),
+          RecoveryLines.sentence(app, device),
+          RecoveryLines.detail(app, device),
+          act('OK', () => _acknowledge(device)),
+          null,
+          () => context.push('/family/member/${recoveryOf(device)?.member ?? ''}'),
+        ),
       ListNeed(:final list) => (
           _glyph(context, Pictograms.listKind(list.list.kind)),
           listDue(app, list),
@@ -277,6 +285,12 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
       () => context.choreActions.setDone(need.day, true),
       owner == null ? '${need.day.chore.title} marked done' : '${need.day.chore.title} marked done for $owner',
     );
+  }
+
+  /// Someone here saw a parent's new phone come in by recovery: this device stops saying so.
+  Future<void> _acknowledge(Device device) async {
+    await RecoveryNotices.acknowledge(device.id);
+    if (mounted) setState(() => _settled['recovered:${device.id}'] = _Settled('${device.name} stays in the family', null));
   }
 
   /// A device whose invite named someone joins as theirs in one tap; one that names nobody

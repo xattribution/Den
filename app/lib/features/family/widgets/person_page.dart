@@ -17,6 +17,7 @@ import '../words/oversight.dart';
 import 'family_parts.dart';
 import 'invite_sheet.dart';
 import 'person_sheets.dart';
+import 'recovery_section.dart';
 
 /// Everything about one person, written as sentences (Family.dc.html's card, then the rest of
 /// their page): their picture and who they are, what they may do as switches that say what they
@@ -97,6 +98,7 @@ class _PersonPageState extends State<PersonPage> {
           _about(context, app, m, trust: trust, isMe: isMe),
           sectionGap,
           _devices(context, app, m, trust: trust),
+          if (trust && isMe && m.isParent) ...[sectionGap, RecoverySection(member: m)],
           if (trust && !isMe && !_lastParent(den, m)) ...[sectionGap, _remove(context, m)],
         ],
       ],

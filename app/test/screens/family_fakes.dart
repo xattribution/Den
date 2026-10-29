@@ -24,6 +24,8 @@ class FakePairing extends PairingService {
     this.link,
     this.invite,
     this.serving,
+    this.recoveryKey,
+    this.recovery,
   });
 
   final List<PendingJoin> pending;
@@ -42,6 +44,30 @@ class FakePairing extends PairingService {
 
   /// What [joinWithInvite] was asked: the words and the device name it chose for "Zoe".
   final List<(String, String)> invitesUsed = [];
+
+  /// The hub's server recovery key; without one it says there's no hub.
+  final String? recoveryKey;
+
+  /// What the words typed on "I lost my phone" find; without one, nobody.
+  final RecoverySession? recovery;
+
+  /// What [startRecovery] was asked: the words and the device name it chose for "Alex".
+  final List<(String, String)> recoveriesStarted = [];
+
+  @override
+  Future<String> hubRecoveryKey() async => recoveryKey ?? (throw const PairingException(LocalOnlyPairing.message));
+
+  @override
+  Future<RecoverySession> startRecovery(
+    String text, {
+    String? hubUrl,
+    required String Function(String name) deviceName,
+    required DeviceKind kind,
+  }) async {
+    recoveriesStarted.add((text, deviceName('Alex')));
+    return recovery ??
+        (throw const PairingException("Those words don't belong to anyone in this family. Check them against where you saved them."));
+  }
 
   @override
   Future<HubInfo?> servingHub() async => serving;
