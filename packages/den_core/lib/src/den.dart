@@ -2520,28 +2520,41 @@ class Den {
       });
 
   /// Creates an active token connection and returns the bearer token, which is shown once and
-  /// stored only as a hash. Parents only.
+  /// stored only as a hash. Parents only. It acts as [member], by default the parent making it:
+  /// every connection acts as someone, so "me" means a person and a request and its approval
+  /// can be told apart. [tz] is the time zone its person lives in, when not the family's.
   Future<String> addTokenConnection({
     required String label,
     required Set<Scope> scopes,
     String? member,
     int? expires,
+    String? tz,
   }) async {
     if (member != null && this.member(member) == null) throw const InvalidInput('That person isn\'t in the family');
+    final who = member ?? actor?.id;
     final token = newBearerToken();
     await _commit([
       _Draft(RecordType.connection, newId(), Space.parents, {
         'label': label,
         'kind': ConnectionKind.token.name,
         'scopes': _scopeNames(scopes),
-        'member': member,
+        'member': ?who,
         'tokenHash': hashToken(token),
         'client': null,
         'status': ConnectionStatus.active.name,
         'expires': expires,
+        'tz': ?_connectionZone(tz),
       }),
     ]);
     return token;
+  }
+
+  /// [tz] as a connection keeps it: null for none or the family's own zone.
+  String? _connectionZone(String? tz) {
+    final t = tz?.trim();
+    if (t == null || t.isEmpty || t == _zone) return null;
+    if (!isKnownZone(t)) throw InvalidInput('Den doesn\'t know the time zone "$t"');
+    return t;
   }
 
   List<String> _scopeNames(Set<Scope> scopes) => [for (final s in Scope.values) if (scopes.contains(s)) s.name];
@@ -2564,18 +2577,50 @@ class Den {
     return id;
   }
 
-  /// Parents approve a pending connection, optionally narrowing its scopes and choosing whose
-  /// permissions it acts with.
-  Future<void> approveConnection(String id, {Set<Scope>? scopes, String? member}) async {
+  /// Parents approve a pending connection, optionally narrowing its scopes, and choose who it acts
+  /// as: [member], by default the parent approving it. [tz] is the time zone its person lives
+  /// in, when not the family's.
+  Future<void> approveConnection(String id, {Set<Scope>? scopes, String? member, String? tz}) async {
     _requireLive(RecordType.connection, id, 'That connection doesn\'t exist');
     if (member != null && this.member(member) == null) throw const InvalidInput('That person isn\'t in the family');
+    final who = member ?? actor?.id;
     await _commit([
       _Draft(RecordType.connection, id, Space.parents, {
         'status': ConnectionStatus.active.name,
         if (scopes != null) 'scopes': _scopeNames(scopes),
-        'member': ?member,
+        'member': ?who,
+        'tz': ?_connectionZone(tz),
       }),
     ]);
+  }
+
+  /// Changes who an approved connection acts as, or the time zone its person lives in (an empty
+  /// [tz] for the family's). Parents, on their own device.
+  Future<void> updateConnection(String id, {String? member, String? tz}) async {
+    final entry = _requireLive(RecordType.connection, id, 'That connection doesn\'t exist');
+    if (member != null && this.member(member) == null) throw const InvalidInput('That person isn\'t in the family');
+    final current = Connection(entry.rec);
+    final zone = tz == null ? current.tz : _connectionZone(tz);
+    final fields = <String, Object?>{
+      if (member != null && member != current.member) 'member': member,
+      if (zone != current.tz) 'tz': zone,
+    };
+    if (fields.isEmpty) return;
+    await _commit([_Draft(RecordType.connection, id, Space.parents, fields)]);
+  }
+
+  /// Who [c] acts as: its member, or, for a connection approved before every connection was
+  /// bound to a person, the parent who let it in (the owner of the device that made it active;
+  /// only a parent's own device can). Null when that parent is no longer a parent in the
+  /// family, or [c] isn't active: such a connection only reads.
+  String? connectionActsAs(Connection c) {
+    final named = c.member;
+    if (named != null) return member(named) == null ? null : named;
+    if (c.status != ConnectionStatus.active) return null;
+    final at = c.rec.fieldTimes['status'];
+    final owner = at == null ? null : device(at.device)?.member;
+    final m = owner == null ? null : member(owner);
+    return m != null && m.isParent ? m.id : null;
   }
 
   /// Records the hash of an OAuth access token issued for an approved connection, or clears it

@@ -752,8 +752,14 @@ class Connection extends RecordView {
   Set<Scope> get scopes =>
       rec.strings('scopes').map((s) => _enum(Scope.values, s)).whereType<Scope>().toSet();
 
-  /// Whose permissions the connection acts with; null means a parent-level automation.
+  /// Whose permissions the connection acts with. Connections approved before every one was
+  /// bound to a person have none: they act as the parent who let them in
+  /// ([Den.connectionActsAs]).
   String? get member => rec.strOrNull('member');
+
+  /// The time zone the connection's person lives in, when a parent set one that differs from
+  /// the family's: answers say which zone their times are in. Null is the family's.
+  String? get tz => rec.strOrNull('tz');
 
   /// SHA-256 hex of the bearer token (token connections, and OAuth access tokens once issued).
   String? get tokenHash => rec.strOrNull('tokenHash');
