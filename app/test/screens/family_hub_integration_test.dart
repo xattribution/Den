@@ -234,7 +234,17 @@ void main() {
     final phone = await parentPhone();
     final sam = phone.owner!.id;
     final dir = await Directory.systemTemp.createTemp('den-hub-test');
-    addTearDown(() => dir.delete(recursive: true));
+    // The hub may still be finishing a save as it stops, and on a busy machine the folder can be
+    // gone already: try a few times, and a folder that's gone is fine.
+    addTearDown(() async {
+      for (var tries = 0; tries < 5 && dir.existsSync(); tries++) {
+        try {
+          await dir.delete(recursive: true);
+        } on FileSystemException {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      }
+    });
     final keepAlive = RecordingKeepAlive();
     final network = DenNetwork(phone, localHub: LocalHub.create(port: 0, mdns: false, dataDir: dir.path, keepAlive: keepAlive));
     addTearDown(network.dispose);
