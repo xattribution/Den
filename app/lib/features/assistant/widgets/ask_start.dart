@@ -85,7 +85,8 @@ class AskChip extends StatelessWidget {
     return DenPressable(
       onTap: onTap,
       color: c.card,
-      semanticLabel: suggestion.send ? 'Ask: ${suggestion.words}' : 'Write: ${suggestion.words}',
+      // A screen reader says which ones ask at once and which only start the words.
+      semanticLabel: suggestion.send ? 'Ask: ${suggestion.words}' : 'Start a message: ${suggestion.words}',
       child: ExcludeSemantics(
         child: ConstrainedBox(
           constraints: BoxConstraints(minHeight: buttonHeight(kid: kid)),

@@ -15,6 +15,7 @@ import 'package:den_assistant/testing.dart';
 import 'package:den_capture/den_capture.dart' show RulesReader;
 import 'package:den_core/demo.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show SemanticsFlag, SemanticsNode;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -238,6 +239,9 @@ void main() {
         expect(find.text(words), findsOneWidget, reason: words);
       }
       expect(find.text(newChatLabel), findsNothing, reason: 'nothing to start over yet');
+      expect(find.bySemanticsLabel("Ask: What's on today?"), findsOneWidget, reason: 'a screen reader hears it asks');
+      expect(find.bySemanticsLabel('Start a message: Add milk to Costco'), findsOneWidget);
+      expect(find.bySemanticsLabel('Hi Alex. What can I help with?'), findsOneWidget);
       expect(tester.getSize(find.ancestor(of: find.text("What's on today?"), matching: find.byType(ConstrainedBox)).first).height, greaterThanOrEqualTo(44));
 
       // A change goes in the field to finish, its example word chosen: nothing is sent.
@@ -423,6 +427,27 @@ void main() {
       expect(chats.session(link), same(second), reason: 'kept while Ask shows it');
       second.detach();
       expect(chats.session(null), isNot(same(second)), reason: 'a family without a hub starts over');
+    });
+  });
+
+  group('Screen readers', () {
+    testWidgets('once the sheet has come up, its field and Ask are there to reach', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final state = await demoIn(tester);
+      await helperOnFor(tester, state.den);
+      Assistant.links = (_) => FakeLink(today());
+      await pumpAt(tester, state: state, location: '/today');
+      await openFromToday(tester);
+      // The sheet slid up from below the screen; what was off it mid-slide is reachable now, not
+      // left hidden (the web leaves hidden nodes out altogether).
+      bool shown(SemanticsNode n) => !n.hasFlag(SemanticsFlag.isHidden) && !n.isInvisible;
+      final field = find.semantics.byPredicate((n) => n.hasFlag(SemanticsFlag.isTextField));
+      final ask = find.semantics.byPredicate((n) => n.label == 'Ask' && n.hasFlag(SemanticsFlag.isButton));
+      expect(field, findsOne);
+      expect(ask, findsOne);
+      expect(shown(field.evaluate().single), isTrue, reason: 'the field');
+      expect(shown(ask.evaluate().single), isTrue, reason: 'the Ask button');
+      semantics.dispose();
     });
   });
 
