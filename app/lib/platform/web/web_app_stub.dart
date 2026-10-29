@@ -9,6 +9,8 @@ Future<void> waitForEngine() async {}
 
 Future<String?> pushSubscription(String key) async => null;
 
+Future<String?> pushState(String key) async => null;
+
 Future<String?> subscribe(String key) async => null;
 
 Future<void> unsubscribe() async {}

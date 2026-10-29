@@ -20,6 +20,7 @@ import 'hub.dart';
 import 'invites.dart';
 import 'log.dart';
 import 'net_guard.dart';
+import 'push/web_push_crypto.dart' show VapidKeys;
 import 'recovery.dart';
 import 'tenant_router.dart';
 import 'web.dart';
@@ -327,6 +328,9 @@ class DenHost implements HostLink {
 
   @override
   bool inviteTaken(String key) => _tenants.any((t) => t.invites.holds(key));
+
+  @override
+  VapidKeys get pushKey => state.pushKey();
 
   @override
   bool recoveryCodeTaken(String hash) => _tenants.any((t) => t.recovery.holdsCode(hash));

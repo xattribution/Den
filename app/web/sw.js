@@ -148,13 +148,19 @@ self.addEventListener('push', (event) => {
     data = { body: event.data ? event.data.text() : '' };
   }
   // Every push shows a notification: Safari stops delivering to pages whose pushes show nothing.
+  // A push from one of several families this Den holds names the family: its title says whose
+  // it is, and a tap opens it in that family (/l/<family>/...).
+  const route = typeof data.route === 'string' && data.route.startsWith('/') ? data.route : '/today';
+  const family = typeof data.family === 'string' && data.family ? data.family : null;
+  const label = typeof data.label === 'string' && data.label ? data.label : null;
+  const title = data.title || 'Den';
   const options = {
     body: data.body || '',
     icon: 'icons/Icon-192.png',
-    data: { route: typeof data.route === 'string' ? data.route : '/today' },
+    data: { route: family ? '/l/' + encodeURIComponent(family) + route : route },
   };
-  if (data.tag) options.tag = data.tag;
-  event.waitUntil(self.registration.showNotification(data.title || 'Den', options));
+  if (data.tag) options.tag = family ? family + '|' + data.tag : data.tag;
+  event.waitUntil(self.registration.showNotification(label ? label + ': ' + title : title, options));
 });
 
 self.addEventListener('notificationclick', (event) => {

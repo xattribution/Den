@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http_client;
 import 'package:shelf/shelf.dart';
 
 import 'edge.dart';
+import 'push/web_push_crypto.dart';
 import 'setup.dart' show restrictToOwner;
 
 /// The directory under a host's data directory that holds each log besides the first:
@@ -15,9 +16,15 @@ import 'setup.dart' show restrictToOwner;
 const String hostLogsDir = 'logs';
 
 /// The directory under a host's data directory with the host's own state: `host.json` (the logs
-/// it serves and their addresses) and `cli-secret`. No family's keys are kept there: each
-/// family's Web Push key is in its own data, and goes with it.
+/// it serves and their addresses), `cli-secret`, and `push.json`, the host's own push key
+/// ([hostPushFile]). No family's keys are kept there: each family's Web Push key is in its own
+/// data, and goes with it.
 const String hostStateDir = 'host';
+
+/// The file in [hostStateDir] with the host's own Web Push key: the one key families on the host
+/// that opt in ([HubConfig.hostPush]) hand out besides their own, so one web app holding several
+/// of them gets all their pushes through one subscription. It is no family's key.
+const String hostPushFile = 'push.json';
 
 /// The file in [hostStateDir] holding the secret `den_hub add-family`, `adopt` and
 /// `remove-family` show the running host, as `den_hub recover` shows a hub its own. Made again
@@ -138,6 +145,38 @@ class HostState {
   final List<HostedLog> _logs = [];
   Uri? _primaryUrl;
   bool _several = false;
+
+  VapidKeys? _pushKey;
+
+  /// The host's own Web Push key ([hostPushFile]), made on first use and kept owner-only; in
+  /// memory without a data directory. An unreadable file is replaced, and browsers that
+  /// subscribed with the old key subscribe again.
+  VapidKeys pushKey() {
+    final have = _pushKey;
+    if (have != null) return have;
+    final dir = dataDir;
+    final file = dir == null ? null : File(_path(dir, hostPushFile));
+    if (file != null && file.existsSync()) {
+      try {
+        final json = jsonDecode(file.readAsStringSync());
+        if (json is Map && json['vapid'] is String) return _pushKey = VapidKeys.fromPrivate(unb64url(json['vapid'] as String));
+      } on Object {
+        // Made again below.
+      }
+    }
+    final made = _pushKey = VapidKeys.generate();
+    if (file != null) {
+      try {
+        file.parent.createSync(recursive: true);
+        final temp = File('${file.path}.tmp')..writeAsStringSync(jsonEncode({'v': 1, 'vapid': b64url(made.privateKey)}), flush: true);
+        restrictToOwner(temp.path);
+        temp.renameSync(file.path);
+      } on Object {
+        // Kept in memory for this run.
+      }
+    }
+    return made;
+  }
 
   /// Deletes `vapid.json`, which earlier builds of the host kept every family's Web Push key in
   /// (each family's own data has its key). Best effort.
@@ -329,4 +368,8 @@ abstract interface class HostLink {
 
   /// Outgoing HTTP to addresses callers gave a hub, through the host's NetGuard.
   http_client.Client get fetch;
+
+  /// The host's own Web Push key ([hostPushFile]), which a family hands out and signs with only
+  /// when it opted in ([HubConfig.hostPush]), and only for subscriptions made with it.
+  VapidKeys get pushKey;
 }

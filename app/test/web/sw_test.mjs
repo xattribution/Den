@@ -153,6 +153,22 @@ v2.windows.length = 0;
 await v2.dispatch('notificationclick', { notification: { close() {}, data: { route: '/today' } } });
 assert.equal(v2.self.opened, ORIGIN + '/#/today');
 
+// 6b. A push from one of several families this Den holds says whose it is and opens there; a
+// tap sends that family's route.
+await v2.dispatch('push', { data: { json: () => ({ title: 'Soccer at 5:30', body: 'Field 3', route: '/event/E2?at=9', tag: 'event:E2', family: 'smith2345', label: 'Smith family' }) } });
+const smith = v2.notifications[v2.notifications.length - 1];
+assert.equal(smith[0], 'Smith family: Soccer at 5:30');
+assert.equal(smith[1].data.route, '/l/smith2345/event/E2?at=9');
+assert.equal(smith[1].tag, 'smith2345|event:E2');
+v2.windows.push(client);
+v2.posted.length = 0;
+await v2.dispatch('notificationclick', { notification: { close() {}, data: smith[1].data } });
+assert.equal(JSON.stringify(v2.posted), JSON.stringify([{ type: 'den-open', route: '/l/smith2345/event/E2?at=9' }]));
+// A route that isn't the app's own is never followed.
+await v2.dispatch('push', { data: { json: () => ({ title: 'X', route: 'https://elsewhere.example/', family: 'f' }) } });
+assert.equal(v2.notifications[v2.notifications.length - 1][1].data.route, '/l/f/today');
+v2.windows.length = 0;
+
 // 7. Skip waiting on request.
 await v2.dispatch('message', { data: { type: 'den-skip-waiting' } });
 assert.equal(v2.self.skipped, true);

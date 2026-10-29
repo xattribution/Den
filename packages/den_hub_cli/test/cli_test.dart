@@ -379,4 +379,14 @@ void main() {
     expect(forced, 0, reason: forcedErr);
     expect(File('$target${Platform.pathSeparator}hub${Platform.pathSeparator}stale.json').existsSync(), isFalse);
   });
+
+  test('DEN_HOST_PUSH names the families that share the host push key: all, or their addresses', () {
+    expect(parseHostPush('').all, isFalse);
+    expect(parseHostPush('').hosts, isEmpty);
+    expect(parseHostPush('all').all, isTrue);
+    expect(parseHostPush(' On ').all, isTrue);
+    final some = parseHostPush('den.kotvas.app, https://Den-Smith.kotvas.app, den-x.test:8443,,');
+    expect(some.all, isFalse);
+    expect(some.hosts, {'den.kotvas.app', 'den-smith.kotvas.app', 'den-x.test'});
+  });
 }

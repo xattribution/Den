@@ -12,6 +12,7 @@ extension type _DenWeb._(JSObject _) implements JSObject {
   external JSPromise<JSBoolean> holdEngine();
   external JSPromise<JSBoolean> waitForEngine();
   external JSPromise<JSString?> pushSubscription(String key);
+  external JSPromise<JSString> pushState(String key);
   external JSPromise<JSString> subscribe(String key);
   external JSPromise<JSAny?> unsubscribe();
   external JSPromise<JSString> share(String text);
@@ -52,6 +53,12 @@ Future<String?> pushSubscription(String key) async {
   final web = _denWeb;
   if (web == null) return null;
   return (await web.pushSubscription(key).toDart)?.toDart;
+}
+
+Future<String?> pushState(String key) async {
+  final web = _denWeb;
+  if (web == null) return null;
+  return (await web.pushState(key).toDart).toDart;
 }
 
 /// Must be the first thing a tap does: the call into the page happens before any await.

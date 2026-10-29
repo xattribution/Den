@@ -7,8 +7,10 @@ import '../../../app/household.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/sync/den_network.dart';
 import '../../../platform/sync/hub_client.dart';
+import '../../../platform/sync/hub_push.dart';
 import '../../../platform/sync/net_pairing.dart';
 import '../../../platform/sync/pairing.dart';
+import '../../../platform/web/web_app.dart';
 
 /// What a pasted invite is, for a device already in a family: where to join it, or why it can't
 /// be joined from here.
@@ -189,6 +191,7 @@ class AnotherFamilyPairing extends PairingService {
       final ticket = await send(pairing);
       if (ticket.familyId != familyId) throw const PairingException('That invite led to another family. Ask for a new one.');
       await home.adopt(log);
+      if (_web) unawaited(MembershipActions.shareReminders(log));
       return ticket;
     } catch (_) {
       await home.discard(log);
@@ -243,6 +246,35 @@ abstract final class MembershipActions {
       }
     }
     await home.remove(log);
+  }
+
+  /// In the web app, once [joined] lets this device in: when this browser's reminders already
+  /// come through the key the families on this server share, the family gets the same
+  /// subscription, with no tap (the browser's subscription stays as it is). A browser whose
+  /// reminders come through one family's own key keeps them; Settings offers to turn them on from
+  /// every family, which takes a tap. Best effort.
+  static Future<void> shareReminders(FamilyLog joined, {Duration wait = const Duration(minutes: 2)}) async {
+    final network = joined.network;
+    if (network == null) return;
+    final until = DateTime.now().add(wait);
+    while (!joined.den.isApproved || network.hubDevice == null) {
+      if (DateTime.now().isAfter(until) || !joined.den.hasFamily) return;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    final client = HubPushClient(network);
+    try {
+      final status = await client.status();
+      final host = status.hostKey;
+      if (host == null || status.subscribed) return;
+      final browser = await WebApp.pushState(host);
+      final subscription = browser.subscription;
+      if (subscription == null || !browser.same) return;
+      await client.subscribe(subscription, key: host);
+    } on Object {
+      // Settings shows where reminders stand, and turns them on with a tap.
+    } finally {
+      client.close();
+    }
   }
 
   /// Gives a change this device just wrote [flush] to go out while the family's hub is
