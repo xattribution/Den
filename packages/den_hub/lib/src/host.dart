@@ -276,6 +276,10 @@ class DenHost implements HostLink {
   bool setupCodeTaken(String code) => _tenants.any((t) => t.waitsForSetupCode(code));
 
   @override
+  bool familyElsewhere(String familyId, String hubDevice) =>
+      _tenants.any((t) => t.den.familyId == familyId && t.den.deviceId != hubDevice);
+
+  @override
   String admitSocket(Request request) {
     _limit(request, 'sockets', Limits.sockets, message: 'Too many connections from here. Wait a minute.');
     final key = clientKey(clientAddress(request, config.trustedProxies));

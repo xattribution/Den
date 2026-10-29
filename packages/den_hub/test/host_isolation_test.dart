@@ -237,6 +237,14 @@ void main() {
       expect(atA.status, 409, reason: "a's address is a's, which is set up");
       final wrong = await f.call('POST', '/api/v1/hub/setup', body: {'code': 'ZZZZ-ZZZZ', 'invite': 'x'});
       expect(wrong.status, 403);
+      // A fresh hub on the host is never set up into a family the host serves already.
+      final node = SyncNode(a.phone);
+      addTearDown(node.close);
+      final intoA = (await node.createInvite(relay: Uri.parse('https://relay.test'))).toUrl();
+      final twice = await f.call('POST', '/api/v1/hub/setup', hostname: 'den-c.test', body: {'code': code, 'invite': intoA});
+      expect(twice.status, 409, reason: twice.text);
+      expect(twice.error['message'], contains('on this server already'));
+      expect(c.den.hasFamily, isFalse);
     });
 
     test("recovery: a's code lets a phone into a only, typed at any address; den_hub recover reaches only its family", () async {

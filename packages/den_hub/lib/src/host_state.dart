@@ -345,6 +345,10 @@ abstract interface class HostLink {
   /// Whether any family on the host waits for setup with [code].
   bool setupCodeTaken(String code);
 
+  /// Whether a hub on the host other than [hubDevice] holds the family [familyId]: a fresh hub
+  /// is never set up into a family the host serves already, so no two of its logs hold one.
+  bool familyElsewhere(String familyId, String hubDevice);
+
   /// Admits a WebSocket upgrade from [request]'s client within the host's budgets, and returns
   /// the client's key.
   String admitSocket(Request request);

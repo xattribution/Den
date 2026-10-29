@@ -306,6 +306,10 @@ class HubSetup {
     if (hub.den.hasFamily && hub.den.familyId != invite.familyId) {
       throw ApiError(409, 'already_set_up', 'This hub asked to join another family. Reset its data to start over.');
     }
+    if (hub.host?.familyElsewhere(invite.familyId, hub.den.deviceId) ?? false) {
+      throw ApiError(409, 'already_set_up',
+          'That family is on this server already, at its own address. Invite people from the Den app there instead.');
+    }
     final dial = !direct && (invite.hubs.isNotEmpty || invite.relay != null);
     if (dial) {
       unawaited(_join(invite, () => openInviteChannel(invite)));
