@@ -123,6 +123,25 @@ void main() {
     });
   }
 
+  test('two devices adding different ride legs to an event at once both count', () async {
+    final clock = TestClock.at(DateTime.utc(2026, 5, 4, 15));
+    final a = await foundFamily(clock);
+    final dana = a.actor!.id;
+    final priya = await a.addMember(name: 'Priya', role: Role.parent);
+    final b = await joinDevice(a, clock, member: priya, name: 'Priya phone', kind: DeviceKind.phone);
+    final start = DateTime.utc(2026, 5, 5, 21).millisecondsSinceEpoch;
+    final party = await a.addEvent(title: 'Party', start: start, end: start + 3600000, rides: const [Ride('to', null)]);
+    await sync(a, b);
+    clock.advance(const Duration(seconds: 30));
+    // Dana takes the drive there; Priya, not having heard, adds a pickup she'll do.
+    await a.claimRide(party, occurrence: start, leg: 'to', driver: dana);
+    await b.updateEvent(party, {'rides': [const Ride('to', null), Ride('from', priya)]});
+    await exchange(a, b);
+    for (final d in [a, b]) {
+      expect({for (final r in d.event(party)!.rides) r.leg: r.driver}, {'to': dana, 'from': priya});
+    }
+  });
+
   group('two devices taking different ride legs at once both count', () {
     for (final repeating in [false, true]) {
       for (final fromLast in [false, true]) {

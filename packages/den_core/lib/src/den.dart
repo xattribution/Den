@@ -1579,7 +1579,10 @@ class Den {
           restore[head] = merged;
         }
       }
-      if (rides && !_undoRides(entry, c0, restore, isDrivers)) mirrorSkipped = null;
+      if (rides) {
+        final unset = {for (final e in firstTouch.entries) if (e.value.absent.contains(e.key)) e.key};
+        if (!_undoRides(entry, c0, restore, isDrivers, unset)) mirrorSkipped = null;
+      }
       if (mirrorSkipped != null) skipped.add(mirrorSkipped);
       if (firstTouch.containsKey('_deleted')) {
         final wasRemoved = restore.remove('_deleted') == true;
@@ -1602,9 +1605,10 @@ class Den {
   /// list before [c0] (an older version's, or one occurrence's own legs), that list comes back,
   /// with the drivers kept out of its way. Otherwise the drivers come back, field by field, and
   /// the list is written again from what they read then: the one there may only have said what
-  /// drivers said at some other time. Returns whether the list itself comes back, so that
-  /// someone having changed it since is worth saying.
-  bool _undoRides(Entry entry, Change c0, Map<String, Object?> restore, bool Function(String) isDrivers) {
+  /// drivers said at some other time. An event's leg the changes added ([unset] names the fields
+  /// they first set) goes, with the whole map. Returns whether the list itself comes back, so
+  /// that someone having changed it since is worth saying.
+  bool _undoRides(Entry entry, Change c0, Map<String, Object?> restore, bool Function(String) isDrivers, Set<String> unset) {
     final event = entry.type == RecordType.event;
     final before = _recBefore(c0);
     final whole = before != null && (event ? !Event(before).readsDrivers : EventException(before).ridesWhole);
@@ -1622,11 +1626,17 @@ class Den {
     if (!restore.keys.any(isDrivers)) return false;
     if (event) {
       final map = restore['drivers'] ?? entry.fields['drivers'];
+      final added = {for (final k in restore.keys) if (k.startsWith('drivers.') && unset.contains(k)) k};
       final after = <String, Object?>{
         if (map is Map) ...Map<String, Object?>.from(map),
         for (final k in restore.keys)
-          if (k.startsWith('drivers.')) k.substring(8): restore[k],
-      };
+          if (k.startsWith('drivers.') && !added.contains(k)) k.substring(8): restore[k],
+      }..removeWhere((leg, _) => added.contains('drivers.$leg'));
+      if (added.isNotEmpty) {
+        restore
+          ..removeWhere((k, _) => k.startsWith('drivers.'))
+          ..['drivers'] = after;
+      }
       restore['rides'] = ridesJson([
         for (final leg in rideLegs)
           if (after.containsKey(leg)) Ride(leg, after[leg] as String?),

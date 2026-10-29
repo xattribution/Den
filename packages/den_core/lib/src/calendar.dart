@@ -188,10 +188,10 @@ bool _sameRides(List<Ride> a, List<Ride> b) {
 }
 
 /// The fields that give an event record [rides]. `rides` is written whole, for older versions;
-/// then `drivers`: one entry per leg whose driver changes (`drivers.<leg>`), so claims of
-/// different legs at once all count, when [existing] already reads its drivers there with the
-/// same legs; otherwise the whole map, which also says which legs there are. Empty when nothing
-/// would change. [existing] is null for a record being made.
+/// then `drivers`: one entry per leg that is new or whose driver changes (`drivers.<leg>`), so
+/// claims of different legs at once all count, when [existing] already reads its drivers there;
+/// the whole map when a leg goes (an entry can't take its key away) or [existing] reads its
+/// `rides` list. Empty when nothing would change. [existing] is null for a record being made.
 ///
 /// Den commits `drivers` in a change of its own, after the rest (`Den._olderVersionsFirst`).
 Map<String, Object?> eventRideFields(List<Ride> rides, {Event? existing}) {
@@ -202,12 +202,11 @@ Map<String, Object?> eventRideFields(List<Ride> rides, {Event? existing}) {
   final now = existing.rides;
   if (_sameRides(now, list)) return const {};
   final have = _legs(now);
-  final sameLegs = have.length == want.length && want.keys.every(have.containsKey);
-  if (!existing.readsDrivers || !sameLegs) return whole;
+  if (!existing.readsDrivers || !have.keys.every(want.containsKey)) return whole;
   return {
     'rides': ridesJson(list),
     for (final r in list)
-      if (have[r.leg] != r.driver) 'drivers.${r.leg}': r.driver,
+      if (!have.containsKey(r.leg) || have[r.leg] != r.driver) 'drivers.${r.leg}': r.driver,
   };
 }
 

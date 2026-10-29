@@ -358,11 +358,17 @@ void main() {
       await den.claimRide(once, occurrence: first, leg: 'to', driver: dana);
       expect(legs(den.event(once)!.rides), {'to': dana, 'from': priya});
       expect(await written(() => den.claimRide(once, occurrence: first, leg: 'to', driver: dana)), isEmpty, reason: 'it already is');
-      // A leg it didn't have comes with the whole map, which says which legs there are.
+      // A leg it didn't have is one more entry; only a leg taken away needs the whole map.
       final single = await den.addEvent(title: 'Field trip', start: first, end: first + hour, rides: const [Ride('to', null)]);
-      final added = await written(() => den.claimRide(single, occurrence: first, leg: 'from', driver: alex));
-      expect(added.last.fields['drivers'], {'to': null, 'from': alex});
+      final r = await den.recording(() => den.claimRide(single, occurrence: first, leg: 'from', driver: alex));
+      final added = [for (final c in den.changesSince({})) if (r.changes.contains(c.id)) c];
+      expect(keysOf(added.last), {'drivers.from'});
       expect(legs(den.event(single)!.rides), {'to': null, 'from': alex});
+      expect((await den.undo(r.changes)).skipped, isEmpty);
+      expect(legs(den.event(single)!.rides), {'to': null}, reason: 'the leg it added goes again');
+      final dropped = await written(() => den.updateEvent(single, {'rides': <Ride>[]}));
+      expect(dropped.last.fields['drivers'], isEmpty);
+      expect(den.event(single)!.rides, isEmpty);
     });
 
     test('one occurrence takes a driver per leg; the others, and its other leg, follow the series', () async {

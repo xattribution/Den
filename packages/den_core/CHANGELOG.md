@@ -4,8 +4,8 @@
   its keys are the legs) is written one entry at a time (`drivers.to`, `drivers.from`), and one
   occurrence takes its own driver per leg (`patch.drivers.<leg>`: a member id, or `""` for nobody
   this time). `claimRide` writes only the leg it changes, so two people taking different legs at
-  once both count; `updateEvent` with `rides` writes the legs that change, or the whole map when
-  the legs do. Every write also writes the whole `rides` list for older versions, in a change of
+  once both count; `updateEvent` with `rides` writes the legs that are new or change, or the
+  whole map when a leg goes. Every write also writes the whole `rides` list for older versions, in a change of
   its own just before the drivers (an older version refuses a change with a field it doesn't
   know). `Event.rides` and `Occurrence.rides` keep their shape: they read `drivers`, or `rides`
   when there are none or an older version wrote the list after them (`Event.readsDrivers`,

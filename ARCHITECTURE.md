@@ -472,11 +472,11 @@ and its exceptions, by the same wall-clock delta.
 "I'll drive" at the same moment, one there (`to`) and one home (`from`), both count:
 
 - An event's `drivers` names its legs and who drives each. `Den.claimRide` writes the one leg
-  (`drivers.<leg>`); a change to which legs there are (the editor, a claim of a leg the event
-  didn't have) writes the whole map. One occurrence of a series takes its own driver per leg
-  (`patch.drivers.<leg>`: a member id, or `""` for nobody this time, which is how "I can't this
-  week" overrides a series driver); a leg with no override follows the series, and an override
-  for a leg the series hasn't adds it to that day.
+  (`drivers.<leg>`), as the editor does for each leg it adds or changes; only taking a leg away
+  writes the whole map, since an entry can't take its key away. One occurrence of a series
+  takes its own driver per leg (`patch.drivers.<leg>`: a member id, or `""` for nobody this
+  time, which is how "I can't this week" overrides a series driver); a leg with no override
+  follows the series, and an override for a leg the series hasn't adds it to that day.
 - Every such write also writes the whole `rides` list (`patch.rides` for an occurrence), as it
   reads after the change, for older versions, in a change of its own committed just before the
   drivers: an older version refuses a whole change carrying a field it doesn't know, so the list
