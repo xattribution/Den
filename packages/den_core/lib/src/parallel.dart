@@ -31,14 +31,18 @@ Future<List<Uint8List?>> checkChanges(
   if (workers > 1 && big) {
     final parts = workers < changes.length ? workers : changes.length;
     final size = (changes.length + parts - 1) ~/ parts;
-    final results = await Future.wait([
-      for (var start = 0; start < changes.length; start += size)
-        _inWorker(job.slice(start, start + size > changes.length ? changes.length : start + size)),
-    ]);
-    return [for (final r in results) ...r];
+    try {
+      final results = await Future.wait([
+        for (var start = 0; start < changes.length; start += size)
+          _inWorker(job.slice(start, start + size > changes.length ? changes.length : start + size)),
+      ]);
+      return [for (final r in results) ...r];
+    } on Object {
+      // A worker that couldn't start or take the batch: check it here instead.
+    }
   }
   final out = <Uint8List?>[];
-  final step = verify ? 16 : 250;
+  final step = verify ? 16 : 100;
   for (var start = 0; start < changes.length; start += step) {
     final end = start + step > changes.length ? changes.length : start + step;
     out.addAll(await job.slice(start, end).runAll(concurrent: true));
