@@ -67,7 +67,10 @@ class HubInvites {
   static const String _doc = 'invites';
 
   final Random _random = Random.secure();
-  final WrongGuesses _wrong = WrongGuesses(perClient: maxWrong, ceiling: wrongCeiling, window: wrongWindow);
+  late final WrongGuesses _own = WrongGuesses(perClient: maxWrong, ceiling: wrongCeiling, window: wrongWindow);
+
+  /// Wrong words, counted for the whole host when the hub is one family of a Den host.
+  WrongGuesses get _wrong => hub.host?.inviteGuesses ?? _own;
 
   /// Adds the invite routes.
   void register(Routes routes) {
@@ -75,6 +78,17 @@ class HubInvites {
       ..add('POST', '/api/v1/invites', (r, _) => create(r))
       ..add('POST', '/api/v1/invites/redeem', (r, _) => redeem(r));
   }
+
+  /// Whether this family keeps a live invite under [key]: four words, or `slot:<hex>`.
+  bool holds(String key) {
+    if (!hub.ready) return false;
+    _prune(hub.now());
+    return _invites.containsKey(key);
+  }
+
+  /// Whether [key] is taken here or by another family on the host: invite words are unique per
+  /// host, so words typed at any family's address find one invite.
+  bool _taken(String key) => _invites.containsKey(key) || (hub.host?.inviteTaken(key) ?? false);
 
   Map<String, Object?> get _invites => hub.state.read(_doc);
 
@@ -154,7 +168,7 @@ class HubInvites {
     final base = hub.base(request);
     if (slot is String) {
       final at = 'slot:$slot';
-      if (_invites.containsKey(at)) throw ApiError(409, 'conflict', 'That invite is already waiting. Make a new one.');
+      if (_taken(at)) throw ApiError(409, 'conflict', 'That invite is already waiting. Make a new one.');
       _invites[at] = {'grant': grant.toJson(), 'url': grant.invite.toUrl(), 'expires': expires, 'made': now, 'key': ?key};
       await _save();
       hub.log.info(key == null ? 'A parent made an invite' : 'A parent made an invite that lets someone in at once');
@@ -168,7 +182,7 @@ class HubInvites {
       }, status: 201);
     }
     var code = _newCode();
-    while (_invites.containsKey(code)) {
+    while (_taken(code)) {
       code = _newCode();
     }
     _invites[code] = {'grant': grant.toJson(), 'url': grant.invite.toUrl(), 'expires': expires, 'made': now};
@@ -217,13 +231,24 @@ class HubInvites {
   /// they stretch to), for the device about to join with it over `/ws`, while it hasn't been
   /// used ([maxJoins]); `404` once it has. Says whether it lets the device in at once
   /// (`preapproved`, with the invite key's public half as `key`).
-  Future<Response> redeem(Request request) async {
-    if (!hub.ready) throw ApiError.notReady();
+  Future<Response> redeem(Request request) => redeemAcross(request, [this]);
+
+  /// [redeem] across [books], every family's on a Den host: words are unique per host, so the
+  /// words someone types at any family's address find their invite, whichever family made it.
+  /// The limits and wrong-word counts are the host's, checked before anything is looked up (and
+  /// before typed words are stretched); the family that keeps the invite answers.
+  static Future<Response> redeemAcross(Request request, List<HubInvites> books) async {
+    final ready = [for (final b in books) if (b.hub.ready) b];
+    if (ready.isEmpty) throw ApiError.notReady();
+    // Limits, failed tries and wrong words are the host's, shared by every family on it, so any
+    // family's context counts them the same.
+    final first = ready.first;
+    final hub = first.hub;
     hub.checkFailures(request);
     hub.limit(request, 'pairing', Limits.pairing);
     final now = hub.now();
     final client = hub.clientOf(request);
-    final wait = _wrong.wait(client, now);
+    final wait = first._wrong.wait(client, now);
     if (wait != null) {
       throw ApiError.rateLimited(
           wait.seconds,
@@ -244,10 +269,25 @@ class HubInvites {
       }
       code = typed;
     }
-    _prune(now);
+    var holders = [for (final book in ready) if (book.holds(code)) book];
     // Words typed into an app that doesn't stretch them: the hub does, for an invite it keeps by
     // its slot (one Argon2id run, so only after the limits above let the client try).
-    if (slot == null && !_invites.containsKey(code) && _hasSlots) code = 'slot:${await InviteWords.slot(code)}';
+    if (slot == null && holders.isEmpty && ready.any((book) => book._hasSlots)) {
+      code = 'slot:${await InviteWords.slot(code)}';
+      holders = [for (final book in ready) if (book.holds(code)) book];
+    }
+    // Unique per host; two holding the same words would be a mistake, and neither answers.
+    if (holders.length != 1) {
+      first._wrong.add(client, now);
+      hub.failed(request);
+      hub.log.warn('Someone tried words that match no invite');
+      throw ApiError.notFound(type: 'invite', message: "That code isn't right, or the invite has expired. Ask for a new invite.");
+    }
+    return holders.single._answer(request, code, client, now);
+  }
+
+  /// The invite this family keeps under [code], for [redeemAcross].
+  Future<Response> _answer(Request request, String code, String client, int now) async {
     final entry = _invites[code];
     InviteGrant? grant;
     if (entry is Map && entry['grant'] is Map) {

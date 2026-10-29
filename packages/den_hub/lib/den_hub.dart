@@ -12,7 +12,11 @@ export 'src/assistant.dart' show HubAssistant;
 export 'src/capture.dart' show HubCapture;
 export 'src/config.dart';
 export 'src/edge.dart' show IpNetwork;
+export 'src/host.dart' show DenHost, HostConfig, HostedTenant;
+export 'src/host_state.dart'
+    show HostState, HostedLog, VapidKeyring, hostCliFile, hostLogsDir, hostStateDir, normalizeHostname, requestHostname;
 export 'src/hub.dart';
+export 'src/tenant_router.dart' show RoutableLog, TenantRouter;
 export 'src/log.dart';
 export 'src/net_guard.dart' show BlockedAddress, HostResolver, NetGuard, isPublicAddress, parsePeerHubs, systemResolver;
 export 'src/setup.dart' show HubSetup, SetupStage, setupAlphabet, setupLink, setupTries, restrictToOwner, linkOpenFile, removedNotice;

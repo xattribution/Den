@@ -9,6 +9,7 @@ import 'access.dart';
 import 'config.dart';
 import 'edge.dart';
 import 'gate.dart';
+import 'host_state.dart';
 import 'http_util.dart';
 import 'log.dart';
 import 'net_guard.dart';
@@ -17,7 +18,8 @@ import 'state.dart';
 
 /// What every part of the hub shares.
 class HubContext {
-  /// Creates the shared context.
+  /// Creates the shared context. In a Den host, [host] gives the host-wide limits and Web Push
+  /// keys, and the host's clients are [http] and [fetch].
   HubContext({
     required this.den,
     required this.gate,
@@ -27,8 +29,14 @@ class HubContext {
     required this.node,
     required this.http,
     http_client.Client? fetch,
-  }) : fetch = fetch ??
-            NetGuard(resolve: config.resolver, allow: config.fetchAllow, hubs: [?config.publicUrl, ...config.peerHubs]).client();
+    this.host,
+  })  : fetch = fetch ??
+            NetGuard(resolve: config.resolver, allow: config.fetchAllow, hubs: [?config.publicUrl, ...config.peerHubs]).client(),
+        limits = host?.limits ?? RateLimiter();
+
+  /// The Den host this hub is one family of, or null for a context made on its own (the command
+  /// line's offline tools).
+  final HostLink? host;
 
   /// The hub's engine.
   final Den den;
@@ -88,8 +96,8 @@ class HubContext {
   /// UTC milliseconds now.
   int now() => DateTime.now().toUtc().millisecondsSinceEpoch;
 
-  /// Per-client limits on what strangers can do.
-  final RateLimiter limits = RateLimiter();
+  /// Per-client limits on what strangers can do: the host's, shared by every family on it.
+  final RateLimiter limits;
 
   /// The public base URL [request] came to (the configured public URL, else what a trusted
   /// proxy says, else the request's `Host`).

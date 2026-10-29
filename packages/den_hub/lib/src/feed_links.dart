@@ -144,6 +144,14 @@ class HubFeedLinks {
     return link != null && _works(link);
   }
 
+  /// Whether this family made a link with [secret], working or not: on a Den host, which family
+  /// a calendar link asked for at an address that names none belongs to.
+  bool holds(String secret) {
+    if (!secret.startsWith(prefix) || secret.length > 200) return false;
+    final hash = hashToken(secret);
+    return _all.any((l) => l.hash == hash);
+  }
+
   /// The link whose secret is [secret], while it [_works]; null otherwise.
   FeedLink? resolve(String secret) {
     if (!secret.startsWith(prefix) || secret.length > 200) return null;

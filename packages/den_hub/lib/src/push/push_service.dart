@@ -72,22 +72,42 @@ class WebPushService implements HubService, ReminderSink {
   /// Device id → its subscription: `endpoint`, `p256dh`, `auth`, `contact`, `since`.
   Map<String, Object?> get _devices => _map('devices');
 
-  /// The hub's VAPID keys, made and saved on first use.
+  /// The hub's VAPID keys, made and saved on first use. On a Den host they join the host's
+  /// keyring, so the host can sign with them for a browser subscribed at this family's address
+  /// whichever family it takes reminders from.
   VapidKeys get keys {
     final have = _keys;
     if (have != null) return have;
     final saved = _state['vapid'];
     if (saved is String) {
       try {
-        return _keys = VapidKeys.fromPrivate(unb64url(saved));
+        final loaded = _keys = VapidKeys.fromPrivate(unb64url(saved));
+        hub.host?.vapid.add(loaded);
+        return loaded;
       } on Object {
         hub.log.warn('The saved Web Push key was unreadable; made a new one. Browsers turn reminders on again.');
       }
     }
     final made = _keys = VapidKeys.generate();
     _state['vapid'] = b64url(made.privateKey);
+    hub.host?.vapid.add(made);
     unawaited(_save());
     return made;
+  }
+
+  /// The key a browser asking at [request]'s address subscribes with: on a Den host, that
+  /// address's family's key (one origin, one key, whichever family's reminders it takes); else
+  /// this hub's own.
+  VapidKeys _keyFor(Request request) => hub.host?.vapidFor(request) ?? keys;
+
+  /// The key [sub] was made with: the one it names (from the host's keyring), else this hub's
+  /// own, which every subscription made before the host was.
+  VapidKeys _signerOf(Map<Object?, Object?> sub) {
+    final named = sub['vapid'];
+    if (named is! String || named == b64url(keys.publicKey)) return keys;
+    final found = hub.host?.vapid[named];
+    if (found == null) hub.log.warn("A browser's push subscription names a Web Push key this host doesn't have; signing with the hub's own");
+    return found ?? keys;
   }
 
   Future<void> _save() async {
@@ -107,11 +127,11 @@ class WebPushService implements HubService, ReminderSink {
 
   Future<Device> _check(Request request) async => (await deviceAuth.check(request)).device!;
 
-  Response _answer(String deviceId) =>
-      jsonResponse({'key': b64url(keys.publicKey), 'subscribed': _devices.containsKey(deviceId)});
+  Response _answer(Request request, String deviceId) =>
+      jsonResponse({'key': b64url(_keyFor(request).publicKey), 'subscribed': _devices.containsKey(deviceId)});
 
   /// `GET /api/v1/push`: the hub's public key, and whether this device gets reminders.
-  Future<Response> status(Request request) async => _answer((await _check(request)).id);
+  Future<Response> status(Request request) async => _answer(request, (await _check(request)).id);
 
   /// `PUT /api/v1/push`: this device's push subscription, as the browser gives it.
   Future<Response> subscribe(Request request) async {
@@ -148,10 +168,12 @@ class WebPushService implements HubService, ReminderSink {
       'auth': auth,
       'contact': base.scheme == 'https' ? base.toString() : null,
       'since': hub.now(),
+      // The key the browser was handed at this address, which it subscribed with.
+      'vapid': b64url(_keyFor(request).publicKey),
     };
     await _save();
     hub.log.info('A device turned reminders on');
-    return _answer(device.id);
+    return _answer(request, device.id);
   }
 
   static bool _validKeys(String p256dh, String auth) {
@@ -167,7 +189,7 @@ class WebPushService implements HubService, ReminderSink {
   Future<Response> unsubscribe(Request request) async {
     final device = await _check(request);
     if (_devices.remove(device.id) != null) await _save();
-    return _answer(device.id);
+    return _answer(request, device.id);
   }
 
   /// `POST /api/v1/push/test`: one notification to this device, to see reminders work.
@@ -212,7 +234,7 @@ class WebPushService implements HubService, ReminderSink {
           .post(
             endpoint,
             headers: {
-              'authorization': keys.authorization(
+              'authorization': _signerOf(sub).authorization(
                 endpoint,
                 subject: subject,
                 expires: DateTime.now().toUtc().add(const Duration(hours: 12)),

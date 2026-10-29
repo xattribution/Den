@@ -126,23 +126,30 @@ final RegExp _hostName = RegExp(r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z
 /// to hold that family's certificate. No other private address is let through this way.
 class NetGuard {
   /// A guard resolving with [resolve] (default the system's) that also admits [allow], and
-  /// loopback for [hubs]. [tls] replaces the system's trusted certificates (tests).
+  /// loopback for [hubs] and whatever [moreHubs] gives at the time (a Den host's families'
+  /// addresses, which change as families are added). [tls] replaces the system's trusted
+  /// certificates (tests).
   NetGuard({
     HostResolver? resolve,
     List<IpNetwork> allow = const [],
     Iterable<Uri> hubs = const [],
+    Iterable<Uri> Function()? moreHubs,
     this.lookupTimeout = const Duration(seconds: 10),
     SecurityContext? tls,
   })  : _resolve = resolve ?? systemResolver,
         _tls = tls,
+        _moreHubs = moreHubs,
         allow = List.unmodifiable(allow),
-        hubs = Set.unmodifiable({
-          for (final h in hubs)
-            if (h.isScheme('https') && h.host.isNotEmpty && InternetAddress.tryParse(h.host) == null) _origin(h),
-        });
+        hubs = Set.unmodifiable(_origins(hubs));
 
   final HostResolver _resolve;
   final SecurityContext? _tls;
+  final Iterable<Uri> Function()? _moreHubs;
+
+  static Set<String> _origins(Iterable<Uri> hubs) => {
+        for (final h in hubs)
+          if (h.isScheme('https') && h.host.isNotEmpty && InternetAddress.tryParse(h.host) == null) _origin(h),
+      };
 
   /// Networks the operator lets the hub fetch from although they aren't public (a calendar
   /// server at home).
@@ -160,8 +167,15 @@ class NetGuard {
   /// Whether the hub may connect to [address].
   bool permits(InternetAddress address) => isPublicAddress(address) || allow.any((n) => n.contains(address));
 
-  /// Whether [uri] is one of the configured [hubs]: `https`, the same name, the same port.
-  bool isHub(Uri uri) => uri.isScheme('https') && hubs.contains(_origin(uri));
+  /// Whether [uri] is one of the configured [hubs] (or the host's families now): `https`, the
+  /// same name, the same port.
+  bool isHub(Uri uri) {
+    if (!uri.isScheme('https')) return false;
+    final origin = _origin(uri);
+    if (hubs.contains(origin)) return true;
+    final more = _moreHubs;
+    return more != null && _origins(more()).contains(origin);
+  }
 
   /// The one address to connect to for [host]: an IP literal as it is, else the first answer of
   /// a single lookup. Throws [BlockedAddress] when any answer isn't permitted, and
