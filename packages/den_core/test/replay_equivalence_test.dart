@@ -284,6 +284,141 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildPool(int seed) async {
   return (TrustRoot(familyId: a.familyId, founderPubkey: a.founderPubkey), pool, before);
 }
 
+/// A family's log with what makes revocation cutoffs hard: a stolen phone answering its removal
+/// with removals of its own clocked before it (of its remover's other device, naming that
+/// device's genesis record, and of another, naming less than its request to join), a device it
+/// lets in on the quiet, and a removal clocked after its own; two parents' devices removing
+/// each other while out of touch; and a chain, where whether one removal counts decides
+/// whether the next does, one naming a low cutoff a parent's device may name.
+Future<(TrustRoot, List<Change>, List<Change>)> buildRevocationPool(int seed) async {
+  final random = Random(seed);
+  final clock = TestClock.at(DateTime.utc(2026, 5, 1, 15));
+  final a = await foundFamily(clock);
+  final dana = a.actor!.id;
+  final priya = await a.addMember(name: 'Priya', role: Role.parent);
+  final leo = await a.addMember(name: 'Leo', role: Role.kid, grants: {Grant.events, Grant.lists});
+  clock.advance(const Duration(minutes: 1));
+  final b = await joinDevice(a, clock, member: priya, name: 'Priya phone', kind: DeviceKind.phone);
+  final c = await joinDevice(a, clock, member: dana, name: 'Dana laptop', kind: DeviceKind.desktop);
+  final d = await joinDevice(a, clock, member: priya, name: 'Priya tablet');
+  final h = await joinDevice(a, clock, mode: DeviceMode.hub, name: 'Hub', kind: DeviceKind.hub);
+  await exchange(a, b);
+  // Leo's tablet is let in by Priya's phone, so a cutoff on that phone could reach it.
+  final t = await joinDevice(b, clock, member: leo, name: 'Leo tablet');
+  final devices = [a, b, c, d, t, h];
+  for (final x in devices) {
+    await exchange(x, h);
+  }
+  for (final x in devices) {
+    await exchange(h, x);
+  }
+  final forged = <Change>[];
+
+  Future<void> op(Den x) async {
+    clock.advance(Duration(seconds: 1 + random.nextInt(300)));
+    try {
+      switch (random.nextInt(5)) {
+        case 0:
+          await x.addEvent(title: 'Event ${random.nextInt(99)}', start: clock.now, end: clock.now + 3600000);
+        case 1:
+          await x.addCategory(name: 'Category ${random.nextInt(99)}');
+        case 2:
+          final events = x.events;
+          if (events.isNotEmpty) await x.updateEvent(events[random.nextInt(events.length)].id, {'location': 'Room ${random.nextInt(9)}'});
+        case 3:
+          await x.addList(title: 'List ${random.nextInt(99)}', kind: ListKind.checklist);
+        default:
+          final lists = x.lists;
+          if (lists.isNotEmpty) await x.addItem(lists[random.nextInt(lists.length)].list.id, text: 'Item ${random.nextInt(99)}');
+      }
+    } on PermissionDenied {
+      // Not theirs to make, or removed by now.
+    } on InvalidInput {
+      // Gone by now.
+    }
+  }
+
+  Future<void> rounds(int n, List<Den> who) async {
+    for (var i = 0; i < n; i++) {
+      await op(who[random.nextInt(who.length)]);
+      if (random.nextInt(3) == 0) await exchange(who[random.nextInt(who.length)], h);
+    }
+  }
+
+  int last(Den x) => x.changesSince(const {}).where((ch) => ch.device == x.deviceId).map((ch) => ch.counter).fold(0, max);
+  Future<Change> removal(Den by, String device, {required int counter, required int millis, required int after, required String actor}) =>
+      forge(by.keys, counter: counter, millis: millis, type: RecordType.device, rid: device, actor: actor, fields: {'revoked': true, 'revokedAfter': after});
+
+  await rounds(60, devices);
+  for (final x in devices) {
+    await exchange(x, h);
+  }
+  final before = {
+    for (final x in devices)
+      for (final ch in x.changesSince(const {})) ch.id: ch,
+  }.values.toList();
+
+  // Priya's phone is stolen, with some of its changes still unsent. Dana's laptop removes it.
+  await rounds(4, [b]);
+  await exchange(h, c);
+  clock.advance(Duration(minutes: 1 + random.nextInt(30)));
+  final removedAt = clock.now;
+  await c.revokeDevice(b.deviceId);
+  await exchange(c, h);
+  // The thief answers, with Priya's phone's key: a removal of Dana's phone clocked just before,
+  // naming its genesis record (allowed, and it would erase everything Dana's phone did since);
+  // one of Priya's tablet naming less than its request to join (refused); a device let in on
+  // the quiet, and what it writes; and a removal of the laptop clocked after its own removal.
+  var n = last(b) + 1;
+  forged.add(await removal(b, a.deviceId, counter: n++, millis: removedAt - 1 - random.nextInt(60000), after: 3, actor: priya));
+  forged.add(await removal(b, d.deviceId, counter: n++, millis: removedAt - 2 - random.nextInt(60000), after: 0, actor: priya));
+  final z = await openDen(TestClock(removedAt - 120000));
+  await z.requestJoin(familyId: a.familyId!, founderPubkey: a.founderPubkey!, deviceName: 'Quiet', kind: DeviceKind.phone);
+  forged.addAll(z.changesSince(const {}));
+  forged.add(await forge(b.keys, counter: n++, millis: removedAt - 60000, type: RecordType.device, rid: z.deviceId, actor: priya, fields: {
+    'approved': true,
+    'approvedBy': priya,
+    'member': priya,
+    'mode': 'personal',
+  }));
+  forged.add(await forge(z.keys, counter: 2, millis: removedAt - 30000, type: RecordType.category, rid: 'quiet', actor: priya, fields: {'name': 'Quiet'}));
+  forged.add(await removal(b, c.deviceId, counter: n++, millis: removedAt + 1 + random.nextInt(60000), after: 1, actor: priya));
+
+  // Dana's phone and Priya's tablet remove each other while out of touch, either first.
+  await rounds(6, [a, c, d, t]);
+  clock.advance(const Duration(minutes: 5));
+  final first = random.nextBool() ? a : d, second = identical(first, a) ? d : a;
+  await first.revokeDevice(second.deviceId);
+  clock.advance(Duration(seconds: 1 + random.nextInt(120)));
+  await second.revokeDevice(first.deviceId);
+  await exchange(first, h);
+  await exchange(second, h);
+
+  // A chain: Dana's phone removes Leo's tablet, which counts only if neither the thief's removal
+  // of Dana's phone nor the race above does; Dana's laptop names a low cutoff for the tablet,
+  // which a parent's device may.
+  // The laptop also names less than Priya's tablet's request to join: refused. (Each device
+  // takes back what is signed with its key here, so it never numbers a change of its own alike.)
+  await rounds(6, [c, t]);
+  await exchange(h, a);
+  clock.advance(const Duration(minutes: 3));
+  final chain = await removal(a, t.deviceId, counter: last(a) + 1, millis: clock.now, after: last(t), actor: dana);
+  await a.ingest([chain]);
+  clock.advance(const Duration(minutes: 3));
+  final low = await removal(c, t.deviceId, counter: last(c) + 1, millis: clock.now, after: 1 + random.nextInt(max(1, last(t))), actor: dana);
+  await c.ingest([low]);
+  final refused = await removal(c, d.deviceId, counter: last(c) + 1, millis: clock.now + 1000, after: 0, actor: dana);
+  await c.ingest([refused]);
+  forged.addAll([chain, low, refused]);
+  await rounds(20, [a, c, d, h]);
+  final pool = {
+    for (final x in devices)
+      for (final ch in x.changesSince(const {})) ch.id: ch,
+    for (final ch in forged) ch.id: ch,
+  }.values.toList();
+  return (TrustRoot(familyId: a.familyId, founderPubkey: a.founderPubkey), pool, before);
+}
+
 /// Everything a materializer holds, as text: the log's order, every record as stored (and the
 /// order the store keeps them in), what didn't count and why, how each valid change applied,
 /// and the revocation cutoffs.
@@ -322,21 +457,36 @@ Future<String> snapshotOf(Materializer m, TrustRoot root, int windowFrom) =>
     m.capture(root: root, windowFrom: windowFrom, digest: const [0]).encode(breathe: () async {});
 
 void main() {
-  for (final seed in [11, 12, 13]) {
-    group('pool $seed', () {
+  for (final (name, seed) in [for (final s in [11, 12, 13]) ('pool', s), for (final s in [21, 22, 23, 24]) ('revocation pool', s)]) {
+    final revocations = name == 'revocation pool';
+    group('$name $seed', () {
       late TrustRoot root;
       late List<Change> pool, beforeRevocation;
       late String expected;
       late List<int> clocks;
 
       setUpAll(() async {
-        (root, pool, beforeRevocation) = await buildPool(seed);
+        (root, pool, beforeRevocation) = await (revocations ? buildRevocationPool(seed) : buildPool(seed));
         final reference = Materializer(() => root)..add(pool);
         reference.replay();
         expected = stateOf(reference);
         clocks = [for (final c in pool) c.hlc.millis]..sort();
         expect(reference.rejected, isNotEmpty, reason: 'the pool has changes that don\'t count');
         expect(reference.validator.cutoffs, isNotEmpty, reason: 'the pool has a revocation with a cutoff');
+        if (revocations) {
+          final founder = deviceIdOf(root.founderPubkey!)!;
+          final reasons = reference.rejected.values;
+          expect(reasons.where((r) => r.contains('request to join')), isNotEmpty, reason: 'a cutoff below a request to join');
+          expect(reasons.where((r) => r.contains('removed')), isNotEmpty, reason: 'changes signed after a removal');
+          // The stolen phone's removal of Dana's phone, which would cut everything it did since
+          // its record, counts for nothing once the laptop's removal of the stolen phone does,
+          // and its cutoff with it.
+          final contest = pool.firstWhere((c) => c.type == RecordType.device && c.rid == founder && c.fields['revokedAfter'] == 3);
+          expect(reference.rejected[contest.id], contains('removed'));
+          expect(reference.validator.cutoffs[founder]?.where((k) => k.after == 3) ?? const <Cutoff>[], isEmpty);
+          expect(reference.store.liveOfType(RecordType.category).where((e) => e.fields['name'] == 'Quiet'), isEmpty);
+          return;
+        }
         expect(reference.store.liveOfType(RecordType.photo), isNotEmpty, reason: 'the pool has photos');
         expect(reference.validator.retiredRecoveryKeys.isEmpty, isFalse, reason: 'and replaced recovery keys');
         expect(reference.rejected.values.where((r) => r.contains('replaced')), isNotEmpty);

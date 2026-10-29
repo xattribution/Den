@@ -156,11 +156,35 @@ before its revocation, and post them to an old epoch's mailbox the relay still k
 revocation also records `revokedAfter`: the highest counter of that device's changes the revoking
 device held (in its log, or vouched for by a peer's `completeVector`). A change from the revoked
 device numbered past `revokedAfter` and clocked before the revocation is invalid, whatever clock
-it claims. A replay runs in two passes, both determined by the log alone: the first finds the
-valid revocations, the second applies their cutoffs from the start, so a backdated change already
-applied is dropped when the revocation arrives. Changes of the revoked device that
-the revoker never held are lost with it; a device re-approved later writes normally after its
-re-approval.
+it claims. Changes of the revoked device that the revoker never held are lost with it; a device
+re-approved later writes normally after its re-approval.
+
+Two rules keep a cutoff from erasing what it shouldn't, whoever names it:
+
+- `revokedAfter` is never below the counter of the change that made the revoked device's record
+  (its request to join, its recovery change, or the founder's genesis): a removal naming less is
+  invalid. So no removal erases a device's record, the devices it let in, or (for the founder's
+  phone) the family itself.
+- A cutoff is in effect only while the revocation that named it counts. A replay from scratch
+  settles this from the log alone, taking the revocations naming a cutoff (and the replaced
+  recovery keys, below) in log order: one is applied only if it counts with those already
+  applied, so a cutoff never makes its own revocation count; any that stops counting once
+  another is applied (the removal of a stolen phone cuts the removal it signed after, say) is
+  dropped for good, with its cutoff; and after a drop the scan starts over. So a backdated
+  change already applied is dropped when the revocation arrives, and what a stolen phone's
+  backdated removal cut comes back once the stolen phone is removed by a device it didn't
+  remove first.
+
+Accepted risk: a stolen parent phone that is still delivering changes (through the relay's
+old mailboxes, or a device that hasn't heard of its removal) can contest its own removal. A
+removal of the remover's device, or a change taking away the remover's role, signed with a
+clock from before its own removal and a `revokedAfter` no lower than the remover's request to
+join, counts, the remover's removal of it doesn't, and the remover's changes after that
+`revokedAfter` and before it count for nothing. The log can't tell this apart from two parents
+removing each other's phones while out of touch, and letting the later removal win instead
+would hand the same win to any removed phone that clocks its answer later (and that needs no
+forgery, just the app). A family that sees it removes the stolen phone again from another
+parent's device, or a phone let in by recovery.
 
 **Trust decisions are made only on a parent's own device.** Approving, revoking or changing
 another device; removing or restoring a member, or changing an existing member's `role`,
@@ -232,8 +256,8 @@ A device sets its own clock, so whoever still holds old words, or a hub's key af
 turned it off, could sign a recovery change dated before the key changed. So a change that
 replaces a key (new words, server help off or another key) lists in `kept` the devices the old
 key let in that its author holds, and a recovery change made with the old key and clocked before
-the replacement counts only for those. The materializer finds replaced keys in its first pass and
-applies them in its second, the way it applies revocation cutoffs, both from the log alone. A
+the replacement counts only for those. The materializer settles which replaced keys are in
+effect together with the revocation cutoffs, the same way, from the log alone. A
 device let in by the old key that the replacing parent never heard of is out, like changes of a
 revoked device the revoker never held.
 
@@ -292,7 +316,7 @@ commit too (`Den.restoreAll`).
 | --- | --- | --- |
 | `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map: memberId -> `{parentsSeePrivate: bool}`, and `<memberId>.rewardsNeedOk` and `<memberId>.ownPicture` -> bool or null; see "Parental controls"), `assistant` (`{enabled, members, kidDailyLimit, budgetCents}`: the in-app assistant, off until a parent turns it on; parents and the members listed may use it, never a little kid or a pre-reader; default 20 questions a day for a kid and $5 a month), `recovery` (`{serverKey, kept}`: the hub key the family lets help a parent back in, null while off; see "Recovery") |
 | `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, `initial`, or `photo:<id>` naming one of their `photo` records), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `until` (a sitter's last day with access, a local date, or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order`, `recovery` (a parent's `{key, kept}`: their recovery key, base64url Ed25519, or null; see "Recovery") |
-| `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`), `recovery` (written once, by a device letting itself in: `{kind: words\|hub, member, key, nonce, expires, sig}`; see "Recovery") |
+| `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held, never below its own request to join), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`), `recovery` (written once, by a device letting itself in: `{kind: words\|hub, member, key, nonce, expires, sig}`; see "Recovery") |
 | `category` | `f` | `name`, `icon` |
 | `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `rides` (list of `{leg: to\|from, driver: memberId\|null}`), `countdown` (bool) |
 | `eventException` | same as event | id `"<eventId>@<occurrence>"`: `event`, `occurrence` (original start), `cancelled`, `patch` (map of event fields: `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `assignees`, `reminders`, `rides`) |

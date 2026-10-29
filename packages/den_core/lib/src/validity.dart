@@ -94,6 +94,11 @@ class Validator {
   /// Recovery keys replaced later in the log; the materializer fills this like [cutoffs].
   final RetiredRecoveryKeys retiredRecoveryKeys = RetiredRecoveryKeys();
 
+  /// The counter of the change by [device] that made its record (its join request, its
+  /// recovery change, or the founder's genesis), whose clock is [created]; null when unknown.
+  /// The materializer, which holds the log, answers.
+  int? Function(String device, Hlc created)? createdCounter;
+
   Rejection? check(Change c) {
     final colon = c.id.lastIndexOf(':');
     final counter = colon > 0 ? int.tryParse(c.id.substring(colon + 1)) : null;
@@ -122,6 +127,15 @@ class Validator {
     if (fieldError != null) return _schema(fieldError);
     final crossError = _crossFields(c, existing);
     if (crossError != null) return _schema(crossError);
+    // A cutoff never reaches the change that made the device's record: that would erase the
+    // device itself, everything it wrote and every device it let in, whoever removed it.
+    final after = c.fields['revokedAfter'];
+    if (c.type == RecordType.device && after is int && existing != null) {
+      final made = createdCounter?.call(c.rid, existing.created);
+      if (made != null && after < made) {
+        return _trust('A removal can\'t reach back past the device\'s own request to join');
+      }
+    }
 
     final authorEntry = store.at(Space.family, RecordType.device, c.device);
     // The one way a device approves itself: as an existing parent's, with a recovery proof.

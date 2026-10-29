@@ -43,15 +43,15 @@ const Object _rejectedStep = Object();
 ///
 /// A device's clock is its own to set, so a revoked device could sign new changes with clocks
 /// from before its revocation. A revocation therefore names the last change the revoking device
-/// held from it (`revokedAfter`), and a replay runs in two passes: the first finds the valid
-/// revocations, the second replays with their cutoffs (see [Cutoff]) applied from the start.
-/// Both passes depend only on the log, so every replica still agrees. A replaced recovery key
-/// works the same way ([RetiredRecoveryKeys]). Which revocations and replacements count can turn
-/// on any change before them, so a change landing at or before one (or making one) replays
-/// everything too.
+/// held from it (`revokedAfter`), and a replay from scratch settles which cutoffs (see [Cutoff])
+/// are in effect, applying them from the start: only those of revocations that count with the
+/// others applied ([replay]). A replaced recovery key works the same way
+/// ([RetiredRecoveryKeys]). All of it depends only on the log, so every replica still agrees.
+/// Which revocations and replacements count can turn on any change before them, so a change
+/// landing at or before one (or making one) replays everything too.
 class Materializer {
   Materializer(TrustRoot Function() root) {
-    validator = Validator(store, root);
+    validator = Validator(store, root)..createdCounter = _createdCounter;
   }
 
   final RecordStore store = RecordStore();
@@ -252,28 +252,84 @@ class Materializer {
     replay();
   }
 
-  /// Replays the whole log from scratch, in two passes when a revocation names a cutoff.
+  /// Replays the whole log from scratch, then settles which revocations naming a cutoff and
+  /// which replaced recovery keys are in effect, taking them in log order:
+  ///
+  /// - one is applied only if it counts with those already applied, so a cutoff never makes
+  ///   its own revocation count;
+  /// - once applied, any that no longer counts (a later removal of its author's device cut it,
+  ///   say) is dropped for good, and its cutoff with it, so no cutoff stays in effect once the
+  ///   revocation that named it stops counting;
+  /// - after a drop the scan starts over, since what the dropped one undid may let an earlier
+  ///   one count.
+  ///
+  /// The log is replayed only when one excludes something. Every replica does the same from the
+  /// log alone, and a late change before any of them replays from scratch ([add]).
   void replay() {
     replays++;
     fullReplays++;
     validator.cutoffs.clear();
     validator.retiredRecoveryKeys.clear();
     _replayOnce();
-    final cutoffs = <String, List<Cutoff>>{};
-    for (final a in _applied) {
-      final cut = Cutoff.of(a.change);
-      if (cut != null) (cutoffs[a.change.rid] ??= []).add(cut);
+    final deciding = [for (final c in _log) if (_decidesVerdicts(c)) c];
+    final applied = <String>[];
+    final dropped = <String>{};
+    for (var i = 0; i < deciding.length; i++) {
+      final c = deciding[i];
+      if (applied.contains(c.id) || dropped.contains(c.id) || rejected.containsKey(c.id)) continue;
+      applied.add(c.id);
+      _applyEffects(applied);
+      // Nothing that counts now is cut: the state is already what a replay would give.
+      if (!_applied.any((a) => _excluded(a.change))) continue;
+      var shrank = false;
+      while (true) {
+        _replayOnce();
+        final gone = [for (final id in applied) if (rejected.containsKey(id)) id];
+        if (gone.isEmpty) break;
+        applied.removeWhere(gone.contains);
+        dropped.addAll(gone);
+        shrank = true;
+        _applyEffects(applied);
+      }
+      if (shrank) i = -1;
     }
-    final retired = RetiredRecoveryKeys.of(_applied);
-    if (cutoffs.isEmpty && retired.isEmpty) return;
-    validator.cutoffs.addAll(cutoffs);
-    validator.retiredRecoveryKeys.addAll(retired);
-    bool excluded(Change c) {
-      final n = _counterIn(c.id);
-      return n != null && (cutoffs[c.device]?.any((k) => k.excludes(n, c.hlc)) ?? false);
-    }
+  }
 
-    if (_log.any(excluded) || _log.any(retired.excludes)) _replayOnce();
+  /// Whether the validator's cutoffs or replaced recovery keys make [c] count for nothing.
+  bool _excluded(Change c) {
+    final n = _counterIn(c.id);
+    return (n != null && (validator.cutoffs[c.device]?.any((k) => k.excludes(n, c.hlc)) ?? false)) ||
+        validator.retiredRecoveryKeys.excludes(c);
+  }
+
+  /// Sets the validator's cutoffs and replaced recovery keys to those of [ids], each of which
+  /// counts in the state as it stands.
+  void _applyEffects(List<String> ids) {
+    final chosen = {...ids};
+    final effects = [
+      for (final a in _applied)
+        if (chosen.contains(a.change.id)) a,
+    ];
+    validator.cutoffs.clear();
+    for (final a in effects) {
+      final cut = Cutoff.of(a.change);
+      if (cut != null) (validator.cutoffs[a.change.rid] ??= []).add(cut);
+    }
+    validator.retiredRecoveryKeys
+      ..clear()
+      ..addAll(RetiredRecoveryKeys.of(effects));
+  }
+
+  /// The counter of [device]'s own change that made its record, clocked [created]: nearly
+  /// always its first.
+  int? _createdCounter(String device, Hlc created) {
+    bool makes(Change? c) => c != null && c.hlc == created && c.type == RecordType.device && c.rid == device;
+    if (makes(_byId['$device:1'])) return 1;
+    int? best;
+    for (final n in _counters[device] ?? const <int>{}) {
+      if ((best == null || n < best) && makes(_byId['$device:$n'])) best = n;
+    }
+    return best;
   }
 
   void _replayOnce() {
