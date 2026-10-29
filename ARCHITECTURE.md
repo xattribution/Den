@@ -267,10 +267,20 @@ it away. The parent's new phone offers "Remove your old phone" on their page. Re
 an action: no MCP client, API token or assistant can set up, turn on or use it
 (`not_exposed.dart`).
 
-What whoever runs the hub can do: with server help **off**, read what the hub holds (every space,
-as always) and stop it serving, but make no trust decision and let in no device, and a key the
-family turned off stays useless; with server help **on**, also let in a phone as any parent, which
-every device shows and any parent can remove.
+What whoever runs the hub can do: read what the hub holds (every space, as always) and stop it
+serving; with server help **on**, also let in a phone as any parent, which every device shows and
+any parent can remove. The hub's own key makes no trust decision, and with server help **off** it
+lets in no device, and a key the family turned off stays useless.
+
+That is about the hub's key, and it isn't the whole story for a family that uses **the web app**.
+The hub serves the web app's code, and that code holds the parent's signing key in the browser
+(see "The web app"). Whoever controls what the hub serves (root on the server, the hub's image,
+or the TLS proxy in front of it) can serve a modified app that signs as any parent who opens it,
+making every trust decision that parent's device can; the family's devices can't tell it from
+the parent. What reduces it: keep the server patched and its access to people the family trusts,
+run an image built from a repository the family trusts, and, for parents who need the stronger
+guarantee, make trust decisions (approving devices, roles, AI access, recovery) in the Den app
+installed on their phone, tablet or computer, whose code doesn't come from the hub.
 
 ### Record types and fields
 
@@ -918,6 +928,13 @@ proxy in front of the hub, where it has the hub as its own origin.
   and takes over when Den next opens with no window on the old one (or on coming back after ten
   minutes away, with a fresh page), never under a page that runs the old one. The hub's own paths
   (`/api`, `/ws`, `/mcp`, `/oauth`, `/ics`, `/health`, `/.well-known`) are never cached.
+- **Whose code it runs.** The check above is that a build is whole, not who made it: the worker
+  and every file come from the hub, and the browser runs whatever the hub serves, with the
+  device's keys. So for families on the web app, whoever controls the hub (root on the server,
+  its image, the TLS proxy) can act as any parent who opens the app (see "Recovery", what whoever
+  runs the hub can do). Nothing the page itself shows, such as a build number, can catch that: a
+  modified build draws that page too. Parents who need the stronger guarantee make trust
+  decisions in an installed Den app.
 - **Founding from a browser.** A browser served by a fresh hub starts the family itself and
   takes the hub in with the setup code it printed (the same flow as from a phone,
   `/api/v1/hub/setup`), approving it on its own when the hub reports the same matching words:

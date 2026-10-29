@@ -508,7 +508,9 @@ phone:
    tap **Find me**.
 4. Den shows whose words they are. **Yes, let this phone in**, and the phone is theirs at once.
 
-The hub only carries the request: it can't make up words, and no setting is needed.
+The hub only carries the request: it can't make up words, and no setting is needed. In the Home
+Screen web app the words are typed into the app the hub serves, so they are only as safe as the
+server is (see below).
 
 **With the hub's help, only if the family turned it on.** A parent turns on Settings, Family,
 **Let the hub help us get back in** on their own phone. Then, from `den/deploy/hosted`:
@@ -537,9 +539,19 @@ server help on, the command says so and how, and lets nobody in.
 
 **What this means for whoever runs the server.** With server help on, the admin could add a
 phone as any parent; every device in the family shows when that happens ("Alex's new iPhone was
-let in by the hub's recovery"), and any parent can remove it. With it off, the admin can't let
-anyone in: turning it off makes the hub's key useless, even for a request dated earlier. Root on
-the server can still read what the hub holds, as always.
+let in by the hub's recovery"), and any parent can remove it. With it off, the hub's key lets
+nobody in, even for a request dated earlier. Root on the server can still read what the hub
+holds, as always.
+
+There is one more thing whoever controls the server can do, with server help on or off. The
+Home Screen web app comes from the hub, and it holds each parent's key on their phone. So whoever
+controls what the hub serves (root on the server, the hub's image, or Caddy and its certificate)
+could serve a changed app that acts as any parent who opens it: approve a phone, change who is a
+parent. The family's devices can't tell that apart from the parent. To keep that from happening,
+keep the server patched and its logins to people you trust, and build the image from this
+repository (or pull a published release). A parent who wants the stronger guarantee makes these
+decisions (approving devices, roles, AI access, recovery) in the Den app installed on their
+phone, tablet or computer, whose code doesn't come from the server.
 
 The hub's server recovery key lives in its data volume (`hub/recovery.json`) and is in every
 backup (`docker compose run --rm backup`), so a [restore](#restore) keeps server help working. A
