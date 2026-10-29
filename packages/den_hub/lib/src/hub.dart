@@ -119,7 +119,7 @@ class DenHub implements RoutableLog {
       state: HubState(config.dataDir),
       node: node,
       http: host.http,
-      fetch: host.fetch,
+      fetch: host.fetchFor(den.deviceId),
       host: host,
     );
     final hub = DenHub._(den, config, ctx, ChangeFeed(den), host);

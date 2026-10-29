@@ -162,8 +162,14 @@ class DenHost implements HostLink {
   @override
   late final http_client.Client fetch;
 
+  /// The outgoing client for addresses callers gave the hub [hubDevice]: [fetch], except that a
+  /// request to another family's address on this host is answered in this process.
+  http_client.Client fetchFor(String hubDevice) => _OtherFamilies(this, hubDevice);
+
   @override
   VapidKeyring get vapid => state.vapid;
+
+  late final Handler _handler;
 
   final List<DenHub> _tenants = [];
   final Map<DenHub, HostedTenant> _opened = {};
@@ -204,7 +210,7 @@ class DenHost implements HostLink {
         ).client();
     host._cliSecret = host.state.writeCliSecret();
     host._web = webAppHandler(config.webDir, policy: host._webPolicy);
-    final pipeline = const Pipeline().addMiddleware(host._headers).addMiddleware(host._errors).addHandler(host._route);
+    final pipeline = host._handler = const Pipeline().addMiddleware(host._headers).addMiddleware(host._errors).addHandler(host._route);
     final server = host._server = await shelf_io.serve(pipeline, config.host ?? InternetAddress.anyIPv4, config.port);
     server.idleTimeout = const Duration(seconds: 120);
     return host;
@@ -699,6 +705,15 @@ class DenHost implements HostLink {
     return diff == 0;
   }
 
+  /// The family other than the hub [from]'s whose address [url] is (`https`, its name, the port
+  /// its address names), or null.
+  DenHub? _otherFamilyAt(Uri url, String from) {
+    if (_stopped || !url.isScheme('https') || url.userInfo.isNotEmpty) return null;
+    final at = router.mapped(normalizeHostname(url.host));
+    if (at == null || at.hubDevice == from || at.config.publicUrl?.port != url.port) return null;
+    return at;
+  }
+
   /// Stops every family, then the server.
   Future<void> stop() async {
     if (_stopped) return;
@@ -710,4 +725,40 @@ class DenHost implements HostLink {
     if (_ownsHttp) http.close();
     fetch.close();
   }
+}
+
+/// One family's outgoing client for addresses callers give its hub ([DenHost.fetchFor]): a
+/// request to another family's address on the same host (a calendar that family shares, and its
+/// watch stream) is answered by the host in this process, as if it had come in from outside
+/// with nothing but what it carries, so it needs no DNS, no `extra_hosts` and no `DEN_PEER_HUBS`,
+/// and never leaves the machine. Everything else, its own family's address included, goes
+/// through the host's [NetGuard] client as before.
+class _OtherFamilies extends http_client.BaseClient {
+  _OtherFamilies(this._host, this._from);
+
+  final DenHost _host;
+  final String _from;
+
+  @override
+  Future<http_client.StreamedResponse> send(http_client.BaseRequest request) async {
+    final url = request.url;
+    if (_host._otherFamilyAt(url, _from) == null) return _host.fetch.send(request);
+    final response = await _host._handler(Request(
+      request.method,
+      url,
+      headers: {...request.headers, 'host': url.host},
+      body: request.finalize(),
+    ));
+    return http_client.StreamedResponse(
+      response.read(),
+      response.statusCode,
+      contentLength: response.contentLength,
+      request: request,
+      headers: {for (final e in response.headers.entries) e.key.toLowerCase(): e.value},
+    );
+  }
+
+  /// The host's client stays open for the other families; the host closes it.
+  @override
+  void close() {}
 }

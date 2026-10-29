@@ -2,12 +2,14 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
 import 'package:den_net/den_net.dart';
+import 'package:http/http.dart' as http;
 import 'package:shelf/shelf.dart';
 import 'package:test/test.dart';
 import 'package:web_socket_channel/io.dart';
@@ -118,7 +120,14 @@ void main() {
       web = await Directory.systemTemp.createTemp('den-web');
       File('${web.path}/index.html').writeAsStringSync('<!doctype html><title>Den</title>');
       f = await HostFixture.start(
-        configure: (c) => HostConfig(port: 0, host: InternetAddress.loopbackIPv4, log: c.log, webDir: web.path),
+        configure: (c) => HostConfig(
+          port: 0,
+          host: InternetAddress.loopbackIPv4,
+          log: c.log,
+          webDir: web.path,
+          // No DNS at all: whatever reaches another family here does it in this process.
+          resolver: (name) async => throw SocketException('no DNS for $name here'),
+        ),
         hub: (name, c) => HubConfig(mdns: false, publicUrl: c.publicUrl, log: c.log, public: false),
       );
     });
@@ -192,6 +201,27 @@ void main() {
       expect((await feeds(hostname: 'den-a.test', sendHub: false)).status, 200, reason: 'an older app at its own address');
       expect((await feeds(sendHub: false)).status, 200, reason: 'an older app at an address that is no family\'s: the one family that knows it');
       expect((await feeds(hostname: 'den-b.test', sendHub: false)).status, 401, reason: "b's address is b's: a's device isn't one of b's");
+    });
+
+    test("a family's hub reads another family's shared calendar here in this process: no DNS, proxy or peer list", () async {
+      final a = f['den-a.test'];
+      final b = f['den-b.test'];
+      final made = await f.signed(a.phone, 'POST', '/api/v1/feeds',
+          hub: a.hubDen.deviceId, body: {'feed': 'shared', 'label': 'For the other family'});
+      expect(made.status, 201, reason: made.text);
+      final url = made.body['url']! as String;
+      final feed = await b.hub.context.fetch.get(Uri.parse(url));
+      expect(feed.statusCode, 200);
+      expect(feed.body, contains('@${a.phone.familyId}.den'));
+      final watch = await b.hub.context.fetch.send(http.Request('GET', Uri.parse(url.replaceFirst('shared.ics', 'watch'))));
+      expect(watch.statusCode, 200);
+      expect(await watch.stream.transform(utf8.decoder).firstWhere((s) => s.contains('hello')), contains('etag'));
+      // Its own address, another port, or http: NetGuard, as ever (which finds no DNS here).
+      await expectLater(a.hub.context.fetch.get(Uri.parse(url)), throwsA(isA<SocketException>()));
+      await expectLater(b.hub.context.fetch.get(Uri.parse(url.replaceFirst('den-a.test', 'den-a.test:8443'))), throwsA(isA<SocketException>()));
+      await expectLater(b.hub.context.fetch.get(Uri.parse(url.replaceFirst('https:', 'http:'))), throwsA(isA<SocketException>()));
+      // A secret that isn't a's, at a's address: refused like any stranger's.
+      expect((await b.hub.context.fetch.get(Uri.parse('https://den-a.test/ics/denfeed_guess/shared.ics'))).statusCode, 401);
     });
 
     test('families come and go while the host runs; two can never share a hub, a family or an address', () async {
