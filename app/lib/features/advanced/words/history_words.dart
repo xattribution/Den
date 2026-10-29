@@ -3,6 +3,7 @@ import 'package:den_core/den_core.dart';
 import '../../../app/family_reads.dart';
 import '../../../app/words.dart';
 import '../../calendar/calendar_words.dart';
+import '../../family/family.dart' show accessEndedWords, privacyNow;
 
 /// Kinds of record people filter History by.
 enum HistoryKind {
@@ -17,6 +18,7 @@ enum HistoryKind {
     RecordType.category,
     RecordType.subscription,
     RecordType.connection,
+    RecordType.photo,
   });
 
   const HistoryKind(this.label, this.types);
@@ -59,6 +61,7 @@ const _labels = {
   'animal': 'Animal',
   'picture': 'Picture',
   'birthday': 'Birthday',
+  'until': 'Has Den until',
   'grants': 'Can edit',
   'timezone': 'Time zone',
   'weekStart': 'Week starts',
@@ -179,6 +182,8 @@ String? valueWords(FamilyReads app, String type, String field, Object? value) {
       }
     case 'weekStart':
       return value is num ? f.weekdayName(value.toInt() % 7, long: true) : '$value';
+    case 'picture' when value is String && Picture.photoIdOf(value) != null:
+      return 'A photo';
     case 'marker':
     case 'animal':
     case 'picture':
@@ -251,6 +256,8 @@ bool _same(Object? a, Object? b) => a == b || (a != null && b != null && a.toStr
 /// Soccer practice on Oct 20" with the fields it overrode; "canceled" when it was removed.
 HistoryLine historyLine(FamilyReads app, HistoryEntry e) {
   final f = app.formats;
+  final controls = _controlsLine(app, e);
+  if (controls != null) return controls;
   if (e.type == RecordType.eventException) {
     FieldDiff? find(String field) {
       for (final d in e.diffs) {
@@ -325,6 +332,50 @@ HistoryLine historyLine(FamilyReads app, HistoryEntry e) {
     if (ride != null) return ride;
   }
   return HistoryLine(e.verb, e.title, diffs);
+}
+
+/// Parental controls, said the way their switches say them: "changed this: parents can now see
+/// things you mark Just me" (to the teen it's about), "changed this: Maya can trade stars for
+/// rewards without asking"; a sitter's device removed after their last day ("removed Sam's
+/// phone: Sam's access ended Sunday"); a photo added.
+HistoryLine? _controlsLine(FamilyReads app, HistoryEntry e) {
+  if (e.type == RecordType.photo && e.verb == 'added') {
+    return HistoryLine('added', 'a photo of ${app.memberById(_after(e, 'member') as String?)?.name ?? 'someone'}', const []);
+  }
+  if (e.type == RecordType.device && e.verb == 'removed') {
+    final owner = app.memberById(app.den.device(e.rid)?.member);
+    final until = owner?.until;
+    if (owner == null || until == null || owner.role != Role.guest) return null;
+    if (app.formats.localDate(e.when.millis).compareTo(until) <= 0) return null;
+    return HistoryLine('removed', '${e.title}: ${accessEndedWords(owner.name, until, app.formats, app.today)}', const []);
+  }
+  if (e.type != RecordType.family) return null;
+  bool sees(Object? v) => (v is Map ? v['parentsSeePrivate'] : null) as bool? ?? true;
+  for (final d in e.diffs) {
+    if (!d.field.startsWith('oversight.')) continue;
+    final key = d.field.substring('oversight.'.length);
+    final dot = key.indexOf('.');
+    final who = app.memberById(dot < 0 ? key : key.substring(0, dot));
+    if (who == null) continue;
+    final name = who.name;
+    if (dot < 0) {
+      if (sees(d.before) == sees(d.after)) continue;
+      final you = app.me?.id == who.id;
+      return HistoryLine('changed this:', privacyNow(parentsSee: sees(d.after), you: you, name: name), const []);
+    }
+    final on = d.after != false;
+    switch (key.substring(dot + 1)) {
+      case OversightSetting.rewardsNeedOk:
+        return HistoryLine(
+          'changed this:',
+          on ? "$name's rewards need a parent's OK" : '$name can trade stars for rewards without asking',
+          const [],
+        );
+      case OversightSetting.ownPicture:
+        return HistoryLine('changed this:', on ? '$name can change their own picture' : "only parents change $name's picture", const []);
+    }
+  }
+  return null;
 }
 
 /// "took the drop-off for Swim lesson", "let go of the pick-up for Soccer practice": a change

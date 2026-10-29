@@ -87,6 +87,9 @@ class ActionRunner {
         details: {'scope': s.scopes.first.name},
       );
     }
+    if (s.person && c.me == null) {
+      return ActionResult.failed('${s.mcpName} is for a person, and this connection doesn\'t act for anyone.', code: 'permission_denied');
+    }
     if (s.needs.isNotEmpty && !s.needs.any(c.can)) {
       return ActionResult.failed(cannot(c.who, s.needs.first), code: 'permission_denied');
     }

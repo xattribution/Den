@@ -58,7 +58,8 @@ class _PointsScreenState extends State<PointsScreen> {
   Future<void> _ask(Reward reward) async {
     final result = await perform(context, () => context.rewardActions.request(reward));
     if (result == null || !mounted) return;
-    setState(() => _asked[reward.id] = (message: reward.needsApproval ? 'Asked' : 'Yours', receipt: result.receipt));
+    final yours = result.data['status'] == RedemptionStatus.approved.name;
+    setState(() => _asked[reward.id] = (message: yours ? 'Yours' : 'Asked', receipt: result.receipt));
   }
 
   @override
@@ -392,6 +393,9 @@ class _RewardCard extends StatelessWidget {
     final canAsk = !manage && me != null && app.allows(DenAction.requestReward);
     final asked = me != null && pending.any((p) => p.reward == reward.id && p.member == me.id);
     final short = reward.cost - balance;
+    // No asking when the reward says so, or when a parent let this kid trade without asking.
+    final noAsking = !reward.needsApproval || (me != null && canAsk && !(app.den.family?.rewardsNeedOk(me.id) ?? true));
+    final verb = noAsking ? 'Get it' : 'Ask for this';
     final n = note;
 
     Widget? foot;
@@ -416,10 +420,10 @@ class _RewardCard extends StatelessWidget {
       } else if (short > 0) {
         foot = DisabledReason(
           reason: '$short more to go',
-          child: OutlinedButton(onPressed: null, child: Text(reward.needsApproval ? 'Ask for this' : 'Get it')),
+          child: OutlinedButton(onPressed: null, child: Text(verb)),
         );
       } else {
-        foot = FilledButton(onPressed: onAsk, child: Text(reward.needsApproval ? 'Ask for this' : 'Get it'));
+        foot = FilledButton(onPressed: onAsk, child: Text(verb));
       }
     }
 
@@ -437,7 +441,7 @@ class _RewardCard extends StatelessWidget {
               Text('${reward.cost}', style: t.body(c.ink)),
               const SizedBox(width: 4),
               const Star(size: 16),
-              if (!reward.needsApproval) ...[
+              if (noAsking) ...[
                 const SizedBox(width: Sp.s),
                 Flexible(child: Text('no asking', style: t.meta(c.ink2))),
               ],

@@ -341,11 +341,16 @@ class MailboxSync {
               }
 
               final seen = currentSeen!;
+              // A person's space parents couldn't read and now may: hand them its key and post
+              // its whole history once, older than the mailbox keeps and already posted too, so
+              // what they kept as "Just me" reaches parents' devices without a hub.
+              final opened = await _openedToParents(space);
+              var reshared = false;
               if (latest?.hash == inUse.hash) {
                 final cutoff = _now() - window.inMilliseconds;
                 final outgoing = [
                   for (final c in _den.changesSince(const {}, spaces: {space}))
-                    if (c.hlc.millis >= cutoff && !seen.contains(c.device, c.counter)) c,
+                    if (opened != null || (c.hlc.millis >= cutoff && !seen.contains(c.device, c.counter))) c,
                 ];
                 try {
                   for (final batch in _batches(outgoing)) {
@@ -355,12 +360,20 @@ class MailboxSync {
                     }
                     posted += batch.length;
                   }
+                  if (opened != null) {
+                    for (final device in opened) {
+                      await _sealTo(device, inUse);
+                      delivered++;
+                    }
+                    reshared = true;
+                  }
                 } on Object {
                   // Full, rate limited or offline: what was posted is remembered below, the rest
                   // goes next round, and the other spaces still go now.
                   failed++;
                 }
               }
+              if (reshared) await _notePrivacy(space);
               await state.write('mailbox:$currentId', {'cursor': currentCursor, 'seen': seen.toJson()});
               await state.write(metaKey, {
                 'seenAt': {for (final e in seenAt.entries) '${e.key}': e.value},
@@ -379,6 +392,34 @@ class MailboxSync {
               failed: failed,
             );
           }));
+
+  /// Whether parents may read [space] (a person's own space) by the family's policy.
+  bool? _parentsSee(String space) {
+    final owner = Space.memberOf(space);
+    return owner == null ? null : _den.family?.parentsSeePrivate(owner) ?? true;
+  }
+
+  /// For a person's space that parents couldn't read when this device last looked and now may:
+  /// the parents' devices to hand its key to. Null otherwise. The first look only notes how it
+  /// stands.
+  Future<List<Device>?> _openedToParents(String space) async {
+    final now = _parentsSee(space);
+    if (now == null) return null;
+    final saved = await state.read('privacy:${_den.familyId}:$space');
+    if (saved == null || saved['parentsSee'] != false || !now) {
+      if (saved == null || saved['parentsSee'] != now) await _notePrivacy(space);
+      return null;
+    }
+    return [
+      for (final d in _den.devices)
+        if (_entitled(d, space) && d.mode == DeviceMode.personal && (_den.member(d.member ?? '')?.isParent ?? false)) d,
+    ];
+  }
+
+  Future<void> _notePrivacy(String space) async {
+    final now = _parentsSee(space);
+    if (now != null) await state.write('privacy:${_den.familyId}:$space', {'parentsSee': now});
+  }
 
   /// Leaves the current key of every space [deviceId] may hold in its relay inbox, sealed to its
   /// X25519 key and signed by this device, with the key's epoch. Returns how many were left.

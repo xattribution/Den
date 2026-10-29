@@ -6,6 +6,7 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import 'photos.dart';
 import 'pictures.dart';
 import 'tokens.dart';
 
@@ -16,7 +17,8 @@ enum _Kind { member, picture, initial, photo }
 /// their color. Color is never the only clue: a name goes beside it, and the picture or letter
 /// tells people apart too.
 class DenAvatar extends StatelessWidget {
-  /// A member: their picture in a ring of their color, or their initial on it.
+  /// A member: their picture or photo in a ring of their color, or their initial on it. A photo
+  /// that hasn't reached this device yet draws the silhouette.
   const DenAvatar(Member this.member, {super.key, this.size = 32})
       : _kind = _Kind.member,
         color = null,
@@ -77,10 +79,23 @@ class DenAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final photoId = _kind == _Kind.member ? member!.photo : null;
+    if (photoId == null) return _build(context, photo);
+    return ValueListenableBuilder<int>(
+      valueListenable: DenPhotos.version,
+      builder: (context, _, _) => _build(context, DenPhotos.of(photoId)),
+    );
+  }
+
+  Widget _build(BuildContext context, Uint8List? photo) {
     final c = context.colors;
     final ring = color ?? c.marker(member!.marker);
     final kind = _kind == _Kind.member
-        ? (member!.picture == Picture.initial || DenPictures.find(member!.picture) == null ? _Kind.initial : _Kind.picture)
+        ? (member!.photo != null
+            ? _Kind.photo
+            : member!.picture == Picture.initial || DenPictures.find(member!.picture) == null
+                ? _Kind.initial
+                : _Kind.picture)
         : _kind;
     final letters = _kind == _Kind.member ? member!.name : initial ?? '';
     final pictureId = _kind == _Kind.member ? member!.picture : picture;
@@ -121,7 +136,12 @@ class DenAvatar extends StatelessWidget {
           background: c.photoBg,
           child: photo == null
               ? CustomPaint(painter: _PhotoPlaceholder(c.photoFg))
-              : Image.memory(photo!, fit: BoxFit.cover, gaplessPlayback: true),
+              : Image.memory(
+                  photo,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, _, _) => CustomPaint(painter: _PhotoPlaceholder(c.photoFg)),
+                ),
         ),
     };
     return Semantics(

@@ -16,6 +16,7 @@ extension type _DenWeb._(JSObject _) implements JSObject {
   external JSPromise<JSString> share(String text);
   external JSPromise<JSString> copy(String text);
   external JSPromise<JSString> paste();
+  external JSPromise<JSString> pickPhoto(bool camera);
   external void listen(JSFunction onOpen);
   external String insets();
   external void reload();
@@ -88,6 +89,14 @@ Future<String> paste() async {
   } on Object {
     return '{"kind":"none"}';
   }
+}
+
+/// Must be the first thing a tap does, like [subscribe].
+Future<String> pickPhoto(bool camera) {
+  final web = _denWeb;
+  if (web == null) return Future.value('');
+  final pending = web.pickPhoto(camera).toDart;
+  return pending.then((answer) => answer.toDart, onError: (Object _) => 'error');
 }
 
 void listen(void Function(String route) onOpen) {

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
@@ -13,7 +15,9 @@ import '../../../design/sheet.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../design/words.dart';
+import '../../../platform/photos/photo_source.dart';
 import '../state/family_actions.dart';
+import '../state/picture_actions.dart';
 import '../state/trust_actions.dart';
 import '../words/family_words.dart';
 import '../words/oversight.dart';
@@ -22,7 +26,9 @@ import '../words/who.dart';
 /// The padding inside every Family sheet.
 const EdgeInsets sheetPadding = EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l);
 
-/// "Mia's picture" (AvatarPicker.dc.html): the picture and color, each saved as it's tapped.
+/// "Mia's picture" (AvatarPicker.dc.html): a photo from the camera or the device's photos, the
+/// initial or a picture from the pack, and the color, each saved as it's tapped. The color is a
+/// parent's to change; a person may change their own picture (a kid when a parent allows it).
 Future<void> showPictureSheet(BuildContext context, Member member) =>
     showDenSheet<void>(context, builder: (_) => _PictureSheet(member: member));
 
@@ -37,32 +43,70 @@ class _PictureSheet extends StatefulWidget {
 class _PictureSheetState extends State<_PictureSheet> {
   late String _picture = widget.member.picture;
   late Marker _color = widget.member.marker;
+  bool _saving = false;
 
   Future<void> _save({String? picture, Marker? color}) async {
     setState(() {
       _picture = picture ?? _picture;
       _color = color ?? _color;
     });
-    final family = context.familyActions;
-    await attempt(context, () => family.saveDetails(widget.member.id, picture: picture, marker: color));
+    if (picture != null) {
+      final pictures = context.pictureActions;
+      await attempt(context, () => pictures.setPicture(widget.member.id, picture));
+    } else {
+      final family = context.familyActions;
+      await attempt(context, () => family.saveDetails(widget.member.id, marker: color));
+    }
+  }
+
+  /// Takes or chooses a photo. The picker opens first thing in the tap: a browser opens its
+  /// file chooser only from one.
+  Future<void> _photo({required bool camera}) async {
+    final source = Photos.source;
+    final pending = camera ? source.take() : source.choose();
+    final den = DenScope.read(context).den;
+    final Uint8List? bytes;
+    try {
+      bytes = await pending;
+    } on PhotoProblem catch (e) {
+      if (mounted) showNote(context, e.message);
+      return;
+    }
+    if (bytes == null || !mounted) return;
+    setState(() => _saving = true);
+    final pictures = context.pictureActions;
+    final ok = await attempt(context, () => pictures.setPhoto(widget.member.id, bytes!));
+    if (!mounted) return;
+    setState(() {
+      _saving = false;
+      if (ok) _picture = den.member(widget.member.id)?.picture ?? _picture;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final members = context.watch(const {}).den.members;
+    final app = context.watch(const {});
+    final members = app.den.members;
     final name = widget.member.name;
+    final source = Photos.source;
+    final colors = app.allows(DenAction.manageFamily);
     return SingleChildScrollView(
       padding: sheetPadding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SheetHeader(title: '${FamilyWords.possessive(name)} picture', actionLabel: 'Done', primary: true),
+          SheetHeader(title: app.me?.id == widget.member.id ? 'Your picture' : '${FamilyWords.possessive(name)} picture', actionLabel: 'Done', primary: true),
           PicturePicker(
             name: name,
             picture: _picture,
             color: _color,
+            photo: DenPhotos.of(Picture.photoIdOf(_picture)),
             colorLabel: '${FamilyWords.possessive(name)} color',
             takenBy: colorsTaken(members, except: widget.member.id),
+            showColors: colors,
+            photoBusy: _saving,
+            onCamera: source.canTake ? () => _photo(camera: true) : null,
+            onPhotos: source.canChoose ? () => _photo(camera: false) : null,
             onPicture: (p) => _save(picture: p),
             onColor: (m) => _save(color: m),
           ),

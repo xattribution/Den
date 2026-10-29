@@ -344,6 +344,8 @@ class DenNetwork extends ChangeNotifier {
       SyncState.live => 'Up to date with $hub',
       SyncState.syncing => 'Catching up with $hub',
       SyncState.connecting => 'Connecting to $hub',
+      SyncState.stopped || SyncState.offline when (_status.lastError ?? '').contains('access-ended') =>
+        'Your access to the family ended. Ask a parent to invite you again.',
       SyncState.stopped || SyncState.offline when _status.lastError == 'no hub' =>
         'No hub yet. Devices sync with each other when they meet.',
       SyncState.stopped || SyncState.offline => "Can't reach $hub. Changes are saved here and sync later.",
