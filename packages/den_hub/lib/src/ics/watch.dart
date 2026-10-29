@@ -98,10 +98,7 @@ class ShareWatchServer {
     while (same.length >= maxPerLink) {
       same.removeAt(0).close();
     }
-    final now = await etag();
-    _told ??= now;
-    final watcher = _Watcher(this, link.id);
-    _open.add(watcher);
+    // Listen before reading the ETag, so a change in between is told, not lost.
     _changes ??= hub.den.onChange.listen((types) {
       if (types.any(_types.contains)) _soon ??= Timer(gather, () => unawaited(_check()));
     });
@@ -110,6 +107,16 @@ class ShareWatchServer {
         if (w.link == id) w.revoked();
       }
     });
+    final String now;
+    try {
+      now = await etag();
+    } on Object {
+      if (_open.isEmpty) _idle();
+      rethrow;
+    }
+    _told ??= now;
+    final watcher = _Watcher(this, link.id);
+    _open.add(watcher);
     watcher.start(now);
     return Response.ok(
       watcher.controller.stream,
@@ -154,7 +161,11 @@ class ShareWatchServer {
 
   void _closed(_Watcher w) {
     _open.remove(w);
-    if (_open.isNotEmpty) return;
+    if (_open.isEmpty) _idle();
+  }
+
+  /// No one is watching: stop listening.
+  void _idle() {
     _soon?.cancel();
     _soon = null;
     _told = null;
