@@ -15,7 +15,9 @@ class TrustActions {
   final Den _den;
 
   /// Makes [member] a [role]; a kid also gets [tier], and [grants] when given (a role change to
-  /// kid starts from the age group's switches).
+  /// kid starts from the age group's switches). Making a parent anything else takes their
+  /// recovery words away in the same change ([Den.updateMember]), so old words can't let them
+  /// back in; made a parent again, they make new ones.
   Future<void> setRole(String member, Role role, {Tier? tier, Set<Grant>? grants}) => _den.updateMember(member, {
         'role': role.name,
         'tier': role == Role.kid ? tier?.name : null,
@@ -80,6 +82,8 @@ class TrustActions {
     ));
   }
 
+  /// Removes [member]: their devices, and their recovery words in the same commit
+  /// ([Den.removeMember]).
   Future<void> removePerson(String member) => _den.removeMember(member);
 
   /// `none`, or a PIN or picture pattern with its [secret].

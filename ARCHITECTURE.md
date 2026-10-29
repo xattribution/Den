@@ -271,6 +271,14 @@ revoked device the revoker never held.
   them), stretches them, and pairs with the hub (pairing kind `recovery`, below); the hub says
   whose they are, the person says it's them, and the phone signs its own proof with the words'
   key and is in.
+- **No longer a parent.** Removing a person, or making a parent anything else, takes their words
+  away in the same commit (`recovery: {key: null, kept}`, `kept` naming the devices the words let
+  in that the author holds, which stay), so old words let nobody in, backdated or not; made a
+  parent again, they make new words. A removal or role change written by an older Den, which
+  left the words in place, doesn't retire them (accepted: replaying it as if it had would erase
+  the devices the words let in before). The hub's help needs no change: den_hub signs a proof
+  only for someone who is a parent when the code is redeemed, and a proof lives at most 30
+  minutes, so only a code made and redeemed in the half hour before the change could still be used.
 - **The hub's help**, only if the family opts in. A parent turns on "Let the hub help us get back
   in" (Settings, Family, their own device): it asks the hub for the public half of its server
   recovery key (`GET /api/v1/recovery/key`) and writes it into `family.recovery.serverKey`.

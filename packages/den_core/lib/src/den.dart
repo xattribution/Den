@@ -807,29 +807,48 @@ class Den {
     return id;
   }
 
-  Future<void> updateMember(String id, Map<String, Object?> patch) async {
-    if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
-    final fields = _cleanPatch(patch, {'name', 'role', 'tier', 'marker', 'animal', 'picture', 'birthday', 'until', 'grants', 'order'});
-    final grants = fields['grants'];
-    if (grants is Iterable) fields['grants'] = [for (final g in grants) g is Enum ? g.name : g];
-    await _commit([_Draft(RecordType.member, id, Space.family, fields)]);
-  }
+  /// Changes a person. Making a parent anything else takes their recovery words away in the
+  /// same change ([_noRecovery]): if they're a parent again later, they make new ones.
+  Future<void> updateMember(String id, Map<String, Object?> patch) => _locked(() async {
+        final m = member(id);
+        if (m == null) throw const InvalidInput('That person isn\'t in the family');
+        final fields = _cleanPatch(patch, {'name', 'role', 'tier', 'marker', 'animal', 'picture', 'birthday', 'until', 'grants', 'order'});
+        final grants = fields['grants'];
+        if (grants is Iterable) fields['grants'] = [for (final g in grants) g is Enum ? g.name : g];
+        final role = fields['role'];
+        if (role != null && role != Role.parent.name) fields.addAll(_noRecovery(m));
+        await _commitNow([_Draft(RecordType.member, id, Space.family, fields)]);
+      });
 
   /// Removes a member and revokes the devices they own, rotating the keys of the spaces those
-  /// devices held.
+  /// devices held. Their recovery words go first, in the same commit ([_noRecovery]).
   Future<void> removeMember(String id) => _locked(() async {
-        if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
+        final m = member(id);
+        if (m == null) throw const InvalidInput('That person isn\'t in the family');
         final owned = [
           for (final d in devices)
             if (d.member == id && d.id != deviceId && !d.revoked) d.id,
         ];
         final held = {for (final d in owned) ...spacesForDevice(d)};
+        final words = _noRecovery(m);
         await _commitNow([
           for (final d in owned) _revocation(d),
+          if (words.isNotEmpty) _Draft(RecordType.member, id, Space.family, words),
           _Draft(RecordType.member, id, Space.family, {'_deleted': true}),
         ]);
         await _rotateNow(held);
       });
+
+  /// The fields that take [m]'s recovery words away, naming the devices they let in that this
+  /// device holds (which stay), or nothing when they have none. Old words can then let nobody
+  /// in, even with a recovery change clocked before this one (recovery.dart).
+  Map<String, Object?> _noRecovery(Member m) {
+    final key = recoveryKeyOf(m);
+    if (key == null) return const {};
+    return {
+      'recovery': {'key': null, 'kept': keptBy(_mat.store, key: key, member: m.id)},
+    };
+  }
 
   /// Sets how a member signs in on shared screens: `pin` (4 digits), `pattern` (4 animals as
   /// digits 0-8), or `none`. Secrets are salted and hashed before they're written.
