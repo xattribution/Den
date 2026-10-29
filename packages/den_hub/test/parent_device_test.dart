@@ -12,7 +12,8 @@ import 'support/test.dart';
 /// What needs "a parent's own phone" needs a personal device of that parent, or a hub-mode
 /// device whose owner is the parent acting. A hub can name any member as its actor (den_net's
 /// DeviceRequest takes it at its word), so an old server hub left in the family after a reset
-/// could otherwise admit apps, set the assistant's key or open linking as any parent.
+/// could otherwise admit apps, set the assistant's key, open linking or make calendar links as any
+/// parent.
 void main() {
   late HubFixture f;
   late Den oldHub;
@@ -63,6 +64,9 @@ void main() {
     ('PUT', '/api/v1/assistant', {'provider': 'anthropic', 'key': 'sk-ant-api03-test'}),
     ('PUT', '/api/v1/capture/reader', {'kind': 'none'}),
     ('GET', '/api/v1/recovery/key', null),
+    ('GET', '/api/v1/feeds', null),
+    ('POST', '/api/v1/feeds', {'feed': 'family', 'label': 'A calendar'}),
+    ('DELETE', '/api/v1/feeds/nope', null),
   ];
 
   test('a hub nobody owns is refused everything a parent\'s own phone does, whoever it names', () async {
