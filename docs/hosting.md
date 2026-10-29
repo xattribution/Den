@@ -306,8 +306,27 @@ up stays exactly as it is: its data, keys and address don't move.
 
 **Why one host.** Adding a family is one command and nothing restarts: the hub keeps serving
 everyone while it takes the new family on. Families on the host share calendars with nothing to
-configure. And it is what lets one Den app on a phone hold more than one family later (one
-address, one Home Screen app), which separate hubs at separate addresses can't.
+configure. And it is what lets one Den app on a phone hold more than one family (one address,
+one Home Screen app: Grandma's iPhone in two families), which separate hubs at separate
+addresses can't ([One app, several families](#one-app-several-families)).
+
+#### One app, several families
+
+A person in two families on this server (Grandma) has one Den on their Home Screen, at either
+family's address, holding both: the second family is joined with **Paste an invite** (in the
+family switcher, or in Settings, **Join another family**), and the app keeps each family's own
+keys and data apart on the phone, syncing each through the one address, where the host hands
+each to its family. Nothing on the server is needed for that.
+
+Reminders on an iPhone's Home Screen app need one thing: a browser holds one push subscription,
+bound to one key, and each family sends with its own key only. So the host keeps a key of its
+own for families that opt in, and the app subscribes once with it and registers that with each
+family. Turn it on for the families on this host with **`DEN_HOST_PUSH=all`** in `.env` (or name
+them: `DEN_HOST_PUSH=den.example.com,den-smith.example.com`), then `docker compose up -d`. A
+family signs only the subscriptions made with the host's key with it, and its own with its own;
+never another family's. Without it, such a person gets reminders from one of their families
+(Settings says which can't reach them). Phones and computers with the Den app need none of it:
+they plan reminders themselves.
 
 **What it costs.** One process: a crash or a bad update stops every family at once (Docker's
 restart brings them all back together). Whoever runs the server can read every family's data, as
@@ -1377,6 +1396,7 @@ The hosted compose file sets these from `.env`; the hub reads them from its envi
 | `DEN_ALLOWED_ORIGINS` | Extra browser origins for `/mcp` and OAuth (`https://claude.ai` is allowed already) |
 | `DEN_FETCH_ALLOW` | Private networks the hub may fetch calendar feeds from; by default only the public internet |
 | `DEN_HOST_RETRY` | Seconds between tries at a family of a Den host that didn't open when the hub started (30) |
+| `DEN_HOST_PUSH` | The families of a Den host that share the host's own Web Push key, so one Home Screen app holding several of them gets every family's reminders: `all`, or their addresses, comma-separated. None by default: each family hands out and signs with its own key only ([One app, several families](#one-app-several-families)) |
 | `DEN_PEER_HUBS` | The other families' addresses on this server in hubs of their own (names or `https://` addresses), whose shared calendars this hub may fetch through the server's own reverse proxy on loopback. Only these names (and the addresses of the families this hub serves), only over `https`. Families on the same Den host need none of it. The private setup's `install.sh` sets it while any family has a container of its own ([Calendars shared between families on this server](#calendars-shared-between-families-on-this-server)) |
 
 **The public posture.** A hub whose `DEN_PUBLIC_URL` is `https` assumes strangers can reach it:

@@ -197,8 +197,12 @@ Done is readable without color: the check mark and the strike-through.
 A calendar source's color is data of its own, apart from people's: `CalendarSource`
 (`features/calendar/state/calendar_sources.dart`) has a kind (the family, a subscription, the
 phone, a group), a label for its tag and filter chip, and a color, one of the eight places drawn
-in the family's pack, null until someone picks one (then its tag is ink). Nothing draws source
-tags yet; sources from other families will read it.
+in the family's pack, null until someone picks one (then its tag is ink). `SourceTag`
+(`design/widgets/source_tag.dart`) draws the tag. On a device in several families each family
+is a source with a color of this device's (the first family the first place, each next family
+the next free one): its tag marks its things in "All my families" and in the switcher, and its
+event blocks there are ringed in it, a gap of the page between ring and block, the way a face is
+ringed; the block itself stays its people's.
 
 ### Old names
 
@@ -493,6 +497,13 @@ tap happened, and shows it in a `DoneRow`.
 
 ## Screens (phone)
 
+- **Several families** (a device in two or more): the family showing heads Today on a phone,
+  "Kotvas ▾" with its tag, above the date; on iPad it is the sidebar's title. It opens the
+  switcher, a sheet: each family with three faces, how many people, a dot when it has something
+  in Needs you and a check on the one showing; "All my families"; Paste an invite. "All my
+  families" heads each family's Needs you with its name ("Smith family needs you"), lists every
+  family's events in one card by time with their tags, and says Chores and stars stay with each
+  family. Someone in one family sees none of it, except Settings' **Join another family**.
 - **Today**: the date and the greeting for the time of day, the person's face at the right
   (it opens Family, Points, History and Settings); "Ask about your day" while the AI helper is on
   for them (see "AI helper"); Needs you, for whoever may settle each thing

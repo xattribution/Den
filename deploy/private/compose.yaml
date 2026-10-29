@@ -51,6 +51,9 @@ services:
       # On the server's own network: never advertise on it.
       DEN_MDNS: "0"
       DEN_LOG: ${DEN_LOG:-info}
+      # Families on the Den host that share its own push key, for one Home Screen app holding
+      # several of them (docs/hosting.md, "One app, several families"): all, or their addresses.
+      DEN_HOST_PUSH: ${DEN_HOST_PUSH:-}
     volumes:
       - den-hub:/data
     cap_drop: [ALL]
