@@ -24,12 +24,12 @@ String? countdownWords(int days) {
   return 'In $days days';
 }
 
-/// Members who might drive: adults, and teens.
-List<Member> possibleDrivers(FamilyReads app) =>
-    app.den.members.where((m) => m.role == Role.parent || m.role == Role.adult || m.tier == Tier.teen).toList();
+/// Members who might drive: parents and other adults. Kids, teens too, are driven: Den never
+/// asks a 14-year-old to take the car.
+List<Member> possibleDrivers(FamilyReads app) => app.den.members.where(canDrive).toList();
 
-/// Whether this person could take a ride leg.
-bool canDrive(Member? me) => me != null && (me.role == Role.parent || me.role == Role.adult || me.tier == Tier.teen);
+/// Whether this person could take a ride leg: a parent or another adult.
+bool canDrive(Member? me) => me != null && (me.role == Role.parent || me.role == Role.adult);
 
 /// Whether whoever is acting may take a ride leg themselves: someone who could drive, and whom
 /// the engine lets set a driver (that changes the event, so it needs [DenAction.editEvents]).
