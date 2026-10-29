@@ -7,7 +7,8 @@ The hub implements exactly this file; the Home Assistant integration
 file disagree, fix one of them in the same change.
 
 Device sync (`/ws`), MCP (`/mcp`), OAuth and the ICS feed are specified elsewhere; this file
-covers `/health`, everything under `/api/v1`, and the mDNS advertisement.
+covers `/health`, everything under `/api/v1` (including the calendar links that open the ICS
+feed), and the mDNS advertisement.
 
 ## Contents
 
@@ -51,6 +52,10 @@ covers `/health`, everything under `/api/v1`, and the mDNS advertisement.
   [`PUT /api/v1/assistant`](#put-apiv1assistant) ·
   [`POST /api/v1/assistant/model`](#post-apiv1assistantmodel)
 - [Invites by message](#invites-by-message)
+- [Calendar links: Den in a phone's calendar](#calendar-links-den-in-a-phones-calendar):
+  [`GET /api/v1/feeds`](#get-apiv1feeds) ·
+  [`POST /api/v1/feeds`](#post-apiv1feeds) ·
+  [`DELETE /api/v1/feeds/{id}`](#delete-apiv1feedsid)
 - [Web Push: reminders in browsers](#web-push-reminders-in-browsers)
 
 ## Conventions
@@ -1691,6 +1696,72 @@ invite; and per client, redeeming counts against the browser link budget and a w
 against the failed-tries budget, see [Limits per client](#limits-per-client)), `503 not_ready`.
 Redeeming needs no open "Add a device" window in the public posture: the invite is a parent's
 consent already.
+
+## Calendar links: Den in a phone's calendar
+
+"Show Den in iPhone Calendar": a parent's own device makes a read-only address for the
+family's calendar, or for one person's, and the phone's calendar app subscribes to it
+(`webcal://`). The address opens one ICS feed and nothing else. It is not an API token: it can't
+reach `/api/v1`, MCP or any other feed.
+
+The feed reads with the permissions of the parent who made the link, exactly as the ICS feed
+does for a token acting as that parent: their own "Just me" events are in it, a kid's or a
+teen's private events only while the family's oversight lets parents see them (and they drop
+out when it stops), and `parents` events for parents. A person's link holds the events they're
+in and the events for everyone, like `GET /ics/<token>/<memberId>.ics`. A link stops working
+when a parent turns it off or when the parent who made it leaves the family.
+
+The hub keeps only a SHA-256 hash of each link's secret, with who made it and for what, in
+`<data>/hub/feed_links.json` (its user only); the address itself is shown once, when it is made.
+At most 50 links at once. The endpoints take no token; requests are signed by a parent's own
+device ([`DeviceRequest`](#capture-reading-for-every-device), not a shared display), and anyone
+else gets `401` or `403 permission_denied`.
+
+### `GET /api/v1/feeds`
+
+The family's links, newest first, never their addresses:
+
+```json
+{"feeds": [{"id": "Qm9iWm9lRmVlZA", "label": "Alex's iPhone", "feed": "family", "feed_name": "The Carters",
+            "made_by": "M5ALEX7QK4MXN3TB", "made_by_name": "Alex",
+            "made": "2026-10-28T15:00:00.000Z", "made_ms": 1793199600000}]}
+```
+
+`feed` is `family` or the member id whose events the link holds (`feed_name` is then their name).
+
+### `POST /api/v1/feeds`
+
+Body `{"feed": "family", "label": "Alex's iPhone"}`: `feed` is `family` (the default) or a
+member id; `label` (1 to 60 characters) says where the calendar goes. Answer `201`, the only
+time the address is shown:
+
+```json
+{
+  "id": "Qm9iWm9lRmVlZA",
+  "label": "Alex's iPhone",
+  "feed": "family",
+  "feed_name": "The Carters",
+  "made_by": "M5ALEX7QK4MXN3TB",
+  "made_by_name": "Alex",
+  "made": "2026-10-28T15:00:00.000Z",
+  "made_ms": 1793199600000,
+  "url": "https://den.example.com/ics/denfeed_q3Jx.../family.ics",
+  "webcal": "webcal://den.example.com/ics/denfeed_q3Jx.../family.ics"
+}
+```
+
+Both are built on the hub's public URL (`DEN_PUBLIC_URL`), else the address the request came
+to; a phone's calendar fetches it from wherever it is, so the hub has to be reachable there
+(over HTTPS) for the calendar to stay up to date. `GET` on the address answers
+`text/calendar` as the ICS feed does; on another file under the same secret, `404`; once the
+link is off, `401`. Errors: `400 invalid_input` (no such member, a missing or long label),
+`409 too_many` (50 links), `503 not_ready`.
+
+### `DELETE /api/v1/feeds/{id}`
+
+Turns a link off: `{"ok": true}`, and calendars subscribed to it stop updating at their next
+refresh (they keep what they last fetched until the person removes the subscription).
+`404 not_found` for an unknown id.
 
 ## Web Push: reminders in browsers
 
