@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:cryptography/cryptography.dart';
 import 'package:den_core/den_core.dart';
 import 'package:test/test.dart';
 
@@ -112,79 +111,6 @@ void main() {
       await expectLater(den.setSignIn(zoe, kind: 'pattern', secret: '9999'), throwsA(isA<InvalidInput>()));
       await den.setSignIn(zoe, kind: 'none');
       expect(await den.verifySignIn(zoe, ''), isTrue);
-    });
-
-    test('new sign-ins stretch with Argon2id, versioned in signIn, and a PIN may have 6 digits', () async {
-      await den.setSignIn(dana, kind: 'pin', secret: '246813');
-      final s = den.member(dana)!.signIn;
-      expect(s.kdf, SignInKdf.argon2id);
-      expect([s.memoryKiB, s.iterations, s.parallelism], [SignInKdf.memoryKiB, SignInKdf.iterations, SignInKdf.parallelism]);
-      expect(s.digits, 6);
-      expect(s.stretchedOld, isFalse);
-      expect(await den.verifySignIn(dana, '246813'), isTrue);
-      expect(await den.verifySignIn(dana, '246812'), isFalse);
-      expect(await den.verifySignIn(dana, '2468'), isFalse, reason: 'its first four digits are not the PIN');
-      await expectLater(den.setSignIn(dana, kind: 'pin', secret: '24681'), throwsA(isA<InvalidInput>()));
-      await expectLater(den.setSignIn(dana, kind: 'pin', secret: '2468135'), throwsA(isA<InvalidInput>()));
-      await expectLater(den.setSignIn(dana, kind: 'pattern', secret: '012345'), throwsA(isA<InvalidInput>()));
-      await den.setSignIn(dana, kind: 'pin', secret: '2468');
-      expect(den.member(dana)!.signIn.digits, 4);
-      expect(await den.verifySignIn(dana, '2468'), isTrue);
-    });
-
-    test('a PBKDF2 sign-in from before Argon2id still verifies until it is set again', () async {
-      clock.advance(const Duration(seconds: 1));
-      final salt = randomBytes(16);
-      final key = await Pbkdf2(macAlgorithm: Hmac.sha256(), iterations: 20000, bits: 256)
-          .deriveKeyFromPassword(password: '2468', nonce: salt);
-      final old = await forge(
-        den.keys,
-        counter: maxCounter(den) + 1,
-        millis: clock.now,
-        type: RecordType.member,
-        rid: dana,
-        fields: {
-          'signIn': {'kind': 'pin', 'salt': b64e(salt), 'hash': b64e(await key.extractBytes())},
-        },
-        actor: dana,
-      );
-      expect((await den.ingest([old])).invalid, isEmpty);
-      final s = den.member(dana)!.signIn;
-      expect(s.kdf, isNull);
-      expect(s.digits, 4);
-      expect(s.stretchedOld, isTrue);
-      expect(await den.verifySignIn(dana, '2468'), isTrue);
-      expect(await den.verifySignIn(dana, '2469'), isFalse);
-      clock.advance(const Duration(seconds: 1));
-      await den.setSignIn(dana, kind: 'pin', secret: '2468');
-      expect(den.member(dana)!.signIn.stretchedOld, isFalse);
-      expect(den.member(dana)!.signIn.kdf, SignInKdf.argon2id);
-      expect(await den.verifySignIn(dana, '2468'), isTrue);
-    });
-
-    test('the schema bounds how a sign-in is stretched, and one it can\'t read never verifies', () async {
-      clock.advance(const Duration(seconds: 1));
-      Map<String, Object?> argon(Map<String, Object?> params) => {
-            'signIn': {'kind': 'pin', 'salt': b64e(randomBytes(16)), 'hash': 'x' * 43, 'kdf': SignInKdf.argon2id, ...params},
-          };
-      final bad = [
-        {'signIn': {'kind': 'pin', 'salt': 'a', 'hash': 'b', 'kdf': 'scrypt'}},
-        argon({'memoryKiB': 1 << 20, 'iterations': 2, 'parallelism': 1}),
-        argon({'memoryKiB': 6144, 'iterations': 0, 'parallelism': 1}),
-        argon({'memoryKiB': 6144, 'iterations': 2, 'parallelism': 1, 'digits': 8}),
-      ];
-      final forged = [
-        for (final (i, fields) in bad.indexed)
-          await forge(den.keys, counter: maxCounter(den) + 1 + i, millis: clock.now + i, type: RecordType.member, rid: dana, fields: fields, actor: dana),
-      ];
-      final result = await den.ingest(forged);
-      expect(result.invalid.keys, unorderedEquals(forged.map((c) => c.id)));
-      expect(den.member(dana)!.signIn.kind, 'none');
-      // No parameters, no check: it fails closed rather than guessing them.
-      final missing = await forge(den.keys,
-          counter: maxCounter(den) + 1, millis: clock.now + 10, type: RecordType.member, rid: dana, fields: argon({}), actor: dana);
-      expect((await den.ingest([missing])).invalid, isEmpty);
-      expect(await den.verifySignIn(dana, '1234'), isFalse);
     });
 
     test('a shared screen tells the parents about wrong tries, for nobody, and History says so', () async {

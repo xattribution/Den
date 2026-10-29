@@ -476,17 +476,15 @@ class Den {
   }
 
   /// Checks a PIN or picture pattern against the member's sign-in for shared screens. A parent
-  /// with no sign-in never verifies on a shared display: anyone there could act as them. How
-  /// many wrong tries it takes before someone has to wait is the screen's to keep (the app's
-  /// `SignInActions`); this only checks.
+  /// with no sign-in never verifies on a shared display: anyone there could act as them.
   Future<bool> verifySignIn(String memberId, String secret) async {
     final m = member(memberId);
     if (m == null) return false;
     final signIn = m.signIn;
     if (signIn.kind == 'none') return !(m.isParent && thisDevice?.mode == DeviceMode.shared);
+    if (signIn.salt == null || signIn.hash == null) return false;
     if (!signInSecretValid(signIn.kind, secret)) return false;
-    if (signIn.kind == 'pin' && secret.length != signIn.digits) return false;
-    return verifySignInHash(secret, signIn);
+    return verifySignInHash(secret, signIn.salt!, signIn.hash!);
   }
 
   /// On a shared screen: tells the family's parents that someone got [memberId]'s PIN or picture
@@ -855,14 +853,13 @@ class Den {
         await _rotateNow(held);
       });
 
-  /// Sets how a member signs in on shared screens: `pin` (4 or 6 digits), `pattern` (4 animals
-  /// as digits 0-8), or `none`. Secrets are salted and stretched with Argon2id ([SignInKdf])
-  /// before they're written, so setting one again also replaces an old PBKDF2 hash.
+  /// Sets how a member signs in on shared screens: `pin` (4 digits), `pattern` (4 animals as
+  /// digits 0-8), or `none`. Secrets are salted and hashed before they're written.
   Future<void> setSignIn(String memberId, {required String kind, String? secret}) async {
     if (member(memberId) == null) throw const InvalidInput('That person isn\'t in the family');
     if (!signInSecretValid(kind, secret)) {
       throw InvalidInput(kind == 'pin'
-          ? 'A PIN is 4 or 6 digits'
+          ? 'A PIN is 4 digits'
           : kind == 'pattern'
               ? 'A picture pattern is 4 animals'
               : 'Sign-in must be a PIN, a picture pattern, or none');
