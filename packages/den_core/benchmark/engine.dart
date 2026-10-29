@@ -7,6 +7,7 @@ library;
 import 'dart:async';
 
 import 'package:den_core/den_core.dart';
+import 'package:den_core/src/snapshot.dart';
 
 import 'big_family.dart';
 
@@ -38,12 +39,18 @@ Future<double> timed(FutureOr<void> Function() body) async {
 Future<Den> openFounder(BigFamily f, DenStorage storage) async =>
     Den.open(storage: storage, keys: await f.keys(), now: () => f.now);
 
-/// Storage as the founder's phone leaves it after a session: opened once and closed, so anything
-/// the engine keeps between launches is there.
-Future<JsonStorage> settledStorage(BigFamily f) async {
+/// Storage as the founder's phone leaves it after a session: opened once and closed, with the
+/// snapshot the engine writes for a log this size (an engine that writes none is done at once).
+Future<JsonStorage> settledStorage(BigFamily f, {void Function(String)? log}) async {
   final storage = f.founderStorage();
+  final sw = Stopwatch()..start();
   final den = await openFounder(f, storage);
   den.today();
+  await Future.any([storage.nextSnapshot, Future<void>.delayed(const Duration(seconds: 120))]);
+  if (storage.snapshot != null) {
+    log?.call('first open, checking the log and writing a snapshot: ${sw.elapsedMilliseconds} ms; '
+        'snapshot ${(storage.snapshot!.length / 1e6).toStringAsFixed(1)} MB of text');
+  }
   await den.close();
   return storage;
 }
@@ -56,7 +63,7 @@ Future<List<Result>> runEngineBenchmarks(BigFamily f, {int runs = 5, void Functi
     log?.call(r.toString());
   }
 
-  final settled = await settledStorage(f);
+  final settled = await settledStorage(f, log: log);
   log?.call('log: ${f.log.length} changes; partner offline week: ${f.partnerWeek.length}');
 
   // Cold open: from stored text to a ready engine, then to Today's first answer.
@@ -74,6 +81,21 @@ Future<List<Result>> runEngineBenchmarks(BigFamily f, {int runs = 5, void Functi
     }
     done(Result('cold open', open));
     done(Result('cold open + first today()', first));
+  }
+
+  // What open leaves running in the background: checking the stored log against its snapshot.
+  {
+    final delay = snapshotCheckDelay;
+    snapshotCheckDelay = Duration.zero;
+    final samples = <double>[];
+    for (var i = 0; i <= (runs < 3 ? runs : 3); i++) {
+      final den = await openFounder(f, settled.copy());
+      final ms = await timed(() => engineProbes[den]!.idle());
+      await den.close();
+      if (i > 0) samples.add(ms);
+    }
+    snapshotCheckDelay = delay;
+    done(Result('background check after open (off the critical path)', samples));
   }
 
   // A partner who was offline for a week: one change, then all 500.

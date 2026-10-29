@@ -18,6 +18,21 @@ abstract class DenStorage {
   Future<void> clear();
 }
 
+/// Storage that also keeps a snapshot: what the change log materializes to, which [Den.open]
+/// starts from instead of replaying every change. Den writes it now and then as the log grows
+/// and owns its format: a snapshot it can't use (another format, damaged, or not matching the
+/// log) is ignored and written again. [DenStorage.clear] removes it with everything else.
+///
+/// Persistent storage implements this; [MemoryStorage] doesn't, since nothing outlives it.
+abstract interface class SnapshotStorage {
+  /// The snapshot last saved, or null.
+  Future<String?> loadSnapshot();
+
+  /// Replaces the snapshot. A crash part way leaves the old one or the new one, never a mix; a
+  /// lost snapshot only means the next open replays the log.
+  Future<void> saveSnapshot(String snapshot);
+}
+
 /// In-memory storage for tests and browsers that sync on load.
 class MemoryStorage implements DenStorage {
   final List<Change> _changes = [];

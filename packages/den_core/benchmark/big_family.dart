@@ -7,6 +7,7 @@
 /// JSON ([BigFamily.toJson]); `benchmark/main.dart` keeps it under `.dart_tool/`.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -22,18 +23,34 @@ class ManualClock {
   int call() => now;
 }
 
-/// A [DenStorage] that keeps changes and metadata as JSON text and decodes them on every load,
-/// the way IndexedDB hands Den strings on the web.
-class JsonStorage implements DenStorage {
-  JsonStorage({List<String>? changes, String? meta})
+/// A [DenStorage] that keeps changes, metadata and the engine's snapshot as JSON text and
+/// decodes them on every load, the way IndexedDB hands Den strings on the web.
+class JsonStorage implements DenStorage, SnapshotStorage {
+  JsonStorage({List<String>? changes, String? meta, this.snapshot})
       : _changes = changes ?? [],
         _meta = meta;
 
   final List<String> _changes;
   String? _meta;
+  String? snapshot;
+  Completer<void> _saved = Completer();
 
   /// A copy holding the same text, for opening the same device again from scratch.
-  JsonStorage copy() => JsonStorage(changes: List.of(_changes), meta: _meta);
+  JsonStorage copy() => JsonStorage(changes: List.of(_changes), meta: _meta, snapshot: snapshot);
+
+  /// Completes when the engine next saves a snapshot.
+  Future<void> get nextSnapshot => _saved.future;
+
+  @override
+  Future<String?> loadSnapshot() async => snapshot;
+
+  @override
+  Future<void> saveSnapshot(String text) async {
+    snapshot = text;
+    final saved = _saved;
+    _saved = Completer();
+    saved.complete();
+  }
 
   @override
   Future<List<Change>> loadChanges() async =>
@@ -57,6 +74,7 @@ class JsonStorage implements DenStorage {
   Future<void> clear() async {
     _changes.clear();
     _meta = null;
+    snapshot = null;
   }
 }
 
