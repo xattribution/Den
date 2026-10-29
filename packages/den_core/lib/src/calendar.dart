@@ -105,12 +105,7 @@ Occurrence buildOccurrence(Event e, int seriesStart, EventException? exception, 
     allDay: pick<bool?>('allDay', null) ?? e.allDay,
     exceptionId: exception?.id,
     seriesStart: seriesStart,
-    rides: patch.containsKey('rides')
-        ? [
-            for (final r in (patch['rides'] as List? ?? const []))
-              Ride((r as Map)['leg'] as String? ?? 'to', r['driver'] as String?),
-          ]
-        : e.rides,
+    rides: exception?.rides(e.rides) ?? e.rides,
     reminders: patch.containsKey('reminders')
         ? [...(patch['reminders'] as List? ?? const []).map((v) => (v as num).toInt())]
         : e.reminders,
@@ -156,14 +151,83 @@ int compareOccurrences(Occurrence a, Occurrence b) {
   return t != 0 ? t : a.event.id.compareTo(b.event.id);
 }
 
-/// The rides of an occurrence with one leg's driver set (adding the leg when it's missing).
-List<Map<String, Object?>> ridesWith(List<Ride> rides, String leg, String? driver) {
-  final out = [for (final r in rides) {'leg': r.leg, 'driver': r.driver}];
-  final i = out.indexWhere((r) => r['leg'] == leg);
+/// [rides] with one leg's driver set (adding the leg when it's missing).
+List<Ride> ridesWith(List<Ride> rides, String leg, String? driver) {
+  final out = List.of(rides);
+  final i = out.indexWhere((r) => r.leg == leg);
   if (i >= 0) {
-    out[i] = {'leg': leg, 'driver': driver};
+    out[i] = Ride(leg, driver);
   } else {
-    out.add({'leg': leg, 'driver': driver});
+    out.add(Ride(leg, driver));
   }
   return out;
+}
+
+/// [rides] as a `rides` list stores them.
+List<Map<String, Object?>> ridesJson(List<Ride> rides) => [
+      for (final r in rides) {'leg': r.leg, 'driver': r.driver},
+    ];
+
+/// [rides] with one entry per leg (the first, when a leg is named twice), as `drivers` can hold
+/// them.
+List<Ride> uniqueRides(List<Ride> rides) {
+  final seen = <String>{};
+  return [
+    for (final r in rides)
+      if (seen.add(r.leg)) r,
+  ];
+}
+
+/// Each leg of [rides] and its driver (the first, when a leg is named twice).
+Map<String, String?> _legs(List<Ride> rides) => {for (final r in uniqueRides(rides)) r.leg: r.driver};
+
+/// Whether [a] and [b] have the same legs with the same drivers, in any order.
+bool _sameRides(List<Ride> a, List<Ride> b) {
+  final x = _legs(a), y = _legs(b);
+  return x.length == y.length && x.entries.every((e) => y.containsKey(e.key) && y[e.key] == e.value);
+}
+
+/// The fields that give an event record [rides]. `rides` is written whole, for older versions;
+/// then `drivers`: one entry per leg that is new or whose driver changes (`drivers.<leg>`), so
+/// claims of different legs at once all count, when [existing] already reads its drivers there;
+/// the whole map when a leg goes (an entry can't take its key away) or [existing] reads its
+/// `rides` list. Empty when nothing would change. [existing] is null for a record being made.
+///
+/// Den commits `drivers` in a change of its own, after the rest (`Den._olderVersionsFirst`).
+Map<String, Object?> eventRideFields(List<Ride> rides, {Event? existing}) {
+  final want = _legs(rides);
+  final list = [for (final leg in rideLegs) if (want.containsKey(leg)) Ride(leg, want[leg])];
+  final whole = {'rides': ridesJson(list), 'drivers': {for (final r in list) r.leg: r.driver}};
+  if (existing == null) return whole;
+  final now = existing.rides;
+  if (_sameRides(now, list)) return const {};
+  final have = _legs(now);
+  if (!existing.readsDrivers || !have.keys.every(want.containsKey)) return whole;
+  return {
+    'rides': ridesJson(list),
+    for (final r in list)
+      if (!have.containsKey(r.leg) || have[r.leg] != r.driver) 'drivers.${r.leg}': r.driver,
+  };
+}
+
+/// The fields of an [EventException] that give one occurrence [rides], over the series'
+/// [series]: `patch.rides` whole, for older versions, then `patch.drivers.<leg>` (a member id, or
+/// `""` for nobody this time) for each leg that changes, so claims of different legs at once all
+/// count. When [x] reads `patch.rides` whole, every leg is written, to take over from it. When
+/// [rides] leaves out a leg the series has, which a per-leg driver can't say, `patch.rides` alone.
+/// Empty when nothing would change.
+Map<String, Object?> occurrenceRideFields(List<Ride> rides, List<Ride> series, EventException? x) {
+  final list = uniqueRides(rides);
+  final now = x?.rides(series) ?? series;
+  if (_sameRides(now, list)) return const {};
+  final want = _legs(list), have = _legs(now);
+  if (!series.every((s) => want.containsKey(s.leg))) return {'patch.rides': ridesJson(list)};
+  final whole = x?.ridesWhole ?? false;
+  return {
+    'patch.rides': ridesJson(list),
+    for (final leg in rideLegs)
+      if (whole || want.containsKey(leg) != have.containsKey(leg) || want[leg] != have[leg])
+        if (want.containsKey(leg) || x?.patch['drivers.$leg'] != null)
+          'patch.drivers.$leg': want.containsKey(leg) ? want[leg] ?? '' : null,
+  };
 }

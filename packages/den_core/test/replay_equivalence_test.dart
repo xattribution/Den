@@ -65,20 +65,67 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildPool(int seed) async {
           if (events.isEmpty) return;
           final e = events[random.nextInt(events.length)];
           final occ = d.occurrences(e.start, e.start + 30 * 86400000).where((o) => o.event.id == e.id).toList();
+          final leg = random.nextBool() ? 'to' : 'from';
+          final driver = [dana, priya, null][random.nextInt(3)];
           if (e.rrule != null && occ.isNotEmpty && random.nextBool()) {
             final o = occ[random.nextInt(occ.length)];
-            switch (random.nextInt(3)) {
+            switch (random.nextInt(5)) {
               case 0:
                 await d.updateEvent(e.id, {'title': 'Moved ${random.nextInt(9)}'}, scope: EditScope.one, occurrence: o.seriesStart);
               case 1:
                 await d.claimRide(e.id, occurrence: o.seriesStart, leg: 'to', driver: random.nextBool() ? dana : priya);
+              case 2:
+                // A leg each, one at a time: `patch.drivers.<leg>`.
+                await d.claimRide(e.id, occurrence: o.seriesStart, leg: leg, driver: driver);
+              case 3:
+                // A version that knows only `rides`: the occurrence's whole list.
+                forged.add(await forge(
+                  d.keys,
+                  counter: forgedCounter++,
+                  millis: c.now,
+                  type: RecordType.eventException,
+                  rid: '${e.id}@${o.seriesStart}',
+                  space: e.space,
+                  fields: {
+                    'event': e.id,
+                    'occurrence': o.seriesStart,
+                    'patch.rides': [
+                      {'leg': leg, 'driver': driver},
+                    ],
+                  },
+                  actor: d.actor?.id,
+                ));
               default:
                 await d.deleteEvent(e.id, scope: EditScope.one, occurrence: o.seriesStart);
             }
           } else if (random.nextInt(4) == 0) {
             await d.deleteEvent(e.id);
           } else {
-            await d.updateEvent(e.id, {'title': 'Renamed ${random.nextInt(99)}', 'location': 'Room ${random.nextInt(5)}'});
+            switch (random.nextInt(4)) {
+              case 0:
+                await d.claimRide(e.id, occurrence: e.start, leg: leg, driver: driver);
+              case 1:
+                await d.updateEvent(e.id, {
+                  'rides': [if (random.nextBool()) Ride('to', driver), if (random.nextBool()) Ride('from', driver)],
+                });
+              case 2:
+                forged.add(await forge(
+                  d.keys,
+                  counter: forgedCounter++,
+                  millis: c.now,
+                  type: RecordType.event,
+                  rid: e.id,
+                  space: e.space,
+                  fields: {
+                    'rides': [
+                      {'leg': leg, 'driver': driver},
+                    ],
+                  },
+                  actor: d.actor?.id,
+                ));
+              default:
+                await d.updateEvent(e.id, {'title': 'Renamed ${random.nextInt(99)}', 'location': 'Room ${random.nextInt(5)}'});
+            }
           }
         case 2:
           await d.addChore(
@@ -276,6 +323,24 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildPool(int seed) async {
     fields: {'member': dana, 'mime': 'image/jpeg', 'data': base64Encode(photo)},
     actor: leo,
   ));
+  // Priya's phone, not updated yet, takes the drive home the old way, after everything else.
+  final latest = clocks.map((c) => c.now).reduce(max) + 60000;
+  for (final e in b.events) {
+    forged.add(await forge(
+      b.keys,
+      counter: forgedCounter++,
+      millis: latest,
+      type: RecordType.event,
+      rid: e.id,
+      space: e.space,
+      fields: {
+        'rides': [
+          {'leg': 'from', 'driver': priya},
+        ],
+      },
+      actor: priya,
+    ));
+  }
   final pool = {
     for (final d in devices)
       for (final c in d.changesSince({})) c.id: c,
@@ -442,7 +507,16 @@ String stateOf(Materializer m) => canonicalJson({
         for (final e in m.validator.cutoffs.entries) e.key: [for (final k in e.value) [k.after, '${k.at}']],
       },
       'retired': m.validator.retiredRecoveryKeys.toJson(),
+      // Who drives, as people see it: from per-leg drivers, or a whole list an older version wrote.
+      'rides': [
+        for (final e in m.store.liveOfType(RecordType.event)) [e.space, e.id, ridesText(Event(e.rec).rides)],
+        for (final x in m.store.liveOfType(RecordType.eventException))
+          if (m.store.liveAt(x.space, RecordType.event, '${x.fields['event']}') case final e?)
+            [x.space, x.id, ridesText(EventException(x.rec).rides(Event(e.rec).rides))],
+      ],
     });
+
+String ridesText(List<Ride> rides) => [for (final r in rides) '${r.leg}=${r.driver}'].join(' ');
 
 /// What [Den.open] does with a snapshot: restore it over everything stored, then add the rest.
 Materializer reopen(TrustRoot root, String snapshot, List<Change> stored) {
@@ -488,6 +562,11 @@ void main() {
           return;
         }
         expect(reference.store.liveOfType(RecordType.photo), isNotEmpty, reason: 'the pool has photos');
+        bool perLeg(Change c) => c.fields.keys.any((k) => k.startsWith('drivers.') || k.startsWith('patch.drivers.'));
+        expect(pool.where(perLeg), isNotEmpty, reason: 'and ride legs claimed one at a time');
+        expect(reference.store.liveOfType(RecordType.event).where((e) => e.fields.containsKey('drivers') && !Event(e.rec).readsDrivers),
+            isNotEmpty,
+            reason: 'and rides an older version wrote after the drivers');
         expect(reference.validator.retiredRecoveryKeys.isEmpty, isFalse, reason: 'and replaced recovery keys');
         expect(reference.rejected.values.where((r) => r.contains('replaced')), isNotEmpty);
         expect(reference.rejected.values.where((r) => r.contains('already used')), isNotEmpty);

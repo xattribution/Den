@@ -1304,7 +1304,9 @@ class Den {
   /// - a record they made is removed (and can be restored again);
   /// - a record they removed comes back as it was ([restore]);
   /// - a field they changed gets its old value back, one entry of a map field (`steps.<id>`,
-  ///   `patch.<field>`) at a time;
+  ///   `patch.<field>`) at a time, ride drivers one leg at a time with the `rides` list older
+  ///   versions read written again from them (or an older version's list put back, when that
+  ///   was what the record read);
   /// - points given or taken get a new adjustment the other way, since adjustments never change.
   ///
   /// What it leaves alone is reported in [UndoResult.skipped]: fields someone changed since
@@ -1514,6 +1516,12 @@ class Den {
           if (f != '_via' && f != '_from') firstTouch.putIfAbsent(f, () => a);
         }
       }
+      // Ride drivers and the list written for older versions alongside them
+      // ([_olderVersionsFirst]): see [_undoRides].
+      final mirror = switch (type) { RecordType.event => 'rides', RecordType.eventException => 'patch.rides', _ => null };
+      bool isDrivers(String f) => type == RecordType.event ? f == 'drivers' || f.startsWith('drivers.') : f.startsWith('patch.drivers.');
+      final rides = mirror != null && firstTouch.keys.any(isDrivers);
+      UndoSkip? mirrorSkipped;
       final restore = <String, Object?>{};
       for (final e in firstTouch.entries) {
         final f = e.key;
@@ -1524,9 +1532,20 @@ class Den {
           final whole = firstTouch[f.substring(0, dot)];
           if (whole != null && changeOrder(whole.change, at.change) < 0) continue;
         }
+        // Only ever written as it already was (an occurrence's `event` and `occurrence`, which every
+        // change to it names): nothing to take back, and nobody's change since is in the way.
+        if (!at.absent.contains(f) &&
+            list.every((a) => !a.change.fields.containsKey(f) || const DeepCollectionEquality().equals(a.change.fields[f], at.before[f]))) {
+          continue;
+        }
         final newer = later.firstWhereOrNull((o) => o.change.hlc > at.change.hlc && _touches(o.change, f));
         if (newer != null) {
-          skipped.add(skip('${_historyEntry(newer).actorName} changed it since', f));
+          final s = skip('${_historyEntry(newer).actorName} changed it since', f);
+          if (rides && f == mirror) {
+            mirrorSkipped = s;
+          } else {
+            skipped.add(s);
+          }
           continue;
         }
         Object? value = copyJson(at.before[f]);
@@ -1560,6 +1579,11 @@ class Den {
           restore[head] = merged;
         }
       }
+      if (rides) {
+        final unset = {for (final e in firstTouch.entries) if (e.value.absent.contains(e.key)) e.key};
+        if (!_undoRides(entry, c0, restore, isDrivers, unset)) mirrorSkipped = null;
+      }
+      if (mirrorSkipped != null) skipped.add(mirrorSkipped);
       if (firstTouch.containsKey('_deleted')) {
         final wasRemoved = restore.remove('_deleted') == true;
         if (wasRemoved) {
@@ -1574,6 +1598,71 @@ class Den {
       }
     }
     return _UndoPlan(drafts, skipped);
+  }
+
+  /// What [_planUndo] puts back of an event's or occurrence's rides, in [restore] (the field
+  /// values it would put back) for changes from [c0] on. When the record read its whole `rides`
+  /// list before [c0] (an older version's, or one occurrence's own legs), that list comes back,
+  /// with the drivers kept out of its way. Otherwise the drivers come back, field by field, and
+  /// the list is written again from what they read then: the one there may only have said what
+  /// drivers said at some other time. An event's leg the changes added ([unset] names the fields
+  /// they first set) goes, with the whole map. Returns whether the list itself comes back, so
+  /// that someone having changed it since is worth saying.
+  bool _undoRides(Entry entry, Change c0, Map<String, Object?> restore, bool Function(String) isDrivers, Set<String> unset) {
+    final event = entry.type == RecordType.event;
+    final before = _recBefore(c0);
+    final whole = before != null && (event ? !Event(before).readsDrivers : EventException(before).ridesWhole);
+    if (whole) {
+      if (event) {
+        restore.removeWhere((k, _) => isDrivers(k));
+      } else {
+        for (final k in [...restore.keys.where(isDrivers)]) {
+          restore[k] = null;
+        }
+      }
+      return true;
+    }
+    restore.remove(event ? 'rides' : 'patch.rides');
+    if (!restore.keys.any(isDrivers)) return false;
+    if (event) {
+      final map = restore['drivers'] ?? entry.fields['drivers'];
+      final added = {for (final k in restore.keys) if (k.startsWith('drivers.') && unset.contains(k)) k};
+      final after = <String, Object?>{
+        if (map is Map) ...Map<String, Object?>.from(map),
+        for (final k in restore.keys)
+          if (k.startsWith('drivers.') && !added.contains(k)) k.substring(8): restore[k],
+      }..removeWhere((leg, _) => added.contains('drivers.$leg'));
+      if (added.isNotEmpty) {
+        restore
+          ..removeWhere((k, _) => k.startsWith('drivers.'))
+          ..['drivers'] = after;
+      }
+      restore['rides'] = ridesJson([
+        for (final leg in rideLegs)
+          if (after.containsKey(leg)) Ride(leg, after[leg] as String?),
+      ]);
+    } else {
+      final after = {
+        ...EventException(entry.rec).patch,
+        for (final e in restore.entries)
+          if (e.key.startsWith('patch.')) e.key.substring(6): e.value,
+      }..remove('rides');
+      final series = _mat.store.at(entry.space, RecordType.event, '${entry.fields['event']}');
+      final own = rideLegs.any((leg) => after['drivers.$leg'] != null);
+      restore['patch.rides'] = own && series != null ? ridesJson(EventException.ridesOver(Event(series.rec).rides, after)) : null;
+    }
+    return false;
+  }
+
+  /// The record [c] changed as it was just before [c]: its own earlier changes, applied again.
+  Rec? _recBefore(Change c) {
+    final store = RecordStore();
+    for (final a in _mat.applied) {
+      final x = a.change;
+      if (changeOrder(x, c) >= 0) break;
+      if (x.type == c.type && x.rid == c.rid && x.space == c.space) store.apply(x);
+    }
+    return store.at(c.space, c.type, c.rid)?.rec;
   }
 
   // ---------------------------------------------------------------- calendar
@@ -1717,6 +1806,7 @@ class Den {
     CaptureOrigin? from,
   }) async {
     final id = newId();
+    _checkDrivers(rides, const []);
     await _commit([
       _Draft(RecordType.event, id, space ?? _spaceFor(audience), {
         'title': title,
@@ -1733,7 +1823,7 @@ class Den {
         'source': source == null || source.kind == 'manual'
             ? {'kind': 'manual'}
             : {'kind': source.kind, 'ref': source.ref, 'label': source.label},
-        'rides': [for (final r in rides) {'leg': r.leg, 'driver': r.driver}],
+        if (rides.isEmpty) 'rides': const <Object?>[] else ...eventRideFields(rides),
         'countdown': countdown,
         '_from': ?from?.toJson(),
       }),
@@ -1753,21 +1843,25 @@ class Den {
   }) async {
     final entry = _requireLive(RecordType.event, id, 'That event doesn\'t exist');
     final event = Event(entry.rec);
-    final fields = _cleanPatch(patch, {...eventFields.keys, 'audience'});
+    final fields = _cleanPatch(patch, {...eventFields.keys.where((k) => k != 'drivers'), 'audience'});
     final audience = fields.remove('audience');
     if (fields.containsKey('rrule')) fields['rrule'] = _normalizeRule(fields['rrule'] as String?);
-    if (fields['rides'] is List) {
-      fields['rides'] = [for (final r in fields['rides'] as List) r is Ride ? {'leg': r.leg, 'driver': r.driver} : r];
-    }
+    final rides = fields.containsKey('rides') ? _ridesInput(fields.remove('rides')) : null;
     if (audience != null) {
       final target = _spaceFor(_audienceOf(audience));
       if (target != entry.space) {
-        await _commit(_moveDrafts(entry, target, fields, RecordType.eventException, 'event'));
+        if (rides != null) _checkDrivers(rides, event.rides);
+        await _commit(_moveDrafts(entry, target, fields, RecordType.eventException, 'event', rides: rides));
         return;
       }
     }
-    if (fields.isEmpty) return;
+    if (fields.isEmpty && rides == null) return;
     if (event.rrule == null || scope == EditScope.all) {
+      if (rides != null) {
+        _checkDrivers(rides, event.rides);
+        fields.addAll(eventRideFields(rides, existing: event));
+        if (fields.isEmpty) return;
+      }
       await _commit(_seriesDrafts(entry, event, fields, occurrence));
       return;
     }
@@ -1777,21 +1871,32 @@ class Den {
       if (fields.keys.any((k) => !patchableEventFields.contains(k))) {
         throw const InvalidInput('That can only be changed for the whole series');
       }
+      final x = _exceptionAt(entry, occurrence);
+      final ridesFields = <String, Object?>{};
+      if (rides != null) {
+        _checkDrivers(rides, x?.rides(event.rides) ?? event.rides);
+        ridesFields.addAll(occurrenceRideFields(rides, event.rides, x));
+      }
+      if (fields.isEmpty && ridesFields.isEmpty) return;
       await _commit([
         _Draft(RecordType.eventException, '$id@$occurrence', entry.space, {
           'event': id,
           'occurrence': occurrence,
           'cancelled': false,
           for (final e in fields.entries) 'patch.${e.key}': e.value,
+          ...ridesFields,
         }),
       ]);
       return;
     }
+    if (rides != null) _checkDrivers(rides, event.rides);
     if (occurrence == firstSeriesStart(event, _zone)) {
+      if (rides != null) fields.addAll(eventRideFields(rides, existing: event));
+      if (fields.isEmpty) return;
       await _commit(_seriesDrafts(entry, event, fields, occurrence));
       return;
     }
-    await _commit(_splitDrafts(entry, event, fields, occurrence));
+    await _commit(_splitDrafts(entry, event, fields, occurrence, rides: rides));
   }
 
   List<_Draft> _seriesDrafts(Entry entry, Event event, Map<String, Object?> fields, int? occurrence) {
@@ -1822,7 +1927,7 @@ class Den {
               'event': event.id,
               'occurrence': moved,
               'cancelled': x.cancelled,
-              'patch': x.patch,
+              'patch': _patchToCopy(x, _seriesRidesAfter(event, fields)),
             }));
         }
       }
@@ -1832,7 +1937,7 @@ class Den {
     return [_Draft(RecordType.event, event.id, entry.space, out), ...drafts];
   }
 
-  List<_Draft> _splitDrafts(Entry entry, Event event, Map<String, Object?> fields, int occurrence) {
+  List<_Draft> _splitDrafts(Entry entry, Event event, Map<String, Object?> fields, int occurrence, {List<Ride>? rides}) {
     final rule = ruleOf(event)!;
     final zoneName = eventZone(event, _zone);
     final before = countBefore(event, _zone, occurrence);
@@ -1844,6 +1949,7 @@ class Den {
     final next = <String, Object?>{
       for (final k in eventFields.keys)
         if (entry.fields.containsKey(k)) k: entry.fields[k],
+      ..._eventRidesToCopy(entry, rides),
       ...fields,
       'start': newStart,
       'end': newEnd,
@@ -1863,7 +1969,7 @@ class Den {
           'event': nextId,
           'occurrence': moved,
           'cancelled': x.cancelled,
-          'patch': x.patch,
+          'patch': _patchToCopy(x, rides ?? event.rides),
         }));
     }
     return drafts;
@@ -1944,34 +2050,92 @@ class Den {
 
   /// Sets the driver of a ride leg for one occurrence (null releases it). Only a parent or an
   /// adult drives ([canDrive]).
+  ///
+  /// It writes that leg alone (`drivers.<leg>`, or `patch.drivers.<leg>` for one occurrence of a
+  /// series), so two people taking different legs at once both count, after the whole `rides`
+  /// list older versions read ([eventRideFields], [occurrenceRideFields]). Nothing is written
+  /// when that leg already has that driver.
   Future<void> claimRide(String eventId, {required int occurrence, required String leg, String? driver}) async {
-    if (leg != 'to' && leg != 'from') throw const InvalidInput('A ride leg is "to" or "from"');
-    if (driver != null) {
-      final m = member(driver);
-      if (m == null) throw const InvalidInput('That person isn\'t in the family');
-      if (!canDrive(m)) throw InvalidInput('${m.name} can\'t drive: in Den, parents and adults drive');
-    }
+    if (!rideLegs.contains(leg)) throw const InvalidInput('A ride leg is "to" or "from"');
+    if (driver != null) _checkDriver(driver);
     final entry = _requireLive(RecordType.event, eventId, 'That event doesn\'t exist');
     final event = Event(entry.rec);
     if (event.rrule == null) {
-      await _commit([
-        _Draft(RecordType.event, eventId, entry.space, {'rides': ridesWith(event.rides, leg, driver)}),
-      ]);
+      final fields = eventRideFields(ridesWith(event.rides, leg, driver), existing: event);
+      if (fields.isNotEmpty) await _commit([_Draft(RecordType.event, eventId, entry.space, fields)]);
       return;
     }
     if (!isSeriesStart(event, _zone, occurrence)) throw const InvalidInput('That isn\'t an occurrence of this event');
-    final xid = '$eventId@$occurrence';
-    final existing = _mat.store.liveAt(entry.space, RecordType.eventException, xid);
-    final x = existing == null ? null : EventException(existing.rec);
-    final rides = buildOccurrence(event, occurrence, x, familyZone: _zone).rides;
+    final x = _exceptionAt(entry, occurrence);
+    final fields = occurrenceRideFields(ridesWith(x?.rides(event.rides) ?? event.rides, leg, driver), event.rides, x);
+    if (fields.isEmpty) return;
     await _commit([
-      _Draft(RecordType.eventException, xid, entry.space, {
+      _Draft(RecordType.eventException, '$eventId@$occurrence', entry.space, {
         'event': eventId,
         'occurrence': occurrence,
-        'patch.rides': ridesWith(rides, leg, driver),
+        ...fields,
       }),
     ]);
   }
+
+  /// The live change to the occurrence of [entry] whose series start is [occurrence], if any.
+  EventException? _exceptionAt(Entry entry, int occurrence) {
+    final x = _mat.store.liveAt(entry.space, RecordType.eventException, '${entry.id}@$occurrence');
+    return x == null ? null : EventException(x.rec);
+  }
+
+  /// Refuses a driver who isn't in the family or may not drive ([canDrive]).
+  void _checkDriver(String id) {
+    final m = member(id);
+    if (m == null) throw const InvalidInput('That person isn\'t in the family');
+    if (!canDrive(m)) throw InvalidInput('${m.name} can\'t drive: in Den, parents and adults drive');
+  }
+
+  /// [_checkDriver] for each driver [rides] names that [now] doesn't already have on that leg.
+  void _checkDrivers(List<Ride> rides, List<Ride> now) {
+    for (final r in rides) {
+      final driver = r.driver;
+      if (driver != null && !now.any((n) => n.leg == r.leg && n.driver == driver)) _checkDriver(driver);
+    }
+  }
+
+  /// Rides as [updateEvent] takes them: [Ride]s, or maps like the `rides` field's.
+  static List<Ride> _ridesInput(Object? raw) {
+    if (raw == null) return const [];
+    if (raw is! List) throw const InvalidInput('Rides must be a list');
+    return [
+      for (final Object? r in raw)
+        switch (r) {
+          final Ride ride when rideLegs.contains(ride.leg) => ride,
+          final Map map when rideLegs.contains(map['leg']) && (map['driver'] == null || map['driver'] is String) =>
+            Ride(map['leg'] as String, map['driver'] as String?),
+          _ => throw const InvalidInput('Each ride is a leg, "to" or "from", and who drives it'),
+        },
+    ];
+  }
+
+  /// The ride fields of an event record about to be copied into a new one (a split series, a
+  /// move to another space), which gets one time for all its fields: what it reads now, or
+  /// [rides] instead, in both forms. Nothing for an event that has only a `rides` list and isn't
+  /// given new ones: its copy reads the same.
+  static Map<String, Object?> _eventRidesToCopy(Entry entry, List<Ride>? rides) {
+    if (rides == null && !entry.fields.containsKey('drivers')) return const {};
+    return eventRideFields(rides ?? Event(entry.rec).rides);
+  }
+
+  /// An occurrence's patch to copy into a new record, which gets one time for all of it, over its
+  /// series' [series]: without its per-leg drivers when `patch.rides` says its rides whole, so the
+  /// copy reads the same; else with `rides` as it reads now, for older versions.
+  static Map<String, Object?> _patchToCopy(EventException x, List<Ride> series) {
+    final patch = x.patch;
+    if (x.ridesWhole) return patch..removeWhere((k, _) => k.startsWith('drivers.'));
+    if (rideLegs.any((leg) => patch['drivers.$leg'] != null)) patch['rides'] = ridesJson(x.rides(series));
+    return patch;
+  }
+
+  /// The rides a series has once [fields] (a series edit's) are written.
+  static List<Ride> _seriesRidesAfter(Event event, Map<String, Object?> fields) =>
+      fields['rides'] is List ? _ridesInput(fields['rides']) : event.rides;
 
   // ---------------------------------------------------------------- chores
 
@@ -3139,6 +3303,7 @@ class Den {
       if (!readable.contains(c.space)) continue;
       if (type != null && c.type != type) continue;
       if (member != null && c.actor != member) continue;
+      if (_driversEcho(c)) continue;
       final entry = _historyEntry(a);
       if (q != null && q.isNotEmpty && !_historyMatches(entry, q)) continue;
       out.add(entry);
@@ -3185,10 +3350,52 @@ class Den {
     final applied = _mat.applied;
     for (var i = applied.length - 1; i >= 0 && want.isNotEmpty; i--) {
       final a = applied[i];
-      if (!want.remove(a.change.id) || !readable.contains(a.change.space)) continue;
+      if (!want.remove(a.change.id) || !readable.contains(a.change.space) || _driversEcho(a.change)) continue;
       out.add(_historyEntry(a));
     }
     return out.reversed.toList();
+  }
+
+  /// Whether [c] writes only an event's `drivers` (an occurrence's `patch.drivers.<leg>`), saying
+  /// again what the `rides` its device wrote in the change just before says
+  /// ([_olderVersionsFirst]). History shows the two as one change: that one.
+  bool _driversEcho(Change c) {
+    final event = c.type == RecordType.event;
+    if (!event && c.type != RecordType.eventException) return false;
+    final legs = <String, Object?>{};
+    var whole = false;
+    for (final e in c.fields.entries) {
+      final k = e.key;
+      if (k.startsWith('_')) continue;
+      if (event && k == 'drivers' && e.value is Map) {
+        whole = true;
+        legs.addAll(Map<String, Object?>.from(e.value as Map));
+      } else if (event && k.startsWith('drivers.')) {
+        legs[k.substring(8)] = e.value;
+      } else if (!event && k.startsWith('patch.drivers.')) {
+        legs[k.substring(14)] = e.value;
+      } else {
+        return false;
+      }
+    }
+    if (legs.isEmpty && !whole) return false;
+    final colon = c.id.lastIndexOf(':');
+    final counter = int.tryParse(c.id.substring(colon + 1));
+    if (colon < 0 || counter == null) return false;
+    final before = _mat.byId('${c.id.substring(0, colon)}:${counter - 1}');
+    if (before == null || before.type != c.type || before.rid != c.rid || before.space != c.space) return false;
+    if (_mat.rejected.containsKey(before.id)) return false;
+    final patch = before.fields['patch'];
+    final rides = event ? before.fields['rides'] : before.fields['patch.rides'] ?? (patch is Map ? patch['rides'] : null);
+    if (rides is! List) return false;
+    final said = {for (final r in rides.reversed) if (r is Map) r['leg']: r['driver']};
+    if (whole && said.length != legs.length) return false;
+    for (final e in legs.entries) {
+      // A leg handed back to the series: the list says the series' driver, which isn't here.
+      if (!event && e.value == null) continue;
+      if (!said.containsKey(e.key) || said[e.key] != (e.value == '' ? null : e.value)) return false;
+    }
+    return true;
   }
 
   static Object? _redact(String field, Object? value) {
@@ -3960,6 +4167,37 @@ class Den {
 
   Future<List<Change>> _commit(List<_Draft> drafts) => _locked(() => _commitNow(drafts));
 
+  /// A draft that writes an event's `drivers` (an occurrence's `patch.drivers.<leg>`) with other
+  /// fields, as two: the others, then the drivers. An older version refuses a whole change with a
+  /// field it doesn't know, so what it can read (the `rides` written for it, a new event, an
+  /// occurrence moved with its series) comes in a change of its own; and `drivers` coming after
+  /// that `rides` is how readers tell it from a `rides` an older version wrote
+  /// ([Event.readsDrivers], [EventException.ridesWhole]).
+  static List<_Draft> _olderVersionsFirst(_Draft d) {
+    final event = d.type == RecordType.event;
+    if (d.hlc != null || (!event && d.type != RecordType.eventException)) return [d];
+    final rest = <String, Object?>{}, drivers = <String, Object?>{};
+    for (final e in d.fields.entries) {
+      final k = e.key;
+      if (event ? k == 'drivers' || k.startsWith('drivers.') : k.startsWith('patch.drivers.')) {
+        drivers[k] = e.value;
+      } else if (!event && k == 'patch' && e.value is Map) {
+        final patch = Map<String, Object?>.from(e.value as Map);
+        for (final key in [...patch.keys.where((key) => key.startsWith('drivers.'))]) {
+          drivers['patch.$key'] = patch.remove(key);
+        }
+        rest[k] = patch;
+      } else {
+        rest[k] = e.value;
+      }
+    }
+    if (drivers.isEmpty || rest.isEmpty) return [d];
+    return [
+      _Draft(d.type, d.rid, d.space, rest, actor: d.actor, setsActor: d.setsActor),
+      _Draft(d.type, d.rid, d.space, drivers, actor: d.actor, setsActor: d.setsActor),
+    ];
+  }
+
   Future<List<Change>> _commitNow(List<_Draft> drafts) async {
     if (drafts.isEmpty) return const [];
     final made = <Change>[];
@@ -3969,7 +4207,7 @@ class Den {
     final zoned = Zone.current[_origins];
     final origin = zoned is CaptureOrigin ? zoned : null;
     try {
-      for (final d in drafts) {
+      for (final d in drafts.expand(_olderVersionsFirst)) {
         counter++;
         while (_mat.contains('$deviceId:$counter')) {
           counter++;
@@ -4118,11 +4356,16 @@ class Den {
   }
 
   /// Moves a record and its children (records whose [parentField] names it) to another space,
-  /// keeping ids: new copies in the target space, removals in the old one.
-  List<_Draft> _moveDrafts(Entry entry, String target, Map<String, Object?> patch, String childType, String parentField) {
+  /// keeping ids: new copies in the target space, removals in the old one. An event's copy reads
+  /// the rides it has now, or [rides].
+  List<_Draft> _moveDrafts(Entry entry, String target, Map<String, Object?> patch, String childType, String parentField,
+      {List<Ride>? rides}) {
     Map<String, Object?> copyOf(Entry e) => {
           for (final f in e.fields.entries)
             if (!f.key.startsWith('_')) f.key: f.value,
+          if (e.type == RecordType.event) ..._eventRidesToCopy(e, rides),
+          if (e.type == RecordType.eventException && e.fields['patch'] is Map)
+            'patch': _patchToCopy(EventException(e.rec), rides ?? Event(entry.rec).rides),
         };
     final children = [
       for (final c in _mat.store.liveOfType(childType))

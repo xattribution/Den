@@ -541,10 +541,31 @@ class EventSource {
   bool get readOnly => kind != 'manual';
 }
 
+/// The legs a ride can have, in the order Den shows them: driving there, picking up.
+const List<String> rideLegs = ['to', 'from'];
+
 class Ride {
   const Ride(this.leg, this.driver);
   final String leg; // to | from
   final String? driver;
+}
+
+/// Rides as a `rides` list holds them.
+List<Ride> _ridesFromList(Object? list) => [
+      for (final r in list is List ? list : const [])
+        if (r is Map) Ride(r['leg'] as String? ?? 'to', r['driver'] as String?),
+    ];
+
+/// Whether a `rides` list written at [rides] came after every write of the drivers [driverTimes]
+/// holds. Den writes drivers in a change of its own right after the `rides` it writes alongside
+/// them, so a newer `rides` came from an older version, which knows nothing else, or (for one
+/// occurrence) said which legs it has: what it says stands.
+bool _ridesAfter(Hlc? rides, Iterable<Hlc> driverTimes) {
+  if (rides == null) return false;
+  for (final t in driverTimes) {
+    if (!(rides > t)) return false;
+  }
+  return true;
 }
 
 class Event extends RecordView {
@@ -565,8 +586,31 @@ class Event extends RecordView {
     return EventSource(raw['kind'] as String? ?? 'manual', raw['ref'] as String?, raw['label'] as String?);
   }
 
-  List<Ride> get rides =>
-      rec.maps('rides').map((r) => Ride(r['leg'] as String? ?? 'to', r['driver'] as String?)).toList();
+  /// Ride legs and who drives each, in [rideLegs] order when they come from `drivers`.
+  ///
+  /// `drivers` holds one entry per leg (`drivers.to`, `drivers.from`: who drives, or null for
+  /// nobody yet), so claims of different legs merge; its keys are the legs the event has. An
+  /// event without `drivers` reads its `rides` list, as does one whose `rides` an older version
+  /// wrote after them ([readsDrivers]).
+  List<Ride> get rides {
+    final drivers = rec.fields['drivers'];
+    if (drivers is! Map || !readsDrivers) return _ridesFromList(rec.fields['rides']);
+    return [
+      for (final leg in rideLegs)
+        if (drivers.containsKey(leg)) Ride(leg, drivers[leg] as String?),
+    ];
+  }
+
+  /// Whether [rides] come from `drivers` rather than the `rides` list.
+  bool get readsDrivers {
+    if (rec.fields['drivers'] is! Map) return false;
+    final times = rec.fieldTimes;
+    return !_ridesAfter(times['rides'], [
+      for (final t in times.entries)
+        if (t.key == 'drivers' || t.key.startsWith('drivers.')) t.value,
+    ]);
+  }
+
   bool get countdown => rec.flag('countdown');
 }
 
@@ -576,6 +620,46 @@ class EventException extends RecordView {
   int get occurrence => rec.integer('occurrence');
   bool get cancelled => rec.flag('cancelled');
   Map<String, Object?> get patch => rec.map('patch');
+
+  /// When the one leg's driver was set for this occurrence (`patch.drivers.<leg>`), if it is.
+  Hlc? _legTime(String leg) =>
+      rec.map('patch')['drivers.$leg'] == null ? null : rec.fieldTimes['patch.drivers.$leg'] ?? rec.fieldTimes['patch'];
+
+  /// Whether `patch.rides` gives this occurrence's rides whole: it was written after every
+  /// per-leg driver (`patch.drivers.<leg>`), by an older version or to change which legs this
+  /// one occurrence has.
+  bool get ridesWhole {
+    if (rec.map('patch')['rides'] is! List) return false;
+    final times = rec.fieldTimes;
+    return _ridesAfter(times['patch.rides'] ?? times['patch'], [
+      for (final leg in rideLegs) ?_legTime(leg),
+    ]);
+  }
+
+  /// This occurrence's rides, over the series' [series]. Each leg's driver may be set for this
+  /// occurrence alone (`patch.drivers.<leg>`: a member id, or `""` for nobody this time; null or
+  /// unset follows the series), and such a leg is there even when the series has none. When
+  /// [ridesWhole], `patch.rides` says them all instead.
+  List<Ride> rides(List<Ride> series) {
+    final patch = rec.map('patch');
+    return ridesWhole ? _ridesFromList(patch['rides']) : ridesOver(series, patch);
+  }
+
+  /// The rides of an occurrence whose [patch] sets drivers per leg (`drivers.<leg>`), over the
+  /// series' [series].
+  static List<Ride> ridesOver(List<Ride> series, Map<String, Object?> patch) {
+    final own = {
+      for (final leg in rideLegs)
+        if (patch['drivers.$leg'] case final String driver) leg: driver.isEmpty ? null : driver,
+    };
+    if (own.isEmpty) return series;
+    final legs = {for (final r in series) r.leg};
+    return [
+      for (final r in series) own.containsKey(r.leg) ? Ride(r.leg, own[r.leg]) : r,
+      for (final e in own.entries)
+        if (!legs.contains(e.key)) Ride(e.key, e.value),
+    ];
+  }
 }
 
 /// Who a chore belongs to.

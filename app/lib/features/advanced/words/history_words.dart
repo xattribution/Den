@@ -87,9 +87,12 @@ String fieldLabel(String field) {
   return words.isEmpty ? field : '${words[0].toUpperCase()}${words.substring(1)}';
 }
 
-/// Whether a field is bookkeeping that History doesn't show.
+/// Whether a field is bookkeeping that History doesn't show. Ride drivers (`drivers`, one
+/// occurrence's `drivers.<leg>`) show as the `rides` written with them.
 bool hiddenField(String field) =>
     field.startsWith('_') ||
+    field == 'drivers' ||
+    field.startsWith('drivers.') ||
     const {
       'signIn',
       'pubkey',

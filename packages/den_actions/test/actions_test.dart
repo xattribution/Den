@@ -143,6 +143,45 @@ void main() {
     expect(rides.firstWhere((x) => x['leg'] == 'from')['driver'], alex);
   });
 
+  test('rides: the app and an assistant each taking a leg at once both count', () async {
+    final hub = await hubFor(den);
+    final priya = idOf(den, 'Priya');
+    final rosa = idOf(den, 'Grandma Rosa');
+    final hubRunner = standardRunner();
+    final soccer = den.events.firstWhere((e) => e.title == 'Soccer practice');
+    Map<String, String?> legs(Den d, int at) => {
+          for (final r in d.occurrences(at, at + 1).firstWhere((o) => o.event.id == soccer.id).rides) r.leg: r.driver,
+        };
+
+    // Alex picks Leo up from the next practice in the app; Priya's assistant, on the hub, hands
+    // the drive there to Grandma Rosa. Neither has heard of the other's yet.
+    final mine = await runner.run(on(Surface.app), 'set_ride', {'event': 'Soccer practice', 'leg': 'from', 'driver': 'me'});
+    expect(mine.isError, isFalse, reason: mine.text);
+    expect(mine.text, startsWith('Alex is picking up Leo from Soccer practice on '));
+    final at = (mine.data['occurrence'] as Map)['occurrence'] as int;
+    final theirs = await hubRunner.run(connectionOn(hub, priya, label: 'Assistant'), 'set_ride', {'event': 'Soccer practice', 'leg': 'to', 'driver': 'Grandma Rosa'});
+    expect(theirs.isError, isFalse, reason: theirs.text);
+    expect(theirs.text, startsWith('Grandma Rosa is driving Leo to Soccer practice on '));
+    expect(((theirs.data['occurrence'] as Map)['rides'] as List).cast<Map>(), [
+      {'leg': 'to', 'driver': rosa},
+      {'leg': 'from', 'driver': null},
+    ], reason: 'the same output, as the hub sees it before hearing of Alex\'s');
+
+    // Each wrote its own leg, after the whole list older versions read.
+    final written = [for (final c in den.changesSince({})) if (mine.receipt!.changes.contains(c.id)) c];
+    expect([for (final c in written) c.fields.keys.where((k) => k.startsWith('patch.')).toList()], [
+      ['patch.rides'],
+      ['patch.drivers.from'],
+    ]);
+    expect(den.historyOf(mine.receipt!.changes), hasLength(1), reason: 'one change to the people reading History');
+
+    await hub.ingest(den.changesSince({}));
+    await den.ingest(hub.changesSince({}));
+    expect(legs(den, at), {'to': rosa, 'from': alex});
+    expect(legs(hub, at), {'to': rosa, 'from': alex});
+    await hub.close();
+  });
+
   test('people: details change here, roles only in the app; feeds only from the public web', () async {
     final app = on(Surface.app);
     final role = await runner.run(app, 'save_member', {'member': 'Leo', 'role': 'parent'});

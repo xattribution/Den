@@ -67,9 +67,10 @@ state.
 
 A field named `"<field>.<key>"` sets one entry of a map field, so concurrent edits of different
 entries merge instead of overwriting each other. Den writes `completion.steps` (`steps.<stepId>`),
-`eventException.patch` (`patch.<eventField>`, null clears an override) and `family.oversight`
+`eventException.patch` (`patch.<eventField>`, null clears an override; `patch.drivers.<leg>`, a
+key with a dot in it), `event.drivers` (`drivers.<leg>`) and `family.oversight`
 (`oversight.<memberId>` for privacy, `oversight.<memberId>.<setting>` for each other per-person
-setting, a key with a dot in it) this way; a write of the whole map replaces it.
+setting) this way; a write of the whole map replaces it.
 
 A record is identified by `(space, type, id)`: a change's validity depends only on its own space
 and `f`, which every replica holding it also holds. Changing who can see an event, chore or list
@@ -407,8 +408,8 @@ commit too (`Den.restoreAll`).
 | `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held, never below its own request to join), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`), `recovery` (written once, by a device letting itself in: `{kind: words\|hub, member, key, nonce, expires, sig}`; see "Recovery"), `invite` (written once, by a device an invite key let in: `{invite, member, mode, key, nonce, expires, sig}`; see "Invite keys") |
 | `inviteKey` | `f` | Id: the hash of `key`, like a device's. `member` (whose own devices it lets in, or null), `modes` (absent: `personal`; for nobody, `shared` and/or `hub`), `uses` (default 1), `key` (base64url Ed25519, null once taken away), `by` (the parent who made it), `device` (where), `expires`, `kept` (written with `key: null`), `home` (for groups of families later; a family refuses it). Made by a parent on their own device, then only taken away |
 | `category` | `f` | `name`, `icon` |
-| `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `rides` (list of `{leg: to\|from, driver: memberId\|null}`), `countdown` (bool) |
-| `eventException` | same as event | id `"<eventId>@<occurrence>"`: `event`, `occurrence` (original start), `cancelled`, `patch` (map of event fields: `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `assignees`, `reminders`, `rides`) |
+| `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `drivers` (map: leg (`to`\|`from`) -> memberId, or null while nobody drives it; its keys are the legs the event has; see "Rides, one leg at a time"), `rides` (list of `{leg: to\|from, driver: memberId\|null}`: what older versions read, written alongside `drivers`), `countdown` (bool) |
+| `eventException` | same as event | id `"<eventId>@<occurrence>"`: `event`, `occurrence` (original start), `cancelled`, `patch` (map of event fields: `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `assignees`, `reminders`, `rides`; and `drivers.<leg>`: who drives that leg this time, `""` for nobody, null or absent as the series says) |
 | `chore` | any | `title`, `notes`, `icon`, `owner` (`{kind: member, id}`\|`{kind: anyone}`\|`{kind: rotation, ids, every: day\|week, anchor: local date}`), `schedule` (`{rrule, start: local date}` or `{once: local date}`), `dueTime` (`HH:mm` or null), `points`, `steps` (list of `{id, text, owner, points, icon}`, `icon` a chore pictogram key or absent), `reminders`, `active` |
 | `completion` | same as chore | id `"<choreId>@<date>"`: `chore`, `date`, `done`, `doneBy`, `owner` (one-day swap; present and null means swapped to anyone) , `steps` (map stepId -> memberId who checked, `""` when checked by open check-off with no owner to credit, or null when unchecked), `points` (what the chore was worth when it was done), `stepPoints` (map stepId -> what the step was worth when checked). Done when `done`, or when every step is checked. The chore must exist and not be removed in the same space, except to remove the completion |
 | `adjustment` | `f` | Append-only. `member`, `delta`, `reason`, `by` |
@@ -467,9 +468,41 @@ as `2TU`), `BYMONTHDAY`, `BYMONTH`, `BYSETPOS`, `WKST`; others are refused by th
 `COUNT`) and starts a new event there; editing "all" with a new time shifts the whole series,
 and its exceptions, by the same wall-clock delta.
 
+**Rides, one leg at a time.** Each ride leg's driver is its own map entry, so two people saying
+"I'll drive" at the same moment, one there (`to`) and one home (`from`), both count:
+
+- An event's `drivers` names its legs and who drives each. `Den.claimRide` writes the one leg
+  (`drivers.<leg>`), as the editor does for each leg it adds or changes; only taking a leg away
+  writes the whole map, since an entry can't take its key away. One occurrence of a series
+  takes its own driver per leg (`patch.drivers.<leg>`: a member id, or `""` for nobody this
+  time, which is how "I can't this week" overrides a series driver); a leg with no override
+  follows the series, and an override for a leg the series hasn't adds it to that day.
+- Every such write also writes the whole `rides` list (`patch.rides` for an occurrence), as it
+  reads after the change, for older versions, in a change of its own committed just before the
+  drivers: an older version refuses a whole change carrying a field it doesn't know, so the list
+  must travel apart (`Den._olderVersionsFirst`, which splits any such draft, undo's and copies'
+  too).
+- Readers (`Event.rides`, `EventException.rides`, so `Occurrence.rides`) use `drivers`, unless
+  `rides` was written after every driver. Den writes the list before its drivers, so a later
+  list came from an older version (or is the occurrence case below) and says it all, as before.
+  An event with only `rides` (made before `drivers`) reads it too. The next claim there takes
+  over: it writes every leg, so the leg nobody touched comes along.
+- An occurrence that leaves out a leg its series has (no drive there this week) can't say so per
+  leg: the editor writes that day's `patch.rides` alone, which then says its rides whole, and
+  claims on that day stay whole-list writes.
+- Copies (a series moved, split, or given another audience) write what they read now, since a
+  copy's fields all get one time.
+
+Two claims of the same leg are still last-writer-wins. So are the first claims of an event, or
+an occurrence, whose list an older version wrote last, which take the whole list over, once. An
+older version refuses the drivers and shows the last whole list anyone wrote until it updates;
+the update replays the log (`snapshotFormat` 6), and the drivers count then.
+
 **History is derived.** Every valid change renders as an entry: who (actor name, or the device
 name), on which device, when, what record, and each field's old and new value. A viewer sees only
-entries for records in spaces they hold.
+entries for records in spaces they hold. A change that only writes ride drivers, right after the
+`rides` its device wrote saying the same, is folded into that one (`Den._driversEcho`): a claim
+reads as one change, in History, receipts' summaries and previews alike.
 
 **Where a change came from.** A change that capture made carries `_from`:
 `{kind: photo|screenshot|pdf|email|message|link|voice|typed|assistant, reader}`, where `reader`
@@ -545,8 +578,9 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
   validity on purpose, since older devices already accepted such approvals and a new rule would
   replay the log differently on them. Retiring a reward, or undo removing one, declines the
   requests waiting on it in the same commit.
-- Only a parent or an adult drives (`canDrive`): `Den.claimRide` refuses anyone else, and the app
-  offers rides only to them. A kid checks off a chore on its day, not a day still to come
+- Only a parent or an adult drives (`canDrive`): `Den.claimRide` refuses anyone else, as do
+  `addEvent` and `updateEvent` for a driver they newly name, and the app offers rides only to
+  them. A kid checks off a chore on its day, not a day still to come
   (`Den.setChoreDone`, `setStep`), since its stars would count now; someone who may complete
   anyone's chore can, when it really was done early.
 - A shared display may add a `signInTries` record about itself, for nobody; no other device may,
@@ -889,8 +923,12 @@ leaves uncovered (a ride nobody drives, a driver in two places, someone double-b
 clocks skip or repeat, a date already past, a name the family already has. `undo` takes
 a receipt back with `Den.undo`, which writes the field-level inverse of each change from what it
 replaced: what it made is removed, what it removed comes back, map entries one at a time,
-adjustments get one the other way; fields someone changed since are left and reported, and
+adjustments get one the other way; fields someone changed since are left and reported (a field
+only written again as it was, like an occurrence's `event`, has nothing to take back), and
 adding or removing people, device and AI-access changes and reward requests can't be undone.
+Ride drivers come back leg by leg, with the `rides` list for older versions written again from
+them; when the record read an older version's whole list before, that list comes back instead
+(`Den._undoRides`, from the record as its own earlier changes made it).
 Receipts belong to their caller and last while the runner does.
 
 Inputs are read the way people give them. Dates and times take words ("tomorrow", "Friday",
