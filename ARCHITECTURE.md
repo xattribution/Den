@@ -887,6 +887,36 @@ oversight policy like a parent's device: nothing from a member's space whose `pa
 is false reaches it, not even in derived views (points lines, Today's gaps, store names), which
 the hub filters because it computes them over every space it holds.
 
+### The Den host: several families in one process
+
+`DenHost` (`den_hub/lib/src/host.dart`) is one process serving several families' logs, one
+server's worth, so one app at one origin can later hold several families. It owns the HTTP server, admission and
+rate limits (per client across the whole host), the web app, NetGuard and the outgoing clients,
+and what is host-wide (`<data>/host/`: which logs it serves at which addresses, `host.json`; every
+Web Push key by its public half, `vapid.json`). Each family is a tenant, a `DenHub` with its own
+engine, keys and device id, `SyncNode`, `HubContext`, state and services, the services started in
+its own guarded zones. `DenHub.start` is a host with one family, which answers any address as a
+hub always has; the app's in-process hub and every existing caller use that.
+
+`TenantRouter` picks a request's family and fails closed (a request two families could answer,
+or none, gets none, never "the first one"): `/ws` by the family in the client's hello, which
+den_net's `peekHello` reads before any session answers and replays to the chosen node (whose
+own family check still refuses any other); device-signed requests by `X-Den-Hub`, the hub id the
+signature already covers; bearer tokens and calendar links by the family whose public URL names
+the request's host, else the one that holds them; invite words, recovery codes, link codes and
+`den_hub recover`'s secret in whichever family keeps them (unique per host); everything else by
+address. The chosen family then authenticates everything against its own records only, so a wrong
+pick ends in a refusal, never in another family's data. The routing table is in
+[docs/hub-api.md](docs/hub-api.md#one-host-several-families).
+
+Data layout: `<data>/` stays the first family's, unchanged (no migration); `<data>/logs/<id>/`
+holds each other family in the same layout; `<data>/host/` the host's own state. `den_hub
+add-family` starts a fresh family on the running host; `den_hub adopt` moves a hub that ran on its
+own in, keys and all, so it keeps its device id and its phones keep syncing; `--family` picks a
+family for the per-family commands (backups are per family). A push subscription records the
+VAPID key its browser was handed at that address and is signed with it from the host's keyring.
+A family reading another family's shared calendar on the same host is answered in-process.
+
 ## Actions
 
 `den_actions` defines every verb once, for the app, the hub's REST API (`/api/v1/actions`), MCP and
