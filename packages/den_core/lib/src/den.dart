@@ -2039,6 +2039,16 @@ class Den {
     await _commit([_Draft(RecordType.chore, id, entry.space, {'_deleted': true})]);
   }
 
+  /// Refuses checking off a day still to come for anyone who may complete only their own chores
+  /// (a kid, a guest, open check-off): its stars would count now. Someone who may complete
+  /// anyone's can, when a chore really was done early.
+  void _notAhead(String date) {
+    if (date.compareTo(todayDate()) <= 0) return;
+    final a = actor;
+    if (a != null && can(a, DenAction.completeAnyChore)) return;
+    throw const InvalidInput('That day hasn\'t come yet; a chore is checked off on its day');
+  }
+
   /// Who gets credit for a step checked on a shared screen with nobody signed in.
   String _anonymousChecker(ChoreStep step, String? owner) => step.owner ?? owner ?? '';
 
@@ -2053,6 +2063,7 @@ class Den {
   Future<void> setChoreDoneBy(String choreId, String date, bool done, String? doneBy) async {
     if (!isLocalDate(date)) throw const InvalidInput('That isn\'t a date');
     if (doneBy != null && member(doneBy) == null) throw const InvalidInput('That person isn\'t in the family');
+    if (done) _notAhead(date);
     final chore = _requireChore(choreId);
     final completion = _completionOf(chore, date);
     final me = doneBy;
@@ -2085,6 +2096,7 @@ class Den {
   Future<void> setStepBy(String choreId, String date, String stepId, bool checked, String? checkedBy) async {
     if (!isLocalDate(date)) throw const InvalidInput('That isn\'t a date');
     if (checkedBy != null && member(checkedBy) == null) throw const InvalidInput('That person isn\'t in the family');
+    if (checked) _notAhead(date);
     final chore = _requireChore(choreId);
     final step = chore.steps.firstWhereOrNull((s) => s.id == stepId);
     if (step == null) throw const InvalidInput('That chore has no such step');
