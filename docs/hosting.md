@@ -323,9 +323,9 @@ only; run it again with the same name and address and a new list to change them)
 the token sees the address's zone, adds a line for the family to `.env`
 (`DEN_FAMILY_SMITH=den-smith.example.com 47735 home.smith-ddns.example ...`), writes
 `compose.families.yaml` and `Caddyfile.families` from those lines (generated: don't edit them),
-starts the family's hub on the next port with its own volume, restarts Caddy and dnsmasq with the
-new address (every family's app reconnects within a moment), lets their homes through the
-firewall, and prints, with your values filled in:
+starts the family's hub on the next port with its own volume, restarts Caddy, dnsmasq and the
+other hubs with the new address (every family's app reconnects within a moment), lets their
+homes through the firewall, and prints, with your values filled in:
 
 1. **Public DNS**, DNS only: a `CNAME` from their address to yours (`den.example.com`), so a move
    changes one record; or an `A` record.
@@ -405,6 +405,58 @@ and its homes out of the firewall, and keeps its data: the volume `den_den-smith
   in public certificate logs anyway).
 - **You.** As root on the server and admin of the tailnet, you can read every family's data and
   see their devices, as with one family. One passphrase seals every family's backups.
+- **A shared calendar is the one thing that crosses**, and only when a family's parent makes a
+  link for another family (Settings, Calendars, **A link for another family**) and the other
+  family adds it: their hub then copies the first family's Everyone events, nothing else
+  ([Calendars shared between families on this server](#calendars-shared-between-families-on-this-server)).
+
+#### Calendars shared between families on this server
+
+A family can share its calendar with another family: their Everyone events (titles, times,
+places, notes), never Parents-only or Just-me ones. The sharing family's hub makes the link; the
+other family's hub fetches it, keeps a watch stream open to hear changes within a second or two,
+and fetches every 15 minutes in case the stream drops. When both families are on this server,
+one hub fetches from the other's address, `https://den-smith.example.com`, on the same machine.
+
+**How that works here.** Every hub runs on the server's own network (`network_mode: host`).
+Left alone, a hub would look the other family's address up in public DNS, get the server's
+public address and connect to it. Where the provider puts that address on the server itself,
+the connection stays on the machine and arrives on `lo`, which the firewall accepts. But where
+the provider puts the public address in front of the server (install.sh's "If that A address
+starts with 10., ..."), the connection leaves the server and comes back from the server's own
+public address, which isn't one of the homes, so the firewall drops it, if the provider sends it
+back at all. So `install.sh`, whenever there is more than one family, writes two things into
+`compose.families.yaml` for every hub, the first family's included:
+
+```yaml
+    environment:
+      DEN_PEER_HUBS: "${DEN_DOMAIN} den-smith.example.com"
+    extra_hosts:
+      - "${DEN_DOMAIN}:127.0.0.1"
+      - "den-smith.example.com:127.0.0.1"
+```
+
+- **`extra_hosts`** makes every family's address mean `127.0.0.1` inside each hub's container,
+  where Caddy listens on 443 (it shares the server's network too). The request goes to Caddy
+  with the family's own name, Caddy answers with that family's certificate (so TLS is checked as
+  it is from a phone) and passes it to that family's hub only. It never leaves the machine and
+  doesn't depend on public DNS or the provider.
+- **`DEN_PEER_HUBS`** lists the same names for the hub's guard on outgoing fetches (NetGuard,
+  [Settings](#settings)). The guard refuses this machine and private networks for any address
+  someone gives the hub, so a calendar link can't reach into the server or the home. It now lets
+  exactly these names, and the hub's own `DEN_PUBLIC_URL`, lead to loopback: only over `https`,
+  only on their port (443), and the certificate must match the name. `http://` to the same name,
+  another port, any other name, or an IP address is refused as before, after a redirect too.
+- **The firewall doesn't change.** The fetch arrives on `lo`, which `den_fw` already accepts;
+  443 stays closed to everyone but the homes and Tailscale.
+- **Caddy** passes the watch stream (`/ics/<secret>/watch`) on as it comes: it's left out of
+  compression, as `/api/v1/stream` is.
+
+`add-family` and `remove-family` rewrite both lists for every hub and restart the hubs whose
+lists changed (each family's app reconnects within a moment). With one family on the server
+there's nothing to write. A family on another server
+needs nothing from this: its address resolves to that server's public address, which the guard
+allows already, as long as that server's firewall lets this one in (its `DEN_ALLOW_EXTRA`).
 
 #### Tailscale for several families
 
@@ -1184,7 +1236,8 @@ With setup A or B everything is public, which works: the public posture's limits
 approval of every sign-in apply either way. With setup P none of them can connect until you open
 these paths to them: [Closed on purpose](#closed-on-purpose). The hub also fetches out (Claude's and ChatGPT's
 client documents, calendar feeds), and refuses addresses on its own machine and network unless
-`DEN_FETCH_ALLOW` admits them.
+`DEN_FETCH_ALLOW` admits them (or, for the other families' shared calendars on the same server,
+`DEN_PEER_HUBS` names them).
 
 ## Settings
 
@@ -1206,6 +1259,7 @@ The hosted compose file sets these from `.env`; the hub reads them from its envi
 | `DEN_CSP` | Replaces the web app's Content-Security-Policy, for a web build that needs a CDN after all |
 | `DEN_ALLOWED_ORIGINS` | Extra browser origins for `/mcp` and OAuth (`https://claude.ai` is allowed already) |
 | `DEN_FETCH_ALLOW` | Private networks the hub may fetch calendar feeds from; by default only the public internet |
+| `DEN_PEER_HUBS` | The other families' addresses on this server (names or `https://` addresses), whose shared calendars this hub may fetch through the server's own reverse proxy on loopback. Only these names (and the hub's own `DEN_PUBLIC_URL`), only over `https`. The private setup's `install.sh` sets it for every hub ([Calendars shared between families on this server](#calendars-shared-between-families-on-this-server)) |
 
 **The public posture.** A hub whose `DEN_PUBLIC_URL` is `https` assumes strangers can reach it:
 `/health` and `/api/v1/hub/status` say almost nothing; setup works only until the hub is in a

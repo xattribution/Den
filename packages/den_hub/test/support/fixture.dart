@@ -23,9 +23,10 @@ class HubFixture {
   /// The hub's base URL.
   Uri get base => hub.localUrl;
 
-  /// Starts a hub over a fresh demo family. [configure] adjusts the configuration.
-  static Future<HubFixture> start({HubConfig Function(HubConfig base)? configure, String? dataDir}) async {
-    final phone = await createDemoFamily();
+  /// Starts a hub over a fresh demo family, or over [phone]'s family. [configure] adjusts the
+  /// configuration.
+  static Future<HubFixture> start({HubConfig Function(HubConfig base)? configure, String? dataDir, Den? phone}) async {
+    phone ??= await createDemoFamily();
     final hubDen = await approvedHub(phone);
     var config = HubConfig(
       port: 0,

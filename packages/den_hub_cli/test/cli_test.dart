@@ -250,6 +250,14 @@ void main() {
     expect((await DataDir(dataPath).readBackup()).keys, isNot(contains('hub/link-open')));
   });
 
+  test('serve refuses a DEN_PEER_HUBS that names an address or http, before it opens anything', () async {
+    for (final bad in ['http://den-smith.example.com', '10.0.0.5', 'den-smith.example.com localhost']) {
+      final (code, _, err) = await run(['serve', '--data', dataPath, '--port', '0'], env: {'DEN_PEER_HUBS': bad});
+      expect(code, 64, reason: bad);
+      expect(err, startsWith('DEN_PEER_HUBS: '), reason: bad);
+    }
+  });
+
   test('recover: a link and four words for a parent, only once the family turned server help on', () async {
     final hubDir = DataDir(dataPath);
     await hubDir.lock();

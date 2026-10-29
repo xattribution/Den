@@ -833,7 +833,8 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `POST /api/v1/invites` | an `InviteGrant` from a parent's own device | Keeps the invite under the slot of the app's own words (with the invite key's public half, once it synced), or under four words it picks; returns the slot or the words, and a link |
 | `POST /api/v1/invites/redeem` | the slot, or the four words | The invite, who it is for, the family's name, and whether its key lets the device in at once |
 | `GET`/`PUT`/`DELETE /api/v1/push`, `POST /api/v1/push/test` | signed by a personal device | The hub's VAPID key; this device's Web Push subscription; a test notification |
-| `GET /ics/<secret>/family.ics`, `GET /ics/<secret>/<memberId>.ics` | a calendar link's secret in the path (never an API token) | Read-only ICS feed for other calendar apps, read as the parent who made the link; it ends when they turn it off, leave the family, or the device they made it on is removed |
+| `GET /ics/<secret>/family.ics`, `GET /ics/<secret>/<memberId>.ics` | a calendar link's secret in the path (never an API token) | Read-only ICS feed for other calendar apps, read as the parent who made the link; it ends when they turn it off, leave the family, or the device they made it on is removed. Weak `ETag`, `304` |
+| `GET /ics/<secret>/shared.ics`, `GET /ics/<secret>/watch` | a `shared` calendar link's secret | A calendar for another family: the family's Everyone events only (never Parents-only, Just-me, or events copied in from a Den feed), UIDs `<eventId>@<familyId>.den`; the watch is server-sent events (`hello`, `changed`, `revoked`) for the other family's hub |
 | `GET /ws` | session handshake | Device sync |
 | `POST /mcp` | bearer or OAuth | MCP Streamable HTTP: 2026-07-28 (stateless, headers checked against the body) and the session-based versions before it |
 | OAuth: `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/mcp]`, `/oauth/register`, `/oauth/authorize`, `/oauth/token` | | OAuth 2.1 with PKCE for remote MCP clients such as claude.ai: client ID metadata documents, registration, or clients a parent sets up; `resource` checked; `iss` on every redirect |
@@ -956,7 +957,19 @@ Addresses callers give the hub (calendar feeds, client metadata documents) are f
 carrier-grade NAT, unique local and metadata addresses (IPv4 inside IPv6 judged as IPv4), and
 connects to the address it checked, so DNS rebinding can't slip between the check and the
 connection; redirects are checked again. The operator can admit a home network
-(`DEN_FETCH_ALLOW`).
+(`DEN_FETCH_ALLOW`). The hub's own `DEN_PUBLIC_URL` and the other families' addresses on the
+same server (`DEN_PEER_HUBS`) may also lead to loopback, where the server's reverse proxy
+answers, so one family's hub can fetch another's shared calendar: only those names, only over
+`https` on their port, with the certificate checked for the name.
+
+**Shared calendars** (one way, read-only) reuse calendar links and feed subscriptions. Family A
+makes a `shared` link (its Everyone events, read as the family); family B subscribes to it like
+any calendar by link, and B's `FeedService` copies the events into B's log as read-only `ics`
+events. For a Den share it also keeps the link's watch stream open (`ics/watch.dart`) and
+fetches on `changed`, polling every 15 minutes as the fallback; on `revoked` or `401` it removes
+every copy and sets the subscription's status ("The Kotvas family stopped sharing their
+calendar"). No loops: a hub leaves out UIDs ending in its own `@<familyId>.den`, and a shared
+feed leaves out events copied in from a Den feed.
 
 ## Home Assistant
 

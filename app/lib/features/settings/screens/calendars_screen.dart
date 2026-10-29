@@ -14,9 +14,10 @@ import '../state/feed_links.dart';
 import '../widgets/feed_links_section.dart';
 
 /// Settings → Calendars: on a phone, its own calendars to bring in; for parents, Den in the
-/// phone's calendar app (a read-only subscription to the family's calendar on the hub), and
-/// calendars by link (a school's, a team's), which the family's hub fetches and keeps up to
-/// date, read-only.
+/// phone's calendar app (a read-only subscription to the family's calendar on the hub), a link
+/// for another family (the family's Everyone events only), and calendars by link (a school's, a
+/// team's, or one another family shared), which the family's hub fetches and keeps up to date,
+/// read-only. A shared one's status says so when that family stops sharing.
 class CalendarsScreen extends StatefulWidget {
   const CalendarsScreen({super.key, this.feedLinks, this.web, this.openCalendar});
 
@@ -117,7 +118,10 @@ class _CalendarsScreenState extends State<CalendarsScreen> {
           DenSection(
             title: 'Calendars by link',
             child: feeds.isEmpty
-                ? const EmptyState(compact: true, message: "A school's or a team's calendar shows here once you add it.")
+                ? const EmptyState(
+                    compact: true,
+                    message: "A school's or a team's calendar, or one another family shared with you, shows here once you add it.",
+                  )
                 : Column(
                     children: ruled([
                       for (final s in feeds)

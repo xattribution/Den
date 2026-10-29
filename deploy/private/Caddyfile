@@ -26,8 +26,9 @@
 	}
 
 	# Caddy sends X-Forwarded-For, -Proto and -Host, passes WebSockets (/ws) through, and
-	# flushes the event stream as it comes; the hub sets its own security headers.
-	@compressible not path /api/v1/stream
+	# flushes the event streams as they come (the API's, and a shared calendar's watch, which
+	# another family's hub keeps open); the hub sets its own security headers.
+	@compressible not path /api/v1/stream /ics/*/watch
 	encode @compressible zstd gzip
 	reverse_proxy 127.0.0.1:{args[0]}
 }

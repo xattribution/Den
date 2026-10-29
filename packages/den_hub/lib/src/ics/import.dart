@@ -14,7 +14,7 @@ const int maxFeedSeries = 1500;
 /// What one feed should put on the calendar, by UID.
 class FeedPlan {
   /// Creates a plan.
-  FeedPlan(this.series, this.fields, {this.skipped = 0});
+  FeedPlan(this.series, this.fields, {this.skipped = 0, this.own = 0});
 
   /// Series kept after filters.
   final Map<String, IcsSeries> series;
@@ -25,6 +25,10 @@ class FeedPlan {
   /// Series left out because Den couldn't read them (a start it can't place, a repeat it can't
   /// expand).
   final int skipped;
+
+  /// Series left out because they are the family's own events, coming back through another
+  /// family's feed (or the family's own shared feed).
+  final int own;
 }
 
 String _cut(String s, int max) => s.length <= max ? s : s.substring(0, max);
@@ -37,13 +41,20 @@ bool _matches(String text, List<String> words) {
 /// The events [calendar] should become under [sub]: cancelled series dropped, include and
 /// exclude words applied to titles, all-day events skipped when asked, and series that ended
 /// before [now] minus [feedHistory] left out. A series Den can't read is skipped and counted,
-/// never thrown: one bad event must not stop the rest of the feed.
-FeedPlan planFeed(IcsCalendar calendar, Subscription sub, {required int now, required String label}) {
+/// never thrown: one bad event must not stop the rest of the feed. Series whose UID [own] says
+/// are the family's own events are left out and counted.
+FeedPlan planFeed(IcsCalendar calendar, Subscription sub,
+    {required int now, required String label, bool Function(String uid)? own}) {
   final kept = <String, IcsSeries>{};
   final fields = <String, Map<String, Object?>>{};
   var skipped = calendar.skipped;
+  var mine = 0;
   for (final s in groupSeries(calendar).values) {
     final m = s.master;
+    if (own != null && own(m.uid)) {
+      mine++;
+      continue;
+    }
     if (m.cancelled || m.start == null) continue;
     final title = m.summary.isEmpty ? 'Busy' : m.summary;
     if (sub.include.any((w) => w.trim().isNotEmpty) && !_matches(title, sub.include)) continue;
@@ -74,7 +85,7 @@ FeedPlan planFeed(IcsCalendar calendar, Subscription sub, {required int now, req
     kept[m.uid] = s;
     fields[m.uid] = want;
   }
-  return FeedPlan(kept, fields, skipped: skipped);
+  return FeedPlan(kept, fields, skipped: skipped, own: mine);
 }
 
 /// The `source.ref` an imported event carries for the feed event with [uid]: how the hub finds

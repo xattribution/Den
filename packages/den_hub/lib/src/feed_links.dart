@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -11,7 +12,8 @@ import 'http_util.dart';
 import 'setup.dart' show restrictToOwner;
 
 /// One calendar link: a secret address that opens one of the family's calendar feeds and
-/// nothing else, read with the permissions of the parent who made it.
+/// nothing else, read with the permissions of the parent who made it; a [shared] one, for
+/// another family, holds the family's Everyone events and nothing more.
 class FeedLink {
   /// Creates a link record.
   const FeedLink({
@@ -40,11 +42,18 @@ class FeedLink {
   /// SHA-256 of the secret in its address; the secret itself is never kept.
   final String hash;
 
-  /// The parent who made it: the feed holds what they may read.
+  /// The parent who made it: the feed holds what they may read (a [shared] one, only what
+  /// everyone in the family may).
   final String member;
 
-  /// `family`, or the member whose events it holds.
+  /// `family`, `shared` (for another family), or the member whose events it holds.
   final String feed;
+
+  /// The feed kind for another family: the family's Everyone events only.
+  static const String sharedFeed = 'shared';
+
+  /// Whether this link is for another family ([sharedFeed]).
+  bool get shared => feed == sharedFeed;
 
   /// What it's for: "Alex's iPhone".
   final String label;
@@ -69,9 +78,12 @@ class FeedLink {
 /// subscribes to it (`webcal://`). Unlike an API token, the address opens only that one feed,
 /// `GET /ics/<secret>/<family|memberId>.ics`, never the API; it reads with its maker's
 /// permissions, so it holds exactly what the feed code gives that parent (their "Just me"
-/// events included, a teen's private ones only while parents may see them). Parents list the
-/// family's links and turn any of them off; a link ends too when its maker leaves the family or
-/// the device it was made on is removed. The hub keeps a hash of each secret, in its data
+/// events included, a teen's private ones only while parents may see them). A link for another
+/// family (`shared.ics`) reads as the family instead: Everyone events only, never Parents-only or
+/// Just-me ones, and never events the family itself copied in from another family's share. Its
+/// subscriber may also watch it (`/ics/<secret>/watch`) to hear of changes at once. Parents list
+/// the family's links and turn any of them off; a link ends too when its maker leaves the family
+/// or the device it was made on is removed. The hub keeps a hash of each secret, in its data
 /// directory; the address is shown once.
 class HubFeedLinks {
   /// Creates the endpoints for [hub], checking signatures with [auth].
@@ -92,6 +104,10 @@ class HubFeedLinks {
   static const String _doc = 'feed_links';
 
   final Random _random = Random.secure();
+  final StreamController<String> _turnedOff = StreamController.broadcast(sync: true);
+
+  /// The ids of links as a parent turns them off.
+  Stream<String> get turnedOff => _turnedOff.stream;
 
   /// Adds the routes.
   void register(Routes routes) {
@@ -121,6 +137,13 @@ class HubFeedLinks {
     return d != null && d.approved && !d.revoked;
   }
 
+  /// Whether the link with [id] is still there and still works (its maker is in the family, the
+  /// device it was made on is still let in).
+  bool works(String id) {
+    final link = FeedLink.fromJson(id, _links[id]);
+    return link != null && _works(link);
+  }
+
   /// The link whose secret is [secret], while it [_works]; null otherwise.
   FeedLink? resolve(String secret) {
     if (!secret.startsWith(prefix) || secret.length > 200) return null;
@@ -141,7 +164,7 @@ class HubFeedLinks {
       'id': link.id,
       'label': link.label,
       'feed': link.feed,
-      'feed_name': link.feed == 'family' ? hub.den.family?.name : hub.den.member(link.feed)?.name,
+      'feed_name': link.feed == 'family' || link.shared ? hub.den.family?.name : hub.den.member(link.feed)?.name,
       'made_by': link.member,
       'made_by_name': hub.den.member(link.member)?.name,
       'made': made.toIso8601String(),
@@ -157,9 +180,9 @@ class HubFeedLinks {
     return jsonResponse({'feeds': [for (final l in links) _json(l)]});
   }
 
-  /// `POST /api/v1/feeds` `{"feed": "family" | "<memberId>", "label": "Alex's iPhone"}`, signed
-  /// by a parent's own device: makes a link and answers its address, this once, as `url` and as
-  /// `webcal`.
+  /// `POST /api/v1/feeds` `{"feed": "family" | "shared" | "<memberId>", "label": "Alex's iPhone"}`,
+  /// signed by a parent's own device: makes a link and answers its address, this once, as `url`
+  /// and as `webcal`. `shared` is the link for another family: Everyone events only.
   Future<Response> create(Request request) async {
     final signed = await auth.withBody(request, limit: 4096);
     final check = DeviceAuth.parentOf(signed.check, message: 'Only a parent\'s own phone can make a calendar link.');
@@ -171,8 +194,8 @@ class HubFeedLinks {
     }
     if (json is! Map) throw ApiError.invalid('The body must be a JSON object.');
     final feed = json['feed'] ?? 'family';
-    if (feed is! String || (feed != 'family' && hub.den.member(feed) == null)) {
-      throw ApiError.invalid('"feed" must be family or someone in the family.', field: 'feed');
+    if (feed is! String || (feed != 'family' && feed != FeedLink.sharedFeed && hub.den.member(feed) == null)) {
+      throw ApiError.invalid('"feed" must be family, shared or someone in the family.', field: 'feed');
     }
     final label = json['label'];
     if (label is! String || label.trim().isEmpty || label.trim().length > 60) {
@@ -194,7 +217,7 @@ class HubFeedLinks {
     );
     _links[link.id] = link.toJson();
     await _save();
-    hub.log.info('${check.actor!.name} made a calendar link');
+    hub.log.info('${check.actor!.name} made a calendar link${link.shared ? ' for another family' : ''}');
     final url = urlOf(hub.base(request), '/ics/$secret/${link.file}');
     return jsonResponse({
       ..._json(link),
@@ -204,12 +227,14 @@ class HubFeedLinks {
   }
 
   /// `DELETE /api/v1/feeds/{id}`, signed by a parent's own device: turns a link off. Calendars
-  /// subscribed to it stop updating at their next refresh.
+  /// subscribed to it stop updating at their next refresh; a hub watching a shared one hears at
+  /// once ([turnedOff]).
   Future<Response> revoke(Request request, String id) async {
     final check = await auth.parent(request, message: 'Only a parent\'s own phone can turn off a calendar link.');
     if (_links.remove(id) == null) throw ApiError.notFound(type: 'feed', message: 'There\'s no calendar link with that id.');
     await _save();
     hub.log.info('${check.actor!.name} turned off a calendar link');
+    _turnedOff.add(id);
     return jsonResponse({'ok': true});
   }
 }

@@ -514,6 +514,7 @@ class DenHub {
     _stopped = true;
     await _stream.shutdown();
     await _mcpHttp.shutdown();
+    await _ics.shutdown();
     for (final s in _services.reversed) {
       try {
         await s.stop();

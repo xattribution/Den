@@ -16,7 +16,9 @@
 # More families on the same server (sudo ./install.sh add-family smith den-smith.example.com):
 # compose.families.yaml, which install.sh writes and .env's COMPOSE_FILE adds to this file, gives
 # each its own hub (hub-smith, on 47735, 47737, ...) with its own volume, and adds its address to
-# Caddy and dnsmasq. docs/hosting.md, "Several families".
+# Caddy and dnsmasq. It also points every family's address at Caddy on 127.0.0.1 inside each hub
+# (extra_hosts, DEN_PEER_HUBS), so a calendar one family shares with another is fetched on this
+# machine. docs/hosting.md, "Several families".
 name: den
 
 x-logging: &logging

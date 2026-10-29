@@ -31,7 +31,7 @@ beside it.
 
 | Command | |
 | --- | --- |
-| `serve` (default) | Env `DEN_DATA` (default `./den-data`), `DEN_WEB`, `DEN_PORT`, `DEN_HOST`, `DEN_RELAY`, `DEN_NAME`, `DEN_HA_URL`, `DEN_HA_TOKEN`, `DEN_PUBLIC_URL`, `DEN_ALLOWED_ORIGINS`, `DEN_TRUSTED_PROXIES` (reverse proxies whose `X-Forwarded-*` headers count: addresses or CIDRs), `DEN_PUBLIC` (`1`: reachable from the internet; default on for an `https` `DEN_PUBLIC_URL`), `DEN_CSP` (replaces the web app's Content-Security-Policy), `DEN_MAILBOX`, `DEN_MDNS` (default off in the public posture), `DEN_LOG`, `DEN_NOTIFY` (JSON, or `notify.json` in the data directory), `DEN_FETCH_ALLOW` (private networks calendar feeds may come from: addresses or CIDRs) |
+| `serve` (default) | Env `DEN_DATA` (default `./den-data`), `DEN_WEB`, `DEN_PORT`, `DEN_HOST`, `DEN_RELAY`, `DEN_NAME`, `DEN_HA_URL`, `DEN_HA_TOKEN`, `DEN_PUBLIC_URL`, `DEN_ALLOWED_ORIGINS`, `DEN_TRUSTED_PROXIES` (reverse proxies whose `X-Forwarded-*` headers count: addresses or CIDRs), `DEN_PUBLIC` (`1`: reachable from the internet; default on for an `https` `DEN_PUBLIC_URL`), `DEN_CSP` (replaces the web app's Content-Security-Policy), `DEN_MAILBOX`, `DEN_MDNS` (default off in the public posture), `DEN_LOG`, `DEN_NOTIFY` (JSON, or `notify.json` in the data directory), `DEN_FETCH_ALLOW` (private networks calendar feeds may come from: addresses or CIDRs), `DEN_PEER_HUBS` (the other families' addresses on this server, whose shared calendars come through this machine's own reverse proxy) |
 | `mcp --token T` | MCP over stdio. Bridges to a running hub's `/mcp`, else serves from the data directory |
 | `import-sett coord.db --as NAME` | Imports Sett as that parent through the hub device (changes say "via Sett import") |
 | `setup-code` | A fresh hub's setup code |
@@ -183,8 +183,13 @@ answer is loopback, private, link-local, carrier-grade NAT, unique local IPv6, a
 address, multicast or reserved (IPv4 inside IPv6 is judged as IPv4), and connects to the address
 it checked, so a name can't answer differently between the check and the connection. Redirects
 are new connections, checked again. `DEN_FETCH_ALLOW` (addresses or CIDRs) lets the operator
-admit a calendar server on the home network. What the operator configures (Home Assistant,
-ntfy, the capture reader, the assistant's provider) isn't guarded.
+admit a calendar server on the home network. The hub's own `DEN_PUBLIC_URL` and the names in
+`DEN_PEER_HUBS` (the other families on the same server) may also lead to this machine's loopback,
+where the server's reverse proxy answers for every family, so one family can fetch another's
+shared calendar: only over `https`, on the port the address names, with the certificate checked
+for the name; any other name, `http`, another port or an IP address is judged as above. What the
+operator configures (Home Assistant, ntfy, the capture reader, the assistant's provider) isn't
+guarded.
 
 ## The assistant through the hub
 
