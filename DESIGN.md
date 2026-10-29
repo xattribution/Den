@@ -475,6 +475,11 @@ tap happened, and shows it in a `DoneRow`.
 - **Presets by age**: "Who is Leo?" sets the starting switches; every switch stays visible.
 - **Privacy**: when a parent can't see an item, the calendar shows "Busy" in the owner's color,
   never the title.
+- **Telling them**: when a parent changes a teen's privacy, the teen's Today says who and what
+  in Needs you ("Mom changed this: parents can now see things you mark Just me") with Got it;
+  the confirm card says first what can't be undone ("What you already saw can't be unseen").
+- **A sitter's last day** is a row on their page ("Has Den: Until Sunday"); once it passes,
+  Needs you says "Sam's access ended Sunday" with Got it, and the sitter's own app says so.
 
 ## Kid mode
 
