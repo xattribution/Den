@@ -318,7 +318,8 @@ class _Progress extends StatelessWidget {
             HubSetupStage.failed => AttentionLine(message: session.error ?? "Adding $name didn't finish. Try again.", bad: true),
           },
         ),
-        if (session.stage == HubSetupStage.done && replaces.isNotEmpty) _ReplaceOffer(older: replaces),
+        if (session.stage == HubSetupStage.done && replaces.isNotEmpty && TrustActions.mayRemoveHubs(context.app.den))
+          _ReplaceOffer(older: replaces),
       ],
     );
   }
@@ -348,7 +349,7 @@ class _ReplaceOfferState extends State<_ReplaceOffer> {
     });
     final problem = await tryWrite(() async {
       for (final d in widget.older) {
-        await trust.revokeDevice(d.id);
+        await trust.removeHub(d.id);
       }
       return null;
     });

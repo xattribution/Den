@@ -4,6 +4,7 @@ import 'package:den_app/platform/sync/local_hub.dart';
 import 'package:den_app/platform/sync/pairing.dart';
 import 'package:den_app/features/advanced/screens/add_hub_screen.dart';
 import 'package:den_app/features/advanced/screens/hub_screen.dart';
+import 'package:den_app/features/family/family.dart' show TrustActions;
 import 'package:den_app/features/advanced/screens/nearby_device_screen.dart';
 import 'package:den_app/features/advanced/screens/link_browser_screen.dart';
 import 'package:den_app/features/onboarding/screens/link_this_browser_screen.dart';
@@ -254,6 +255,18 @@ void main() {
     expect(den.device(r.oldHub)!.revoked, isTrue);
     expect(den.device(r.newHub)!.revoked, isFalse);
     expect(find.text('The hub'), findsOneWidget, reason: 'one hub left');
+  });
+
+  testWidgets("Hubs are removed only on a parent's own personal device, not on a hub", (tester) async {
+    final r = await replacedHub(tester);
+    final den = r.state.den;
+    // Alex's computer keeping the family online is a hub, though Alex owns it.
+    await tester.runAsync(() => den.setThisDeviceMode(DeviceMode.hub));
+    await pumpScreen(tester, const HubScreen(), state: r.state, size: const Size(390, 1240));
+    expect(find.text('Hubs'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Remove'), findsNothing);
+    expect(() => TrustActions(den).removeHub(r.oldHub), throwsA(isA<PermissionDenied>()));
+    expect(den.device(r.oldHub)!.revoked, isFalse);
   });
 
   testWidgets('Adding a hub where an older one answered offers to remove the old one', (tester) async {

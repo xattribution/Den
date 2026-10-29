@@ -35,7 +35,7 @@ class _HubsSectionState extends State<HubsSection> {
       _busy = true;
       _error = null;
     });
-    final problem = await tryWrite(() => trust.revokeDevice(hub.id));
+    final problem = await tryWrite(() => trust.removeHub(hub.id));
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -49,7 +49,8 @@ class _HubsSectionState extends State<HubsSection> {
     final app = context.watch(const {});
     final network = app.network;
     if (network == null) return const SizedBox.shrink();
-    final trust = app.allowsTrust(DenAction.manageFamily);
+    // A trust decision, on a parent's own personal device only (TrustActions.removeHub).
+    final trust = app.allowsTrust(DenAction.manageFamily) && TrustActions.mayRemoveHubs(app.den);
     return ListenableBuilder(
       listenable: network,
       builder: (context, _) {
