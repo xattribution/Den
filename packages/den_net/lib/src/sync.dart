@@ -167,8 +167,9 @@ class JoinAttempt {
   /// With recovery words, after [recoveringAs]: lets this device in as that parent's own. It
   /// signs a recovery proof with the words' key for this family, this device's key, a fresh
   /// nonce and an expiry [recoveryWordsProofLife] on, writes the change that carries it
-  /// (`den.requestRecovery`), and sends it; the family's device lets it in at once.
-  Future<void> confirmRecovery() async {
+  /// (`den.requestRecovery`), and sends it; the family's device lets it in at once. [deviceName]
+  /// names this device now that the parent is known ("Alex's new iPhone").
+  Future<void> confirmRecovery({String? deviceName}) async {
     final key = _recoveryKey;
     if (key == null || !_recoveringAs.isCompleted || _confirmed) throw StateError('nothing to confirm');
     _confirmed = true;
@@ -185,7 +186,7 @@ class JoinAttempt {
     await den.requestRecovery(
       familyId: who.familyId,
       founderPubkey: peer._founder!,
-      deviceName: request.deviceName,
+      deviceName: deviceName ?? request.deviceName,
       kind: request.kind,
       proof: proof,
     );
