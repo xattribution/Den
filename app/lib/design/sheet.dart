@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
@@ -187,9 +189,10 @@ class _DenSheetPageState<T> extends State<_DenSheetPage<T>> with TickerProviderS
     final c = context.colors;
     final media = MediaQuery.of(context);
     _centered = DenLayout.forWidth(media.size.width).centersSheets;
+    // Over the keyboard too, a sheet stops short of the status bar.
     final maxHeight = _centered
         ? media.size.height * 0.86
-        : media.size.height - media.padding.top - Sp.s;
+        : math.max(0.0, media.size.height - media.viewInsets.bottom - media.padding.top - Sp.s);
     final radius = _centered
         ? const BorderRadius.all(Radius.circular(Radii.sheet))
         : const BorderRadius.vertical(top: Radius.circular(Radii.sheet));
@@ -203,10 +206,11 @@ class _DenSheetPageState<T> extends State<_DenSheetPage<T>> with TickerProviderS
         color: c.bg,
         shape: RoundedRectangleBorder(borderRadius: radius),
         clipBehavior: Clip.antiAlias,
-        child: MediaQuery.removePadding(
-          context: context,
-          removeTop: true,
-          removeBottom: true,
+        child: MediaQuery(
+          // The whole sheet is already lifted over the keyboard (the padding below), so what's
+          // inside lays out as if there were none. A field's own "keyboard height" padding then
+          // can't count it a second time and squeeze the sheet's words out of sight.
+          data: media.removePadding(removeTop: true, removeBottom: true).removeViewInsets(removeBottom: true),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,

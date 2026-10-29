@@ -1,6 +1,6 @@
 // Den in the browser: what the app needs from the page that Flutter doesn't do itself. Loaded by
 // index.html before flutter_bootstrap.js; the app reaches it as window.denWeb
-// (app/lib/web/web_app_web.dart).
+// (app/lib/platform/web/web_app_web.dart).
 //
 // - The service worker (sw.js): registered with this build's version, so a new version installs
 //   whole in the background and takes over the next time Den opens. See sw.js.
@@ -11,6 +11,8 @@
 // - Sharing text with the share sheet, or copying it where there is none.
 // - One engine per browser: tabs share the family's IndexedDB, so only one may write it.
 // - The screen's safe areas (the home indicator, the notch), which Flutter doesn't report.
+// - The page stays put around the keyboard, and the app learns how much of the screen the
+//   keyboard really covers.
 (function () {
   'use strict';
 
@@ -336,7 +338,8 @@
   }
 
   // Flutter replaces the page's viewport tag with its own. Den keeps drawing to the screen's
-  // edges under it; the app pads its content by the safe areas instead (lib/web/web_insets.dart).
+  // edges under it; the app pads its content by the safe areas instead
+  // (lib/platform/web/web_insets.dart).
   new MutationObserver(function (records) {
     records.forEach(function (record) {
       record.addedNodes.forEach(function (node) {
@@ -346,6 +349,180 @@
       });
     });
   }).observe(document.head, { childList: true });
+
+  // ------------------------------------------------------------------ the keyboard
+  //
+  // Flutter paints the whole app into one canvas pinned to the top of the page, and on iOS it
+  // takes the page's own size as the screen's (documentElement.clientHeight), with the keyboard
+  // as an inset it reads from the visual viewport. Safari doesn't know any of that. When a
+  // field gets the keyboard, Safari scrolls the page and pans the visual viewport to show the
+  // field; when the keyboard goes away through Return the field closes and Safari scrolls back,
+  // but when it goes away through the keyboard's own close button Safari can leave the page
+  // scrolled, or (iOS 26) the visual viewport panned with nothing scrolled and its height a
+  // little short. The canvas stays at the top, so the screen shows the empty page below it,
+  // black at night, and since Flutter takes every touch (touch-action: none) no swipe can
+  // scroll the page back. Taps still reach the app where it thinks things are.
+  //
+  // So: the page can't scroll (index.html pins html and body), whatever scrolls it anyway is
+  // put back at the top as soon as the viewport moves and again once the keyboard has finished
+  // moving, Flutter is asked to measure again afterwards, and the app gets the keyboard's real
+  // height (lib/platform/web/web_insets.dart) instead of trusting a stale one.
+
+  var vv = window.visualViewport || null;
+
+  /** Below this, what the visual viewport lost isn't a keyboard (iOS 26 leaves 24 px). */
+  var MIN_KEYBOARD = 60;
+
+  /** Corrections allowed per burst of viewport events, so a page that won't settle can't loop. */
+  var BUDGET = 8;
+  var budget = BUDGET;
+  var queued = false;
+  var poking = false;
+  var lastReport = '';
+  var viewportListener = null;
+
+  function frame(callback) {
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(callback);
+    else setTimeout(callback, 16);
+  }
+
+  /** A text field has the browser's focus, so a keyboard may be up. */
+  function editing() {
+    var el = document.activeElement;
+    if (!el || el === document.body || el === document.documentElement) return false;
+    var tag = (el.tagName || '').toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable === true;
+  }
+
+  /** Someone zoomed in (Zoom in Accessibility, a pinch Flutter didn't take): leave it alone. */
+  function zoomed() {
+    return vv !== null && (vv.scale || 1) > 1.01;
+  }
+
+  /** The layout viewport, which is the screen Flutter lays out on iOS. */
+  function layout() {
+    var root = document.documentElement;
+    return {
+      width: (root && root.clientWidth) || window.innerWidth || 0,
+      height: (root && root.clientHeight) || window.innerHeight || 0,
+    };
+  }
+
+  function scrolledBy() {
+    var se = document.scrollingElement || document.documentElement;
+    var body = document.body;
+    return {
+      x: Math.max(Math.abs(window.scrollX || window.pageXOffset || 0), se ? Math.abs(se.scrollLeft || 0) : 0, body ? Math.abs(body.scrollLeft || 0) : 0),
+      y: Math.max(Math.abs(window.scrollY || window.pageYOffset || 0), se ? Math.abs(se.scrollTop || 0) : 0, body ? Math.abs(body.scrollTop || 0) : 0),
+    };
+  }
+
+  /** How much of the layout viewport the keyboard covers, in CSS pixels; 0 when it's down. */
+  function keyboard() {
+    if (vv === null || !editing()) return 0;
+    var covered = layout().height - vv.height * (vv.scale || 1);
+    return covered >= MIN_KEYBOARD ? Math.round(covered) : 0;
+  }
+
+  /** What the app reads: the keyboard's height and the page's size and offsets. */
+  function viewport() {
+    var size = layout();
+    var by = scrolledBy();
+    return JSON.stringify({
+      keyboard: keyboard(),
+      width: size.width,
+      height: size.height,
+      top: vv === null ? 0 : Math.round((vv.offsetTop || 0) * 100) / 100,
+      scrolled: by.y,
+      editing: editing(),
+    });
+  }
+
+  /** Puts the page back at the top if anything moved it; true when something had. */
+  function pin() {
+    if (zoomed() || budget <= 0) return false;
+    var by = scrolledBy();
+    var panned = vv !== null && (Math.abs(vv.offsetTop || 0) > 0.5 || Math.abs(vv.offsetLeft || 0) > 0.5);
+    if (by.x < 0.5 && by.y < 0.5 && !panned) return false;
+    budget--;
+    var se = document.scrollingElement;
+    if (se) {
+      se.scrollTop = 0;
+      se.scrollLeft = 0;
+    }
+    if (document.body) {
+      document.body.scrollTop = 0;
+      document.body.scrollLeft = 0;
+    }
+    // With nothing scrolled but the visual viewport still panned (iOS 26 after the keyboard),
+    // a scroll down and back makes Safari settle it.
+    if (panned && by.y < 0.5) window.scrollTo(0, 1);
+    window.scrollTo(0, 0);
+    return true;
+  }
+
+  /** Has Flutter measure the page again, as it does on a real resize. */
+  function poke() {
+    if (vv === null || typeof vv.dispatchEvent !== 'function') return;
+    poking = true;
+    try {
+      vv.dispatchEvent(new Event('resize'));
+    } catch (e) {
+      // An old browser without Event(): Flutter measures on the next real resize.
+    }
+    poking = false;
+  }
+
+  function settle() {
+    var moved = pin();
+    var now = viewport();
+    var changed = now !== lastReport;
+    lastReport = now;
+    if (moved || changed) poke();
+    if (changed && viewportListener) viewportListener(now);
+  }
+
+  function schedule() {
+    if (queued) return;
+    queued = true;
+    frame(function () {
+      queued = false;
+      settle();
+    });
+  }
+
+  /** After a focus change or a resize: now, and again once the keyboard has finished moving. */
+  function scheduleBurst() {
+    budget = BUDGET;
+    schedule();
+    [120, 360, 720].forEach(function (ms) { setTimeout(schedule, ms); });
+  }
+
+  function onViewportResize() {
+    if (poking) return;
+    scheduleBurst();
+  }
+
+  if (vv !== null && typeof vv.addEventListener === 'function') {
+    vv.addEventListener('resize', onViewportResize);
+    vv.addEventListener('scroll', schedule);
+  }
+  window.addEventListener('scroll', schedule, { passive: true });
+  window.addEventListener('resize', scheduleBurst);
+  window.addEventListener('orientationchange', scheduleBurst);
+  window.addEventListener('pageshow', scheduleBurst);
+  document.addEventListener('focusin', scheduleBurst, true);
+  document.addEventListener('focusout', scheduleBurst, true);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') scheduleBurst();
+  });
+
+  /** Calls [callback] with [viewport]'s answer now and whenever it changes. */
+  function onViewport(callback) {
+    viewportListener = callback;
+    lastReport = viewport();
+    callback(lastReport);
+  }
 
   // ------------------------------------------------------------------ photos
 
@@ -460,6 +637,8 @@
     paste: paste,
     pickPhoto: pickPhoto,
     insets: insets,
+    viewport: viewport,
+    onViewport: onViewport,
     reload: function () { window.location.reload(); },
   };
 })();

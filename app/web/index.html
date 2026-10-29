@@ -26,9 +26,21 @@
   <title>Den</title>
 
   <!-- The page is the app's page color from the first frame (#F2F2F2, true black at night), so
-       opening Den never flashes white. -->
+       opening Den never flashes white.
+       It never scrolls: Flutter draws everything in one canvas pinned to the top, so a page
+       that moved would show its own empty background instead of the app (den_web.js puts it
+       back when iOS moves it for the keyboard anyway). html and body fill the layout viewport,
+       and body is where Flutter puts its view. -->
   <style>
-    html, body { margin: 0; height: 100%; background: #F2F2F2; }
+    html, body {
+      position: fixed;
+      top: 0; right: 0; bottom: 0; left: 0;
+      width: 100%; height: 100%;
+      margin: 0; padding: 0;
+      overflow: hidden;
+      overscroll-behavior: none;
+      background: #F2F2F2;
+    }
     @media (prefers-color-scheme: dark) { html, body { background: #000000; } }
   </style>
   <!-- The face every word is drawn in, fetched while Flutter starts rather than after. -->
