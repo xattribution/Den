@@ -1,25 +1,42 @@
 # Two families on one server: a hub each, with its own data volume, port and address, behind
 # one Caddy that routes by hostname. Neither hub can see the other's data; each family adds its
-# hub with its own setup code. docs/hosting.md, "Two families on one server".
+# hub with its own setup code. docs/hosting.md, "Several families on one server". From this
+# folder:
 #
-#   cp deploy/hosted/env.two-families.example deploy/hosted/.env   # set both domains
-#   docker compose -f deploy/hosted/two-families.yaml up -d
-#   docker compose -f deploy/hosted/two-families.yaml logs hub-a   # family A's setup code
-#   docker compose -f deploy/hosted/two-families.yaml logs hub-b   # family B's setup code
+#   cp env.two-families.example .env       # set both domains; it also picks this file
+#   docker compose up -d --build
+#   docker compose exec hub-a /app/bin/den_hub setup-code     # family A's setup code
+#   docker compose exec hub-b /app/bin/den_hub setup-code     # family B's setup code
+#   docker compose run --rm backup-a                          # family A's backup, into backups/a
 #
-# A third family is another service like these: the next port, its own volume, a block in
-# Caddyfile.two-families.
+# A third family is another hub like these (the next port, its own volume), a backup service
+# like theirs, and a block in Caddyfile.two-families.
 name: den-families
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 x-hub: &hub
   build:
     context: ../..
     dockerfile: deploy/hub/Dockerfile
-  image: ghcr.io/xattribution/den-hub:latest
+  image: ${DEN_IMAGE:-den-hub}
   restart: unless-stopped
   networks: [den]
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
+  logging: *logging
+
+x-backup: &backup
+  profiles: [backup]
+  image: ${DEN_IMAGE:-den-hub}
+  entrypoint: ["/app/bin/den-backup"]
+  command: ["backup"]
+  user: root
+  network_mode: none
 
 services:
   hub-a:
@@ -27,7 +44,7 @@ services:
     environment:
       DEN_NAME: ${FAMILY_A_NAME:-Den hub}
       DEN_PORT: "47733"
-      DEN_PUBLIC_URL: https://${FAMILY_A_DOMAIN:?set FAMILY_A_DOMAIN in deploy/hosted/.env}
+      DEN_PUBLIC_URL: https://${FAMILY_A_DOMAIN:?set FAMILY_A_DOMAIN in .env}
       DEN_TRUSTED_PROXIES: 172.30.74.0/24
       DEN_MDNS: "0"
     ports:
@@ -40,7 +57,7 @@ services:
     environment:
       DEN_NAME: ${FAMILY_B_NAME:-Den hub}
       DEN_PORT: "47735"
-      DEN_PUBLIC_URL: https://${FAMILY_B_DOMAIN:?set FAMILY_B_DOMAIN in deploy/hosted/.env}
+      DEN_PUBLIC_URL: https://${FAMILY_B_DOMAIN:?set FAMILY_B_DOMAIN in .env}
       DEN_TRUSTED_PROXIES: 172.30.74.0/24
       DEN_MDNS: "0"
     ports:
@@ -63,7 +80,30 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     networks: [den]
-    depends_on: [hub-a, hub-b]
+    depends_on:
+      hub-a:
+        condition: service_healthy
+      hub-b:
+        condition: service_healthy
+    logging: *logging
+
+  backup-a:
+    <<: *backup
+    environment:
+      DEN_BACKUP_PASSPHRASE: ${DEN_BACKUP_PASSPHRASE:-}
+      DEN_BACKUP_KEEP: ${DEN_BACKUP_KEEP:-14}
+    volumes:
+      - den-family-a:/data
+      - ./backups/a:/backups
+
+  backup-b:
+    <<: *backup
+    environment:
+      DEN_BACKUP_PASSPHRASE: ${DEN_BACKUP_PASSPHRASE:-}
+      DEN_BACKUP_KEEP: ${DEN_BACKUP_KEEP:-14}
+    volumes:
+      - den-family-b:/data
+      - ./backups/b:/backups
 
 networks:
   den:

@@ -2,6 +2,8 @@
 # Den hub: the family's always-on device in a container. Serves the web app, device sync (/ws),
 # the HTTP API, MCP with OAuth, calendar feeds and reminders on one port.
 # Build from the repository root:  docker build -f deploy/hub/Dockerfile -t den-hub .
+# Compiling the web app is the heavy part: about 1.5 GB of memory at its peak (docs/hosting.md,
+# "Building on a small server").
 
 FROM ghcr.io/cirruslabs/flutter:3.38.5 AS web
 WORKDIR /src
@@ -13,9 +15,11 @@ WORKDIR /src/app
 # --csp keeps dart2js from generating code at run time, CanvasKit loads from the hub
 # (build/web/canvaskit/) instead of gstatic.com, and so do the fonts Flutter falls back to for
 # emoji and symbols (build/web/fonts/fallback/). DEN_FALLBACK_FONTS=. ships every script's.
+# --no-wasm-dry-run: the hub serves the JavaScript build, and the WebAssembly compile Flutter
+# would otherwise run alongside it only to print warnings takes more memory than the build itself.
 ARG DEN_FALLBACK_FONTS=
 RUN flutter pub get \
- && flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ \
+ && flutter build web --release --csp --no-wasm-dry-run --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ \
  && sh /usr/local/bin/fallback_fonts.sh build/web "$DEN_FALLBACK_FONTS"
 
 FROM dart:3.10 AS hub
@@ -48,12 +52,13 @@ RUN apt-get update \
  && mkdir -p /data /app/web && chown den /data
 COPY --from=hub /out/bundle/ /app/
 COPY --from=web /src/app/build/web /app/web
+COPY --chmod=755 deploy/hub/den-backup.sh /app/bin/den-backup
 USER den
 VOLUME /data
 EXPOSE 47733
 ENV DEN_DATA=/data \
     DEN_WEB=/app/web \
     DEN_PORT=47733
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD curl -fsS "http://127.0.0.1:${DEN_PORT:-47733}/health" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=2s CMD curl -fsS "http://127.0.0.1:${DEN_PORT:-47733}/health" || exit 1
 ENTRYPOINT ["/app/bin/den_hub"]
 CMD ["serve"]
