@@ -9,7 +9,7 @@ enum HistoryKind {
   events('Events', {RecordType.event, RecordType.eventException}),
   chores('Chores', {RecordType.chore, RecordType.completion}),
   lists('Lists', {RecordType.list, RecordType.item}),
-  points('Points', {RecordType.adjustment, RecordType.goal, RecordType.reward, RecordType.redemption}),
+  points('Stars', {RecordType.adjustment, RecordType.goal, RecordType.reward, RecordType.redemption}),
   family('Family', {
     RecordType.family,
     RecordType.member,
@@ -41,7 +41,7 @@ const _labels = {
   'owner': 'Whose',
   'schedule': 'Schedule',
   'dueTime': 'Due',
-  'points': 'Points',
+  'points': 'Stars',
   'steps': 'Steps',
   'active': 'Active',
   'done': 'Done',
@@ -66,7 +66,7 @@ const _labels = {
   'target': 'Target',
   'reward': 'Reward',
   'status': 'Status',
-  'delta': 'Points',
+  'delta': 'Stars',
   'reason': 'Reason',
   'approved': 'Approved',
   'revoked': 'Revoked',
@@ -297,9 +297,9 @@ HistoryLine historyLine(FamilyReads app, HistoryEntry e) {
   if (e.type == RecordType.adjustment && (e.verb == 'gave' || e.verb == 'took')) {
     final member = app.memberById(_after(e, 'member') as String?)?.name ?? 'someone';
     final delta = ((_after(e, 'delta') as num?) ?? 0).toInt().abs();
-    final points = '$delta ${delta == 1 ? 'point' : 'points'}';
-    final reason = e.title.isEmpty ? '' : ': ${e.title}';
-    return HistoryLine(e.verb, e.verb == 'gave' ? '$member $points$reason' : '$points from $member$reason', const []);
+    final stars = '$delta ${delta == 1 ? 'star' : 'stars'}';
+    final reason = e.title.isEmpty ? '' : ' for ${e.title}';
+    return HistoryLine(e.verb, e.verb == 'gave' ? '$member $stars$reason' : '$stars from $member$reason', const []);
   }
   if (e.type == RecordType.completion && (e.verb == 'checked' || e.verb == 'unchecked')) {
     final at = e.rid.lastIndexOf('@');
@@ -362,3 +362,79 @@ Set<HistoryEntry> bookkeeping(List<HistoryEntry> entries) {
         e,
   };
 }
+
+/// What a History row says after the person's name, as one plain sentence: "moved Soccer
+/// practice to 6:00 PM", "renamed Dishes to Dinner dishes", "made Dishes worth 3 stars",
+/// "added Parent-teacher conference". A change to several things at once says "changed Soccer
+/// practice"; the row shows each field on a tap.
+String historySentence(FamilyReads app, HistoryEntry e, HistoryLine line) {
+  final title = line.title;
+  final diffs = line.diffs;
+  if (line.verb != 'changed' || diffs.isEmpty) return '${line.verb} $title';
+  final f = app.formats;
+  FieldDiff? find(String field) => diffs.where((d) => d.field == field).firstOrNull;
+  final fields = {for (final d in diffs) d.field};
+
+  // A time moved, keeping how long it lasts: "moved Soccer practice to 6:00 PM", to another
+  // day "to Tue, Oct 20 at 6:00 PM", and to a new place too "... at Field 4".
+  final start = find('start'), end = find('end');
+  String? movedTo;
+  if (start != null && start.before is num && start.after is num) {
+    final before = (start.before! as num).toInt(), after = (start.after! as num).toInt();
+    final sameLength = end == null ||
+        (end.before is num && end.after is num && (end.after! as num) - (end.before! as num) == after - before);
+    if (sameLength) {
+      movedTo = f.localDate(before) == f.localDate(after) ? f.time(after) : '${f.short(f.localDate(after))} at ${f.time(after)}';
+    }
+  }
+  if (movedTo != null && fields.difference({'start', 'end', 'location'}).isEmpty) {
+    final place = find('location')?.after;
+    if (!fields.contains('location')) return 'moved $title to $movedTo';
+    if (place is String && place.trim().isNotEmpty) return 'moved $title to $movedTo at ${place.trim()}';
+  }
+  if (fields.length != 1) return 'changed $title';
+
+  final only = diffs.single;
+  final (before, after) = diffWords(app, e.type, only);
+  String stars(String? n) => n == null || n == '0' ? 'no stars' : '$n ${n == '1' ? 'star' : 'stars'}';
+  switch (only.field) {
+    case 'title' || 'text' || 'name' when before != null && after != null:
+      return 'renamed $before to $after';
+    case 'location':
+      if (after == null) return 'took the place off $title';
+      return before == null ? 'set $title at $after' : 'moved $title to $after';
+    case 'end' when after != null:
+      return 'made $title end at $after';
+    case 'points':
+      return 'made $title worth ${stars(after)}';
+    case 'cost':
+      return 'made $title cost ${stars(after)}';
+    case 'dueTime':
+      return after == null ? 'took the due time off $title' : 'made $title due by $after';
+    case 'owner':
+      if (after == 'Anyone') return "made $title anyone's";
+      if (after == 'Taking turns') return 'made $title take turns';
+      return 'gave $title to $after';
+    case 'assignees':
+      return 'made $title for ${after == 'Everyone' ? 'everyone' : after}';
+    case 'rrule' || 'schedule':
+      if (after == null) return 'made $title happen once';
+      return 'made $title repeat ${_lowerFirst(after).replaceFirst('repeats ', '')}';
+    case 'allDay':
+      return after == 'Yes' ? 'made $title all day' : 'gave $title a time';
+    case 'reminders':
+      return after == null ? 'took the reminders off $title' : 'set $title to remind ${_lowerFirst(after)}';
+    case 'qty' when after != null:
+      return 'changed $title to $after';
+    case 'store':
+      return after == null ? 'took $title off its store' : 'moved $title to $after';
+    case 'pinned':
+      return after == 'Yes' ? 'pinned $title to Today' : 'took $title off Today';
+    case 'needBy':
+      return after == null ? 'took the date off $title' : 'made $title needed by $after';
+  }
+  return 'changed the ${fieldLabel(only.field).toLowerCase()} for $title';
+}
+
+/// "Every Tuesday" as it reads mid-sentence: "every Tuesday".
+String _lowerFirst(String text) => text.isEmpty ? text : '${text[0].toLowerCase()}${text.substring(1)}';

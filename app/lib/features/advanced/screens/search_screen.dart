@@ -1,19 +1,21 @@
-import 'dart:async';
-
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../../../app/app_state.dart';
+import '../../../app/family_reads.dart';
+import '../../../app/navigation.dart';
+import '../../../design/pictograms.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
-import '../../../app/app_state.dart';
-import '../words/history_words.dart';
-import '../../../app/navigation.dart';
 import '../../calendar/calendar.dart';
+import '../words/history_words.dart';
 
-/// Finds events, chores, lists and items by what they're called or what's written in them, and
-/// opens the one you pick.
+/// Search (Today's header, the iPad sidebar, ⌘F): what you type finds people, events, chores,
+/// lists and list items by name, place or note, as you type, grouped by kind. One tap opens a
+/// result; Return opens the first. Nothing found offers History, where what was removed or
+/// renamed still is.
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key, this.query});
   final String? query;
@@ -22,150 +24,151 @@ class SearchScreen extends StatefulWidget {
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
+/// The kinds of result, in the order they show, with their headings.
+const Map<String, String> searchKinds = {
+  RecordType.member: 'People',
+  RecordType.event: 'Events',
+  RecordType.chore: 'Chores',
+  RecordType.list: 'Lists',
+  RecordType.item: 'On lists',
+  RecordType.reward: 'Rewards',
+  RecordType.goal: 'Goals',
+};
+
 class _SearchScreenState extends State<SearchScreen> {
   late final _field = TextEditingController(text: widget.query ?? '');
-  late String _query = widget.query?.trim() ?? '';
-  Timer? _debounce;
 
-  static const _groups = <String, String>{
-    RecordType.event: 'Events',
-    RecordType.chore: 'Chores',
-    RecordType.list: 'Lists',
-    RecordType.item: 'List items',
-    RecordType.member: 'People',
-    RecordType.reward: 'Rewards',
-    RecordType.goal: 'Goals',
-  };
+  @override
+  void initState() {
+    super.initState();
+    // Every letter searches again in the same frame: the family's records are on this device.
+    _field.addListener(() => setState(() {}));
+  }
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _field.dispose();
     super.dispose();
   }
 
-  void _onChanged(String text) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 250), () {
-      if (mounted) setState(() => _query = text.trim());
-    });
-    setState(() {});
+  String? _routeFor(FamilyReads app, SearchHit hit) {
+    var route = routeForRecord(app, hit.type, hit.id);
+    if (route != null && hit.type == RecordType.event && hit.when != null) route = '$route?at=${hit.when}';
+    // Something only History remembers (it was removed, or renamed since) opens its history.
+    return route ?? (hit.type == RecordType.member ? null : '/history?q=${Uri.encodeQueryComponent(hit.title)}');
   }
 
   @override
   Widget build(BuildContext context) {
     final app = context.app;
     final c = context.colors;
-    final hits = _query.isEmpty ? const <SearchHit>[] : app.den.search(_query);
-    final byType = <String, List<SearchHit>>{};
+    final t = context.text;
+    final query = _field.text.trim();
+    final hits = query.isEmpty ? const <SearchHit>[] : app.den.search(query);
+    final byKind = <String, List<SearchHit>>{};
     for (final hit in hits) {
-      byType.putIfAbsent(hit.type, () => []).add(hit);
+      byKind.putIfAbsent(hit.type, () => []).add(hit);
     }
-    final order = [..._groups.keys.where(byType.containsKey), ...byType.keys.where((t) => !_groups.containsKey(t))];
+    final kinds = [...searchKinds.keys.where(byKind.containsKey), ...byKind.keys.where((k) => !searchKinds.containsKey(k))];
+    void open(SearchHit hit) {
+      final route = _routeFor(app, hit);
+      if (route != null) context.push(route);
+    }
 
-    return Scaffold(
-      body: SafeArea(
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 820),
+    final field = TextField(
+      controller: _field,
+      autofocus: widget.query == null || widget.query!.isEmpty,
+      textInputAction: TextInputAction.search,
+      autocorrect: false,
+      style: t.body(c.ink),
+      onSubmitted: (_) {
+        if (hits.isNotEmpty) open(hits.first);
+      },
+      decoration: InputDecoration(
+        hintText: 'People, events, chores, lists',
+        prefixIcon: Icon(PhosphorIconsRegular.magnifyingGlass, size: 20, color: c.ink2),
+        suffixIcon: query.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear',
+                onPressed: _field.clear,
+                icon: Icon(PhosphorIconsBold.xCircle, size: 20, color: c.ink2),
+              ),
+      ),
+    );
+
+    return DenPage(
+      title: 'Search',
+      onBack: () => closePage(context, fallback: '/today'),
+      children: [
+        Semantics(textField: true, label: 'Search', child: field),
+        if (query.isNotEmpty && hits.isEmpty)
+          EmptyState(
+            message: 'Nothing here matches “$query”.',
+            actionLabel: 'Look in History',
+            onAction: () => context.push('/history?q=${Uri.encodeQueryComponent(query)}'),
+          ),
+        for (final kind in kinds)
+          DenSection(
+            title: searchKinds[kind] ?? fieldLabel(kind),
+            trailing: SectionCount('${byKind[kind]!.length}'),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(Sp.xs, Sp.s, Sp.l, Sp.s),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'Back',
-                        onPressed: () => closePage(context),
-                        icon: const Icon(PhosphorIconsRegular.arrowLeft),
-                      ),
-                      const SizedBox(width: Sp.xs),
-                      Expanded(
-                        child: TextField(
-                          controller: _field,
-                          autofocus: widget.query == null || widget.query!.isEmpty,
-                          onChanged: _onChanged,
-                          textInputAction: TextInputAction.search,
-                          style: context.type.body(c.ink),
-                          decoration: InputDecoration(
-                            hintText: 'Search events, chores, and lists',
-                            prefixIcon: Icon(PhosphorIconsRegular.magnifyingGlass, size: 18, color: c.ink2),
-                            suffixIcon: _field.text.isEmpty
-                                ? null
-                                : IconButton(
-                                    tooltip: 'Clear search',
-                                    onPressed: () {
-                                      _field.clear();
-                                      _onChanged('');
-                                    },
-                                    icon: Icon(PhosphorIconsRegular.x, size: 18, color: c.ink2),
-                                  ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Divider(height: 1, color: c.rule),
-                Expanded(
-                  child: _query.isEmpty
-                      ? const SizedBox.shrink()
-                      : hits.isEmpty
-                      ? ListView(children: [EmptyLine(message: 'Nothing matches “$_query”.')])
-                      : ListView(
-                          padding: const EdgeInsets.only(bottom: Sp.xxxl),
-                          children: [
-                            for (final type in order) ...[
-                              SectionHeader(_groups[type] ?? fieldLabel(type), trailing: '${byType[type]!.length}'),
-                              for (final hit in byType[type]!) _HitRow(hit),
-                            ],
-                          ],
-                        ),
-                ),
-              ],
+              children: ruled(
+                [for (final hit in byKind[kind]!) _ResultRow(hit: hit, onTap: _routeFor(app, hit) == null ? null : () => open(hit))],
+                indent: kind == RecordType.member ? RowRule.afterFace : 36,
+              ),
             ),
           ),
-        ),
-      ),
+      ],
     );
   }
 }
 
-class _HitRow extends StatelessWidget {
-  const _HitRow(this.hit);
-  final SearchHit hit;
+/// One result: what it is at a glance (a person's face, an event's pictogram, an ink glyph), its
+/// name with where or which list under it, and when for an event.
+class _ResultRow extends StatelessWidget {
+  const _ResultRow({required this.hit, required this.onTap});
 
-  static IconData _icon(String type) => switch (type) {
-    RecordType.event => PhosphorIconsRegular.calendarBlank,
-    RecordType.chore => PhosphorIconsRegular.checkSquare,
-    RecordType.list => PhosphorIconsRegular.listChecks,
-    RecordType.item => PhosphorIconsRegular.shoppingCart,
-    RecordType.member => PhosphorIconsRegular.user,
-    RecordType.reward => PhosphorIconsRegular.gift,
-    RecordType.goal => PhosphorIconsRegular.flag,
-    _ => PhosphorIconsRegular.fileText,
-  };
+  final SearchHit hit;
+  final VoidCallback? onTap;
+
+  static IconData _glyph(String type) => switch (type) {
+        RecordType.chore => PhosphorIconsRegular.checkCircle,
+        RecordType.list => PhosphorIconsRegular.listBullets,
+        RecordType.item => PhosphorIconsRegular.circle,
+        RecordType.reward => PhosphorIconsRegular.gift,
+        RecordType.goal => PhosphorIconsRegular.flag,
+        _ => PhosphorIconsRegular.fileText,
+      };
 
   @override
   Widget build(BuildContext context) {
     final app = context.app;
     final f = app.formats;
-    final c = context.colors;
-    var route = routeForRecord(app, hit.type, hit.id);
-    if (route != null && hit.type == RecordType.event && hit.when != null) route = '$route?at=${hit.when}';
-    // Something only History remembers (it was removed, or renamed since) opens its history.
-    route ??= hit.type == RecordType.member ? null : '/history?q=${Uri.encodeQueryComponent(hit.title)}';
+    final member = hit.type == RecordType.member ? app.memberById(hit.id) : null;
+    final event = hit.type == RecordType.event ? app.den.event(hit.id) : null;
     final when = hit.when == null ? null : f.shortWithYear(f.localDate(hit.when!), relativeTo: app.today);
-    final detail = hit.detail;
-
-    return ListTile(
-      leading: Icon(_icon(hit.type), color: c.ink2),
-      title: Text(hit.title),
-      subtitle: detail == null || detail.isEmpty ? null : Text(detail, maxLines: 2, overflow: TextOverflow.ellipsis),
-      trailing: when == null ? null : Text(when, style: context.type.meta(c.ink2)),
-      onTap: route == null ? null : () => context.push(route!),
+    // Chores of the same name ("Make bed") are told apart by whose they are.
+    final chore = hit.type == RecordType.chore ? app.den.chore(hit.id) : null;
+    final whose = switch (chore?.owner) {
+      OwnerMember(:final id) => app.memberById(id)?.name,
+      OwnerAnyone() => 'Anyone',
+      OwnerRotation() => 'Taking turns',
+      _ => null,
+    };
+    final detail = hit.detail == null || hit.detail!.isEmpty ? whose : hit.detail;
+    return NavRow(
+      label: hit.title,
+      detail: detail,
+      value: when,
+      onTap: onTap,
+      chevron: onTap != null,
+      leading: member != null ? DenAvatar(member, size: 40) : null,
+      icon: member != null
+          ? null
+          : event != null
+              ? Pictograms.event(eventKind(event.title, location: event.location))
+              : _glyph(hit.type),
     );
   }
 }

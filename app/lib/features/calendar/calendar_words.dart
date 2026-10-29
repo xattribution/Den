@@ -3,5 +3,6 @@
 library;
 
 export 'words/calendar_time.dart';
+export 'words/event_kinds.dart' show eventKind;
 export 'words/event_words.dart';
 export 'words/recurrence.dart';
