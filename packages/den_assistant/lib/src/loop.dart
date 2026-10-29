@@ -100,6 +100,7 @@ class TurnResult {
     this.modelCalls = 0,
     this.toolCalls = 0,
     this.error,
+    this.failure,
   });
 
   /// How it ended.
@@ -131,6 +132,10 @@ class TurnResult {
 
   /// Why the turn failed, for people.
   final String? error;
+
+  /// The model call that failed, with its status and the hub's code, when [end] is
+  /// [TurnEnd.failed] because of one: an app tells a daily limit from a spent budget with it.
+  final ModelException? failure;
 
   /// Whether a tap is needed to go on.
   bool get waiting => pending != null;
@@ -268,7 +273,7 @@ class AssistantLoop {
           cacheKey: cacheKey,
         ));
       } on ModelException catch (e) {
-        return _finish(turn, TurnEnd.failed, error: e.message);
+        return _finish(turn, TurnEnd.failed, error: e.message, failure: e);
       } on Object catch (e) {
         return _finish(turn, TurnEnd.failed, error: 'Something went wrong with the assistant ($e).');
       }
@@ -417,12 +422,19 @@ class AssistantLoop {
         StopReason.refusal => TurnEnd.refused,
       };
 
-  TurnResult _finish(_Turn turn, TurnEnd end, {String text = '', String? error}) {
+  TurnResult _finish(_Turn turn, TurnEnd end, {String text = '', String? error, ModelException? failure}) {
     if (identical(_turn, turn)) _turn = null;
-    return _result(turn, end, text: text, error: error);
+    return _result(turn, end, text: text, error: error, failure: failure);
   }
 
-  TurnResult _result(_Turn turn, TurnEnd end, {String text = '', PendingConfirmation? pending, String? error}) =>
+  TurnResult _result(
+    _Turn turn,
+    TurnEnd end, {
+    String text = '',
+    PendingConfirmation? pending,
+    String? error,
+    ModelException? failure,
+  }) =>
       TurnResult(
         end: end,
         text: text,
@@ -434,6 +446,7 @@ class AssistantLoop {
         modelCalls: turn.modelCalls,
         toolCalls: turn.toolCalls,
         error: error,
+        failure: failure,
       );
 }
 

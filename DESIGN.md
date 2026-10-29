@@ -451,7 +451,8 @@ tap happened, and shows it in a `DoneRow`.
   button that says where it goes ("Add to calendar", "Add to Groceries"). What was added stays
   in the sheet with Undo, and Undo brings the words back. Photo of a flyer (a phone's camera),
   a photo or PDF, and on the web Paste (text, or a screenshot) go to the review page. "Or add
-  one thing" offers Event, Chore and Grocery item, each only to someone who may.
+  one thing" offers Event, Chore and Grocery item, each only to someone who may. With the AI
+  helper on for the person, the field reads "Add or ask anything" (see "AI helper").
 - **Calendar**: the month as the title and a Today button; a week strip in a card (selected day
   in ink, people's dots); person filters; the day's events as solid blocks by time; on iPad the
   family week (a column per person, a row per day, everyone's events across the row).
@@ -477,6 +478,51 @@ tap happened, and shows it in a `DoneRow`.
 - **Kid**: "Hi, Leo" with their picture, a star card with their goal bar, 2 to 4 big chore tiles.
 - **An event**: a solid block in the owner's color with the title (tap to change), then the
   details as rows that open in place.
+
+## AI helper
+
+Optional, and off until a parent turns it on (Settings, AI helper). It is a word ("Ask") and a
+speech bubble, never a sparkle, a wand or a glow, and it lives in Add, not in a tab of its own
+(`features/assistant`).
+
+- **Who sees it.** Parents once it's on, and each other person a parent switches on (never a
+  little kid or a pre-reader). Never on a wall display or a shared screen, and never without a
+  family hub, which runs it and keeps the key.
+- **Add or ask.** The field reads "Add or ask anything" ("Ask anything" for someone who may ask
+  but not add). The rule, in this order:
+  1. A **question** goes to the helper: it ends with a question mark, or starts with a question
+     word (what, when, where, who, which, why, how, is, are, can, will, does, did, "do we", tell,
+     show, find, plan...).
+  2. A **change to something already there** goes to the helper: any part of it starts with
+     move, reschedule, postpone, push, cancel, delete, remove, rename, swap, give, mark, undo,
+     uncheck, approve or decline ("add milk and move soccer to 6").
+  3. Otherwise **Den's own reader** takes it as it does today: when it finds something
+     ("milk", "Soccer Wednesday at 5 for Leo"), its chips show and Add adds at once, with Undo,
+     and a quiet "Ask instead" under the button. When it finds nothing, it's the helper's.
+  Photos, PDFs and pastes still go to the review page. The rule is `addOrAsk`
+  (`features/assistant/words`); a word on the list that also starts a chore ("Give the dog his
+  pill") reaches the helper, which can add it too.
+- **Answers** open in Ask: a sheet on phones, a panel at the right edge from 840 pt with the page
+  behind in view (an iPad turning keeps the conversation). What was asked, quietly, beside the
+  person's face; the answer in plain sentences; then each change as a row: a filled check in the
+  person's color, what it did ("Moved Dentist to 4:00 PM Tue") and Undo in place. Taken back, the
+  ring empties and the row says "Took back: ...". "Undo that" takes back the newest change still
+  in place, without asking the helper.
+- **Do it / Not now.** A change that needs a tap (someone else's things, a whole series, a
+  removal) shows first as a card on the card color: the question ("Remove the chore Feed the
+  cat?"), what it would change from the preview on a fork ("Removes Feed the cat"), any warning
+  with an ink icon, and "Do it" (ink) and "Not now". Nothing changes before the tap; a spoken yes
+  doesn't count.
+- **Limits and outages, plainly.** A limit a parent set is a line with an ink icon: "That's 20
+  questions today. Ask a parent for more.", "The family's AI budget is used up for October."
+  Off or not set up says who can change it. A hub or a company that doesn't answer is red text
+  and icon with Try again ("Claude can't be reached right now. Try again in a few minutes.").
+  "Asking Claude" shows only after a second; nothing pulses.
+- **Kids** a parent turned it on for get 72 pt buttons, "Read it to me" (the kids' app's
+  read-aloud), simpler words and only the tools they may use.
+- **Session only.** The conversation lives while Ask is open on that device and is forgotten
+  when it closes; closing Ask stops a turn still running from changing anything more. What it
+  changed shows in History as "from the assistant (Claude)", like any other change.
 
 ## Parental oversight
 
