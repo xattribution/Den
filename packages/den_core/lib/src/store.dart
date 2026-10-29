@@ -5,9 +5,12 @@ import 'model.dart';
 /// One record's merged state inside a space. Records are keyed by `(space, type, id)` so that a
 /// change's validity depends only on the spaces a replica holds.
 class Entry {
-  Entry(this.type, this.id, this.space, this.created, this.createdBy, this.createdDevice)
+  Entry(this.type, this.id, this.space, this.created, this.createdBy, this.createdDevice,
+      {Map<String, Object?>? fields, Map<String, Hlc>? times})
       : updated = created,
-        updatedBy = createdBy;
+        updatedBy = createdBy,
+        fields = fields ?? {},
+        times = times ?? {};
 
   final String type;
   final String id;
@@ -15,8 +18,8 @@ class Entry {
   final Hlc created;
   final String? createdBy;
   final String createdDevice;
-  final Map<String, Object?> fields = {};
-  final Map<String, Hlc> times = {};
+  final Map<String, Object?> fields;
+  final Map<String, Hlc> times;
   Hlc updated;
   String? updatedBy;
   Rec? _rec;
@@ -64,17 +67,86 @@ Object? copyJson(Object? value) {
   return value;
 }
 
+/// What a field or field time held before a change: [absent] when it wasn't there at all.
+const Object absent = _Absent();
+
+class _Absent {
+  const _Absent();
+}
+
+/// Everything a change altered in one record, so it can be taken back exactly: the record it
+/// created, or the earlier values of the fields and field times it touched. The materializer
+/// keeps one per applied change to rewind to an earlier position in the log.
+class Undo {
+  Undo(this.entry, this.created, this.fieldNames, this.fieldValues, this.timeNames, this.timeValues, this.updated,
+      this.updatedBy);
+
+  final Entry entry;
+  final bool created;
+
+  /// Top-level fields of [entry] the change touched, with what each held ([absent] when unset).
+  final List<String> fieldNames;
+  final List<Object?> fieldValues;
+
+  /// Field times the change set or cleared, with what each held ([absent] when unset).
+  final List<String> timeNames;
+  final List<Object?> timeValues;
+  final Hlc updated;
+  final String? updatedBy;
+}
+
 /// The materialized records of every space this replica holds.
 class RecordStore {
-  final Map<String, Entry> _byKey = {};
+  /// type -> record id -> the entries with that id, one per space (nearly always one).
   final Map<String, Map<String, List<Entry>>> _byType = {};
 
-  /// Bumped on every applied change; caches key off it.
+  /// Bumped on every applied or undone change; caches key off it.
   int version = 0;
 
-  static String _key(String space, String type, String id) => '$space\u0000$type\u0000$id';
+  /// Bumped when the whole store is replaced (cleared, replayed or restored), which no per-type
+  /// count can tell apart from what it held before.
+  int epoch = 0;
 
-  Entry? at(String space, String type, String id) => _byKey[_key(space, type, id)];
+  /// type -> space -> changes applied to or undone from records of that type in that space.
+  final Map<String, Map<String, int>> _versions = {};
+
+  /// A number that changes whenever a record of one of [types] in one of [spaces] does; equal
+  /// numbers within one [epoch] mean nothing those views read has changed.
+  int versionOf(Iterable<String> types, Iterable<String> spaces) {
+    var n = 0;
+    for (final t in types) {
+      final bySpace = _versions[t];
+      if (bySpace == null) continue;
+      for (final s in spaces) {
+        n += bySpace[s] ?? 0;
+      }
+    }
+    return n;
+  }
+
+  /// [versionOf] over every space.
+  int versionOfType(String type) {
+    var n = 0;
+    for (final v in (_versions[type] ?? const <String, int>{}).values) {
+      n += v;
+    }
+    return n;
+  }
+
+  void _touched(String type, String space) {
+    final bySpace = _versions[type] ??= {};
+    bySpace[space] = (bySpace[space] ?? 0) + 1;
+    version++;
+  }
+
+  Entry? at(String space, String type, String id) {
+    final list = _byType[type]?[id];
+    if (list == null) return null;
+    for (final e in list) {
+      if (e.space == space) return e;
+    }
+    return null;
+  }
 
   /// The live entry at `(space, type, id)`, or null.
   Entry? liveAt(String space, String type, String id) {
@@ -98,32 +170,67 @@ class RecordStore {
     return best;
   }
 
-  Iterable<Entry> ofType(String type) sync* {
+  Iterable<Entry> ofType(String type) {
     final byId = _byType[type];
-    if (byId == null) return;
-    for (final list in byId.values) {
-      yield* list;
-    }
+    if (byId == null) return const [];
+    return byId.values.expand(_same);
   }
+
+  static List<Entry> _same(List<Entry> list) => list;
 
   Iterable<Entry> liveOfType(String type) => ofType(type).where((e) => !e.deleted);
 
+  /// Every entry, in the order [ofType] gives them type by type.
+  Iterable<Entry> get all => _byType.values.expand((byId) => byId.values).expand(_same);
+
   /// Applies a valid change; returns the entry, the previous values of the fields it set, whether
-  /// it created the record, and which of those fields had never been set before.
-  (Entry, Map<String, Object?>, bool, Set<String>) apply(Change c) {
-    final key = _key(c.space, c.type, c.rid);
-    var entry = _byKey[key];
+  /// it created the record, which of those fields had never been set before, and how to take it
+  /// back.
+  (Entry, Map<String, Object?>, bool, Set<String>, Undo) apply(Change c) {
+    var entry = at(c.space, c.type, c.rid);
     final creating = entry == null;
+    final fieldNames = <String>[], timeNames = <String>[];
+    final fieldValues = <Object?>[], timeValues = <Object?>[];
     if (entry == null) {
       entry = Entry(c.type, c.rid, c.space, c.hlc, c.actor, c.device);
-      _byKey[key] = entry;
       ((_byType[c.type] ??= {})[c.rid] ??= []).add(entry);
+    } else {
+      // What the change will touch, as it was before any of it: the top-level fields, the times
+      // it sets, and the entry times a whole-field write clears.
+      final fields = entry.fields, times = entry.times;
+      void field(String name) {
+        if (fieldNames.contains(name)) return;
+        fieldNames.add(name);
+        fieldValues.add(fields.containsKey(name) ? fields[name] : absent);
+      }
+
+      void time(String name) {
+        if (timeNames.contains(name)) return;
+        timeNames.add(name);
+        timeValues.add(times.containsKey(name) ? times[name] : absent);
+      }
+
+      for (final name in c.fields.keys) {
+        final dot = name.indexOf('.');
+        if (dot > 0 && !name.startsWith('_')) {
+          field(name.substring(0, dot));
+        } else {
+          field(name);
+          if (_mayHaveEntryTimes(entry, name)) {
+            for (final k in times.keys) {
+              if (k.startsWith('$name.')) time(k);
+            }
+          }
+        }
+        time(name);
+      }
     }
+    final undo = Undo(entry, creating, fieldNames, fieldValues, timeNames, timeValues, entry.updated, entry.updatedBy);
     final before = <String, Object?>{};
-    final absent = <String>{};
+    final absentBefore = <String>{};
     for (final f in c.fields.entries) {
       final name = f.key;
-      if (!entry.has(name)) absent.add(name);
+      if (!entry.has(name)) absentBefore.add(name);
       before[name] = entry.valueOf(name);
       final dot = name.indexOf('.');
       if (dot > 0 && !name.startsWith('_')) {
@@ -133,21 +240,61 @@ class RecordStore {
         map[name.substring(dot + 1)] = copyJson(f.value);
         entry.fields[head] = map;
       } else {
+        if (_mayHaveEntryTimes(entry, name)) entry.times.removeWhere((k, _) => k.startsWith('$name.'));
         entry.fields[name] = copyJson(f.value);
-        entry.times.removeWhere((k, _) => k.startsWith('$name.'));
       }
       entry.times[name] = c.hlc;
     }
     entry.updated = c.hlc;
     entry.updatedBy = c.actor;
     entry._rec = null;
-    version++;
-    return (entry, before, creating, absent);
+    _touched(c.type, c.space);
+    return (entry, before, creating, absentBefore, undo);
   }
 
+  /// Whether `"<name>.<key>"` field times may exist on [entry]: only entry writes make them, and
+  /// those leave a map in the field, so any other value means there are none to clear.
+  static bool _mayHaveEntryTimes(Entry entry, String name) => name.startsWith('_') || entry.fields[name] is Map;
+
+  /// Takes back a change [apply] made, the newest first.
+  void undo(Undo u) {
+    final entry = u.entry;
+    if (u.created) {
+      final byId = _byType[entry.type]!;
+      final list = byId[entry.id]!..remove(entry);
+      if (list.isEmpty) byId.remove(entry.id);
+      if (byId.isEmpty) _byType.remove(entry.type);
+    } else {
+      for (var i = 0; i < u.fieldNames.length; i++) {
+        final v = u.fieldValues[i];
+        if (identical(v, absent)) {
+          entry.fields.remove(u.fieldNames[i]);
+        } else {
+          entry.fields[u.fieldNames[i]] = v;
+        }
+      }
+      for (var i = 0; i < u.timeNames.length; i++) {
+        final v = u.timeValues[i];
+        if (identical(v, absent)) {
+          entry.times.remove(u.timeNames[i]);
+        } else {
+          entry.times[u.timeNames[i]] = v as Hlc;
+        }
+      }
+      entry.updated = u.updated;
+      entry.updatedBy = u.updatedBy;
+      entry._rec = null;
+    }
+    _touched(entry.type, entry.space);
+  }
+
+  /// Adds an entry as a snapshot recorded it.
+  void put(Entry e) => ((_byType[e.type] ??= {})[e.id] ??= []).add(e);
+
   void clear() {
-    _byKey.clear();
     _byType.clear();
+    _versions.clear();
     version++;
+    epoch++;
   }
 }

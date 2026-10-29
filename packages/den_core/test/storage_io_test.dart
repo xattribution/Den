@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:den_core/den_core.dart';
+import 'package:den_core/src/snapshot.dart';
 import 'package:den_core/storage_io.dart';
 import 'package:test/test.dart';
 
@@ -129,5 +130,48 @@ void main() {
     File('${dir.path}${Platform.pathSeparator}meta.json').writeAsStringSync('{"broken": ');
     File('${dir.path}${Platform.pathSeparator}meta.json.tmp').writeAsStringSync('{"counter": 3}');
     expect(await storage.loadMeta(), {'counter': 3}, reason: 'falls back to a finished temporary file');
+  });
+
+  test('a snapshot is replaced whole, and cleared with everything else', () async {
+    final storage = FileStorage(dir.path);
+    expect(await storage.loadSnapshot(), isNull);
+    await storage.saveSnapshot('first');
+    await storage.saveSnapshot('second\nwith lines');
+    expect(await storage.loadSnapshot(), 'second\nwith lines');
+    expect(File('${dir.path}${Platform.pathSeparator}snapshot.json.tmp').existsSync(), isFalse);
+    // A write cut short leaves a temporary file behind, never a half-written snapshot.
+    File('${dir.path}${Platform.pathSeparator}snapshot.json.tmp').writeAsStringSync('half');
+    expect(await FileStorage(dir.path).loadSnapshot(), 'second\nwith lines');
+    await storage.clear();
+    expect(await storage.loadSnapshot(), isNull);
+    expect(dir.listSync(), isEmpty);
+  });
+
+  test('a device on files opens from its snapshot to the same state', () async {
+    snapshotCheckDelay = Duration.zero;
+    final clock = TestClock.at(DateTime.utc(2026, 2, 1, 15));
+    final keys = await DeviceKeys.generate();
+    final den = await openDen(clock, storage: FileStorage(dir.path), keys: keys);
+    await den.createFamily(
+      familyName: 'Park family',
+      timezone: 'America/New_York',
+      yourName: 'Jin',
+      deviceName: 'Phone',
+      deviceKind: DeviceKind.phone,
+    );
+    final list = await den.addList(title: 'Groceries', kind: ListKind.shopping);
+    for (var i = 0; i < snapshotEvery; i++) {
+      clock.advance(const Duration(minutes: 7));
+      await den.addItem(list, text: 'Item $i');
+    }
+    await den.debugIdle();
+    expect(File('${dir.path}${Platform.pathSeparator}snapshot.json').existsSync(), isTrue);
+    final export = jsonEncode(den.exportJson());
+    await den.close();
+    final reopened = await openDen(clock, storage: FileStorage(dir.path), keys: keys);
+    expect(reopened.debugOpenedFromSnapshot, isTrue);
+    expect(jsonEncode(reopened.exportJson()), export);
+    await reopened.debugIdle();
+    await reopened.close();
   });
 }

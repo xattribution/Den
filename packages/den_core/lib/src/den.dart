@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
 
@@ -13,12 +14,14 @@ import 'ids.dart';
 import 'materializer.dart';
 import 'model.dart';
 import 'order_keys.dart';
+import 'parallel.dart';
 import 'permissions.dart';
 import 'points.dart';
 import 'recovery.dart';
 import 'rrule.dart';
 import 'schema.dart';
 import 'secrets.dart';
+import 'snapshot.dart';
 import 'space_keys.dart';
 import 'storage.dart';
 import 'store.dart';
@@ -96,9 +99,36 @@ class Den {
   String? _actingVia;
   Timer? _actingTimer;
   Future<void> _tail = Future.value();
-  int _cacheVersion = -1;
-  String? _cacheActor;
-  final Map<String, Object?> _cache = {};
+
+  /// Memoized views, least recently used first ([_memo]).
+  final Map<String, _Memo> _memos = {};
+
+  /// The occurrences of each repeating event (or one with changed occurrences) in the windows
+  /// asked for lately, by the event's record as it is now.
+  Map<Rec, _EventOccurrences> _occurrenceCache = {};
+
+  // Snapshots (see [SnapshotStorage]): written only to storage that keeps them.
+  late final bool _snapshots = _storage is SnapshotStorage;
+
+  /// Change id -> its digest hash ([changeHash]), for every change held, once known.
+  final Map<String, Uint8List> _hashes = {};
+
+  /// False while [open]'s background check of the stored log runs; no snapshot is written until
+  /// it has vouched for every change.
+  bool _settled = true;
+  bool _closed = false;
+
+  /// Bumped when the device leaves its family, so work started before can't write after.
+  int _generation = 0;
+
+  /// How many changes the stored snapshot covers, and its window's first change: a change
+  /// ordered before that makes the next open replay from scratch, so the snapshot is written
+  /// again ([_staleMarks]).
+  int _snapshotCount = 0;
+  Change? _snapshotBoundary;
+  int _staleMarks = 0;
+  int _staleSaved = 0;
+  Future<void>? _snapshotting;
 
   // ---------------------------------------------------------------- lifecycle and identity
 
@@ -107,7 +137,12 @@ class Den {
     required DenStorage storage,
     required DeviceKeys keys,
     int Function()? now,
-  }) async {
+  }) =>
+      _open(storage, keys, now);
+
+  /// [open]; with [copying], the state is copied from that engine's (whose log [storage] holds)
+  /// instead of replayed.
+  static Future<Den> _open(DenStorage storage, DeviceKeys keys, int Function()? now, {Materializer? copying}) async {
     final den = Den._(
       storage,
       keys,
@@ -119,7 +154,26 @@ class Den {
     den._pubkeys[den.deviceId] = keys.pubkey;
     final changes = await storage.loadChanges();
     changes.forEach(den._learnKey);
-    den._mat.add(changes);
+    SnapshotHeader? snapshot;
+    if (storage is SnapshotStorage && copying == null) {
+      try {
+        final text = await (storage as SnapshotStorage).loadSnapshot();
+        if (text != null) snapshot = SnapshotHeader.parse(text);
+      } on Object {
+        snapshot = null;
+      }
+    }
+    if (snapshot != null && (snapshot.familyId != den._root.familyId || snapshot.founderPubkey != den._root.founderPubkey)) {
+      snapshot = null;
+    }
+    // From the snapshot, with the changes it doesn't cover on top; else the whole log.
+    final rest = snapshot == null ? null : den._mat.restore(snapshot, changes, root: den._root);
+    den._fromSnapshot = rest != null;
+    if (copying != null) {
+      den._mat.copyFrom(copying);
+    } else {
+      den._mat.add(rest ?? changes);
+    }
     den._observeApplied();
     var own = 0;
     for (final c in changes) {
@@ -128,21 +182,194 @@ class Den {
       own = math.max(own, c.counter);
     }
     den._counter = math.max(den._counter, own);
+    if (den._snapshots && copying == null) {
+      den._settled = false;
+      den._settling = den._settle(changes, snapshot, restored: rest != null);
+    }
+    engineProbes[den] = den._probe;
     return den;
+  }
+
+  Future<void>? _settling;
+  bool _fromSnapshot = false;
+
+  /// What tests see of the work [open] started.
+  EngineProbe get _probe => EngineProbe(
+        fullReplays: () => _mat.fullReplays,
+        openedFromSnapshot: () => _fromSnapshot,
+        idle: () async {
+          await _settling;
+          while (_snapshotting != null) {
+            await _snapshotting;
+          }
+        },
+      );
+
+  /// After [open], off the critical path: checks the stored log against the snapshot it opened
+  /// from. The changes the snapshot covers must still give its digest (so stored changes that were
+  /// altered are caught without checking every signature again); the others, stored since it was
+  /// written, have their signatures checked. A change that fails is dropped, as if it had never
+  /// arrived. Without a snapshot (a log from before snapshots, or one that couldn't be used) the
+  /// stored log is trusted as before, every change having been checked when it arrived.
+  ///
+  /// Then, with every change vouched for, a snapshot is written if one is due.
+  Future<void> _settle(List<Change> held, SnapshotHeader? snapshot, {required bool restored}) async {
+    final generation = _generation;
+    bool gone() => _closed || generation != _generation;
+    try {
+      await Future<void>.delayed(Duration.zero);
+      final seen = <String>{};
+      final covered = <Change>[], unvouched = <Change>[];
+      for (final c in held) {
+        if (!seen.add(c.id) || !_mat.contains(c.id)) continue;
+        (snapshot == null || snapshot.covers(c.id) ? covered : unvouched).add(c);
+      }
+      final bad = <String>{};
+      var mismatch = false;
+      final checked = await checkChanges(unvouched, pubkeys: [for (final c in unvouched) _pubkeys[c.device]]);
+      if (gone()) return;
+      for (var i = 0; i < unvouched.length; i++) {
+        final h = checked[i];
+        if (h == null || !await recoveryProofHolds(unvouched[i], familyId)) {
+          bad.add(unvouched[i].id);
+        } else {
+          _hashes[unvouched[i].id] = h;
+        }
+      }
+      // The digest of everything else is a lot of hashing: not while the first screens draw.
+      await Future<void>.delayed(snapshotCheckDelay);
+      if (gone()) return;
+      final hashes = await checkChanges(covered, verify: false);
+      if (gone()) return;
+      for (var i = 0; i < covered.length; i++) {
+        _hashes[covered[i].id] = hashes[i]!;
+      }
+      if (snapshot != null) {
+        covered.sort(changeOrder);
+        final digest = digestOf([for (final c in covered) _hashes[c.id]!]);
+        if (!_sameBytes(digest, snapshot.digest)) {
+          // Stored changes the snapshot vouched for aren't the ones it saw: check them all, and
+          // build the state from what is stored rather than from the snapshot.
+          final again = await checkChanges(covered, pubkeys: [for (final c in covered) _pubkeys[c.device]]);
+          if (gone()) return;
+          for (var i = 0; i < covered.length; i++) {
+            if (again[i] == null) bad.add(covered[i].id);
+          }
+          mismatch = true;
+          _staleMarks++;
+        } else {
+          _snapshotCount = snapshot.count;
+          final first = snapshot.windowFirst;
+          _snapshotBoundary = first != null ? _mat.byId(first) : (covered.isEmpty ? null : covered.last);
+          if (!restored) _staleMarks++;
+        }
+      }
+      if (bad.isNotEmpty || mismatch) {
+        await _locked(() async {
+          if (gone()) return;
+          final types = mismatch ? RecordType.all : {for (final id in bad) ?_mat.byId(id)?.type};
+          for (final id in bad) {
+            _hashes.remove(id);
+          }
+          _mat.remove(bad);
+          if (mismatch) _mat.replay();
+          _staleMarks++;
+          _emit(types);
+        });
+      }
+      if (gone()) return;
+      _settled = true;
+      _maybeSnapshot();
+    } on Object {
+      // Left unsettled: no snapshot is written this time, and the next open checks again.
+    }
+  }
+
+  static bool _sameBytes(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// Writes a snapshot when enough has changed since the last, or the last no longer fits. A log
+  /// shorter than [snapshotEvery] replays quickly enough without one.
+  void _maybeSnapshot() {
+    if (!_snapshots || !_settled || _closed || _snapshotting != null || !hasFamily) return;
+    final held = _mat.log.length;
+    if (held < snapshotEvery) return;
+    if (_staleMarks == _staleSaved && held - _snapshotCount < snapshotEvery) return;
+    _snapshotting = _writeSnapshot().whenComplete(() {
+      _snapshotting = null;
+      if (_mat.log.length >= snapshotEvery && (_staleMarks != _staleSaved || _mat.log.length - _snapshotCount >= snapshotEvery)) {
+        // Still behind (it moved on while this one was written): only if this one got written.
+        if (_lastSnapshotOk) _maybeSnapshot();
+      }
+    });
+  }
+
+  bool _lastSnapshotOk = false;
+
+  /// Copies the state (inside the lock, so no write is half applied), encodes it while the engine
+  /// moves on, and saves it unless the device left its family meanwhile.
+  Future<void> _writeSnapshot() async {
+    _lastSnapshotOk = false;
+    try {
+      await Future<void>.delayed(Duration.zero);
+      final generation = _generation;
+      SnapshotCapture? capture;
+      var marks = 0;
+      await _locked(() async {
+        if (_closed || generation != _generation || !hasFamily) return;
+        final log = _mat.log;
+        final hashes = <List<int>>[];
+        for (final c in log) {
+          final h = _hashes[c.id];
+          if (h == null) return;
+          hashes.add(h);
+        }
+        marks = _staleMarks;
+        capture = _mat.capture(root: _root, windowFrom: _now() - snapshotWindow.inMilliseconds, digest: digestOf(hashes));
+      });
+      final taken = capture;
+      if (taken == null) return;
+      final text = await taken.encode();
+      await _locked(() async {
+        if (generation != _generation) return;
+        await (_storage as SnapshotStorage).saveSnapshot(text);
+        _snapshotCount = taken.log.length;
+        _snapshotBoundary = taken.boundary;
+        _staleSaved = marks;
+        _lastSnapshotOk = true;
+      });
+    } on Object {
+      // Not written: the next open replays more of the log, and a later write tries again.
+    }
+  }
+
+  /// Notes changes just added to the log: one ordered before the stored snapshot's window means
+  /// the snapshot should be written again.
+  void _noteAdded(Iterable<Change> added) {
+    final boundary = _snapshotBoundary;
+    if (!_snapshots || boundary == null) return;
+    if (added.any((c) => changeOrder(c, boundary) < 0)) _staleMarks++;
   }
 
   /// Keeps this device's clock past every valid change, so its next write is the newest. Invalid
   /// changes don't move it: a device nobody approved can't push the family's clocks ahead.
   void _observeApplied() {
-    final applied = _mat.applied;
-    if (applied.isNotEmpty) _clock.observe(applied.last.change.hlc);
+    final newest = _mat.newestApplied;
+    if (newest != null) _clock.observe(newest);
   }
 
   /// Ends the [onChange] stream and the acting window's timer.
-  Future<void> close() {
+  Future<void> close() async {
+    _closed = true;
     _actingTimer?.cancel();
     _actingTimer = null;
-    return _changes.close();
+    await _snapshotting;
+    await _changes.close();
   }
 
   /// The engine's clock: UTC milliseconds now.
@@ -435,8 +662,14 @@ class Den {
           ..clear()
           ..[deviceId] = _keys.pubkey;
         _mat.clear();
-        _cache.clear();
-        _cacheVersion = -1;
+        _memos.clear();
+        _occurrenceCache = {};
+        _generation++;
+        _hashes.clear();
+        _snapshotCount = 0;
+        _snapshotBoundary = null;
+        _staleMarks = _staleSaved = 0;
+        _settled = true;
         await _saveMeta();
         _emit({...RecordType.all, actingChanged});
       });
@@ -458,7 +691,7 @@ class Den {
   int get _weekStart => family?.weekStart ?? 0;
 
   /// Members in display order, removed members excluded.
-  List<Member> get members => _memo('members', () {
+  List<Member> get members => _memo('members', const {RecordType.member}, visible: false, () {
         final list = [
           for (final e in _mat.store.liveOfType(RecordType.member))
             if (e.space == Space.family) Member(e.rec),
@@ -477,7 +710,7 @@ class Den {
     return e == null ? null : Member(e.rec);
   }
 
-  List<Device> get devices => _memo('devices', () {
+  List<Device> get devices => _memo('devices', const {RecordType.device}, visible: false, () {
         return [
           for (final e in _mat.store.liveOfType(RecordType.device))
             if (e.space == Space.family) Device(e.rec),
@@ -495,7 +728,7 @@ class Den {
   /// Devices waiting for a parent's approval.
   List<Device> get pendingDevices => devices.where((d) => !d.approved && !d.revoked).toList();
 
-  List<EventCategory> get categories => _memo('categories', () {
+  List<EventCategory> get categories => _memo('categories', const {RecordType.category}, visible: false, () {
         return [
           for (final e in _mat.store.liveOfType(RecordType.category))
             if (e.space == Space.family) EventCategory(e.rec),
@@ -518,14 +751,17 @@ class Den {
 
   /// The spaces whose records the current actor on this device may see: what the device holds,
   /// narrowed to what the acting member may read.
-  Set<String> get readableSpaces {
-    if (!isApproved) return const {};
-    final held = spacesForDevice(deviceId);
-    final a = actor;
-    if (a == null) return held;
-    final f = family;
-    return {for (final s in held) if (canRead(a, s, f)) s};
-  }
+  Set<String> get readableSpaces => _memo('readable', _whoReadsWhat, visible: false, () {
+        if (!isApproved) return const <String>{};
+        final held = spacesForDevice(deviceId);
+        final a = actor;
+        if (a == null) return held;
+        final f = family;
+        return Set<String>.unmodifiable({for (final s in held) if (canRead(a, s, f)) s});
+      });
+
+  /// What decides who may read which spaces: the family's policy, its people and its devices.
+  static const Set<String> _whoReadsWhat = {RecordType.family, RecordType.member, RecordType.device};
 
   Future<void> updateFamily(Map<String, Object?> patch) async {
     final id = familyId;
@@ -837,7 +1073,7 @@ class Den {
       'floor': Map<String, Object?>.of(_floor),
       'spaceKeys': _keyringJson(),
     });
-    final copy = await Den.open(storage: storage, keys: _keys, now: _now);
+    final copy = await Den._open(storage, _keys, _now, copying: _mat);
     copy
       .._actingMember = _actingMember
       .._actingUntil = _actingUntil
@@ -1077,30 +1313,113 @@ class Den {
   // ---------------------------------------------------------------- calendar
 
   /// Live events the actor may see, by start.
-  List<Event> get events => _memo('events', () {
-        return [for (final e in _visibleLive(RecordType.event)) Event(e.rec)]
+  List<Event> get events => _memo('events', const {RecordType.event}, () {
+        return [for (final e in _visibleLive(RecordType.event)) _eventOf(e.rec)]
           ..sort((a, b) => a.start != b.start ? a.start.compareTo(b.start) : a.id.compareTo(b.id));
       });
 
-  Map<String, Map<int, EventException>> get _exceptions => _memo('exceptions', () {
-        final out = <String, Map<int, EventException>>{};
+  /// One [Event] per version of an event record, wherever it's asked for.
+  final Expando<Event> _eventViews = Expando();
+  Event _eventOf(Rec rec) => _eventViews[rec] ??= Event(rec);
+
+  /// The live events the actor may see, sorted for windows: those that happen once and have no
+  /// changed occurrence, by start (with the longest one's length, how far before a window one can
+  /// start and still reach into it), and the rest, which repeat or have changed occurrences.
+  ({List<Entry> once, List<int> starts, int longest, List<Entry> others}) get _eventIndex =>
+      _memo('eventIndex', const {RecordType.event, RecordType.eventException}, () {
+        final exceptions = _exceptions;
+        final once = <(int, Entry)>[];
+        final others = <Entry>[];
+        var longest = 0;
+        for (final e in _visibleLive(RecordType.event)) {
+          final f = e.fields;
+          if (_repeats(f['rrule']) || (exceptions[e.space]?.containsKey(e.id) ?? false)) {
+            others.add(e);
+          } else {
+            final start = (f['start'] as num).toInt();
+            once.add((start, e));
+            final length = (f['end'] as num).toInt() - start;
+            if (length > longest) longest = length;
+          }
+        }
+        once.sort((a, b) {
+          final s = a.$1.compareTo(b.$1);
+          return s != 0 ? s : a.$2.id.compareTo(b.$2.id);
+        });
+        return (once: [for (final o in once) o.$2], starts: [for (final o in once) o.$1], longest: longest, others: others);
+      });
+
+  /// Whether an event with this `rrule` repeats, as [ruleOf] reads it.
+  static bool _repeats(Object? rrule) {
+    if (rrule is! String || rrule.isEmpty) return false;
+    try {
+      RecurrenceRule.parse(rrule);
+      return true;
+    } on FormatException {
+      return false;
+    }
+  }
+
+  /// Changed occurrences the actor may see: space -> event id -> series start -> the change.
+  Map<String, Map<String, Map<int, EventException>>> get _exceptions =>
+      _memo('exceptions', const {RecordType.eventException}, () {
+        final out = <String, Map<String, Map<int, EventException>>>{};
         for (final e in _visibleLive(RecordType.eventException)) {
           final x = EventException(e.rec);
-          (out['${e.space}|${x.event}'] ??= {})[x.occurrence] = x;
+          ((out[e.space] ??= {})[x.event] ??= {})[x.occurrence] = x;
         }
         return out;
       });
 
-  Map<int, EventException> _exceptionsFor(Event e) => _exceptions['${e.space}|${e.id}'] ?? const {};
+  Map<int, EventException> _exceptionsFor(Event e) => _exceptions[e.space]?[e.id] ?? const {};
 
   /// Occurrences overlapping [start, end) (UTC ms), exceptions applied, sorted by start.
-  List<Occurrence> occurrences(int start, int end) {
-    final zoneName = _zone;
-    final out = <Occurrence>[
-      for (final e in events) ...occurrencesOf(e, _exceptionsFor(e), start, end, zoneName),
-    ];
-    out.sort(compareOccurrences);
-    return out;
+  List<Occurrence> occurrences(int start, int end) => List.of(_occurrencesIn(start, end));
+
+  /// [occurrences], shared: kept until an event, an occurrence or the family's time zone changes,
+  /// and then worked out again only for the events that changed.
+  List<Occurrence> _occurrencesIn(int start, int end) =>
+      _memo('occurrences|$start|$end', const {RecordType.event, RecordType.eventException, RecordType.family}, () {
+        final zoneName = _zone;
+        final index = _eventIndex;
+        final out = <Occurrence>[];
+        // Events that happen once: only those starting in the window, or before it by no more
+        // than the longest one lasts, can reach into it.
+        final starts = index.starts;
+        var lo = 0, hi = starts.length;
+        final from = start - index.longest;
+        while (lo < hi) {
+          final mid = (lo + hi) >> 1;
+          if (starts[mid] < from) {
+            lo = mid + 1;
+          } else {
+            hi = mid;
+          }
+        }
+        for (var i = lo; i < starts.length && starts[i] < end; i++) {
+          out.addAll(occurrencesOf(_eventOf(index.once[i].rec), const {}, start, end, zoneName));
+        }
+        // The rest, kept per event and window until the event or its occurrences change.
+        final kept = _occurrenceCache;
+        final next = <Rec, _EventOccurrences>{};
+        for (final entry in index.others) {
+          final e = _eventOf(entry.rec);
+          final exceptions = _exceptionsFor(e);
+          var cached = kept[e.rec];
+          if (cached == null || !cached.holds(exceptions, zoneName)) cached = _EventOccurrences(exceptions, zoneName);
+          next[e.rec] = cached;
+          out.addAll(cached.window(start, end) ?? cached.keep(start, end, occurrencesOf(e, exceptions, start, end, zoneName)));
+        }
+        _occurrenceCache = next;
+        out.sort(_compareOccurrences);
+        return out;
+      });
+
+  /// [compareOccurrences], then which occurrence of the series: so an occurrence moved onto
+  /// another's start always sorts the same way.
+  static int _compareOccurrences(Occurrence a, Occurrence b) {
+    final c = compareOccurrences(a, b);
+    return c != 0 ? c : a.seriesStart.compareTo(b.seriesStart);
   }
 
   Event? event(String id) {
@@ -1385,7 +1704,7 @@ class Den {
 
   // ---------------------------------------------------------------- chores
 
-  List<Chore> get chores => _memo('chores', () {
+  List<Chore> get chores => _memo('chores', const {RecordType.chore}, () {
         return [for (final e in _visibleLive(RecordType.chore)) Chore(e.rec)]
           ..sort((a, b) {
             final t = a.title.compareTo(b.title);
@@ -1404,10 +1723,21 @@ class Den {
   }
 
   /// Chores scheduled on [date] (local), plus earlier one-off chores still not done.
-  List<ChoreDay> choresOn(String date) {
+  List<ChoreDay> choresOn(String date) => List.of(_choresOn(date));
+
+  /// What chores and their check-offs show, with who's who and the family's week.
+  static const Set<String> _choreReads = {RecordType.chore, RecordType.completion, RecordType.member, RecordType.family};
+
+  /// [choresOn], shared: kept until a chore, a check-off or who's who changes, or the minute does
+  /// (a chore turns late at its due time).
+  List<ChoreDay> _choresOn(String date) {
     final today = todayDate();
     final wall = wallTime(_zone, _now());
     final nowMinutes = wall.hour * 60 + wall.minute;
+    return _memo('choresOn|$date|$today|$nowMinutes', _choreReads, () => _choresOnNow(date, today, nowMinutes));
+  }
+
+  List<ChoreDay> _choresOnNow(String date, String today, int nowMinutes) {
     ChoreDay dayOf(Chore c, String d) => choreDay(
           chore: c,
           date: d,
@@ -1451,7 +1781,7 @@ class Den {
     final seen = <String>{};
     final out = <ChoreDay>[];
     for (var i = days; i >= 0; i--) {
-      for (final cd in choresOn(addDays(today, -i))) {
+      for (final cd in _choresOn(addDays(today, -i))) {
         if (cd.late && seen.add('${cd.chore.id}@${cd.date}')) out.add(cd);
       }
     }
@@ -1677,7 +2007,7 @@ class Den {
   // ---------------------------------------------------------------- lists
 
   /// Lists in display order with their items: pinned first, then by order.
-  List<ListState> get lists => _memo('lists', () {
+  List<ListState> get lists => _memo('lists', const {RecordType.list, RecordType.item}, () {
         final items = <String, List<Item>>{};
         for (final e in _visibleLive(RecordType.item)) {
           final item = Item(e.rec);
@@ -1933,7 +2263,7 @@ class Den {
 
   /// Every reward the actor may see, retired ones too ([PointsSummary.rewards] has only those
   /// that can be asked for), cheapest first.
-  List<Reward> get rewards => _memo('rewards', () {
+  List<Reward> get rewards => _memo('rewards', const {RecordType.reward}, () {
         return [for (final e in _visibleLive(RecordType.reward)) Reward(e.rec)]
           ..sort((a, b) {
             final c = a.cost.compareTo(b.cost);
@@ -1942,7 +2272,7 @@ class Den {
       });
 
   /// Every goal the actor may see, by title.
-  List<Goal> get goals => _memo('goals', () {
+  List<Goal> get goals => _memo('goals', const {RecordType.goal}, () {
         return [for (final e in _visibleLive(RecordType.goal)) Goal(e.rec)]..sort((a, b) => a.title.compareTo(b.title));
       });
 
@@ -2067,7 +2397,7 @@ class Den {
 
   // ---------------------------------------------------------------- AI and automation connections
 
-  List<Connection> get connections => _memo('connections', () {
+  List<Connection> get connections => _memo('connections', const {RecordType.connection}, () {
         return [for (final e in _visibleLive(RecordType.connection)) Connection(e.rec)]
           ..sort((a, b) => a.label.compareTo(b.label));
       });
@@ -2266,10 +2596,13 @@ class Den {
 
   /// The latest change that turned whether parents see [memberId]'s "Just me" items one way or
   /// the other, or null when nobody ever has: what that person's Today and History tell them.
-  PrivacyChange? privacyChange(String memberId) {
+  PrivacyChange? privacyChange(String memberId) =>
+      _memo('privacy|$memberId', const {RecordType.family}, visible: false, () => _privacyChange(memberId));
+
+  PrivacyChange? _privacyChange(String memberId) {
     final entry = 'oversight.$memberId';
     bool sees(Object? v) => (v is Map ? v['parentsSeePrivate'] : null) as bool? ?? true;
-    final applied = _mat.applied;
+    final applied = _mat.appliedToFamily;
     for (var i = applied.length - 1; i >= 0; i--) {
       final a = applied[i];
       final c = a.change;
@@ -2293,7 +2626,7 @@ class Den {
   // ---------------------------------------------------------------- calendar feeds
 
   /// Subscribed ICS calendars the actor may see (parents and hubs), by label.
-  List<Subscription> get subscriptions => _memo('subscriptions', () {
+  List<Subscription> get subscriptions => _memo('subscriptions', const {RecordType.subscription}, () {
         return [for (final e in _visibleLive(RecordType.subscription)) Subscription(e.rec)]
           ..sort((a, b) {
             final l = a.label.compareTo(b.label);
@@ -2393,7 +2726,7 @@ class Den {
       }
     }
     if (dates.isNotEmpty) {
-      final all = occurrences(dayStart(dates.first), dayStart(addDays(dates.last, 1)));
+      final all = _occurrencesIn(dayStart(dates.first), dayStart(addDays(dates.last, 1)));
       for (final d in dates) {
         final start = dayStart(d), end = dayStart(addDays(d, 1));
         for (final o in all) {
@@ -2408,7 +2741,7 @@ class Den {
             }
           }
         }
-        for (final cd in choresOn(d)) {
+        for (final cd in _choresOn(d)) {
           if (cd.date == d && cd.owner != null && ids.contains(cd.owner)) cellChores[(d, cd.owner!)]!.add(cd);
         }
       }
@@ -2569,7 +2902,17 @@ class Den {
       joinNames([for (final id in ids) member(id)?.name ?? 'someone']);
 
   List<Gap> gaps(int start, int end) {
-    final occ = occurrences(start, end);
+    final today = todayDate();
+    final wall = wallTime(_zone, _now());
+    final nowMinutes = wall.hour * 60 + wall.minute;
+    return List.of(_memo('gaps|$start|$end|$today|$nowMinutes', const {
+      RecordType.event, RecordType.eventException, RecordType.chore, RecordType.completion, //
+      RecordType.member, RecordType.family,
+    }, () => _gapsNow(start, end)));
+  }
+
+  List<Gap> _gapsNow(int start, int end) {
+    final occ = _occurrencesIn(start, end);
     final out = <Gap>[];
     for (final o in occ) {
       for (final r in o.rides) {
@@ -2584,8 +2927,10 @@ class Den {
     // Only people named on both events: an event for everyone would flag nearly everything.
     final everyoneIds = [for (final m in members) m.id];
     final timed = occ.where((o) => !o.allDay && o.end > o.start && o.assignees.isNotEmpty).toList();
+    // [occ] is sorted by start, so the events overlapping timed[i] that start no earlier are the
+    // run right after it: a sweep, not every pair.
     for (var i = 0; i < timed.length; i++) {
-      for (var j = i + 1; j < timed.length; j++) {
+      for (var j = i + 1; j < timed.length && timed[j].start < timed[i].end; j++) {
         final a = timed[i], b = timed[j];
         if (!(a.start < b.end && b.start < a.end)) continue;
         final both = [for (final id in everyoneIds) if (a.assignees.contains(id) && b.assignees.contains(id)) id];
@@ -2600,7 +2945,7 @@ class Den {
     }
     final today = todayDate();
     if (dayStart(today) < end && dayStart(addDays(today, 1)) > start) {
-      for (final cd in choresOn(today)) {
+      for (final cd in _choresOn(today)) {
         if (cd.date == today && cd.owner == null && !cd.done) {
           out.add(Gap(kind: GapKind.unowned, message: '${cd.chore.title} is up for grabs', occurrences: const []));
         }
@@ -2619,12 +2964,12 @@ class Den {
         maxLead = math.max(maxLead, m);
       }
     }
-    for (final x in _exceptions.values.expand((m) => m.values)) {
+    for (final x in _exceptions.values.expand((byEvent) => byEvent.values).expand((m) => m.values)) {
       for (final m in (x.patch['reminders'] as List? ?? const [])) {
         maxLead = math.max(maxLead, (m as num).toInt());
       }
     }
-    for (final o in occurrences(from, to + maxLead * 60000 + 1)) {
+    for (final o in _occurrencesIn(from, to + maxLead * 60000 + 1)) {
       if (memberId != null && o.assignees.isNotEmpty && !o.assignees.contains(memberId)) continue;
       for (final minutes in o.reminders.toSet()) {
         final at = o.start - minutes * 60000;
@@ -2650,7 +2995,7 @@ class Den {
     final lastDate = addDays(dateIn(zoneName, to + choreLead * 60000), 1);
     final seen = <String>{};
     for (var d = firstDate; d.compareTo(lastDate) <= 0; d = addDays(d, 1)) {
-      for (final cd in choresOn(d)) {
+      for (final cd in _choresOn(d)) {
         final due = cd.chore.dueTime;
         if (cd.done || due == null || !isLocalTime(due) || cd.chore.reminders.isEmpty) continue;
         if (!seen.add('${cd.chore.id}@${cd.date}')) continue;
@@ -2730,14 +3075,29 @@ class Den {
         candidates.values.forEach(_learnKey);
         final accepted = <Change>[];
         final rejected = <String, String>{};
+        final toCheck = <Change>[];
         for (final c in candidates.values) {
-          final pubkey = _pubkeys[c.device];
-          if (pubkey == null) {
+          if (_pubkeys[c.device] == null) {
             _pending[c.id] = c;
-          } else if (await verifySignature(c.signedBytes, c.sig, pubkey) && await recoveryProofHolds(c, familyId)) {
-            accepted.add(c);
           } else {
+            toCheck.add(c);
+          }
+        }
+        // Checked as a batch: in worker isolates where there are any, else in slices that let
+        // the page draw in between.
+        final checked = await checkChanges(
+          toCheck,
+          pubkeys: [for (final c in toCheck) _pubkeys[c.device]],
+          hash: _snapshots,
+        );
+        for (var i = 0; i < toCheck.length; i++) {
+          final c = toCheck[i], h = checked[i];
+          // A recovery proof is checked with the signature: signed by the key it names.
+          if (h == null || !await recoveryProofHolds(c, familyId)) {
             rejected[c.id] = 'The signature doesn\'t verify';
+          } else {
+            accepted.add(c);
+            if (_snapshots) _hashes[c.id] = h;
           }
         }
         while (_pending.length > maxPending) {
@@ -2748,6 +3108,7 @@ class Den {
         if (accepted.isNotEmpty) {
           await _storage.appendChanges(accepted);
           invalid = _mat.add(accepted);
+          _noteAdded(accepted);
           _observeApplied();
           // This device's own changes coming back from a peer (after a restore from an older
           // backup, say): never number a new change with an id the family already holds.
@@ -2771,6 +3132,7 @@ class Den {
         if (metaMoved) await _saveMeta();
         if (accepted.isNotEmpty) _emit({for (final c in accepted) c.type});
         if (accepted.isNotEmpty) await _afterKeyFacts();
+        _maybeSnapshot();
         return IngestResult(
           added: accepted.length,
           duplicate: duplicate,
@@ -2781,12 +3143,12 @@ class Den {
       });
 
   /// The spaces the given device should hold, per its owner, mode and the family's policy.
-  Set<String> spacesForDevice(String deviceId) {
-    final d = device(deviceId);
-    if (d == null || !d.approved || d.revoked) return {};
-    final owner = d.member == null ? null : member(d.member!);
-    return spacesFor(device: d, owner: owner, family: family, members: members);
-  }
+  Set<String> spacesForDevice(String deviceId) => _memo('spaces|$deviceId', _whoReadsWhat, visible: false, () {
+        final d = device(deviceId);
+        if (d == null || !d.approved || d.revoked) return const <String>{};
+        final owner = d.member == null ? null : member(d.member!);
+        return Set<String>.unmodifiable(spacesFor(device: d, owner: owner, family: family, members: members));
+      });
 
   // ---------------------------------------------------------------- space keys
 
@@ -3174,6 +3536,7 @@ class Den {
         );
         final rejection = _mat.check(unsigned);
         if (rejection != null) throw rejection.toException();
+        final bytes = unsigned.signedBytes;
         final signed = Change(
           id: unsigned.id,
           space: unsigned.space,
@@ -3183,19 +3546,24 @@ class Den {
           fields: unsigned.fields,
           device: deviceId,
           actor: unsigned.actor,
-          sig: await _keys.sign(unsigned.signedBytes),
+          sig: await _keys.sign(bytes),
         );
         final invalid = _mat.add([signed]);
         if (invalid.isNotEmpty) throw PermissionDenied(invalid.values.first);
         made.add(signed);
+        if (_snapshots) _hashes[signed.id] = changeHash(signed, bytes);
       }
       await _storage.appendChanges(made);
     } on Object {
       _mat.remove([for (final c in made) c.id]);
+      for (final c in made) {
+        _hashes.remove(c.id);
+      }
       rethrow;
     }
     _counter = counter;
     await _saveMeta();
+    _maybeSnapshot();
     final sinks = Zone.current[_recorders];
     if (sinks is List<List<String>>) {
       for (final ids in sinks) {
@@ -3210,14 +3578,42 @@ class Den {
     if (!_changes.isClosed && types.isNotEmpty) _changes.add(types);
   }
 
-  T _memo<T>(String key, T Function() build) {
+  /// Memoized views kept at most; the least recently used goes first.
+  static const int _maxMemos = 256;
+
+  /// [build]'s value, kept until a record of one of [types] changes. A [visible] view reads only
+  /// what the actor may see, so it is kept through changes in spaces they can't read and worked
+  /// out again when who is acting, or what they may read, changes.
+  T _memo<T>(String key, Set<String> types, T Function() build, {bool visible = true}) {
+    final store = _mat.store;
     final actorId = actor?.id;
-    if (_cacheVersion != _mat.store.version || _cacheActor != actorId) {
-      _cache.clear();
-      _cacheVersion = _mat.store.version;
-      _cacheActor = actorId;
+    final kept = _memos.remove(key);
+    if (kept != null && kept.storeVersion == store.version && kept.actor == actorId) {
+      _memos[key] = kept;
+      return kept.value as T;
     }
-    return _cache.putIfAbsent(key, build) as T;
+    final readable = visible ? readableSpaces : null;
+    var version = 0;
+    if (readable != null) {
+      version = store.versionOf(types, readable);
+    } else {
+      for (final t in types) {
+        version += store.versionOfType(t);
+      }
+    }
+    if (kept != null &&
+        kept.epoch == store.epoch &&
+        kept.actor == actorId &&
+        identical(kept.readable, readable) &&
+        kept.version == version) {
+      kept.storeVersion = store.version;
+      _memos[key] = kept;
+      return kept.value as T;
+    }
+    final value = build();
+    _memos[key] = _Memo(store.version, store.epoch, actorId, readable, version, value);
+    if (_memos.length > _maxMemos) _memos.remove(_memos.keys.first);
+    return value;
   }
 
   Iterable<Entry> _visibleLive(String type) {
@@ -3286,5 +3682,56 @@ class Den {
       for (final c in children) _Draft(childType, c.id, entry.space, {'_deleted': true}),
       _Draft(entry.type, entry.id, entry.space, {'_deleted': true}),
     ];
+  }
+}
+
+/// One memoized view and what it was worked out from.
+class _Memo {
+  _Memo(this.storeVersion, this.epoch, this.actor, this.readable, this.version, this.value);
+
+  /// [RecordStore.version] when last found current: unchanged means nothing at all changed.
+  int storeVersion;
+  final int epoch;
+  final String? actor;
+  final Set<String>? readable;
+  final int version;
+  final Object? value;
+}
+
+/// One event's occurrences in the windows asked for lately, while its changed occurrences and the
+/// family's time zone stay as they were (the event itself is the cache's key).
+class _EventOccurrences {
+  _EventOccurrences(this._exceptions, this._zone)
+      : _recs = _exceptions.isEmpty ? const {} : {for (final e in _exceptions.entries) e.key: e.value.rec};
+
+  final Map<int, EventException> _exceptions;
+  final Map<int, Rec> _recs;
+  final String _zone;
+  final List<(int, int, List<Occurrence>)> _windows = [];
+
+  /// Windows kept per event.
+  static const int _keep = 6;
+
+  bool holds(Map<int, EventException> exceptions, String zone) {
+    if (zone != _zone) return false;
+    if (identical(exceptions, _exceptions)) return true;
+    if (exceptions.length != _recs.length) return false;
+    for (final x in exceptions.entries) {
+      if (!identical(_recs[x.key], x.value.rec)) return false;
+    }
+    return true;
+  }
+
+  List<Occurrence>? window(int start, int end) {
+    for (final w in _windows) {
+      if (w.$1 == start && w.$2 == end) return w.$3;
+    }
+    return null;
+  }
+
+  List<Occurrence> keep(int start, int end, List<Occurrence> found) {
+    if (_windows.length >= _keep) _windows.removeAt(0);
+    _windows.add((start, end, found.isEmpty ? const <Occurrence>[] : found));
+    return found;
   }
 }
