@@ -275,6 +275,7 @@ class ActionRunner {
     try {
       final fc = c.on(fork);
       final r = await fork.recording(() => _guard(() => s.run(fc, input)));
+      c.shownZones.addAll(fc.shownZones);
       final result = r.value;
       if (result.isError) return result;
       final entries = fork.historyOf(r.changes);
