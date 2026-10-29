@@ -239,8 +239,16 @@ void main() {
     addTearDown(phone.close);
     await ownHub(at('smith'), phone);
     final args = ['--data', at('host'), '--port', '9'];
-    final (adopted, _, adoptErr) = await run(['adopt', at('smith'), '--hostname', 'den-smith.test', ...args]);
+    // A copy an adopt left halfway, which host.json doesn't list: moved aside, never deleted.
+    Directory('${at('host')}/logs').createSync(recursive: true);
+    await Process.run('cp', ['-r', at('smith'), '${at('host')}/logs/halfway']);
+    final (adopted, adoptOut, adoptErr) = await run(['adopt', at('smith'), '--hostname', 'den-smith.test', ...args]);
     expect(adopted, 0, reason: adoptErr);
+    expect(adoptOut, contains('Moved an unfinished copy'));
+    expect(Directory('${at('host')}/logs/halfway').existsSync(), isFalse);
+    final aside = Directory('${at('host')}/logs-aside').listSync();
+    expect(aside, hasLength(1));
+    expect(File('${aside.single.path}/keys.json').existsSync(), isTrue, reason: 'kept whole');
     final log = HostState(at('host')).find('den-smith.test')!;
     final inside = '${at('host')}/logs/${log.id}';
 
@@ -275,7 +283,7 @@ void main() {
     expect(HostState(at('host')).all, isEmpty);
   });
 
-  test("a family that doesn't open: its address answers 503, the host is unhealthy, it is tried again, and its address stays its own", () async {
+  test("a family that doesn't open: its address answers 503, the host is up and says why, it is tried again, and its address stays its own", () async {
     final phone = await createDemoFamily();
     addTearDown(phone.close);
     await ownHub(at('smith'), phone);
@@ -292,11 +300,13 @@ void main() {
       final status = await http.get(host.localUrl.resolve('/api/v1/hub/status'), headers: {'host': 'den-smith.test'});
       expect(status.statusCode, 503);
       expect(status.headers['retry-after'], isNotNull);
-      expect((await http.get(host.localUrl.resolve('/health'))).statusCode, 503, reason: 'Docker waits for every family');
+      final health = await http.get(host.localUrl.resolve('/health'));
+      expect(health.statusCode, 200, reason: "every family had its try: one that won't open doesn't hold up --wait");
+      expect(jsonDecode(health.body), containsPair('waiting', 1));
       final (_, statusOut, _) = await run(['status', '--family', 'den-smith.test', ...args]);
-      expect(statusOut, contains("isn't open yet"));
+      expect(statusOut, contains("isn't open: Another den_hub is using"));
       final (_, list, _) = await run(['families', ...args]);
-      expect(list, contains('not open yet'));
+      expect(list, contains('https://den-smith.test  id ${log.id}  not open: Another den_hub is using'));
       final (taken, _, takenErr) = await run(['add-family', '--hostname', 'den-smith.test', ...args]);
       expect(taken, 1);
       expect(takenErr, contains("address on this host already"));
@@ -340,5 +350,47 @@ void main() {
         ['restore', '--family', 'den-smith.test', '--data', at('host'), '--in', file, '--passphrase-env', 'DEN_BACKUP_PASSPHRASE', '--force'],
         env: env);
     expect(right, 0, reason: rightErr);
+  });
+
+  test('remove-family --delete-data: by its id for a family still on the host, in the running host; its address is free again', () async {
+    final host = await serveAt(at('host'));
+    final args = ['--data', at('host'), '--port', '${host.port}'];
+    try {
+      final (added, _, addErr) = await run(['add-family', '--hostname', 'den-smith.test', ...args]);
+      expect(added, 0, reason: addErr);
+      final log = HostState(at('host')).find('den-smith.test')!;
+      final dir = Directory('${at('host')}/logs/${log.id}');
+      final (_, list, _) = await run(['families', ...args]);
+      expect(list, contains('https://den-smith.test  id ${log.id}  setup:'));
+
+      // By its address, a family still on the host is never deleted; nor by another's id.
+      final (refused, _, refusedErr) = await run(['remove-family', '--family', 'den-smith.test', '--delete-data', ...args]);
+      expect(refused, 1);
+      expect(refusedErr, contains('--id ${log.id}'));
+      final (wrong, _, wrongErr) = await run(['remove-family', '--family', 'den-other.test', '--id', log.id, '--delete-data', ...args]);
+      expect(wrong, 1, reason: wrongErr);
+      expect(host.tenants, hasLength(2));
+      expect(dir.existsSync(), isTrue);
+
+      // By its id: the host lets it go and deletes it, so its record is gone from the running
+      // host and host.json alike.
+      final (deleted, out, err) = await run(['remove-family', '--family', 'den-smith.test', '--id', log.id, '--delete-data', ...args]);
+      expect(deleted, 0, reason: err);
+      expect(out, contains('deleted'));
+      expect(dir.existsSync(), isFalse);
+      expect(HostState(at('host')).all, isEmpty);
+      expect(host.tenants, hasLength(1));
+      // Its old address is never the first family's.
+      expect((await http.get(host.localUrl.resolve('/api/v1/hub/status'), headers: {'host': 'den-smith.test'})).statusCode, 404);
+
+      final (again, againOut, againErr) = await run(['add-family', '--hostname', 'den-smith.test', ...args]);
+      expect(again, 0, reason: againErr);
+      expect(againOut, contains('https://den-smith.test/#/setup/'), reason: 'a new family at the freed address');
+    } finally {
+      await host.stop();
+    }
+    final later = await serveAt(at('host'));
+    expect(later.tenants.map((t) => t.config.publicUrl?.host), contains('den-smith.test'));
+    await later.stop();
   });
 }

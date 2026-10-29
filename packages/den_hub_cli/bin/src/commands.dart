@@ -269,8 +269,11 @@ Future<int> status(FamilyTarget target, int port, CliIo io) async {
   final catchingUp = data.file('hub/$restoreMarkerDoc.json').existsSync();
   if (probe != null && probe.status == 503) {
     // A host still opening this family (or every family, at no family's address).
-    io.out.writeln('Running, but ${target.label} isn\'t open yet: the host is starting it, or tries it again shortly. '
-        'docker compose logs hub says why.');
+    final waiting = await waitingOn(target, port);
+    io.out.writeln(waiting?.error != null
+        ? 'Running, but ${target.label} isn\'t open: ${waiting!.error} The host tries it again every ${waiting.retry}s.'
+        : 'Running, but ${target.label} isn\'t open yet: the host is starting it, or tries it again shortly. '
+            'docker compose logs hub says why.');
     return 0;
   }
   final health = probe?.json;

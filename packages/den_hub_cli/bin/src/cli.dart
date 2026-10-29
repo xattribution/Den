@@ -90,7 +90,8 @@ ArgParser cliParser() {
     ..addOption('url', help: 'Its address with a scheme and port, when not https on 443')
     ..addFlag('dry-run', help: 'Say what it would do, and change nothing', negatable: false);
   _family(_common(root.addCommand('remove-family')))
-      .addFlag('delete-data', help: "Delete the family's data too", negatable: false);
+    ..addOption('id', help: 'The family by its id (den_hub families lists them): needed to delete the data of a family still on the host')
+    ..addFlag('delete-data', help: "Delete the family's data too", negatable: false);
   _common(root.addCommand('families'));
   return root;
 }
@@ -163,7 +164,8 @@ String _usage(ArgParser parser) => [
       '  add-family --hostname ADDRESS   Another family on this host; prints its setup link',
       '  adopt DIR --hostname ADDRESS [--dry-run]   Move a hub that ran on its own onto this host;',
       '                    it keeps its keys, so its phones keep syncing',
-      '  remove-family --family ADDRESS [--delete-data]',
+      '  remove-family --family ADDRESS   Take a family off this host; its data stays',
+      '  remove-family --id ID --delete-data   ... and delete its data (or --family ADDRESS of one taken off)',
       '  families          The families this host serves',
       '  --family ADDRESS  on setup-code, setup-link, open-linking, status, recover, backup and',
       '                    restore: that family (the first family without it)',
@@ -301,6 +303,18 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
       peerHubs: peerHubs,
       openLog: (l) => openLog(l, fresh: false),
       createLog: (l) => openLog(l, fresh: true),
+      // remove-family --delete-data, once the host has let the family go: its own lock says no
+      // backup or restore has it open.
+      deleteLog: (l) async {
+        final dir = data.log(l.id);
+        if (!Directory(dir.path).existsSync()) return;
+        await dir.lock();
+        try {
+          await Directory(dir.path).delete(recursive: true);
+        } finally {
+          await dir.unlock();
+        }
+      },
       // One family answers at any address while host.json lists no other, as a hub always has.
       single: true,
       // Until the first family is attached, its address answers 503, never another family.
@@ -321,7 +335,7 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
         rethrow;
       }
       // Every other family host.json lists; one that doesn't open is tried again, and its address
-      // answers 503 (and /health fails) until it does.
+      // answers 503 until it does (den_hub families says why).
       await host.openConfigured();
     } catch (_) {
       await host.stop();

@@ -17,10 +17,13 @@ import 'data_dir.dart';
 /// data directory itself.
 class FamilyTarget {
   /// Creates the target.
-  const FamilyTarget(this.data, {this.publicUrl, this.log});
+  FamilyTarget(this.data, {this.publicUrl, this.log, DataDir? host}) : host = host ?? data;
 
   /// The family's data directory: the host's own for the first family, `logs/<id>/` for others.
   final DataDir data;
+
+  /// The host's data directory (the first family's).
+  final DataDir host;
 
   /// The family's address, when known.
   final Uri? publicUrl;
@@ -65,12 +68,12 @@ FamilyTarget familyTarget(DataDir data, String? family, Map<String, String> env,
   if (first != null && normalizeHostname(first.host) == name) return FamilyTarget(data, publicUrl: first);
   final state = HostState(data.path);
   final found = state.find(family.trim()) ?? state.find(name);
-  if (found != null && !found.removed) return FamilyTarget(data.log(found.id), publicUrl: found.publicUrl, log: found);
+  if (found != null && !found.removed) return FamilyTarget(data.log(found.id), publicUrl: found.publicUrl, log: found, host: data);
   if (register) {
     final log = found?.copyWith(removed: false) ??
         HostedLog(id: HostedLog.newId(), publicUrl: Uri.parse('https://$name'), added: DateTime.now().toUtc().millisecondsSinceEpoch);
     state.put(log);
-    return FamilyTarget(data.log(log.id), publicUrl: log.publicUrl, log: log);
+    return FamilyTarget(data.log(log.id), publicUrl: log.publicUrl, log: log, host: data);
   }
   throw StateError('There\'s no family at $family on this host. den_hub families lists them.');
 }
@@ -131,6 +134,22 @@ Future<({int status, Map<String, Object?> json})?> hostCall(
     json = null;
   }
   return (status: r.statusCode, json: json is Map ? json.cast<String, Object?>() : <String, Object?>{});
+}
+
+/// Why the running host hasn't opened [target]'s family, as it says (`error`, and how often it
+/// tries again); null when it isn't waiting for it, or doesn't answer.
+Future<({String? error, int retry})?> waitingOn(FamilyTarget target, int port) async {
+  final id = target.log?.id;
+  if (id == null) return null;
+  try {
+    final running = await hostCall(port, target.host, 'GET', '/api/v1/host');
+    for (final w in (running?.json['waiting'] as List?) ?? const []) {
+      if (w is Map && w['id'] == id) return (error: w['error'] as String?, retry: (w['retry_seconds'] as int?) ?? 30);
+    }
+  } on StateError {
+    return null;
+  }
+  return null;
 }
 
 String _errorOf(Map<String, Object?> json, int status) {
@@ -343,8 +362,15 @@ Future<int> adopt(ArgResults a, DataDir data, int port, CliIo io) async {
       return 0;
     }
     if (!k.listed) {
-      // A copy an adopt left without telling the host: nothing ever served it.
-      if (!dry) await Directory(data.log(k.id!).path).delete(recursive: true);
+      // A copy an adopt left without telling the host: nothing ever served it. Moved aside, never
+      // deleted: whoever runs this deletes it once the family is fine.
+      if (dry) {
+        io.out.writeln('Would move aside ${data.log(k.id!).path}, an unfinished copy of this hub that the host doesn\'t list.');
+      } else {
+        final aside = await _moveAside(data, k.id!);
+        io.out.writeln('Moved an unfinished copy of this hub that the host doesn\'t list from ${data.log(k.id!).path} to $aside. '
+            'Delete it once the family is fine.');
+      }
       continue;
     }
     throw StateError(k.removed
@@ -447,6 +473,28 @@ Future<int> adopt(ArgResults a, DataDir data, int port, CliIo io) async {
   }
 }
 
+/// The directory where [_moveAside] puts copies in `logs/` the host doesn't list.
+const String _asideDir = 'logs-aside';
+
+/// Moves `logs/<id>/` (a copy of a hub the host doesn't list) to `logs-aside/<id>-<time>/` in
+/// the host's data directory, holding its lock so nothing has it open; returns where it went.
+Future<String> _moveAside(DataDir data, String id) async {
+  final copy = data.log(id);
+  try {
+    await copy.lock();
+  } on StateError {
+    throw StateError('${copy.path} is a copy of this hub that the host doesn\'t list, and something has it open. Stop that first.');
+  }
+  final to = [data.path, _asideDir, '$id-${DateTime.now().toUtc().millisecondsSinceEpoch}'].join(Platform.pathSeparator);
+  try {
+    Directory([data.path, _asideDir].join(Platform.pathSeparator)).createSync(recursive: true);
+    Directory(copy.path).renameSync(to);
+  } finally {
+    await copy.unlock();
+  }
+  return to;
+}
+
 /// Leaves a note in the adopted hub's own directory: the restore marker, so that hub, if it ever
 /// starts again, writes nothing of its own until a device of the family has synced with it (the
 /// changes the host writes as that same hub are on the family's devices).
@@ -464,53 +512,83 @@ void _markMoved(DataDir source, DataDir data, String id, CliIo io) {
   }
 }
 
-/// `den_hub remove-family --family den-smith.example.com [--delete-data]`: the host stops serving
-/// that family. Its data stays in `logs/<id>/` (add-family with the same address brings it
-/// back), unless `--delete-data`.
+/// `den_hub remove-family --family den-smith.example.com`: the host stops serving that family.
+/// Its data stays in `logs/<id>/` (add-family with the same address brings it back).
+///
+/// `--delete-data` deletes it too: for a family taken off already, by its address or id; for one
+/// still on the host only with `--id` (`den_hub families` lists the ids), so a mistyped name never
+/// deletes a family in use. With the host running, the host itself lets the family go and deletes
+/// it, so its record goes everywhere at once.
 Future<int> removeFamily(ArgResults a, DataDir data, int port, CliIo io) async {
-  final family = a['family'] as String?;
-  if (family == null || family.isEmpty) throw CliUsage('--family is required: the family\'s address (or, for one taken off, its id)');
+  final family = (a['family'] as String?)?.trim();
+  final givenId = (a['id'] as String?)?.trim();
+  if ((family == null || family.isEmpty) && (givenId == null || givenId.isEmpty)) {
+    throw CliUsage('--family is required: the family\'s address (or its id, or --id)');
+  }
   final first = primaryUrl(data, io.environment);
-  final name = familyName(family);
+  final name = family == null || family.isEmpty ? null : familyName(family);
   if (first != null && name != null && normalizeHostname(first.host) == name) {
     throw StateError('That\'s the first family, whose data is the host\'s own directory. It can\'t be removed.');
   }
   final state = HostState(data.path);
-  final log = state.find(family.trim()) ?? (name == null ? null : state.find(name));
-  if (log == null) {
-    final gone = name == null ? const <HostedLog>[] : state.removedAt(name);
-    throw StateError(gone.length > 1
-        ? 'More than one family was taken off $name (${gone.map((l) => l.id).join(', ')}): give --family its id.'
-        : 'There\'s no family at $family on this host. den_hub families lists them.');
+  final HostedLog? log;
+  if (givenId != null && givenId.isNotEmpty) {
+    log = state.log(givenId);
+    if (log == null) throw StateError('No family on this host has the id $givenId. den_hub families lists them, with their ids.');
+    if (family != null && family.isNotEmpty && family != givenId && log.hostname != name) {
+      throw StateError('The family with the id $givenId is at ${log.hostname ?? '(no address)'}, not $family. Nothing changed.');
+    }
+  } else {
+    log = state.find(family!) ?? (name == null ? null : state.find(name));
+    if (log == null) {
+      final gone = name == null ? const <HostedLog>[] : state.removedAt(name);
+      throw StateError(gone.length > 1
+          ? 'More than one family was taken off $name (${gone.map((l) => l.id).join(', ')}): give --id.'
+          : 'There\'s no family at $family on this host. den_hub families lists them.');
+    }
   }
   final label = log.hostname ?? log.id;
   final dir = data.log(log.id);
   final delete = a['delete-data'] == true;
-  if (!log.removed) {
-    final running = await hostCall(port, data, 'DELETE', '/api/v1/host/families/${log.id}');
-    if (running != null) {
-      if (running.status != 200) throw StateError(_errorOf(running.json, running.status));
-    } else {
-      await data.lock();
-      try {
-        HostState(data.path).put(log.copyWith(removed: true));
-      } finally {
-        await data.unlock();
-      }
-    }
-  } else if (!delete) {
+  final byId = (givenId != null && givenId.isNotEmpty) || family == log.id;
+  if (delete && !log.removed && !byId) {
+    throw StateError('$label is still on this host, so its data isn\'t deleted by its address. Take it off first '
+        '(den_hub remove-family --family $label), then delete its data; or give its id, --id ${log.id}, to do both. Nothing changed.');
+  }
+  if (log.removed && !delete) {
     io.out.writeln('The host doesn\'t serve $label already. Its data stays in ${dir.path}.');
     return 0;
   }
-  if (delete) {
-    // Nothing serves it now; its own lock says no backup or restore has it open either.
-    await dir.lock();
+  final running = await hostCall(port, data, 'DELETE', '/api/v1/host/families/${log.id}${delete ? '?delete_data=1' : ''}');
+  if (running != null) {
+    if (running.status != 200) throw StateError(_errorOf(running.json, running.status));
+  } else {
+    // No host running: this is the only one changing the host's state.
     try {
-      await Directory(dir.path).delete(recursive: true);
-    } finally {
-      await dir.unlock();
+      await data.lock();
+    } on StateError {
+      throw StateError('A host is running on ${data.path} but didn\'t answer on port $port. Give --port, or stop it first.');
     }
-    HostState(data.path).forget(log.id);
+    try {
+      final now = HostState(data.path);
+      if (!log.removed) now.put(log.copyWith(removed: true));
+      if (delete) {
+        // Its own lock says no backup or restore has it open.
+        if (Directory(dir.path).existsSync()) {
+          await dir.lock();
+          try {
+            await Directory(dir.path).delete(recursive: true);
+          } finally {
+            await dir.unlock();
+          }
+        }
+        now.forget(log.id);
+      }
+    } finally {
+      await data.unlock();
+    }
+  }
+  if (delete) {
     io.out.writeln('The host no longer serves $label, and its data is deleted.');
   } else {
     io.out.writeln('The host no longer serves $label. Its data stays in ${dir.path}: '
@@ -524,6 +602,8 @@ Future<int> families(ArgResults a, DataDir data, int port, CliIo io) async {
   final running = await hostCall(port, data, 'GET', '/api/v1/host');
   final state = HostState(data.path);
   final first = primaryUrl(data, io.environment);
+  // One line a family: its address, then `first` or `id <id>`, then how it is, then the rest.
+  // install.sh reads the first three words, so keep them in this order.
   if (running != null) {
     final open = <String>{};
     for (final f in (running.json['families'] as List?) ?? const []) {
@@ -532,18 +612,26 @@ Future<int> families(ArgResults a, DataDir data, int port, CliIo io) async {
       if (id != null) open.add(id);
       final where = id == null ? data.path : data.log(id).path;
       final what = f['ready'] == true ? 'in a family: ${f['family_name'] ?? f['family']}' : 'setup: ${f['stage']}';
-      io.out.writeln('${f['public_url'] ?? '(no address)'}  $what  hub ${f['device']}  data $where');
+      io.out.writeln('${f['public_url'] ?? '(no address)'}  ${id == null ? 'first' : 'id $id'}  $what  hub ${f['device']}  data $where');
     }
+    final why = {
+      for (final w in (running.json['waiting'] as List?) ?? const [])
+        if (w is Map && w['id'] is String) w['id'] as String: (error: w['error'] as String?, retry: w['retry_seconds'] as int?),
+    };
     for (final l in state.all) {
       if (open.contains(l.id)) continue;
-      io.out.writeln('${l.publicUrl ?? '(no address)'}  ${l.removed ? 'taken off (id ${l.id})' : 'not open yet: tried again'}  data ${data.log(l.id).path}');
+      final w = why[l.id];
+      final what = l.removed
+          ? 'taken off'
+          : 'not open: ${w?.error ?? 'starting'} (tried again every ${w?.retry ?? 30}s)';
+      io.out.writeln('${l.publicUrl ?? '(no address)'}  id ${l.id}  $what  data ${data.log(l.id).path}');
     }
     return 0;
   }
   io.out.writeln('Not running. From ${data.path}/$hostStateDir/host.json:');
-  io.out.writeln('${first ?? '(the first family, no address known)'}  data ${data.path}');
+  io.out.writeln('${first ?? '(the first family, no address known)'}  first  data ${data.path}');
   for (final l in state.all) {
-    io.out.writeln('${l.publicUrl ?? '(no address)'}  data ${data.log(l.id).path}${l.removed ? '  (taken off: not served; id ${l.id})' : ''}');
+    io.out.writeln('${l.publicUrl ?? '(no address)'}  id ${l.id}  ${l.removed ? 'taken off' : 'served from the next start'}  data ${data.log(l.id).path}');
   }
   return 0;
 }
