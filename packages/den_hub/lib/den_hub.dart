@@ -23,6 +23,7 @@ export 'src/mcp/stdio.dart' show serveMcpStdio;
 export 'src/ics/expand.dart' show expandCalendar, groupSeries, IcsOccurrence, IcsSeries;
 export 'src/ics/feeds.dart' show FeedService;
 export 'src/ics/parse.dart' show parseIcs, parseIcsDuration, zoneForTzid, IcsCalendar, IcsEvent, IcsTime, IcsFormatException;
+export 'src/recovery.dart' show HubRecovery, RecoveryRefused, RecoveryTicket, recoveryCliFile, recoveryTicketsDoc;
 export 'src/reminders.dart' show ReminderService, Notice;
 export 'src/mdns/dns.dart' show DnsMessage, DnsQuestion, DnsRecord, DnsType;
 export 'src/mdns/responder.dart' show MdnsAdvert, MdnsResponder, denServiceName;

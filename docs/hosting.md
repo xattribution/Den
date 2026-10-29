@@ -489,16 +489,59 @@ docker compose up -d
 
 ### If a parent loses their phone
 
-<!-- Recovery (feat/recovery) fills this section in. -->
+If another parent still has their phone, nothing special is needed: invite the new phone as
+usual and that parent lets it in from Needs you. When no parent's phone is left, there are two
+ways back in.
 
-Each parent saves recovery words when they set up Den. If the family turned on **Let the hub
-help us get back in** (Settings, Family), the server's admin can also run:
+**With their recovery words** (nothing to do on the server). Each parent saves 12 words when
+they start the family, or later on their own page in Family, **Recovery words**. On the new
+phone:
+
+1. Open `https://den.example.com` in Safari, add Den to the Home Screen and open it from there.
+2. Choose **Join your family**, then **I lost my phone**.
+3. Paste the 12 words as they were saved (numbers, new lines and the note's title are fine) and
+   tap **Find me**.
+4. Den shows whose words they are. **Yes, let this phone in**, and the phone is theirs at once.
+
+The hub only carries the request: it can't make up words, and no setting is needed.
+
+**With the hub's help, only if the family turned it on.** A parent turns on Settings, Family,
+**Let the hub help us get back in** on their own phone. Then, from `den/deploy/hosted`:
 
 ```sh
 docker compose exec hub /app/bin/den_hub recover --person "Alex"
 ```
 
-It prints a one-time link and four words, good for 30 minutes.
+The name is the parent's name in Den, in quotes. The command prints:
+
+```text
+A recovery code for Alex is ready. It lets in one phone, for the next 30 minutes (until 15:42 UTC).
+
+Send Alex this link to open on the new phone:
+  https://den.example.com/#/recover/maple-river-canoe-tiger
+
+Or, in Den on the new phone, choose "I lost my phone" and type these four words:
+  maple river canoe tiger
+
+Every device in the family will show that Alex's new phone was let in by the hub.
+```
+
+Send Alex the link, or read out the four words. They let in one phone, once. The link is built
+on `DEN_PUBLIC_URL`; without it the command prints only the words. If the family hasn't turned
+server help on, the command says so and how, and lets nobody in.
+
+**What this means for whoever runs the server.** With server help on, the admin could add a
+phone as any parent; every device in the family shows when that happens ("Alex's new iPhone was
+let in by the hub's recovery"), and any parent can remove it. With it off, the admin can't let
+anyone in: turning it off makes the hub's key useless, even for a request dated earlier. Root on
+the server can still read what the hub holds, as always.
+
+The hub's server recovery key lives in its data volume (`hub/recovery.json`) and is in every
+backup (`docker compose run --rm backup`), so a [restore](#restore) keeps server help working. A
+hub [reset without a backup](#reset-the-hub-keep-the-family) makes a new key: a parent turns
+**Let the hub help us get back in** off and on again.
+
+Either way, the new phone then offers **Remove your old phone** on the parent's page in Family.
 
 ### Bring in a family from Sett
 

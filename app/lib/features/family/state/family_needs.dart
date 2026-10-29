@@ -2,6 +2,7 @@ import 'package:den_core/den_core.dart';
 
 import '../../../app/app_state.dart';
 import '../../../platform/sync/pairing.dart';
+import 'recovery.dart';
 
 /// Something at the top of Family that waits for a parent on their own device, with its one
 /// answer. Each keeps its [key] while it waits, so a settled one keeps its place.
@@ -35,6 +36,16 @@ final class ConnectionAsk extends FamilyNeed {
   String get key => 'connection:${connection.id}';
 }
 
+/// A parent's new phone that recovery let in, said on every other parent's own device until
+/// someone there puts it away, so nobody gets in unseen: Got it, or That wasn't us (remove it).
+final class RecoveredNotice extends FamilyNeed {
+  const RecoveredNotice(this.device);
+  final Device device;
+
+  @override
+  String get key => Recovery.noticeKey(device);
+}
+
 /// The family has a shared screen and this parent has no PIN, so they can't act there and
 /// nobody can act as them.
 final class PinAsk extends FamilyNeed {
@@ -61,6 +72,7 @@ List<FamilyNeed> familyNeeds(AppState app, List<PendingJoin> joins) {
         JoinAsk(device: j.deviceId, name: j.deviceName, kind: j.kind, words: j.words),
     for (final c in den.connections)
       if (c.status == ConnectionStatus.pending) ConnectionAsk(c),
+    for (final d in Recovery.unseen(den, app.seen)) RecoveredNotice(d),
   ];
   final me = app.me;
   final display = sharedDisplays(den).firstOrNull;

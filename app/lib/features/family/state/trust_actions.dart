@@ -95,6 +95,13 @@ class TrustActions {
 
   /// What a shared display shows ([display] is its whole settings map).
   Future<void> setDisplay(String device, Map<String, Object?> display) => _den.updateDevice(device, {'display': display});
+
+  /// [member]'s recovery key (the public half of what their 12 words stretch to), or null to
+  /// take their words away. Only the parent themselves sets theirs (state/recovery.dart).
+  Future<void> setRecoveryKey(String member, String? publicKey) => _den.setRecoveryKey(member, publicKey);
+
+  /// "Let the hub help us get back in": the hub's server recovery key, or null to stop it.
+  Future<void> setHubHelp(String? serverKey) => _den.setServerRecoveryKey(serverKey);
 }
 
 extension TrustActionsOf on BuildContext {

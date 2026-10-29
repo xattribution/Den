@@ -216,6 +216,14 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
           null,
           null,
         ),
+      RecoveredNeed(:final device) => (
+          _face(app, recoveryOf(device)?.member, PhosphorIconsRegular.key),
+          RecoveryLines.sentence(app, device),
+          RecoveryLines.detail(app, device),
+          gotIt(),
+          null,
+          () => context.push('/family/member/${recoveryOf(device)?.member ?? ''}'),
+        ),
       PrivacyNeed(:final change) => (
           _face(app, change.by, PhosphorIconsRegular.lockKey),
           privacyNotice(app.memberById(change.by)?.name ?? 'A parent', parentsSee: change.parentsSee),

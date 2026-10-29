@@ -15,6 +15,7 @@ import 'model.dart';
 import 'order_keys.dart';
 import 'permissions.dart';
 import 'points.dart';
+import 'recovery.dart';
 import 'rrule.dart';
 import 'schema.dart';
 import 'secrets.dart';
@@ -354,6 +355,68 @@ class Den {
         ]);
       });
 
+  /// Lets this new device into the family as [proof]'s parent's own device: one change to its
+  /// own device record, approved, carrying the proof (see recovery.dart). This device holds
+  /// none of the family's log yet, so it can't check the change itself; it is written as is,
+  /// counts for nothing here until the family's log arrives, and every device that receives it
+  /// decides by the same rules.
+  Future<void> requestRecovery({
+    required String familyId,
+    required String founderPubkey,
+    required String deviceName,
+    required DeviceKind kind,
+    required RecoveryProof proof,
+  }) =>
+      _locked(() async {
+        if (hasFamily && this.familyId != familyId) throw StateError('This device already belongs to a family');
+        if (isApproved) throw StateError('This device is already in the family');
+        if (deviceIdOf(founderPubkey) == null) throw const InvalidInput('The founder key isn\'t valid');
+        if (!hasFamily) {
+          _setRoot(familyId, founderPubkey);
+          _mat.replay();
+        }
+        var counter = _counter + 1;
+        while (_mat.contains('$deviceId:$counter')) {
+          counter++;
+        }
+        final unsigned = Change(
+          id: '$deviceId:$counter',
+          space: Space.family,
+          hlc: _clock.next(),
+          type: RecordType.device,
+          rid: deviceId,
+          fields: {
+            'name': deviceName,
+            'kind': kind.name,
+            'pubkey': _keys.pubkey,
+            'xpub': _keys.xpub,
+            'member': proof.member,
+            'mode': DeviceMode.personal.name,
+            'approved': true,
+            'recovery': proof.toJson(),
+          },
+          device: deviceId,
+          actor: null,
+          sig: '',
+        );
+        final signed = Change(
+          id: unsigned.id,
+          space: unsigned.space,
+          hlc: unsigned.hlc,
+          type: unsigned.type,
+          rid: unsigned.rid,
+          fields: unsigned.fields,
+          device: deviceId,
+          actor: null,
+          sig: await _keys.sign(unsigned.signedBytes),
+        );
+        await _storage.appendChanges([signed]);
+        _mat.add([signed]);
+        _counter = counter;
+        await _saveMeta();
+        _emit({RecordType.device});
+      });
+
   /// Forgets the family on this device: wipes its log and metadata from storage and returns the
   /// engine to a fresh device's state, so a declined device or one the family no longer uses can
   /// start over. A family remembers devices it declined or removed, so join again with new keys.
@@ -621,6 +684,44 @@ class Den {
   }
 
   static const Map<String, Object?> _defaultDisplay = {'layout': 'week', 'openCheckoff': false};
+
+  // ---------------------------------------------------------------- recovery (recovery.dart)
+
+  /// Sets [memberId]'s recovery key: the public half of the key their 12 recovery words stretch
+  /// to (den_net's `RecoveryWords`), or null to remove it. Only the parent themselves sets
+  /// theirs, on their own device; any parent there may remove one. Replacing a key names the
+  /// devices the old one let in that this device holds, so old words can't let in a phone
+  /// clocked before the change.
+  Future<void> setRecoveryKey(String memberId, String? publicKey) => _locked(() async {
+        final m = member(memberId);
+        if (m == null) throw const InvalidInput('That person isn\'t in the family');
+        final old = recoveryKeyOf(m);
+        await _commitNow([
+          _Draft(RecordType.member, memberId, Space.family, {
+            'recovery': {
+              'key': publicKey,
+              'kept': old == null ? <String>[] : keptBy(_mat.store, key: old, member: memberId),
+            },
+          }),
+        ]);
+      });
+
+  /// Lets the hub with server recovery key [publicKey] help a parent back in (`family.recovery`),
+  /// or with null stops it, after which that key lets nobody in. A parent on their own device.
+  Future<void> setServerRecoveryKey(String? publicKey) => _locked(() async {
+        final id = familyId;
+        final f = family;
+        if (id == null || f == null) throw const InvalidInput('There is no family yet');
+        final old = serverRecoveryKeyOf(f);
+        await _commitNow([
+          _Draft(RecordType.family, id, Space.family, {
+            'recovery': {
+              'serverKey': publicKey,
+              'kept': old == null ? <String>[] : keptBy(_mat.store, key: old, hub: true),
+            },
+          }),
+        ]);
+      });
 
   Future<String> addCategory({required String name, String icon = 'calendar'}) async {
     final id = newId();
@@ -2386,6 +2487,11 @@ class Den {
     if (value == null) return null;
     if (field == 'signIn' && value is Map) return {'kind': value['kind']};
     if (field == 'tokenHash' || field == 'pubkey' || field == 'xpub') return '•••';
+    if (field == 'recovery' && value is Map) {
+      return value.containsKey('kind')
+          ? {'kind': value['kind'], 'member': value['member']}
+          : {'on': (value['key'] ?? value['serverKey']) != null};
+    }
     return value;
   }
 
@@ -2628,7 +2734,7 @@ class Den {
           final pubkey = _pubkeys[c.device];
           if (pubkey == null) {
             _pending[c.id] = c;
-          } else if (await verifySignature(c.signedBytes, c.sig, pubkey)) {
+          } else if (await verifySignature(c.signedBytes, c.sig, pubkey) && await recoveryProofHolds(c, familyId)) {
             accepted.add(c);
           } else {
             rejected[c.id] = 'The signature doesn\'t verify';

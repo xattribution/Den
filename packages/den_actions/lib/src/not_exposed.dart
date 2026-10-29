@@ -33,6 +33,13 @@ const Map<String, String> notExposed = {
   // Photos.
   'setPhoto': 'A photo is taken or chosen on a device and made small there before it is saved; an AI connection or '
       'the assistant sees that someone has one (their picture reads "photo:<id>") but can\'t add one',
+  // Recovery: a parent's new phone let in by their recovery words or the hub's key. Never an
+  // assistant's or MCP client's to set up, turn on or use, whoever it acts for.
+  'setRecoveryKey': '$_trust: a parent\'s recovery words are set up on their own phone, and only they keep them',
+  'setServerRecoveryKey': '$_trust: whether whoever runs the hub may let a parent\'s new phone in is the family\'s '
+      'call, made on a parent\'s own phone',
+  'requestRecovery': 'A new device lets itself in as a parent\'s own with their recovery words or the hub\'s proof; '
+      'nothing acting for the family can',
   'requestOAuthConnection': 'Written by the hub\'s OAuth server when an app asks to connect; a parent approves it',
   'setConnectionToken': 'Written by the hub\'s OAuth server when it issues a token for approved access',
   // The hub's and the runner's own bookkeeping.

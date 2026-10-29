@@ -37,6 +37,7 @@ beside it.
 | `setup-code` | A fresh hub's setup code |
 | `open-linking [--minutes N]` | In the public posture, lets browsers ask for a link code for N minutes (default 10), as if a parent had opened "A browser on a computer" in the app |
 | `status` | What the hub is doing |
+| `recover --person NAME` | A parent lost their phone and no other parent's is left: prints a one-time link and four words that let in one phone as that parent for 30 minutes, only if the family turned on "Let the hub help us get back in" (otherwise it says how). `docker compose exec hub /app/bin/den_hub recover --person "Alex"`. See docs/hub-api.md, "Getting back in" |
 | `backup --out FILE --passphrase-env VAR` | Keys, the change log, the hub's own state and `notify.json`, sealed with den_net's backup format. Works while the hub runs (`docker compose exec hub /app/bin/den_hub backup ...`): it reads the log's metadata before the log and cuts the log after its last complete line, so the copy is consistent without the hub's lock |
 | `restore --in FILE --passphrase-env VAR [--force]` | Refuses while a hub runs on the directory (stop it, then `docker compose run --rm hub restore ...`); `--force` first removes the hub that is there. Afterwards, let the family's devices connect before changing anything: what the hub wrote after the backup comes back from them, and the hub's change counter moves past it |
 

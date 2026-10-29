@@ -217,6 +217,9 @@ void main() {
     testWidgets('a name and who they are, then Add: two taps', (tester) async {
       final state = await demo(tester);
       await pumpScreen(tester, const FamilyScreen(), state: state, pushed: true);
+      // Below the parent's own page, which ends with their recovery words.
+      await tester.ensureVisible(find.text('Add someone'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Add someone'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'Ava');

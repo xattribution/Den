@@ -187,4 +187,5 @@ associated data. Defaults: 19 MiB, t=2, p=1. Headers asking for more than 1 GiB,
 
 ## Third-party material
 
-The spoken-code word list is the BIP-39 English list; see `LICENSE-NOTICE`.
+The word list for spoken codes, matching words and recovery words is the BIP-39 English list; see
+`LICENSE-NOTICE`.

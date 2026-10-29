@@ -1,5 +1,6 @@
 import 'change.dart';
 import 'model.dart';
+import 'recovery.dart';
 import 'store.dart';
 import 'validity.dart';
 
@@ -73,8 +74,9 @@ class Materializer {
     }
     if (fresh.isEmpty) return const {};
     fresh.sort(changeOrder);
-    if (fresh.any(_namesCutoff)) {
-      // A revocation can make changes already applied, clocked before it, count for nothing.
+    if (fresh.any((c) => _namesCutoff(c) || setsRecoveryKey(c))) {
+      // A revocation, or a replaced recovery key, can make changes already applied, clocked
+      // before it, count for nothing.
       _log
         ..addAll(fresh)
         ..sort(changeOrder);
@@ -119,20 +121,23 @@ class Materializer {
   void replay() {
     replays++;
     validator.cutoffs.clear();
+    validator.retiredRecoveryKeys.clear();
     _replayOnce();
     final cutoffs = <String, List<Cutoff>>{};
     for (final a in applied) {
       final cut = Cutoff.of(a.change);
       if (cut != null) (cutoffs[a.change.rid] ??= []).add(cut);
     }
-    if (cutoffs.isEmpty) return;
+    final retired = RetiredRecoveryKeys.of(applied);
+    if (cutoffs.isEmpty && retired.isEmpty) return;
     validator.cutoffs.addAll(cutoffs);
+    validator.retiredRecoveryKeys.addAll(retired);
     bool excluded(Change c) {
       final n = _counterIn(c.id);
       return n != null && (cutoffs[c.device]?.any((k) => k.excludes(n, c.hlc)) ?? false);
     }
 
-    if (_log.any(excluded)) _replayOnce();
+    if (_log.any(excluded) || _log.any(retired.excludes)) _replayOnce();
   }
 
   void _replayOnce() {

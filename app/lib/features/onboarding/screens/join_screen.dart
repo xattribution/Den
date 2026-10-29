@@ -268,6 +268,10 @@ class _JoinScreenState extends State<JoinScreen> {
               ),
             ),
         ],
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(onPressed: () => context.push('/welcome/recover'), child: const Text('I lost my phone')),
+        ),
       ],
     );
   }
