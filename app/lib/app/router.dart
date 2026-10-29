@@ -36,6 +36,7 @@ GoRouter buildRouter(AppState state) => GoRouter(
         ...rewardRoutes,
         ...onboardingRoutes,
         familyRoute(addDevice: advancedAddDeviceRoutes),
+        accessEndedRoute(),
         settingsRoute(more: advancedSettingsRoutes),
         ...sharedScreenRoutes,
       ],

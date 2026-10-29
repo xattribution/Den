@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import '../features/family/family.dart' show accessEndedHere;
 import '../features/shared_screens/shared_screens.dart';
 import 'app_state.dart';
 
@@ -11,7 +12,8 @@ bool _isShellTab(String loc) =>
 ///
 /// 0. An invite's link (`/join/<words>`): joining with its words, or Today for a device that is
 ///    already in a family.
-/// 1. No family on this device: onboarding (`/welcome`).
+/// 1. No family on this device: onboarding (`/welcome`). A sitter's device past their last day:
+///    that their access ended (`/ended`).
 /// 2. A join request sent but not approved yet: the waiting screen, whatever was asked for.
 /// 3. Right after creating a family: the short "Add people" step; any other onboarding route
 ///    once the device is in the family goes to Today.
@@ -34,6 +36,9 @@ String? familyRedirect(AppState state, GoRouterState route) {
   }
 
   if (!den.hasFamily) return inWelcome ? null : '/welcome';
+  // A sitter past their last day, removed or not yet: their access ended.
+  if (accessEndedHere(state)) return loc == '/ended' ? null : '/ended';
+  if (loc == '/ended') return '/today';
   if (!den.isApproved) return loc == '/welcome/waiting' ? null : '/welcome/waiting';
   if (loc == '/welcome/start') return '/welcome/people';
   if (inWelcome && loc != '/welcome/people') return '/today';
