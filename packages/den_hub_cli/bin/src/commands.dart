@@ -228,6 +228,100 @@ Future<int> status(DataDir data, int port, CliIo io) async {
   });
 }
 
+/// `den_hub recover --person NAME`: a parent lost their phone and no other parent device is
+/// left to let a new one in. Prints a one-time link and four words, good for one phone for 30
+/// minutes, that let the new phone in as that parent, but only if the family turned on "Let
+/// the hub help us get back in"; otherwise it says how. With Docker:
+/// `docker compose exec hub /app/bin/den_hub recover --person "Alex"`. A running hub makes the
+/// code (the command shows it the secret the hub left in `hub/recovery-cli`); with none running
+/// the command makes it in the data directory, for the hub to honor when it starts.
+Future<int> recover(ArgResults a, DataDir data, int port, CliIo io) async {
+  final person = _required(a, 'person');
+  if (!data.exists) throw StateError('There\'s no hub in ${data.path} yet. Run den_hub serve first.');
+  final base = Uri.parse('http://127.0.0.1:$port');
+  final Map<String, Object?> ticket;
+  if (await _getJson(base.resolve('/health')) != null) {
+    final file = data.file('hub/$recoveryCliFile');
+    if (!file.existsSync()) {
+      throw StateError('The hub running on port $port didn\'t leave its recovery secret in ${data.path}. '
+          'Is --data the hub\'s data directory? An older hub needs updating and restarting first.');
+    }
+    final http.Response r;
+    try {
+      r = await http
+          .post(
+            base.resolve('/api/v1/recovery/tickets'),
+            headers: {'content-type': 'application/json', 'x-den-recovery-secret': file.readAsStringSync().trim()},
+            body: jsonEncode({'person': person}),
+          )
+          .timeout(const Duration(seconds: 10));
+    } on Object {
+      throw StateError('Couldn\'t reach the hub on port $port. Is it still starting?');
+    }
+    final json = _object(r.body);
+    if (r.statusCode != 201) {
+      final error = json?['error'];
+      final message = error is Map ? error['message'] : null;
+      throw StateError(message is String ? message : 'The hub said no (HTTP ${r.statusCode}).');
+    }
+    ticket = json!;
+  } else {
+    ticket = await _withDen(data, (den) async {
+      final public = io.environment['DEN_PUBLIC_URL'];
+      final ctx = HubContext(
+        den: den,
+        gate: DenGate(den),
+        config: HubConfig(
+          dataDir: data.path,
+          mdns: false,
+          publicUrl: public == null || public.isEmpty ? null : Uri.parse(public),
+        ),
+        log: HubLog(level: LogLevel.error, sink: io.err.writeln),
+        state: HubState(data.path),
+        node: SyncNode(den),
+        http: http.Client(),
+      );
+      try {
+        return (await HubRecovery.offline(ctx).issue(person)).toJson();
+      } on RecoveryRefused catch (e) {
+        throw StateError(e.message);
+      } finally {
+        await ctx.state.flush();
+        await ctx.node.close();
+        ctx.http.close();
+      }
+    });
+  }
+  final name = ticket['member_name'];
+  final words = ((ticket['words'] as List?) ?? const []).join(' ');
+  final link = ticket['link'];
+  final until = DateTime.tryParse('${ticket['expires']}')?.toUtc();
+  final at = until == null ? '' : ' (until ${until.hour.toString().padLeft(2, '0')}:${until.minute.toString().padLeft(2, '0')} UTC)';
+  io.out.writeln('A recovery code for $name is ready. It lets in one phone, for the next 30 minutes$at.');
+  io.out.writeln();
+  if (link is String) {
+    io.out.writeln('Send $name this link to open on the new phone:');
+    io.out.writeln('  $link');
+    io.out.writeln();
+    io.out.writeln('Or, in Den on the new phone, choose "I lost my phone" and type these four words:');
+  } else {
+    io.out.writeln('On the new phone, open Den at the hub\'s address, choose "I lost my phone" and type these four words:');
+  }
+  io.out.writeln('  $words');
+  io.out.writeln();
+  io.out.writeln('Every device in the family will show that $name\'s new phone was let in by the hub.');
+  return 0;
+}
+
+Map<String, Object?>? _object(String text) {
+  try {
+    final json = jsonDecode(text);
+    return json is Map ? json.cast<String, Object?>() : null;
+  } on FormatException {
+    return null;
+  }
+}
+
 String _passphrase(ArgResults a, CliIo io) {
   final variable = _required(a, 'passphrase-env');
   final value = io.environment[variable];
