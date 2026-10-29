@@ -111,6 +111,26 @@ void main() {
     expect(err, contains('Another den_hub'));
   });
 
+  test('status of a running public hub says what the hub tells it, never "null"', () async {
+    final den = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
+    final hub = await DenHub.start(den, HubConfig(
+      port: 0,
+      host: InternetAddress.loopbackIPv4,
+      mdns: false,
+      name: 'Server hub',
+      publicUrl: Uri.parse('https://den.example.com'),
+    ));
+    addTearDown(() async {
+      await hub.stop();
+      await den.close();
+    });
+    final (code, out, err) = await run(['status', '--data', dataPath, '--port', '${hub.port}']);
+    expect(code, 0, reason: err);
+    expect(out, isNot(contains('null')));
+    expect(out, contains('Running: Server hub (${den.deviceId}), den_hub $hubVersion'));
+    expect(out, contains('Setup: waiting_for_code'));
+  });
+
   test('backup and restore round-trip under a passphrase', () async {
     final file = '${tmp.path}${Platform.pathSeparator}hub.denbackup';
     final env = {'DEN_PASS': 'correct horse battery'};
