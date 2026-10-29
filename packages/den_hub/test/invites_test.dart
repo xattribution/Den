@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
+import 'package:den_hub/src/invites.dart' show HubInvites;
 import 'package:den_net/den_net.dart';
 import 'package:test/test.dart';
 
@@ -88,6 +89,48 @@ void main() {
     }
     final locked = await f.call('POST', '/api/v1/invites/redeem', body: {'code': 'maple river canoe tiger'});
     expect(locked.status, 429);
+  });
+
+  /// Redeems [code] and asks to join with what it gives, as a new device; returns the device once
+  /// its request waits for a parent.
+  Future<Den> join(String code) async {
+    final redeemed = await f.call('POST', '/api/v1/invites/redeem', body: {'code': code});
+    expect(redeemed.status, 200, reason: redeemed.text);
+    final joiner = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
+    final node = SyncNode(joiner);
+    addTearDown(() async {
+      await node.close();
+      await joiner.close();
+    });
+    final invite = await Invite.parse(redeemed.body['invite']! as String);
+    final attempt = await node.joinWithInvite(await connectWebSocket(sync()), invite, deviceName: 'New phone', kind: DeviceKind.phone);
+    await eventually(() => attempt.stage == JoinStage.waitingForApproval);
+    await eventually(() => f.hubDen.pendingDevices.any((d) => d.id == joiner.deviceId));
+    await attempt.cancel();
+    return joiner;
+  }
+
+  test('an invite is used up once a parent approves a device that joined with it', () async {
+    final made = await f.call('POST', '/api/v1/invites', body: await grant(f.phone, context: 'invite:${f.id('Zoe')}'));
+    final code = made.body['code']! as String;
+    final first = await join(code);
+    await f.toPhone();
+    await f.phone.approveDevice(first.deviceId, member: f.id('Zoe'));
+    await f.toHub();
+    final again = await f.call('POST', '/api/v1/invites/redeem', body: {'code': code});
+    expect(again.status, 404);
+    expect(again.error['message'], contains('used already'));
+  });
+
+  test('an invite stops after ${HubInvites.maxJoins} devices joined with it and none was approved', () async {
+    final made = await f.call('POST', '/api/v1/invites', body: await grant(f.phone));
+    final code = made.body['code']! as String;
+    for (var i = 0; i < HubInvites.maxJoins; i++) {
+      await join(code);
+    }
+    final more = await f.call('POST', '/api/v1/invites/redeem', body: {'code': code});
+    expect(more.status, 404);
+    expect(more.error['message'], contains('used already'));
   });
 
   test('an invite outlives a restart of the hub', () async {

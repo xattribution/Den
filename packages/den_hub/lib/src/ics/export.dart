@@ -1,19 +1,17 @@
 import 'package:den_actions/den_actions.dart' show readableSpacesFor;
 import 'package:den_actions/times.dart';
-import 'package:den_core/den_core.dart';
 import 'package:shelf/shelf.dart';
 
-import '../access.dart';
 import '../context.dart';
 import '../feed_links.dart';
 import '../http_util.dart';
 import 'write.dart';
 
-/// Calendar feeds out: `GET /ics/<token>/family.ics` and `GET /ics/<token>/<memberId>.ics`
-/// (events assigned to that member, plus events for everyone unless `?everyone=0`). The token
-/// in the path is an API token with the read scope, and the feed holds what that token may
-/// read; or the secret of a calendar link ([HubFeedLinks]), which opens only its own file and
-/// holds what the parent who made it may read.
+/// Calendar feeds out: `GET /ics/<secret>/family.ics` and `GET /ics/<secret>/<memberId>.ics`
+/// (events assigned to that member, plus events for everyone unless `?everyone=0`). The secret
+/// is a calendar link's ([HubFeedLinks]), which opens only its own file and holds what the
+/// parent who made it may read. An API token doesn't open a feed: pasted into a calendar app or
+/// service, it would be a key to the whole API sitting in someone else's settings.
 class IcsExport {
   /// Creates the export for [hub], taking calendar links from [links].
   IcsExport(this.hub, {this.links});
@@ -29,18 +27,16 @@ class IcsExport {
     if (!hub.ready) throw ApiError.notReady();
     hub.checkFailures(request);
     final link = links?.resolve(token);
-    final access = link == null ? accessForToken(hub.den, token) : null;
-    if (link == null && access == null) {
+    if (link == null) {
       hub.failed(request);
-      throw ApiError.unauthorized('That calendar link no longer works.');
+      throw ApiError.unauthorized('That calendar link no longer works. Make a new one in Den: Settings, Calendars.');
     }
-    if (access != null && !access.has(Scope.read)) throw ApiError.scope('read');
     if (!file.endsWith('.ics')) throw ApiError.notFound();
     // A calendar link opens the one feed it was made for.
-    if (link != null && file != link.file) throw ApiError.notFound();
+    if (file != link.file) throw ApiError.notFound();
     final name = file.substring(0, file.length - 4);
-    final member = link?.member ?? access!.member;
-    final text = await hub.gate.run(member, link == null ? access!.label : 'Calendar link', () {
+    final member = link.member;
+    final text = await hub.gate.run(member, 'Calendar link', () {
       final den = hub.den;
       final readable = readableSpacesFor(den, member);
       String? person;

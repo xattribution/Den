@@ -2,10 +2,12 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
+import 'package:den_net/den_net.dart';
 import 'support/test.dart';
 
 import 'support/fixture.dart';
@@ -249,8 +251,22 @@ void main() {
     final later = upcoming[1].seriesStart;
     await f.phone.deleteEvent(soccer.id, scope: EditScope.one, occurrence: later);
     await f.toHub();
-    final token = await f.token();
-    final r = await f.call('GET', '/ics/$token/family.ics');
+    // A calendar link from Alex's phone: the path to the feed, on the hub.
+    Future<String> link(String feed) async {
+      final body = jsonEncode({'feed': feed, 'label': 'Test'});
+      final headers = await DeviceRequest.sign(
+          keys: f.phone.keys,
+          method: 'POST',
+          url: f.base.resolve('/api/v1/feeds'),
+          body: utf8.encode(body),
+          hub: f.hubDen.deviceId,
+          actorId: f.phone.actor?.id);
+      final made = await f.call('POST', '/api/v1/feeds', body: body, headers: headers);
+      expect(made.status, 201, reason: made.text);
+      return Uri.parse(made.body['url']! as String).path;
+    }
+
+    final r = await f.call('GET', await link('family'));
     expect(r.status, 200);
     expect(r.headers['content-type'], 'text/calendar; charset=utf-8');
     expect(r.text, contains('BEGIN:VTIMEZONE'));
@@ -260,10 +276,14 @@ void main() {
     final parsed = {for (final o in expandCalendar(cal, from, to)) '${o.start} ${o.end} ${o.title}'};
     final expected = {for (final o in f.hubDen.occurrences(from, to)) '${o.start} ${o.end} ${o.title}'};
     expect(parsed, expected);
-    final leo = await f.token(member: f.id('Leo'), label: 'Leo calendar');
-    final mine = await f.call('GET', '/ics/$leo/${f.id('Leo')}.ics');
+    final mine = await f.call('GET', await link(f.id('Leo')));
     expect(mine.text, contains('Soccer practice'));
     expect(mine.text, isNot(contains('Anniversary dinner')));
     expect((await f.call('GET', '/ics/nope/family.ics')).status, 401);
+    // An API token isn't a calendar link: pasted into a calendar, it would be a key to the API.
+    final token = await f.token();
+    final refused = await f.call('GET', '/ics/$token/family.ics');
+    expect(refused.status, 401);
+    expect(refused.error['message'], contains('Settings, Calendars'));
   });
 }

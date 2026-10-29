@@ -10,6 +10,7 @@ import 'context.dart';
 import 'device_auth.dart';
 import 'http_util.dart';
 import 'setup.dart' show restrictToOwner;
+import 'usage.dart';
 
 /// The in-app assistant's side on the hub (`/api/v1/assistant`).
 ///
@@ -20,21 +21,25 @@ import 'setup.dart' show restrictToOwner;
 /// checks each against the family's rules (`family.assistant`: who may use it, a kid's daily
 /// limit, no photos for kids, the month's budget) and den_assistant's `ModelProxy` (the
 /// provider, the models offered, an output cap), forwards it with the key, and counts what it
-/// cost. Phones and the web app never hold the key.
+/// cost ([AiUsage], which captures the hub reads count against too). Phones and the web app
+/// never hold the key.
 ///
 /// The key lives in `<data>/hub/assistant.json`, readable by its owner only, never in the
 /// family's log or in an answer. The hub keeps no conversation and logs no content: only that
 /// the setup changed, and when the month's budget runs low. It is off until a parent turns it
 /// on in the family's settings and sets a provider here.
 class HubAssistant {
-  /// The endpoints for [hub], checking signatures with [auth].
-  HubAssistant(this.hub, this.auth);
+  /// The endpoints for [hub], checking signatures with [auth] and counting in [usage].
+  HubAssistant(this.hub, this.auth, this.usage);
 
   /// Shared hub context.
   final HubContext hub;
 
   /// Checks the signed requests.
   final DeviceAuth auth;
+
+  /// The family's AI budget and kids' days, shared with captures.
+  final AiUsage usage;
 
   /// Largest model request: a conversation and a few photos.
   static const int maxBody = 12 * 1024 * 1024;
@@ -45,11 +50,7 @@ class HubAssistant {
   /// Model requests forwarded at once.
   static const int maxForwarding = 6;
 
-  /// The share of the month's budget at which parents are warned.
-  static const double warnAt = 0.8;
-
   static const String _doc = 'assistant';
-  static const String _usageDoc = 'assistant_usage';
 
   int _forwarding = 0;
 
@@ -62,8 +63,6 @@ class HubAssistant {
   }
 
   Map<String, Object?> get _saved => hub.state.read(_doc);
-
-  Map<String, Object?> get _usage => hub.state.read(_usageDoc);
 
   /// The provider the hub runs the assistant with, or null.
   ModelProvider? get provider => ModelProvider.byId(_saved['provider'] as String?);
@@ -94,40 +93,20 @@ class HubAssistant {
     return raw is String ? Uri.tryParse(raw) : null;
   }
 
-  AssistantPolicy get _policy => hub.den.family?.assistant ?? const AssistantPolicy();
+  AssistantPolicy get _policy => usage.policy;
 
-  String get _today => hub.den.todayDate();
-
-  String get _month => _today.substring(0, 7);
-
-  /// Micro-dollars spent this month.
-  int get _spent => _usage['month'] == _month ? (_usage['spent_micros'] as int? ?? 0) : 0;
-
-  /// What a kid ([member]) asked today.
-  int _turns(String member) {
-    final u = _usage;
-    if (u['day'] != _today) return 0;
-    return ((u['turns'] as Map?)?[member] as int?) ?? 0;
-  }
-
-  Map<String, Object?> _monthJson() {
-    final budget = _policy.budgetCents;
-    final spent = _spent;
-    final free = provider == ModelProvider.ollama;
-    return {
-      'month': _month,
-      'spent_cents': (spent / 10000).ceil(),
-      'budget_cents': budget,
-      'warn': !free && budget > 0 && spent >= budget * 10000 * warnAt,
-      'stopped': !free && spent >= budget * 10000,
-    };
-  }
+  /// The month's spending, the assistant's and the captures' the hub's reader read.
+  Map<String, Object?> _monthJson() => usage.monthJson(
+        free: provider == ModelProvider.ollama,
+        captureFree: hub.state.read('capture')['kind'] != 'claude',
+      );
 
   Map<String, Object?> _modelJson(ModelInfo m) =>
       {'model': m.model, 'label': m.label, 'size': m.size.name, 'images': m.images, 'context_tokens': m.contextTokens};
 
   /// What a device sees: the provider and models, whether a key is saved (never the key), the
-  /// family's rules, what [actor] has left today, and the month's spending.
+  /// family's rules, what [actor] has used today (a kid's questions and the captures the hub
+  /// read for them count together), and the month's spending, captures included.
   Map<String, Object?> describe(Member? actor) {
     final p = provider;
     final policy = _policy;
@@ -143,7 +122,8 @@ class HubAssistant {
       if (actor != null)
         'you': {
           'allowed': p != null && policy.allows(actor),
-          if (actor.isKid) 'used_today': _turns(actor.id),
+          if (actor.isKid) 'used_today': usage.usedToday(actor.id),
+          if (actor.isKid) 'captures_today': usage.capturesToday(actor.id),
           if (actor.isKid) 'daily_limit': policy.kidDailyLimit,
         },
       'this_month': _monthJson(),
@@ -283,12 +263,14 @@ class HubAssistant {
       throw ApiError(403, 'too_long', 'The hub sends requests for at most $cap tokens of answer.');
     }
     if (kid && facts.images > 0) throw ApiError(403, 'no_photos', 'Photos aren\'t part of the assistant for kids.');
-    final turn = kid && newTurn(p, _decode(bytes));
-    if (turn && _turns(actor.id) >= policy.kidDailyLimit) {
+    // A kid's every request counts, except one that answers tool calls the hub forwarded in a
+    // turn it already counted for them: what a modified device can't make up.
+    final carried = kid ? _carries(actor.id, answeredCalls(p, _decode(bytes))) : null;
+    if (kid && carried == null && usage.dayUsedUp(actor.id)) {
       throw ApiError(429, 'daily_limit', 'That\'s all the assistant for today, ${actor.name}. Ask a parent if you need more.');
     }
     final free = p == ModelProvider.ollama;
-    if (!free && _spent >= policy.budgetCents * 10000) {
+    if (!free && usage.budgetSpent) {
       throw ApiError(402, 'budget_spent',
           'The assistant has used this month\'s budget. A parent can raise it in Settings, or it starts again next month.');
     }
@@ -296,11 +278,18 @@ class HubAssistant {
       throw ApiError(429, 'busy', 'The hub is busy with other questions. Try again in a moment.', details: {'retry': true});
     }
     _forwarding++;
+    var answered = false;
     try {
-      if (turn) await _count(actor.id);
+      String? turn = carried?.turn;
+      if (kid && turn == null) {
+        await usage.countFor(actor.id);
+        turn = '${actor.id}:${_turnIds++}';
+      }
       final reply = await proxy.forward(model: model!, body: bytes);
+      answered = reply.status == 200;
       final cost = reply.costUsd;
-      if (cost != null && cost > 0) await _spend((cost * 1000000).round());
+      if (cost != null && cost > 0) await usage.spend((cost * 1000000).round());
+      if (kid && answered) _remember(actor.id, turn!, toolCalls(p, _decode(reply.body)));
       final month = _monthJson();
       return Response(reply.status, body: reply.body, headers: {
         'content-type': 'application/json',
@@ -312,7 +301,60 @@ class HubAssistant {
       throw ApiError(502, 'provider_unreachable', e.message, details: {'retry': e.retry});
     } finally {
       _forwarding--;
+      // A carried-on request the provider didn't answer may be sent again, still carried on.
+      if (carried != null && !answered) carried.giveBack();
     }
+  }
+
+  /// How long after the hub forwarded a tool call its answer still carries on that turn.
+  static const Duration turnWindow = Duration(minutes: 10);
+
+  /// Requests that may carry on one counted turn: den_assistant's loop makes at most eight
+  /// tool calls a turn, each answered in a request of its own at most.
+  static const int maxCarried = 8;
+
+  /// Tool calls in answers the hub forwarded to kids, by call id: whose, in which counted turn,
+  /// until when.
+  final Map<String, ({String member, String turn, int until})> _calls = {};
+  final Map<String, int> _carriedIn = {};
+  int _turnIds = 0;
+
+  /// The counted turn of [member]'s that a request answering [calls] carries on, or null when
+  /// it starts a new one: every call must be one the hub forwarded to [member] in that turn,
+  /// within [turnWindow], not answered before, and the turn mustn't have carried on
+  /// [maxCarried] times. The calls are used up now; `giveBack` returns them.
+  ({String turn, void Function() giveBack})? _carries(String member, List<String>? calls) {
+    if (calls == null || calls.isEmpty) return null;
+    final now = hub.now();
+    _calls.removeWhere((_, c) => c.until <= now);
+    final found = [for (final id in calls) _calls[id]];
+    final first = found.first;
+    if (first == null || found.any((c) => c == null || c.member != member || c.turn != first.turn)) return null;
+    final turn = first.turn;
+    final n = _carriedIn[turn] ?? 0;
+    if (n >= maxCarried) return null;
+    _carriedIn[turn] = n + 1;
+    final taken = {for (final id in calls) id: _calls.remove(id)!};
+    return (
+      turn: turn,
+      giveBack: () {
+        _calls.addAll(taken);
+        _carriedIn[turn] = (_carriedIn[turn] ?? 1) - 1;
+      },
+    );
+  }
+
+  /// Keeps the tool calls the provider asked for in [member]'s [turn], so their answers carry it
+  /// on. Bounded: the oldest go first.
+  void _remember(String member, String turn, List<String> calls) {
+    final until = hub.now() + turnWindow.inMilliseconds;
+    for (final id in calls) {
+      _calls[id] = (member: member, turn: turn, until: until);
+    }
+    while (_calls.length > 10000) {
+      _calls.remove(_calls.keys.first);
+    }
+    if (_carriedIn.length > 10000) _carriedIn.remove(_carriedIn.keys.first);
   }
 
   /// Reads [request]'s body once its headers pass [DeviceAuth.precheck]. A device that signed the
@@ -343,37 +385,6 @@ class HubAssistant {
 
   final Map<String, int> _unverified = {};
 
-  Future<void> _count(String member) async {
-    final u = _usage;
-    final today = _today;
-    if (u['day'] != today) {
-      u['day'] = today;
-      u['turns'] = <String, Object?>{};
-    }
-    final turns = (u['turns'] as Map).cast<String, Object?>();
-    turns[member] = ((turns[member] as int?) ?? 0) + 1;
-    u['turns'] = turns;
-    await hub.state.save(_usageDoc, u);
-  }
-
-  Future<void> _spend(int micros) async {
-    final u = _usage;
-    final month = _month;
-    if (u['month'] != month) {
-      u['month'] = month;
-      u['spent_micros'] = 0;
-      u['warned'] = false;
-    }
-    final spent = (u['spent_micros'] as int? ?? 0) + micros;
-    u['spent_micros'] = spent;
-    final budget = _policy.budgetCents * 10000;
-    if (budget > 0 && spent >= budget * warnAt && u['warned'] != true) {
-      u['warned'] = true;
-      hub.log.warn('The assistant has used ${(spent * 100 / budget).floor()}% of this month\'s budget');
-    }
-    await hub.state.save(_usageDoc, u);
-  }
-
   static Map<String, Object?> _decode(List<int> bytes) {
     try {
       final v = jsonDecode(utf8.decode(bytes, allowMalformed: true));
@@ -383,23 +394,62 @@ class HubAssistant {
     }
   }
 
-  /// Whether [json], a request for [provider], starts a new turn (the person said something)
-  /// rather than carrying on one (the model's tools answered): what a kid's daily limit counts.
-  static bool newTurn(ModelProvider provider, Map<String, Object?> json) {
+  /// The tool calls [json], a request for [provider], answers: null when it doesn't answer any
+  /// (the person said something), else the ids of the calls its last message answers, empty
+  /// when the provider's format carries none (a model at home, Gemini without ids), which the
+  /// hub can't match to calls it forwarded.
+  static List<String>? answeredCalls(ModelProvider provider, Map<String, Object?> json) {
     List<Object?> list(Object? v) => v is List ? v : const [];
     Map<Object?, Object?> map(Object? v) => v is Map ? v : const {};
+    List<String> ids(Iterable<Object?> raw) {
+      final out = <String>[];
+      for (final id in raw) {
+        if (id is! String || id.isEmpty) return const [];
+        out.add(id);
+      }
+      return out;
+    }
+
     switch (provider) {
       case ModelProvider.anthropic:
-        final last = list(json['messages']).lastOrNull;
-        final content = map(last)['content'];
-        return !list(content).any((b) => map(b)['type'] == 'tool_result');
+        final content = list(map(list(json['messages']).lastOrNull)['content']);
+        final results = [for (final b in content) if (map(b)['type'] == 'tool_result') map(b)];
+        return results.isEmpty ? null : ids(results.map((b) => b['tool_use_id']));
       case ModelProvider.openai || ModelProvider.xai:
-        return map(list(json['input']).lastOrNull)['type'] != 'function_call_output';
+        final results = <Map<Object?, Object?>>[];
+        for (final item in list(json['input']).reversed) {
+          if (map(item)['type'] != 'function_call_output') break;
+          results.add(map(item));
+        }
+        return results.isEmpty ? null : ids(results.map((r) => r['call_id']));
       case ModelProvider.gemini:
-        final last = map(list(json['contents']).lastOrNull);
-        return !list(last['parts']).any((p) => map(p).containsKey('functionResponse'));
+        final parts = list(map(list(json['contents']).lastOrNull)['parts']);
+        final results = [for (final p in parts) if (map(p).containsKey('functionResponse')) map(map(p)['functionResponse'])];
+        return results.isEmpty ? null : ids(results.map((r) => r['id']));
       case ModelProvider.ollama:
-        return map(list(json['messages']).lastOrNull)['role'] != 'tool';
+        return map(list(json['messages']).lastOrNull)['role'] == 'tool' ? const [] : null;
     }
+  }
+
+  /// The ids of the tool calls in [json], [provider]'s answer to a request.
+  static List<String> toolCalls(ModelProvider provider, Map<String, Object?> json) {
+    List<Object?> list(Object? v) => v is List ? v : const [];
+    Map<Object?, Object?> map(Object? v) => v is Map ? v : const {};
+    final raw = switch (provider) {
+      ModelProvider.anthropic => [
+          for (final b in list(json['content']))
+            if (map(b)['type'] == 'tool_use') map(b)['id'],
+        ],
+      ModelProvider.openai || ModelProvider.xai => [
+          for (final o in list(json['output']))
+            if (map(o)['type'] == 'function_call') map(o)['call_id'],
+        ],
+      ModelProvider.gemini => [
+          for (final p in list(map(map(list(json['candidates']).firstOrNull)['content'])['parts']))
+            if (map(p)['functionCall'] is Map) map(map(p)['functionCall'])['id'],
+        ],
+      ModelProvider.ollama => const <Object?>[],
+    };
+    return [for (final id in raw) if (id is String && id.isNotEmpty) id];
   }
 }

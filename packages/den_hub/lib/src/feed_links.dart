@@ -21,6 +21,7 @@ class FeedLink {
     required this.feed,
     required this.label,
     required this.made,
+    this.device,
   });
 
   /// Reads a stored link; null when it isn't one.
@@ -28,7 +29,9 @@ class FeedLink {
     if (json is! Map) return null;
     final hash = json['hash'], member = json['member'], feed = json['feed'], label = json['label'], made = json['made'];
     if (hash is! String || member is! String || feed is! String || label is! String || made is! int) return null;
-    return FeedLink(id: id, hash: hash, member: member, feed: feed, label: label, made: made);
+    final device = json['device'];
+    return FeedLink(
+        id: id, hash: hash, member: member, feed: feed, label: label, made: made, device: device is String ? device : null);
   }
 
   /// The link's id, which never reveals its secret.
@@ -49,11 +52,16 @@ class FeedLink {
   /// When it was made (UTC ms).
   final int made;
 
+  /// The device it was made on; removing that device ends the link. Null for links made
+  /// before the hub kept it, which end only with their maker.
+  final String? device;
+
   /// The file its address ends with.
   String get file => '$feed.ics';
 
   /// As stored.
-  Map<String, Object?> toJson() => {'hash': hash, 'member': member, 'feed': feed, 'label': label, 'made': made};
+  Map<String, Object?> toJson() =>
+      {'hash': hash, 'member': member, 'feed': feed, 'label': label, 'made': made, 'device': ?device};
 }
 
 /// Calendar links (`/api/v1/feeds`): "Show Den in iPhone Calendar". A parent's own device makes
@@ -62,7 +70,8 @@ class FeedLink {
 /// `GET /ics/<secret>/<family|memberId>.ics`, never the API; it reads with its maker's
 /// permissions, so it holds exactly what the feed code gives that parent (their "Just me"
 /// events included, a teen's private ones only while parents may see them). Parents list the
-/// family's links and turn any of them off. The hub keeps a hash of each secret, in its data
+/// family's links and turn any of them off; a link ends too when its maker leaves the family or
+/// the device it was made on is removed. The hub keeps a hash of each secret, in its data
 /// directory; the address is shown once.
 class HubFeedLinks {
   /// Creates the endpoints for [hub], checking signatures with [auth].
@@ -102,12 +111,22 @@ class HubFeedLinks {
     if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json');
   }
 
-  /// The link whose secret is [secret], while its maker is still in the family; null otherwise.
+  /// Whether [link] still works: its maker is in the family and the device it was made on
+  /// hasn't been removed.
+  bool _works(FeedLink link) {
+    if (hub.den.member(link.member) == null) return false;
+    final made = link.device;
+    if (made == null) return true;
+    final d = hub.den.device(made);
+    return d != null && d.approved && !d.revoked;
+  }
+
+  /// The link whose secret is [secret], while it [_works]; null otherwise.
   FeedLink? resolve(String secret) {
     if (!secret.startsWith(prefix) || secret.length > 200) return null;
     final hash = hashToken(secret);
     for (final link in _all) {
-      if (link.hash == hash) return hub.den.member(link.member) == null ? null : link;
+      if (link.hash == hash) return _works(link) ? link : null;
     }
     return null;
   }
@@ -134,7 +153,7 @@ class HubFeedLinks {
   /// first, never their addresses.
   Future<Response> list(Request request) async {
     await auth.parent(request, message: 'Only a parent\'s own phone can see calendar links.');
-    final links = _all.where((l) => hub.den.member(l.member) != null).toList()..sort((a, b) => b.made.compareTo(a.made));
+    final links = _all.where(_works).toList()..sort((a, b) => b.made.compareTo(a.made));
     return jsonResponse({'feeds': [for (final l in links) _json(l)]});
   }
 
@@ -159,7 +178,7 @@ class HubFeedLinks {
     if (label is! String || label.trim().isEmpty || label.trim().length > 60) {
       throw ApiError.invalid('"label" must say where the calendar goes, up to 60 characters.', field: 'label');
     }
-    final live = _all.where((l) => hub.den.member(l.member) != null).length;
+    final live = _all.where(_works).length;
     if (live >= maxLinks) {
       throw ApiError(409, 'too_many', 'This family already has $maxLinks calendar links. Turn one off first.');
     }
@@ -171,6 +190,7 @@ class HubFeedLinks {
       feed: feed,
       label: label.trim(),
       made: hub.now(),
+      device: check.device!.id,
     );
     _links[link.id] = link.toJson();
     await _save();

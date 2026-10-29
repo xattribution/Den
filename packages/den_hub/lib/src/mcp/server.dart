@@ -6,6 +6,7 @@ import 'package:den_capture/den_capture.dart' show CaptureReader;
 import '../access.dart';
 import '../config.dart';
 import '../context.dart';
+import '../http_util.dart' show ApiError;
 import '../log.dart';
 import 'prompts.dart';
 import 'resources.dart';
@@ -359,6 +360,19 @@ class McpServer {
         },
       };
 
+  /// Whether [message] is a `tools/call` that would write (a tool that changes something, not
+  /// asked for a preview): what waits while the hub catches up after a restore.
+  bool writes(Object? message) {
+    if (message is! Map || message['method'] != 'tools/call') return false;
+    final params = message['params'];
+    if (params is! Map) return false;
+    final name = params['name'];
+    final spec = name is String ? runner.spec(name) : null;
+    if (spec == null || spec.readOnly) return false;
+    final args = params['arguments'];
+    return !(args is Map && args['preview'] == true);
+  }
+
   /// Runs tool [name] with [arguments] for [access]. Old tool names still work.
   ///
   /// A change that needs a yes first (Den's `confirm` two-step) asks through the client when the
@@ -387,6 +401,9 @@ class McpServer {
     final ActionResult result;
     if (!hub.ready) {
       result = runner.refusal(context(access), spec) ?? ActionResult.failed('This hub isn\'t part of a family yet.');
+    } else if (hub.catchingUp && !spec.readOnly && args['preview'] != true) {
+      // Over HTTP this is a 503 before it gets here (McpHttp); over stdio, the tool says so.
+      result = ActionResult.failed(ApiError.catchingUp().message, code: 'catching_up');
     } else {
       result = await hub.gate.run(access.member, access.label, () => runner.run(context(access), name, args));
     }
