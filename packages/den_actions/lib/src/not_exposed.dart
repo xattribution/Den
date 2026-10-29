@@ -29,6 +29,7 @@ const Map<String, String> notExposed = {
   'updateDevice': _trust,
   'addTokenConnection': '$_trust: an AI can\'t make itself or another one a token',
   'approveConnection': '$_trust: an AI can\'t approve itself or widen its own access',
+  'updateConnection': '$_trust: an AI can\'t change who it acts as',
   'revokeConnection': _trust,
   'endExpiredAccess': '$_trust; a parent\'s own device removes a sitter\'s devices after their last day, when Den opens there',
   'endAccessNow': '$_trust; it also removes the sitter\'s devices and rotates keys',

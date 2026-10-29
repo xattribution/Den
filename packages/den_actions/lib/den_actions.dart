@@ -18,4 +18,6 @@ export 'src/runner.dart';
 export 'src/schema.dart';
 export 'src/shapes.dart' show Out;
 export 'src/spec.dart';
+export 'src/specs/lists.dart' show itemAlreadyOn;
+export 'src/specs/points.dart' show adjustmentWarning, bigAdjustment;
 export 'src/wire.dart';

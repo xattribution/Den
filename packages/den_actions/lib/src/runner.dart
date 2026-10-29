@@ -9,6 +9,7 @@ import 'privacy.dart';
 import 'resolve.dart';
 import 'schema.dart';
 import 'spec.dart';
+import 'times.dart';
 
 class _Kept {
   _Kept(this.receipt, this.caller);
@@ -87,6 +88,13 @@ class ActionRunner {
         details: {'scope': s.scopes.first.name},
       );
     }
+    if (!s.readOnly && c.member == null && c.den.thisDevice?.mode == DeviceMode.hub) {
+      return ActionResult.failed(
+        'This connection doesn\'t act for anyone in the family, so it only reads. A parent can choose who it acts as '
+        'in the Den app: Settings → AI and automations.',
+        code: 'permission_denied',
+      );
+    }
     if (s.person && c.me == null) {
       return ActionResult.failed('${s.mcpName} is for a person, and this connection doesn\'t act for anyone.', code: 'permission_denied');
     }
@@ -116,6 +124,8 @@ class ActionRunner {
   /// Runs action [name] with [args] for [c].
   Future<ActionResult> run(ActionContext c, String name, Map<String, Object?>? args, {RunMode mode = RunMode.run}) async {
     c.runner = this;
+    c.asked = null;
+    c.shownZones.clear();
     final s = spec(name);
     if (s == null) return ActionResult.failed('Den has no action called "$name".', code: 'unknown_action');
     final refused = refusal(c, s);
@@ -132,16 +142,40 @@ class ActionRunner {
       final checked = normalizeInput(s.inputSchema, raw);
       if (checked.remove('preview') == true) preview = true;
       token = checked.remove('confirm') as String?;
+      if (s.readOnly) {
+        final zone = (checked.remove('timezone') as String?)?.trim();
+        if (zone != null && zone.isNotEmpty) {
+          if (!isZone(zone)) throw ActionError('Den doesn\'t know the time zone "$zone".', field: 'timezone');
+          c.asked = zone;
+        }
+      }
       input = ActionInput(checked);
     } on ActionError catch (e) {
       return _failed(e);
     }
-    if (s.readOnly) return _guard(() => s.run(c, input));
-    if (preview) return _preview(c, s, input);
+    if (s.readOnly) return _labeled(c, await _guard(() => s.run(c, input)));
+    if (preview) return _labeled(c, await _preview(c, s, input));
     if (mode == RunMode.run && asks(c, s, input)) {
-      if (token == null || !_consume(token, c, s, input)) return _needsYes(c, s, input, stale: token != null);
+      if (token == null || !_consume(token, c, s, input)) return _labeled(c, await _needsYes(c, s, input, stale: token != null));
     }
-    return _write(c, s, input);
+    return _labeled(c, await _write(c, s, input));
+  }
+
+  /// [r] with the line saying which zone its times are in, when the caller lives in another
+  /// zone than the family's or asked for one, and with its warnings said.
+  static ActionResult _labeled(ActionContext c, ActionResult r) {
+    if (r.isError) return r;
+    final line = c.zoneLine;
+    final warnings = [for (final w in r.data['warnings'] as List? ?? const []) '$w'];
+    final said = r.status == ActionStatus.done && warnings.isNotEmpty;
+    if (line == null && !said) return r;
+    final text = [
+      r.text,
+      if (said)
+        for (final w in warnings) 'Note: $w',
+      ?line,
+    ].join('\n');
+    return ActionResult(text, r.data, receipt: r.receipt, status: r.status, code: r.code, message: r.message);
   }
 
   /// Whether a call of [s] with [input] needs a yes before it runs, for [c]'s surface: always
@@ -174,11 +208,25 @@ class ActionRunner {
       ActionResult.failed(e.message, code: e.code, field: e.field, details: e.details);
 
   Future<ActionResult> _write(ActionContext c, ActionSpec s, ActionInput input) => _guard(() async {
+        // What a change to the calendar newly leaves uncovered (a ride nobody drives, a driver in
+        // two places, someone double-booked) is said with it, as a preview would.
+        final before = s.scopes.contains(Scope.calendar) ? _gapMessages(c) : null;
         final r = await c.den.recording(() => s.run(c, input), undoOnError: true);
-        final result = r.value;
+        var result = r.value;
         if (result.isError || r.changes.isEmpty) return result;
+        if (before != null) {
+          final fresh = [for (final g in _gapMessages(c)) if (!before.contains(g)) g];
+          if (fresh.isNotEmpty) result = withWarnings(result, fresh);
+        }
         return result.withReceipt(_keep(c, s, result, r.changes));
       });
+
+  /// [r] with [more] added to its `warnings`.
+  static ActionResult withWarnings(ActionResult r, List<String> more) {
+    final had = [for (final w in r.data['warnings'] as List? ?? const []) '$w'];
+    final all = [...had, for (final w in more) if (!had.contains(w)) w];
+    return ActionResult(r.text, {...r.data, 'warnings': all}, receipt: r.receipt, status: r.status, code: r.code, message: r.message);
+  }
 
   String _newId(String prefix) {
     final bytes = List<int>.generate(12, (_) => _random.nextInt(256));
@@ -230,7 +278,11 @@ class ActionRunner {
       final result = r.value;
       if (result.isError) return result;
       final entries = fork.historyOf(r.changes);
-      final warnings = [..._newGaps(c, fc), ..._duplicates(c, fork, entries)];
+      final warnings = <String>{
+        for (final w in result.data['warnings'] as List? ?? const []) '$w',
+        ..._newGaps(c, fc),
+        ..._duplicates(c, fork, entries),
+      }.toList();
       final summary = _firstLine(result.text);
       String question;
       try {
@@ -264,17 +316,19 @@ class ActionRunner {
   /// Gaps (missing drivers, overlaps) in the next two weeks that [after] has and [before]
   /// doesn't.
   static List<String> _newGaps(ActionContext before, ActionContext after) {
-    Set<String> gaps(ActionContext c) {
-      final start = c.den.dayStart(c.today);
-      final end = start + 15 * Duration.millisecondsPerDay;
-      return {
-        for (final g in visibleGaps(c.den, c.den.gaps(start, end), c.readable))
-          if (g.kind != GapKind.unowned) g.message,
-      };
-    }
+    final had = _gapMessages(before);
+    return [for (final g in _gapMessages(after)) if (!had.contains(g)) g];
+  }
 
-    final had = gaps(before);
-    return [for (final g in gaps(after)) if (!had.contains(g)) g];
+  /// What needs someone in the next two weeks, as [c] may see it: missing drivers, drivers in
+  /// two places, people in two places.
+  static Set<String> _gapMessages(ActionContext c) {
+    final start = c.den.dayStart(c.today);
+    final end = start + 15 * Duration.millisecondsPerDay;
+    return {
+      for (final g in visibleGaps(c.den, c.den.gaps(start, end), c.readable))
+        if (g.kind != GapKind.unowned) g.message,
+    };
   }
 
   static List<String> _duplicates(ActionContext c, Den fork, List<HistoryEntry> entries) {
@@ -289,10 +343,7 @@ class ActionRunner {
           if (e != null && c.events.any((x) => same(x.title) && x.start == e.start)) {
             out.add('${h.title} is already on the calendar then.');
           }
-        case RecordType.chore:
-          if (c.chores.any((x) => same(x.title))) out.add('There\'s already a chore called ${h.title}.');
-        case RecordType.list:
-          if (c.lists.any((x) => same(x.list.title))) out.add('There\'s already a list called ${h.title}.');
+        // Chores, lists, rewards and categories of a name the family has say so themselves.
         case RecordType.item:
           String? listOf(Den den) {
             for (final l in den.lists) {

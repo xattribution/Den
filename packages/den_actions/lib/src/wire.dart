@@ -258,6 +258,7 @@ class Wire {
           GapKind.noDriver => 'no_driver',
           GapKind.overlap => 'overlap',
           GapKind.unowned => 'unowned',
+          GapKind.driverBusy => 'driver_busy',
         },
         'message': g.message,
         'occurrences': [for (final o in g.occurrences) uidOf(o)],

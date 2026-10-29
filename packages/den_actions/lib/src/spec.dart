@@ -222,7 +222,19 @@ class ActionSpec {
       };
 
   static Map<String, Object?> _withControls(Map<String, Object?> input, Effect effect, Confirm confirm) {
-    if (effect == Effect.read) return input;
+    if (effect == Effect.read) {
+      return {
+        ...input,
+        'properties': {
+          ...(input['properties'] as Map).cast<String, Object?>(),
+          'timezone': S.string(
+            'Show times in this IANA time zone, such as Pacific/Honolulu (default: where this connection\'s person '
+            'lives, else the family\'s), saying which. Days, and "today", stay the family\'s.',
+            maxLength: 64,
+          ),
+        },
+      };
+    }
     return {
       ...input,
       'properties': {
@@ -243,6 +255,8 @@ class ActionSpec {
         'receipt': receiptSchema,
         'preview': previewSchema,
         'confirm': confirmSchema,
+        'warnings': S.array(S.string('A warning.'), 'What to know about what just changed: overlaps, a driver in two '
+            'places, duplicates, a date already past.'),
       },
     };
   }
