@@ -400,6 +400,11 @@ final Map<String, TypeSpec> typeSpecs = {
     'order': number(),
     'recovery': _recoveryKey('key'),
   }, required: {'name', 'role'}, space: Space.family),
+  RecordType.signInTries: TypeSpec({
+    'device': id(),
+    'member': id(),
+    'tries': number(min: 1, max: 1000000),
+  }, required: {'device', 'member', 'tries'}, space: Space.family),
   RecordType.device: TypeSpec({
     'name': text(min: 1, max: maxName),
     'kind': names(DeviceKind.values),

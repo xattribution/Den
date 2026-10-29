@@ -22,10 +22,11 @@ abstract final class RecordType {
   static const subscription = 'subscription';
   static const connection = 'connection';
   static const photo = 'photo';
+  static const signInTries = 'signInTries';
 
   static const all = {
     family, member, device, category, event, eventException, chore, completion, adjustment,
-    goal, reward, redemption, list, item, subscription, connection, photo,
+    goal, reward, redemption, list, item, subscription, connection, photo, signInTries,
   };
 }
 
@@ -488,6 +489,23 @@ class Member extends RecordView {
   int get order => rec.integer('order');
   bool get isParent => role == Role.parent;
   bool get isKid => role == Role.kid;
+}
+
+/// A shared screen saying that someone got a person's PIN or picture pattern wrong [tries] times
+/// in a row there, so the parents hear of it on their own phones. Written by the screen, for
+/// nobody, and never changed.
+class SignInTries extends RecordView {
+  const SignInTries(super.rec);
+
+  /// The shared screen.
+  String get device => rec.str('device');
+
+  /// Whose PIN or pattern.
+  String get member => rec.str('member');
+  int get tries => rec.integer('tries');
+
+  /// When the screen said so (UTC milliseconds).
+  int get at => rec.created.millis;
 }
 
 class Device extends RecordView {

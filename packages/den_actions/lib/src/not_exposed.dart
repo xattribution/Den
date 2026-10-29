@@ -18,6 +18,8 @@ const Map<String, String> notExposed = {
   'requestJoin': 'A device asks to join from itself, with the family\'s QR code or code words',
   'leaveFamily': 'Forgetting the family is done on the device that leaves it',
   'verifySignIn': 'Checks a PIN or picture pattern on a shared screen; it changes nothing',
+  'noteSignInTries': 'A shared screen tells the parents that someone kept getting a PIN wrong there; nothing acting '
+      'for the family can say that',
   'setThisDeviceMode': 'What a device is for is set on that device by a parent',
   // Trust: people's roles and sign-in, devices, AI access.
   'removeMember': '$_trust; removing someone also revokes their devices and rotates keys',
