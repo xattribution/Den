@@ -47,6 +47,7 @@ class HostConfig {
     this.fetchClient,
     this.openLog,
     this.createLog,
+    this.deleteLog,
     this.single = false,
     this.expected = const [],
     this.retryInterval = const Duration(seconds: 30),
@@ -114,15 +115,21 @@ class HostConfig {
   /// phone. Null: as [openLog].
   final Future<HostedTenant> Function(HostedLog log)? createLog;
 
-  /// Whether the host is configured for one family: while `host.json` lists no other, that
-  /// family answers at any address, as a hub always has ([DenHub.start], and `den_hub serve` on
-  /// a data directory with one family). Otherwise each family answers at its own address only,
-  /// and an address that is none of theirs gets no family.
+  /// Deletes a log's data for good (`den_hub remove-family --delete-data`), once the host has
+  /// stopped serving it; throws [StateError] when something else (a backup) has it open. Null:
+  /// the host can't delete families' data while it runs.
+  final Future<void> Function(HostedLog log)? deleteLog;
+
+  /// Whether the host is configured for one family: as long as it has never had another (none in
+  /// `host.json`, served, taken off or deleted), that family answers at any address, as a hub
+  /// always has ([DenHub.start], and `den_hub serve` on a data directory with one family).
+  /// Otherwise each family answers at its own address only, and an address that is none of
+  /// theirs gets no family.
   final bool single;
 
   /// The addresses the host serves besides those `host.json` lists (the first family's public
   /// URL's name). Until the family at one of them is attached, requests to it are answered `503`
-  /// with `Retry-After`, never by another family, and the host's `/health` fails.
+  /// with `Retry-After`, never by another family.
   final List<String> expected;
 
   /// How often the host tries again to open a family in `host.json` that didn't open.
@@ -153,14 +160,17 @@ class HostConfig {
 /// configured for one family ([HostConfig.single]), that family whatever the address. With
 /// several, a request that names no family and comes to no family's address gets none: fail
 /// closed. An address the host is configured to serve whose family isn't attached (it is
-/// starting, or didn't open and is tried again) gets `503` with `Retry-After`.
+/// starting, or didn't open and is tried again) gets `503` with `Retry-After`. The host's own
+/// `/health` fails while it starts, until every family has had its first try at opening; after
+/// that it answers `200`, saying how many families aren't open (`den_hub families` says which,
+/// and why).
 class DenHost implements HostLink {
   DenHost._(this.config, this.state, this.log);
 
   /// How the host runs.
   final HostConfig config;
 
-  /// The host's own state: which logs it serves, its Web Push keys.
+  /// The host's own state: which logs it serves, at which addresses.
   final HostState state;
 
   /// Where the host logs.
@@ -188,12 +198,11 @@ class DenHost implements HostLink {
   @override
   late final http_client.Client fetch;
 
-  /// The outgoing client for addresses callers gave the hub [hubDevice]: [fetch], except that a
-  /// request to another family's address on this host is answered in this process.
+  /// The outgoing client for the calendar feeds of the hub [hubDevice]: [fetch], except that
+  /// reading another family's calendar link on this host is answered in this process. Only the
+  /// feed service has it ([HubContext.feedFetch]); everything else a hub fetches goes through
+  /// [fetch].
   http_client.Client fetchFor(String hubDevice) => _OtherFamilies(this, hubDevice);
-
-  @override
-  VapidKeyring get vapid => state.vapid;
 
   late final Handler _handler;
 
@@ -203,11 +212,14 @@ class DenHost implements HostLink {
   /// Picks the family each request is for.
   late final TenantRouter<DenHub> router = TenantRouter(() => List.of(_tenants), single: () => single);
 
-  /// Whether the host answers as one family at any address: configured for one family, and
-  /// `host.json` lists no other.
-  bool get single => config.single && state.logs.isEmpty;
+  /// Whether the host answers as one family at any address: configured for one family, and it has
+  /// never had another ([HostState.several]). A host that had several never goes back, so an
+  /// address a family was taken off never reaches the first family.
+  bool get single => config.single && !state.several;
 
   Timer? _retry;
+  bool _settled = false;
+  final Map<String, String> _whyNot = {};
   final Map<String, int> _sockets = {};
   final Set<String> _warnedProxies = {};
   late final bool _ownsHttp;
@@ -241,12 +253,30 @@ class DenHost implements HostLink {
           moreHubs: () => [for (final t in host._tenants) ?t.config.publicUrl],
         ).client();
     host._cliSecret = host.state.writeCliSecret();
+    host.state.dropKeyring();
     host._web = webAppHandler(config.webDir, policy: host._webPolicy);
     final pipeline = host._handler = const Pipeline().addMiddleware(host._headers).addMiddleware(host._errors).addHandler(host._route);
-    final server = host._server = await shelf_io.serve(pipeline, config.host ?? InternetAddress.anyIPv4, config.port);
+    final server = host._server = await HttpServer.bind(config.host ?? InternetAddress.anyIPv4, config.port);
     server.idleTimeout = const Duration(seconds: 120);
+    shelf_io.serveRequests(_screened(server), pipeline);
     return host;
   }
+
+  /// [requests] without those shelf can't read (a `Host` or `X-Forwarded-Proto` that makes no
+  /// address, say), which are answered `400` here instead of shelf's `500`.
+  static Stream<HttpRequest> _screened(Stream<HttpRequest> requests) => requests.where((request) {
+        try {
+          request.requestedUri;
+          return true;
+        } on Object {
+          final response = request.response
+            ..statusCode = HttpStatus.badRequest
+            ..headers.contentType = ContentType.text
+            ..write('Bad Request');
+          unawaited(response.close().then((_) {}, onError: (Object _) {}));
+          return false;
+        }
+      });
 
   /// The families on the host, the first first.
   List<DenHub> get tenants => List.unmodifiable(_tenants);
@@ -338,14 +368,31 @@ class DenHost implements HostLink {
     }
   }
 
-  /// Headers a reverse proxy adds; a request with any of them didn't come from this machine
-  /// itself, whatever its peer address.
-  static const List<String> _proxyHeaders = ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-forwarded-host', 'x-forwarded-proto'];
+  /// Headers a reverse proxy or CDN adds, besides every `X-Forwarded-*`; a request with any of
+  /// them didn't come from this machine itself, whatever its peer address.
+  static const Set<String> _proxyHeaders = {
+    'forwarded',
+    'via',
+    'x-real-ip',
+    'x-client-ip',
+    'x-cluster-client-ip',
+    'x-original-forwarded-for',
+    'cf-connecting-ip',
+    'cf-connecting-ipv6',
+    'true-client-ip',
+    'fastly-client-ip',
+  };
 
-  /// Whether [request] came from this machine itself, not through a proxy.
+  /// Whether [request] came from this machine itself, not through a proxy: from loopback, with
+  /// no header any proxy adds.
   static bool local(Request request) {
     final peer = peerAddress(request);
-    return peer != null && peer.isLoopback && !_proxyHeaders.any(request.headers.containsKey);
+    if (peer == null || !peer.isLoopback) return false;
+    for (final name in request.headers.keys) {
+      final n = name.toLowerCase();
+      if (n.startsWith('x-forwarded-') || _proxyHeaders.contains(n)) return false;
+    }
+    return true;
   }
 
   /// The anonymous budget, for a request the host answers or reads itself.
@@ -550,13 +597,16 @@ class DenHost implements HostLink {
     if (tenant != null) return tenant.handle(request);
     if (path == 'health') {
       _anonymous(request);
+      // Starting: fails until every family has had its first try. After that the host is up
+      // (its other families are served), and says how many families aren't open.
       final waiting = unavailable.length;
+      final starting = waiting > 0 && !_settled;
       return jsonResponse({
-        'ok': waiting == 0,
+        'ok': !starting,
         'api': 1,
         'ready': waiting == 0 && _tenants.isNotEmpty && _tenants.every((t) => t.ready),
         if (waiting > 0) 'waiting': waiting,
-      }, status: waiting == 0 ? 200 : 503, headers: {if (waiting > 0) 'retry-after': '10'});
+      }, status: starting ? 503 : 200, headers: {if (starting) 'retry-after': '10'});
     }
     _anonymous(request);
     throw _noFamily();
@@ -629,7 +679,15 @@ class DenHost implements HostLink {
     }
     final rest = segments.skip(3).toList();
     final method = request.method;
-    if (rest.isEmpty && method == 'GET') return jsonResponse({'families': [for (final t in _tenants) _describe(t)]});
+    if (rest.isEmpty && method == 'GET') {
+      return jsonResponse({
+        'families': [for (final t in _tenants) _describe(t)],
+        'waiting': [
+          for (final l in _missing)
+            {'id': l.id, 'public_url': l.publicUrl?.toString(), 'error': _whyNot[l.id], 'retry_seconds': config.retryInterval.inSeconds},
+        ],
+      });
+    }
     if (rest.length == 1 && rest.first == 'families' && method == 'POST') {
       final json = await readJsonObject(request, required: true);
       return _serial(() => _addFamily(json));
@@ -639,7 +697,8 @@ class DenHost implements HostLink {
       return _serial(() => _takeOn(json));
     }
     if (rest.length == 2 && rest.first == 'families' && method == 'DELETE') {
-      return _serial(() => _removeFamily(rest[1]));
+      final delete = request.url.queryParameters['delete_data'] == '1';
+      return _serial(() => _removeFamily(rest[1], delete: delete));
     }
     throw ApiError.notFound();
   }
@@ -689,6 +748,11 @@ class DenHost implements HostLink {
     if (url == null) throw ApiError.invalid('"public_url" must be an address like https://den-smith.example.com.', field: 'public_url');
     _checkAddress(url);
     final id = json['id'];
+    // A family taken off whose data was deleted by hand isn't one to bring back.
+    for (final l in state.removedAt(url.host)) {
+      final dir = state.dirOf(l.id);
+      if (dir != null && !Directory(dir).existsSync()) state.forget(l.id);
+    }
     final gone = state.removedAt(url.host);
     if (id != null && (id is! String || !gone.any((l) => l.id == id))) {
       throw ApiError.invalid('No family taken off ${url.host} has that id.', field: 'id');
@@ -738,7 +802,13 @@ class DenHost implements HostLink {
   Future<DenHub> _open(HostedLog log, {required bool fresh}) async {
     final opener = fresh ? config.createLog : config.openLog;
     if (opener == null) throw ApiError(501, 'unavailable', 'This host can\'t take on families while it runs. Stop it first.');
-    final opened = await opener(log);
+    final HostedTenant opened;
+    try {
+      opened = await opener(log);
+    } on StateError catch (e) {
+      // Its data is in use (a backup), or isn't there: say so, not "something went wrong".
+      throw ApiError(409, 'cannot_open', e.message);
+    }
     try {
       return await add(opened.den, opened.config, id: log.id, onClosed: opened.close);
     } on StateError catch (e) {
@@ -750,16 +820,34 @@ class DenHost implements HostLink {
     }
   }
 
-  /// `DELETE /api/v1/host/families/<id or address>`: stops serving that family. Its data stays
-  /// in `logs/<id>/`, so adding its address again brings it back.
-  Future<Response> _removeFamily(String which) async {
+  /// `DELETE /api/v1/host/families/<id or address>[?delete_data=1]`: stops serving that family.
+  /// Its data stays in `logs/<id>/`, so adding its address again brings it back; with
+  /// `delete_data`, it is deleted, and the record with it. Deleting a family the host still has
+  /// takes its id, never its address, so a mistyped name can't delete a family in use.
+  Future<Response> _removeFamily(String which, {bool delete = false}) async {
     final log = state.find(which);
-    final tenant = log == null ? null : _ids.entries.where((e) => e.value == log.id).firstOrNull?.key;
-    if (log == null || log.removed) throw ApiError.notFound(type: 'family', message: 'No family other than the first is at $which.');
+    if (log == null) throw ApiError.notFound(type: 'family', message: 'No family other than the first is at $which.');
+    if (!delete && log.removed) throw ApiError.notFound(type: 'family', message: 'No family other than the first is at $which.');
+    if (delete && !log.removed && which != log.id) {
+      throw ApiError(409, 'in_use', '${log.hostname ?? log.id} is still on this host. Take it off first, or name it by its id (${log.id}) to take it off and delete its data.');
+    }
+    if (delete && config.deleteLog == null) throw ApiError(501, 'unavailable', 'This host can\'t delete a family\'s data while it runs. Stop it first.');
+    final tenant = _ids.entries.where((e) => e.value == log.id).firstOrNull?.key;
     if (tenant != null) await remove(tenant);
-    state.put(log.copyWith(removed: true));
-    this.log.info('Stopped serving ${log.hostname ?? log.id}; its data stays in $hostLogsDir/${log.id}');
-    return jsonResponse({'ok': true, 'id': log.id});
+    if (!log.removed) state.put(log.copyWith(removed: true));
+    _whyNot.remove(log.id);
+    if (!delete) {
+      this.log.info('Stopped serving ${log.hostname ?? log.id}; its data stays in $hostLogsDir/${log.id}');
+      return jsonResponse({'ok': true, 'id': log.id});
+    }
+    try {
+      await config.deleteLog!(log);
+    } on StateError catch (e) {
+      throw ApiError(409, 'busy', '${log.hostname ?? log.id} is off the host, but its data wasn\'t deleted: ${e.message}');
+    }
+    state.forget(log.id);
+    this.log.info('Deleted the data of ${log.hostname ?? log.id}');
+    return jsonResponse({'ok': true, 'id': log.id, 'deleted': true});
   }
 
   /// The families `host.json` lists that aren't attached.
@@ -768,9 +856,12 @@ class DenHost implements HostLink {
   /// Opens and serves every family `host.json` lists that isn't served yet ([HostConfig.openLog]).
   /// One that doesn't open (its data directory's lock held by a backup, say) is logged and tried
   /// again every [HostConfig.retryInterval]; until it opens, requests to its address are answered
-  /// `503` and the host's `/health` fails. Returns the families still missing.
+  /// `503`. The host's `/health` fails until this first pass is done, then answers `200` (the
+  /// families that did open are served), with how many aren't. Returns the families still
+  /// missing.
   Future<List<HostedLog>> openConfigured() async {
     final missing = await _serial(_openMissing);
+    _settled = true;
     _retry ??= Timer.periodic(config.retryInterval, (_) {
       if (_stopped || _missing.isEmpty) return;
       unawaited(_serial(_openMissing).then((_) {}, onError: (Object _) {}));
@@ -782,9 +873,11 @@ class DenHost implements HostLink {
     for (final l in _missing) {
       try {
         await _open(l, fresh: false);
+        _whyNot.remove(l.id);
         log.info('Serving ${l.hostname ?? l.id}');
       } on Object catch (e) {
-        final why = e is ApiError ? e.message : (e is StateError ? e.message : '${e.runtimeType}');
+        final why = e is ApiError ? e.message : (e is StateError ? e.message : (e is FileSystemException ? e.message : '${e.runtimeType}'));
+        _whyNot[l.id] = why;
         log.error('Not serving ${l.hostname ?? l.id} yet ($why); trying again in ${config.retryInterval.inSeconds}s');
       }
     }
@@ -835,8 +928,8 @@ class DenHost implements HostLink {
   }
 }
 
-/// One family's outgoing client for addresses callers give its hub ([DenHost.fetchFor]): reading
-/// another family's calendar link on the same host (`GET /ics/<secret>/shared.ics`, and its
+/// One family's outgoing client for the calendar feeds it subscribes to ([DenHost.fetchFor],
+/// [HubContext.feedFetch]): reading another family's calendar link on the same host (`GET /ics/<secret>/shared.ics`, and its
 /// watch stream) is answered by the host in this process, as if it had come in from outside
 /// with nothing but its secret, so it needs no DNS, no `extra_hosts` and no `DEN_PEER_HUBS`, and
 /// never leaves the machine. It counts against the limits of the hub that asked

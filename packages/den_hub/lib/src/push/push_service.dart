@@ -72,24 +72,21 @@ class WebPushService implements HubService, ReminderSink {
   /// Device id → its subscription: `endpoint`, `p256dh`, `auth`, `contact`, `since`.
   Map<String, Object?> get _devices => _map('devices');
 
-  /// The hub's VAPID keys, made and saved on first use. On a Den host they join the host's
-  /// keyring too, which keeps every family's key by its public half.
+  /// The hub's VAPID keys, made and saved on first use, in the hub's own state: on a Den host
+  /// too, each family's key is in its own data only.
   VapidKeys get keys {
     final have = _keys;
     if (have != null) return have;
     final saved = _state['vapid'];
     if (saved is String) {
       try {
-        final loaded = _keys = VapidKeys.fromPrivate(unb64url(saved));
-        hub.host?.vapid.add(loaded);
-        return loaded;
+        return _keys = VapidKeys.fromPrivate(unb64url(saved));
       } on Object {
         hub.log.warn('The saved Web Push key was unreadable; made a new one. Browsers turn reminders on again.');
       }
     }
     final made = _keys = VapidKeys.generate();
     _state['vapid'] = b64url(made.privateKey);
-    hub.host?.vapid.add(made);
     unawaited(_save());
     return made;
   }

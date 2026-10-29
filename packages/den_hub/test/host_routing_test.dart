@@ -218,18 +218,21 @@ void main() {
           hub: a.hubDen.deviceId, body: {'feed': 'shared', 'label': 'For the other family'});
       expect(made.status, 201, reason: made.text);
       final url = made.body['url']! as String;
-      final feed = await b.hub.context.fetch.get(Uri.parse(url));
+      final feeds = b.hub.context.feedFetch;
+      final feed = await feeds.get(Uri.parse(url));
       expect(feed.statusCode, 200);
       expect(feed.body, contains('@${a.phone.familyId}.den'));
-      final watch = await b.hub.context.fetch.send(http.Request('GET', Uri.parse(url.replaceFirst('shared.ics', 'watch'))));
+      final watch = await feeds.send(http.Request('GET', Uri.parse(url.replaceFirst('shared.ics', 'watch'))));
       expect(watch.statusCode, 200);
       expect(await watch.stream.transform(utf8.decoder).firstWhere((s) => s.contains('hello')), contains('etag'));
       // Its own address, another port, or http: NetGuard, as ever (which finds no DNS here).
-      await expectLater(a.hub.context.fetch.get(Uri.parse(url)), throwsA(isA<SocketException>()));
-      await expectLater(b.hub.context.fetch.get(Uri.parse(url.replaceFirst('den-a.test', 'den-a.test:8443'))), throwsA(isA<SocketException>()));
-      await expectLater(b.hub.context.fetch.get(Uri.parse(url.replaceFirst('https:', 'http:'))), throwsA(isA<SocketException>()));
+      await expectLater(a.hub.context.feedFetch.get(Uri.parse(url)), throwsA(isA<SocketException>()));
+      await expectLater(feeds.get(Uri.parse(url.replaceFirst('den-a.test', 'den-a.test:8443'))), throwsA(isA<SocketException>()));
+      await expectLater(feeds.get(Uri.parse(url.replaceFirst('https:', 'http:'))), throwsA(isA<SocketException>()));
       // A secret that isn't a's, at a's address: refused like any stranger's.
-      expect((await b.hub.context.fetch.get(Uri.parse('https://den-a.test/ics/denfeed_guess/shared.ics'))).statusCode, 401);
+      expect((await feeds.get(Uri.parse('https://den-a.test/ics/denfeed_guess/shared.ics'))).statusCode, 401);
+      // Only the feed service reads in-process: whatever else a hub fetches goes through NetGuard.
+      await expectLater(b.hub.context.fetch.get(Uri.parse(url)), throwsA(isA<SocketException>()));
     });
 
     test('made-up signature headers reach nothing an address doesn\'t, and say nothing about which hubs are here', () async {
@@ -253,7 +256,7 @@ void main() {
       final url = made.body['url']! as String;
       var limited = false;
       for (var i = 0; i < 45 && !limited; i++) {
-        final r = await a.hub.context.fetch.get(Uri.parse('https://den-b.test/ics/denfeed_guess$i/shared.ics'));
+        final r = await a.hub.context.feedFetch.get(Uri.parse('https://den-b.test/ics/denfeed_guess$i/shared.ics'));
         limited = r.statusCode == 429;
       }
       expect(limited, isTrue, reason: "a's hub spent its own failed tries");
@@ -263,12 +266,12 @@ void main() {
         await c.hubDen.close();
         await c.phone.close();
       });
-      expect((await c.hub.context.fetch.get(Uri.parse(url))).statusCode, 200, reason: "c's reads are c's own");
+      expect((await c.hub.context.feedFetch.get(Uri.parse(url))).statusCode, 200, reason: "c's reads are c's own");
       // Anything but reading a calendar link goes out through NetGuard (which finds no DNS here).
       for (final other in ['https://den-b.test/api/v1/hub/status', 'https://den-b.test/api/v1/host', 'https://den-b.test/.well-known/oauth-authorization-server']) {
-        await expectLater(a.hub.context.fetch.get(Uri.parse(other)), throwsA(isA<SocketException>()), reason: other);
+        await expectLater(a.hub.context.feedFetch.get(Uri.parse(other)), throwsA(isA<SocketException>()), reason: other);
       }
-      await expectLater(a.hub.context.fetch.post(Uri.parse(url)), throwsA(isA<SocketException>()), reason: 'only GET');
+      await expectLater(a.hub.context.feedFetch.post(Uri.parse(url)), throwsA(isA<SocketException>()), reason: 'only GET');
     });
 
     test('families come and go while the host runs; two can never share a hub, a family or an address', () async {
@@ -303,7 +306,7 @@ void main() {
 
     HubLog quiet() => HubLog(level: LogLevel.error, sink: (_) {});
 
-    test("a configured address whose family isn't attached answers 503, never another family's, and /health fails", () async {
+    test("a configured address whose family isn't attached answers 503, never another family's; /health fails only while starting", () async {
       final host = await DenHost.start(
           HostConfig(port: 0, host: InternetAddress.loopbackIPv4, log: quiet(), expected: const ['den-a.test', 'den-b.test']));
       final a = await HostFixture.addFamily(host, 'den-a.test');
@@ -326,7 +329,7 @@ void main() {
         expect(r.headers['retry-after'], isNotNull);
       }
       final health = await at('GET', '/health', null);
-      expect(health.status, 503, reason: 'Docker waits for every family');
+      expect(health.status, 503, reason: 'starting: every family has its first try first');
       expect(health.body['waiting'], 1);
       // A hello naming no family at b's address is closed, never a's.
       final ws = await WebSocket.connect('${host.localUrl.replace(scheme: 'ws', path: '/ws')}', headers: {'host': 'den-b.test'});
@@ -334,6 +337,13 @@ void main() {
           Session.connect(IOWebSocketChannel(ws), keys: await DeviceKeys.generate(), familyId: null, timeout: const Duration(seconds: 5)),
           throwsA(isA<SessionException>()));
       expect((await at('GET', '/api/v1/hub/status', 'den-a.test')).status, 200, reason: 'a is open');
+      // Every family has had its try: the host is up (a is served), and says one isn't open.
+      await host.openConfigured();
+      final up = await at('GET', '/health', null);
+      expect(up.status, 200, reason: "one family that won't open doesn't hold up the others' --wait");
+      expect(up.body['waiting'], 1);
+      expect(up.body['ready'], isFalse);
+      expect((await at('GET', '/api/v1/hub/status', 'den-b.test')).status, 503, reason: "b's address still waits for b");
 
       final b = await HostFixture.addFamily(host, 'den-b.test');
       addTearDown(() async {
@@ -378,9 +388,17 @@ void main() {
           port: 0, host: InternetAddress.loopbackIPv4, log: quiet(), dataDir: dir.path, openLog: open,
           retryInterval: const Duration(milliseconds: 100)));
       addTearDown(host.stop);
+      expect((await apiCall(host.localUrl, 'GET', '/health')).status, 503, reason: 'starting');
       final missing = await host.openConfigured();
       expect(missing.map((l) => l.id), ['smith']);
       expect((await apiCall(host.localUrl, 'GET', '/api/v1/hub/status', headers: {'host': 'den-b.test'})).status, 503);
+      // Up, saying how many aren't open; the host's own command line hears which, and why.
+      expect((await apiCall(host.localUrl, 'GET', '/health')).body['waiting'], 1);
+      final listed = await _admin(host, dir.path, 'GET', '/api/v1/host');
+      expect(listed.statusCode, 200);
+      final waiting = (jsonDecode(listed.body) as Map)['waiting'] as List;
+      expect(waiting.single, containsPair('id', 'smith'));
+      expect(waiting.single, containsPair('error', 'Another den_hub is using it'));
       await eventually(() => host.tenants.isNotEmpty);
       expect(tries, 3);
       expect((await apiCall(host.localUrl, 'GET', '/api/v1/hub/status', headers: {'host': 'den-b.test'})).status, 200);
@@ -418,4 +436,164 @@ void main() {
       expect(status.body['device'], f.hubDen.deviceId, reason: name);
     }
   });
+
+  test("anonymous sign-ins naming another family's calendar link as their app never read it in-process", () async {
+    final proxy = [IpNetwork.parse('127.0.0.1')];
+    final f = await HostFixture.start(
+      configure: (c) => HostConfig(
+        port: 0,
+        host: InternetAddress.loopbackIPv4,
+        log: c.log,
+        trustedProxies: proxy,
+        resolver: (name) async => throw SocketException('no DNS for $name here'),
+      ),
+      hub: (name, c) => HubConfig(mdns: false, publicUrl: c.publicUrl, log: c.log, public: false, trustedProxies: proxy),
+    );
+    addTearDown(f.stop);
+    final a = f['den-a.test'];
+    final b = f['den-b.test'];
+    final made = await f.signed(b.phone, 'POST', '/api/v1/feeds', hub: b.hubDen.deviceId, body: {'feed': 'shared', 'label': 'For a'});
+    final url = made.body['url']! as String;
+    // Strangers start sign-ins at a's address with "apps" whose metadata is at b's calendar
+    // links: a's hub looks them up through NetGuard, which finds no DNS here, so none of them
+    // is read in-process or spends a's in-process tries.
+    for (var ip = 1; ip <= 4; ip++) {
+      for (var i = 0; i < 10; i++) {
+        final query = {
+          'response_type': 'code',
+          'client_id': 'https://den-b.test/ics/denfeed_cimd$ip$i/x.ics',
+          'redirect_uri': 'http://127.0.0.1:9/cb',
+          'code_challenge': 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+          'code_challenge_method': 'S256',
+          'state': 's',
+        };
+        await http.get(f.base.resolve('/oauth/authorize').replace(queryParameters: query),
+            headers: {'host': 'den-a.test', 'x-forwarded-for': '198.51.100.$ip'});
+      }
+    }
+    expect((await a.hub.context.feedFetch.get(Uri.parse(url))).statusCode, 200, reason: "a's calendar reads are untouched");
+    await expectLater(a.hub.context.fetch.get(Uri.parse(url)), throwsA(isA<SocketException>()), reason: 'metadata documents go through NetGuard');
+  });
+
+  group("the host's own command line", () {
+    late Directory dir;
+    late DenHost host;
+    late HostedFamily first;
+    final opened = <String, Den>{};
+    final deleted = <String>[];
+    HubLog quiet() => HubLog(level: LogLevel.error, sink: (_) {});
+
+    Future<HostedTenant> fresh(HostedLog log) async {
+      final den = opened[log.id] ??= await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
+      return (den: den, config: HubConfig(mdns: false, publicUrl: log.publicUrl, log: quiet()), close: () async {});
+    }
+
+    Future<DenHost> startHost() => DenHost.start(HostConfig(
+          port: 0,
+          host: InternetAddress.loopbackIPv4,
+          log: quiet(),
+          dataDir: dir.path,
+          single: true,
+          expected: const ['den-a.test'],
+          openLog: fresh,
+          createLog: fresh,
+          deleteLog: (log) async {
+            deleted.add(log.id);
+            await opened.remove(log.id)?.close();
+          },
+        ));
+
+    setUp(() async {
+      dir = await Directory.systemTemp.createTemp('den-host-cli');
+      opened.clear();
+      deleted.clear();
+      host = await startHost();
+      first = await HostFixture.addFamily(host, 'den-a.test');
+      await host.openConfigured();
+    });
+
+    tearDown(() async {
+      await host.stop();
+      await first.hubDen.close();
+      await first.phone.close();
+      for (final den in opened.values) {
+        await den.close();
+      }
+      await dir.delete(recursive: true);
+    });
+
+    Future<int> statusAt(String name) async => (await apiCall(host.localUrl, 'GET', '/api/v1/hub/status', headers: {'host': name})).status;
+
+    test('a host that had another family never answers as one family again: not when it is taken off, deleted, or the host restarts', () async {
+      expect(host.single, isTrue);
+      expect((await apiCall(host.localUrl, 'GET', '/api/v1/hub/status', headers: {'host': 'elsewhere.test'})).status, 200);
+      final added = await _admin(host, dir.path, 'POST', '/api/v1/host/families', body: {'public_url': 'https://den-b.test'});
+      expect(added.statusCode, 201, reason: added.body);
+      final id = (jsonDecode(added.body) as Map)['id'] as String;
+      expect(host.single, isFalse);
+      expect((await _admin(host, dir.path, 'DELETE', '/api/v1/host/families/den-b.test')).statusCode, 200);
+      expect(host.single, isFalse, reason: 'taken off, its address is still never the first family\'s');
+      for (final (method, path) in [('GET', '/api/v1/hub/status'), ('GET', '/ics/denfeed_abcdef/shared.ics'), ('POST', '/api/v1/link')]) {
+        final r = await apiCall(host.localUrl, method, path, headers: {'host': 'den-b.test'});
+        expect(r.status, 404, reason: '$method $path: ${r.text}');
+        expect(r.error['code'], 'no_family');
+      }
+      final ws = await WebSocket.connect('${host.localUrl.replace(scheme: 'ws', path: '/ws')}', headers: {'host': 'den-b.test'});
+      await expectLater(
+          Session.connect(IOWebSocketChannel(ws), keys: await DeviceKeys.generate(), familyId: null, timeout: const Duration(seconds: 5)),
+          throwsA(isA<SessionException>()),
+          reason: "a joiner's hello at b's old address is never the first family's");
+      final gone = await _admin(host, dir.path, 'DELETE', '/api/v1/host/families/den-b.test?delete_data=1');
+      expect(gone.statusCode, 200, reason: gone.body);
+      expect(deleted, [id]);
+      expect(HostState(dir.path).all, isEmpty);
+      expect(await statusAt('den-b.test'), 404, reason: 'deleted, still never the first family\'s');
+      await host.stop();
+      host = await startHost();
+      await host.add(first.hubDen, HubConfig(mdns: false, publicUrl: Uri.parse('https://den-a.test'), log: quiet()));
+      expect(host.single, isFalse, reason: 'host.json remembers');
+      expect(await statusAt('den-b.test'), 404);
+      expect(await statusAt('den-a.test'), 200);
+    });
+
+    test("deleting a family's data happens in the running host, by its id while it is on the host, and frees its address", () async {
+      final added = await _admin(host, dir.path, 'POST', '/api/v1/host/families', body: {'public_url': 'https://den-c.test'});
+      final id = (jsonDecode(added.body) as Map)['id'] as String;
+      final byAddress = await _admin(host, dir.path, 'DELETE', '/api/v1/host/families/den-c.test?delete_data=1');
+      expect(byAddress.statusCode, 409, reason: 'a mistyped name never deletes a family in use');
+      expect(await statusAt('den-c.test'), 200, reason: 'still served');
+      final byId = await _admin(host, dir.path, 'DELETE', '/api/v1/host/families/$id?delete_data=1');
+      expect(byId.statusCode, 200, reason: byId.body);
+      expect(deleted, [id]);
+      expect(HostState(dir.path).all, isEmpty, reason: 'the record is gone from host.json');
+      final again = await _admin(host, dir.path, 'POST', '/api/v1/host/families', body: {'public_url': 'https://den-c.test'});
+      expect(again.statusCode, 201, reason: 'a new family at the freed address: ${again.body}');
+      expect((jsonDecode(again.body) as Map)['id'], isNot(id));
+    });
+
+    test('only from this machine, with no proxy in between; a request shelf could not read is a 400, not a 500', () async {
+      expect((await _admin(host, dir.path, 'GET', '/api/v1/host')).statusCode, 200);
+      for (final header in ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-server', 'x-forwarded-port', 'via', 'cf-connecting-ip', 'true-client-ip']) {
+        final r = await _admin(host, dir.path, 'GET', '/api/v1/host', headers: {header: header == 'x-forwarded-proto' ? 'https' : '1.2.3.4'});
+        expect(r.statusCode, 403, reason: header);
+      }
+      final bad = await http.get(host.localUrl.resolve('/health'), headers: {'x-forwarded-proto': '1.2.3.4'});
+      expect(bad.statusCode, 400);
+      expect((await http.get(host.localUrl.resolve('/health'))).statusCode, 200, reason: 'and the host serves on');
+    });
+  });
+}
+
+/// A request to [host]'s command-line endpoints, with the secret it left in [dataDir].
+Future<http.Response> _admin(DenHost host, String dataDir, String method, String path,
+    {Object? body, Map<String, String> headers = const {}}) async {
+  final secret = File('$dataDir/$hostStateDir/$hostCliFile').readAsStringSync().trim();
+  final request = http.Request(method, host.localUrl.resolve(path))
+    ..headers[DenHost.secretHeader] = secret
+    ..headers.addAll(headers);
+  if (body != null) {
+    request.headers['content-type'] = 'application/json';
+    request.body = jsonEncode(body);
+  }
+  return http.Response.fromStream(await request.send());
 }

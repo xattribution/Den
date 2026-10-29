@@ -44,13 +44,14 @@ void main() {
         'keys': {'p256dh': b64url(uaPublic), 'auth': b64url(auth)},
       };
 
-  /// The key the last push named, after checking its JWT verifies with that key from [ring].
-  String lastSigner(VapidKeyring ring) {
+  /// The key the last push named, after checking its JWT verifies with that key, one of the
+  /// families' own.
+  String lastSigner() {
     final header = apple.pushes.last.$1.headers['authorization']!;
     final m = RegExp(r'^vapid t=([^,]+), k=(.+)$').firstMatch(header)!;
     final parts = m[1]!.split('.');
-    final key = ring[m[2]!];
-    expect(key, isNotNull, reason: 'a key the host has');
+    final key = {for (final t in f.host.tenants) b64url(t.push.keys.publicKey): t.push.keys}[m[2]!];
+    expect(key, isNotNull, reason: "a family's own key");
     expect(key!.verify(utf8.encode('${parts[0]}.${parts[1]}'), unb64url(parts[2])), isTrue, reason: 'signed with the key it names');
     return m[2]!;
   }
@@ -81,11 +82,11 @@ void main() {
     expect(await keyAt(b, 'den-a.test'), kb);
     await subscribeAt(b, 'den-a.test', 'b-at-a');
     await testPush(b, 'den-a.test');
-    expect(lastSigner(f.host.vapid), kb);
+    expect(lastSigner(), kb);
     expect(apple.pushes.last.$2['title'], 'Reminders are on');
     await subscribeAt(a, 'den-a.test', 'a-at-a');
     await testPush(a, 'den-a.test');
-    expect(lastSigner(f.host.vapid), ka);
+    expect(lastSigner(), ka);
   });
 
   test("a family's own browsers keep its own key, older subscriptions and any key a record names included", () async {
@@ -93,30 +94,34 @@ void main() {
     final kb = await keyAt(b, 'den-b.test');
     await subscribeAt(b, 'den-b.test', 'b-at-b');
     await testPush(b, 'den-b.test');
-    expect(lastSigner(f.host.vapid), kb);
+    expect(lastSigner(), kb);
     final devices = b.hub.context.state.read('push')['devices']! as Map;
     final record = devices[b.phone.deviceId] as Map;
     expect(record['vapid'], kb);
     // A subscription from before the host names no key: it was made with the family's own.
     record.remove('vapid');
     await testPush(b, 'den-b.test');
-    expect(lastSigner(f.host.vapid), kb);
+    expect(lastSigner(), kb);
     // One naming another family's key (edited by hand, say) is still signed with b's own.
     record['vapid'] = ka;
     await testPush(b, 'den-b.test');
-    expect(lastSigner(f.host.vapid), kb);
+    expect(lastSigner(), kb);
   });
 
-  test('the host keeps every key on disk, by its public half, readable by its user only', () async {
+  test("the host keeps no family's key: each is in the family's own data, and goes with it", () async {
     final ka = await keyAt(a, 'den-a.test');
     final kb = await keyAt(b, 'den-b.test');
-    final kept = VapidKeyring(File('${dir.path}/$hostStateDir/vapid.json'));
-    expect(kept[ka], isNotNull);
-    expect(kept[kb], isNotNull);
-    expect(b64url(kept[ka]!.privateKey), b64url(f.host.vapid[ka]!.privateKey));
-    if (!Platform.isWindows) {
-      expect(File('${dir.path}/$hostStateDir/vapid.json').statSync().mode & 0x3f, 0, reason: "only the host's user reads it");
+    expect(File('${dir.path}/$hostStateDir/vapid.json').existsSync(), isFalse);
+    for (final (family, key) in [(a, ka), (b, kb)]) {
+      await family.hub.context.state.flush();
+      final saved = jsonDecode(File('${dir.path}/${family.hostname}/hub/push.json').readAsStringSync()) as Map;
+      expect(b64url(VapidKeys.fromPrivate(unb64url(saved['vapid'] as String)).publicKey), key, reason: family.hostname);
     }
+    // A keyring an earlier host kept is deleted when the host starts.
+    final old = File('${dir.path}/$hostStateDir/vapid.json')..writeAsStringSync('{"keys": {}}');
+    final again = await DenHost.start(HostConfig(port: 0, host: InternetAddress.loopbackIPv4, dataDir: dir.path, log: HubLog.silent()));
+    await again.stop();
+    expect(old.existsSync(), isFalse);
   });
 
   test('a hub moved onto a host keeps its key and every browser it had', () async {
@@ -154,7 +159,7 @@ void main() {
     final family = HostedFamily('den-c.test', hub.phone, hub.hubDen, c);
     expect(await keyAt(family, 'den-c.test'), before, reason: "the app sees the key it subscribed with, so it keeps its subscription");
     await testPush(family, 'den-c.test');
-    expect(lastSigner(f.host.vapid), before);
+    expect(lastSigner(), before);
   });
 }
 

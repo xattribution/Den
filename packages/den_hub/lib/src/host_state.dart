@@ -7,7 +7,6 @@ import 'package:http/http.dart' as http_client;
 import 'package:shelf/shelf.dart';
 
 import 'edge.dart';
-import 'push/web_push_crypto.dart';
 import 'setup.dart' show restrictToOwner;
 
 /// The directory under a host's data directory that holds each log besides the first:
@@ -16,7 +15,8 @@ import 'setup.dart' show restrictToOwner;
 const String hostLogsDir = 'logs';
 
 /// The directory under a host's data directory with the host's own state: `host.json` (the logs
-/// it serves and their addresses), `vapid.json` (every Web Push key) and `cli-secret`.
+/// it serves and their addresses) and `cli-secret`. No family's keys are kept there: each
+/// family's Web Push key is in its own data, and goes with it.
 const String hostStateDir = 'host';
 
 /// The file in [hostStateDir] holding the secret `den_hub add-family`, `adopt` and
@@ -123,86 +123,34 @@ String? requestHostname(Request request, List<IpNetwork> trusted) {
   return normalizeHostname(colon > 0 && host.indexOf(':') == colon ? host.substring(0, colon) : host);
 }
 
-/// Every Web Push (VAPID) key the families on a host have handed browsers, by public key
-/// (base64url): `<data>/host/vapid.json`. A browser's subscription is bound to the key it was
-/// made with, so the host signs each push with that one, whichever family sends it: a family
-/// adopted from its own container keeps its key and every browser it had, and a browser
-/// subscribed at one family's address can also take another family's reminders.
-class VapidKeyring {
-  /// Opens the keyring in [file] (null: memory only).
-  VapidKeyring(this._file) {
-    final file = _file;
-    if (file == null) return;
-    try {
-      if (!file.existsSync()) return;
-      final json = jsonDecode(file.readAsStringSync());
-      final keys = json is Map ? json['keys'] : null;
-      if (keys is! Map) return;
-      for (final e in keys.entries) {
-        final private = e.value;
-        if (private is! String) continue;
-        try {
-          final k = VapidKeys.fromPrivate(unb64url(private));
-          _keys[b64url(k.publicKey)] = k;
-        } on Object {
-          continue;
-        }
-      }
-    } on Object {
-      return;
-    }
-  }
-
-  final File? _file;
-  final Map<String, VapidKeys> _keys = {};
-
-  /// The key whose public half (base64url) is [publicKey], when the host has it.
-  VapidKeys? operator [](String publicKey) => _keys[publicKey];
-
-  /// How many keys it holds.
-  int get length => _keys.length;
-
-  /// Keeps [keys], saving the keyring when it is new.
-  void add(VapidKeys keys) {
-    final id = b64url(keys.publicKey);
-    if (_keys.containsKey(id)) return;
-    _keys[id] = keys;
-    final file = _file;
-    if (file == null) return;
-    try {
-      file.parent.createSync(recursive: true);
-      final temp = File('${file.path}.tmp');
-      temp.writeAsStringSync(
-        jsonEncode({
-          'keys': {for (final e in _keys.entries) e.key: b64url(e.value.privateKey)},
-        }),
-        flush: true,
-      );
-      restrictToOwner(temp.path);
-      temp.renameSync(file.path);
-    } on Object {
-      // The families keep their own keys too (hub/push.json); this only adds the others'.
-    }
-  }
-}
-
 /// A Den host's own state, under `<data>/host/` ([hostStateDir]): which logs it serves besides
-/// the first, at which addresses (`host.json`), its Web Push keys ([VapidKeyring]) and the
-/// command line's secret ([hostCliFile]). Without a data directory everything is in memory.
+/// the first, at which addresses (`host.json`), and the command line's secret ([hostCliFile]).
+/// Without a data directory everything is in memory.
 class HostState {
   /// Opens the state of the host whose data directory is [dataDir].
-  HostState(this.dataDir) : vapid = VapidKeyring(dataDir == null ? null : File(_path(dataDir, 'vapid.json'))) {
+  HostState(this.dataDir) {
     _load();
   }
 
   /// The host's data directory, or null.
   final String? dataDir;
 
-  /// Every Web Push key.
-  final VapidKeyring vapid;
-
   final List<HostedLog> _logs = [];
   Uri? _primaryUrl;
+  bool _several = false;
+
+  /// Deletes `vapid.json`, which earlier builds of the host kept every family's Web Push key in
+  /// (each family's own data has its key). Best effort.
+  void dropKeyring() {
+    final dir = dataDir;
+    if (dir == null) return;
+    try {
+      final old = File(_path(dir, 'vapid.json'));
+      if (old.existsSync()) old.deleteSync();
+    } on Object {
+      // Nothing reads it.
+    }
+  }
 
   static String _path(String dataDir, String name) =>
       [dataDir, hostStateDir, name].join(Platform.pathSeparator);
@@ -219,13 +167,20 @@ class HostState {
       throw StateError('${file.path} is unreadable. Fix it, or restore it from a backup, before the host starts.');
     }
     if (json is! Map) return;
+    _several = json['several'] == true;
     final primary = json['primary'];
     if (primary is Map && primary['public_url'] is String) _primaryUrl = Uri.tryParse(primary['public_url'] as String);
     for (final l in (json['logs'] as List?) ?? const []) {
       final log = HostedLog.fromJson(l);
       if (log != null && !_logs.any((x) => x.id == log.id)) _logs.add(log);
     }
+    if (_logs.isNotEmpty) _several = true;
   }
+
+  /// Whether the host has ever had a family besides the first (one it serves, one taken off, or
+  /// one whose data was deleted since). Once it has, it never answers as one family at any
+  /// address again ([HostConfig.single]): an address a family had stays no one else's.
+  bool get several => _several;
 
   /// Every log in `host.json`, removed ones included.
   List<HostedLog> get all => List.unmodifiable(_logs);
@@ -267,10 +222,12 @@ class HostState {
     _logs
       ..removeWhere((l) => l.id == log.id)
       ..add(log);
+    _several = true;
     save();
   }
 
-  /// Drops the record of log [id] (its data deleted), and saves.
+  /// Drops the record of log [id] (its data deleted), and saves. The host still remembers it had
+  /// other families ([several]).
   void forget(String id) {
     final before = _logs.length;
     _logs.removeWhere((l) => l.id == id);
@@ -299,6 +256,7 @@ class HostState {
       const JsonEncoder.withIndent('  ').convert({
         'v': 1,
         if (_primaryUrl != null) 'primary': {'public_url': _primaryUrl.toString()},
+        if (_several) 'several': true,
         'logs': [for (final l in _logs) l.toJson()],
       }),
       flush: true,
@@ -337,7 +295,7 @@ class HostState {
 }
 
 /// What a family's hub (a tenant) gets from the Den host it runs in: the host-wide limits and
-/// clients, its Web Push keys, and the lookups that keep codes unique across the host's books.
+/// clients, and the lookups that keep codes unique across the host's books.
 abstract interface class HostLink {
   /// Per-client budgets, shared by every family on the host, so spreading tries across
   /// families' addresses buys no more of them.
@@ -348,9 +306,6 @@ abstract interface class HostLink {
 
   /// Wrong recovery codes, counted for the whole host.
   WrongGuesses get recoveryGuesses;
-
-  /// Every Web Push key the host has.
-  VapidKeyring get vapid;
 
   /// Whether any family on the host keeps an invite under [key] (four words, or `slot:<hex>`).
   bool inviteTaken(String key);

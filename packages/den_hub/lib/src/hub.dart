@@ -108,7 +108,7 @@ class DenHub implements RoutableLog {
   }
 
   /// Starts [den]'s hub as one family of [host] ([DenHost.add] calls this): its own engine,
-  /// state and services, with the host's server, limits, clients and Web Push keys.
+  /// state and services, with the host's server, limits and clients.
   static Future<DenHub> tenantOf(DenHost host, Den den, HubConfig config) async {
     final node = SyncNode(den, invites: HubInviteBook());
     final ctx = HubContext(
@@ -119,7 +119,8 @@ class DenHub implements RoutableLog {
       state: HubState(config.dataDir),
       node: node,
       http: host.http,
-      fetch: host.fetchFor(den.deviceId),
+      fetch: host.fetch,
+      feedFetch: host.fetchFor(den.deviceId),
       host: host,
     );
     final hub = DenHub._(den, config, ctx, ChangeFeed(den), host);

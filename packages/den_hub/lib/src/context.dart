@@ -18,8 +18,8 @@ import 'state.dart';
 
 /// What every part of the hub shares.
 class HubContext {
-  /// Creates the shared context. In a Den host, [host] gives the host-wide limits and Web Push
-  /// keys, and the host's clients are [http] and [fetch].
+  /// Creates the shared context. In a Den host, [host] gives the host-wide limits, and the host's
+  /// clients are [http], [fetch] and [feedFetch].
   HubContext({
     required this.den,
     required this.gate,
@@ -29,9 +29,11 @@ class HubContext {
     required this.node,
     required this.http,
     http_client.Client? fetch,
+    http_client.Client? feedFetch,
     this.host,
   })  : fetch = fetch ??
             NetGuard(resolve: config.resolver, allow: config.fetchAllow, hubs: [?config.publicUrl, ...config.peerHubs]).client(),
+        _feedFetch = feedFetch,
         limits = host?.limits ?? RateLimiter();
 
   /// The Den host this hub is one family of, or null for a context made on its own (the command
@@ -59,10 +61,18 @@ class HubContext {
   /// Outgoing HTTP to what the operator configured (notifiers, readers, model providers).
   final http_client.Client http;
 
-  /// Outgoing HTTP to addresses callers gave the hub (calendar feeds, OAuth client metadata):
-  /// [NetGuard]'s client, which refuses the hub's own machine and network (except the
-  /// configured hubs' names, [HubConfig.peerHubs], which may lead to loopback).
+  /// Outgoing HTTP to addresses callers gave the hub (OAuth client metadata, and anything else
+  /// but calendar feeds): [NetGuard]'s client, which refuses the hub's own machine and network
+  /// (except the configured hubs' names, [HubConfig.peerHubs], which may lead to loopback).
   final http_client.Client fetch;
+
+  final http_client.Client? _feedFetch;
+
+  /// Outgoing HTTP for the calendar feeds the family subscribes to: [fetch], except that on a Den
+  /// host another family's calendar link there is read in the host's own process
+  /// (`DenHost.fetchFor`). Only the feed service uses it, so nothing an anonymous caller names
+  /// (an OAuth client's metadata address, say) is ever read in-process.
+  http_client.Client get feedFetch => _feedFetch ?? fetch;
 
   /// In a family, approved, log loaded: the API answers.
   bool get ready => den.hasFamily && den.isApproved;

@@ -14,7 +14,7 @@ export 'src/config.dart';
 export 'src/edge.dart' show IpNetwork;
 export 'src/host.dart' show DenHost, HostConfig, HostedTenant;
 export 'src/host_state.dart'
-    show HostState, HostedLog, VapidKeyring, hostCliFile, hostLogsDir, hostStateDir, normalizeHostname, requestHostname;
+    show HostState, HostedLog, hostCliFile, hostLogsDir, hostStateDir, normalizeHostname, requestHostname;
 export 'src/hub.dart';
 export 'src/tenant_router.dart' show RoutableLog, TenantRouter;
 export 'src/log.dart';
