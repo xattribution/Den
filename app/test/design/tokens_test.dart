@@ -256,6 +256,7 @@ void main() {
     test('a short line never ends with one lonely word', () {
       expect(noOrphan('Movie night approved for Mia'), 'Movie night approved for${nbsp}Mia');
       expect(noOrphan('Approve'), 'Approve');
+      expect(noOrphan("Maya's picture"), "Maya's picture", reason: 'two words joined would break inside one');
       final long = List.filled(15, 'word').join(' ');
       expect(noOrphan(long), long);
     });

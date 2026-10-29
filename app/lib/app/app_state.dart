@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../platform/calendars/phone_calendars.dart';
 import '../platform/sync/den_network.dart';
 import '../platform/notifications/reminder_scheduler.dart';
+import '../design/photos.dart';
 import 'actions.dart';
 import 'den_scope.dart';
 import 'family_reads.dart';
@@ -26,8 +27,11 @@ abstract final class Changes {
   static const all = 'all';
 
   /// Who's who and what they may do, which nearly every screen reads: the family's settings,
-  /// its people, its devices, and who is acting on this device.
-  static const people = {RecordType.family, RecordType.member, RecordType.device, Den.actingChanged};
+  /// its people and their photos, its devices, and who is acting on this device.
+  static const people = {RecordType.family, RecordType.member, RecordType.photo, RecordType.device, Den.actingChanged};
+
+  /// Which notices this device has shown and its person put away ([AppState.seen]).
+  static const notices = 'notices';
 }
 
 /// The app's live state: the device's [Den] engine plus UI preferences. Tells listeners what
@@ -41,11 +45,14 @@ class AppState extends ChangeNotifier with FamilyReads {
     this.network,
     this.reminders,
     this.phoneCalendars,
+    Set<String> seen = const {},
   })
       : _den = den,
         _wall = wall,
-        _theme = theme {
+        _theme = theme,
+        _seen = {...seen} {
     _listen();
+    _keepPhotos();
   }
 
   /// Restores the saved theme and wall preferences for this device.
@@ -60,6 +67,7 @@ class AppState extends ChangeNotifier with FamilyReads {
       den,
       wall: prefs.getBool(_wallKey) ?? false,
       theme: ThemeChoice.values.asNameMap()[prefs.getString(_themeKey)] ?? ThemeChoice.auto,
+      seen: {...?prefs.getStringList(_seenKey)},
       network: network,
       reminders: reminders,
       phoneCalendars: phoneCalendars,
@@ -78,6 +86,7 @@ class AppState extends ChangeNotifier with FamilyReads {
 
   static const _wallKey = 'den.wall';
   static const _themeKey = 'den.theme';
+  static const _seenKey = 'den.seen';
 
   Den _den;
   @override
@@ -93,7 +102,30 @@ class AppState extends ChangeNotifier with FamilyReads {
     _formats = null;
     _views.clear();
     _listen();
+    _keepPhotos();
     _changed(const {Changes.all});
+  }
+
+  /// Notices (a privacy change, a sitter's access ending) this device's person put away with
+  /// "Got it", by key. Kept on this device only.
+  bool seen(String key) => _seen.contains(key);
+  final Set<String> _seen;
+
+  /// Puts a notice away for good on this device.
+  void markSeen(String key) {
+    if (!_seen.add(key)) return;
+    _changed(const {Changes.notices});
+    final keep = [..._seen];
+    _save((p) => p.setStringList(_seenKey, keep.length > 200 ? keep.sublist(keep.length - 200) : keep));
+  }
+
+  /// Decodes the photos people's pictures name, so avatars draw them in their first frame.
+  void _keepPhotos() {
+    final den = _den;
+    DenPhotos.keep([
+      for (final m in den.members)
+        if (m.photo case final id?) ?den.photo(id),
+    ]);
   }
 
   /// What the latest change touched: record types, [Den.actingChanged], [Changes.prefs], or
@@ -162,6 +194,7 @@ class AppState extends ChangeNotifier with FamilyReads {
   void _listen() {
     _sub = _den.onChange.listen((types) {
       if (types.contains(RecordType.family)) _formats = null;
+      if (types.contains(RecordType.member) || types.contains(RecordType.photo)) _keepPhotos();
       _changed(types);
     });
   }

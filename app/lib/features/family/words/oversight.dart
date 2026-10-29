@@ -7,8 +7,9 @@
 /// | --- | --- |
 /// | Can add to lists | `Grant.lists` |
 /// | Can add events and chores | `Grant.events` and `Grant.chores` together |
-/// | Rewards need my OK | no `Grant.points` (only parents give stars and decide requests) |
+/// | Rewards need my OK | `family.oversight.<id>.rewardsNeedOk` (default on) and no `Grant.points` |
 /// | Can keep things private from parents | `family.oversight.<id>.parentsSeePrivate` false |
+/// | Can change their own picture | `family.oversight.<id>.ownPicture` (default: teens on) |
 /// | Can use the AI helper | the kid's id in `family.assistant.members` |
 library;
 
@@ -17,7 +18,7 @@ import 'package:den_core/den_core.dart';
 import 'family_words.dart';
 
 /// The switches on a kid's page, in the order they show.
-enum KidSwitch { lists, plans, rewardsOk, private, assistant }
+enum KidSwitch { lists, plans, rewardsOk, private, ownPicture, assistant }
 
 /// One switch as a kid's page shows it.
 class KidSwitchView {
@@ -45,8 +46,9 @@ Set<Grant> defaultGrants(Tier? tier) => switch (tier) {
 bool kidSwitchOn(KidSwitch which, Member kid, Family? family) => switch (which) {
       KidSwitch.lists => kid.grants.contains(Grant.lists),
       KidSwitch.plans => kid.grants.contains(Grant.events) || kid.grants.contains(Grant.chores),
-      KidSwitch.rewardsOk => !kid.grants.contains(Grant.points),
+      KidSwitch.rewardsOk => !kid.grants.contains(Grant.points) && (family?.rewardsNeedOk(kid.id) ?? true),
       KidSwitch.private => !(family?.parentsSeePrivate(kid.id) ?? true),
+      KidSwitch.ownPicture => family?.ownsPicture(kid) ?? kid.tier == Tier.teen,
       KidSwitch.assistant => family?.assistant.members.contains(kid.id) ?? false,
     };
 
@@ -86,9 +88,11 @@ List<KidSwitchView> kidSwitches(Member kid, Family? family) {
       KidSwitch.rewardsOk,
       on: ok,
       label: 'Rewards need my OK',
-      detail: ok ? 'Only parents give stars and say yes to rewards' : '$name can give stars and approve rewards',
-      // Only parents give stars: a kid isn't given that back.
-      reason: ok ? 'Only parents give stars and say yes to rewards' : null,
+      detail: ok
+          ? 'Only parents give stars and say yes to rewards'
+          : kid.grants.contains(Grant.points)
+              ? '$name can give stars and approve rewards'
+              : '$name can trade stars for rewards without asking you',
     ));
   }
 
@@ -101,6 +105,14 @@ List<KidSwitchView> kidSwitches(Member kid, Family? family) {
       detail: private ? 'Things set to Just me stay on ${FamilyWords.possessive(name)} devices' : 'Off: you can see everything',
     ));
   }
+
+  final ownPicture = on(KidSwitch.ownPicture);
+  out.add(KidSwitchView(
+    KidSwitch.ownPicture,
+    on: ownPicture,
+    label: 'Can change their own picture',
+    detail: ownPicture ? 'A photo from the camera too' : 'Only parents change it',
+  ));
 
   final assistant = on(KidSwitch.assistant);
   if (!little || assistant) {
@@ -126,9 +138,10 @@ Set<Grant> grantsWith(KidSwitch which, bool on, Set<Grant> current) {
     case KidSwitch.plans:
       set(const [Grant.events, Grant.chores]);
     case KidSwitch.rewardsOk:
-      // On means parents decide: the kid loses the points grant. Off isn't offered.
+      // On means parents decide: the kid loses the points grant. Off keeps the grants as they
+      // are: the kid trades their own stars without asking, and gives nobody any.
       if (on) next.remove(Grant.points);
-    case KidSwitch.private || KidSwitch.assistant:
+    case KidSwitch.private || KidSwitch.ownPicture || KidSwitch.assistant:
       break;
   }
   return next;
@@ -140,9 +153,15 @@ String kidSwitchChange(KidSwitch which, String name, {required bool on}) => swit
       (KidSwitch.lists, false) => '$name will still check items off, but won\'t add or change them.',
       (KidSwitch.plans, true) => '$name will add and change events and chores, and you\'ll see them on the calendar.',
       (KidSwitch.plans, false) => '$name won\'t add or change events and chores. What $name added stays.',
-      (KidSwitch.rewardsOk, _) => 'Only parents will give stars and say yes to rewards $name asks for.',
-      (KidSwitch.private, true) => 'What $name sets to Just me will be for $name alone. Parents won\'t see it.',
-      (KidSwitch.private, false) => 'Parents will see what $name sets to Just me.',
+      (KidSwitch.rewardsOk, true) => 'Only parents will give stars and say yes to rewards $name asks for.',
+      (KidSwitch.rewardsOk, false) =>
+        '$name can trade stars for rewards without asking you, when $name has enough. Only parents give stars.',
+      (KidSwitch.private, true) => 'From now on, what $name sets to Just me is for $name alone. What you already saw '
+          'can\'t be unseen: it stays on your devices. $name will see that you changed this.',
+      (KidSwitch.private, false) => 'Parents will see what $name sets to Just me, including what $name kept private '
+          'until now. $name will see that you changed this.',
+      (KidSwitch.ownPicture, true) => '$name can choose their own picture, or take a photo for it.',
+      (KidSwitch.ownPicture, false) => 'Only parents will change $name\'s picture.',
       (KidSwitch.assistant, true) =>
         '$name can ask the AI helper to add and find things, up to the daily limit you set. What $name asks goes to '
             'the company that runs it.',
@@ -151,3 +170,14 @@ String kidSwitchChange(KidSwitch which, String name, {required bool on}) => swit
 
 /// The button that saves a switch change: "Turn on", "Turn off".
 String kidSwitchVerb(bool on) => on ? 'Turn on' : 'Turn off';
+
+/// What a person is told about a change to their privacy, on their Today and in History:
+/// "Mom changed this: parents can now see things you mark Just me". [by] is the parent's name.
+String privacyNotice(String by, {required bool parentsSee}) => '$by changed this: ${privacyNow(parentsSee: parentsSee)}';
+
+/// How a person's privacy stands after a change, said to them ([you]) or about [name].
+String privacyNow({required bool parentsSee, bool you = true, String name = ''}) => parentsSee
+    ? 'parents can now see ${you ? 'things you mark' : 'what $name marks'} Just me'
+    : you
+        ? 'things you mark Just me are for you alone'
+        : 'what $name marks Just me is for $name alone';

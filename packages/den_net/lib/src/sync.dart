@@ -616,11 +616,24 @@ class SyncNode {
           if (c.device == den.deviceId) c.toJson(),
       ];
 
+  /// The spaces [deviceId] may hold by this replica's view, right now; none for a sitter's
+  /// device past their last day ([Den.accessEnded], by this device's clock), so nothing is
+  /// sent to it or taken from it even before a parent's device has removed it.
   Set<String> _spacesFor(String deviceId) {
     try {
+      if (deviceId != den.deviceId && den.accessEnded(deviceId)) return const {};
       return den.spacesForDevice(deviceId);
     } on Object {
       return const {};
+    }
+  }
+
+  /// Whether this node stops syncing with [deviceId] because a sitter's access ended.
+  bool _accessEnded(String deviceId) {
+    try {
+      return deviceId != den.deviceId && den.accessEnded(deviceId);
+    } on Object {
+      return false;
     }
   }
 
@@ -795,6 +808,9 @@ class SyncPeer {
         // (`pair_ok`), so a stranger on the network can't feed it changes or a finished join.
         _trusted = join._code == null && session.pinned;
       }
+    } else if (session.peerFamily != null && _peerApproved() && _node._accessEnded(deviceId)) {
+      // A sitter's last day has passed: their device hears so and gets nothing more.
+      unawaited(_violation('access-ended'));
     } else if (session.peerFamily != null && _peerApproved()) {
       _beginSync();
     } else if (session.peerFamily != null && _node._refused(deviceId)) {
@@ -1183,6 +1199,10 @@ class SyncPeer {
     final d = _den.device(deviceId);
     if (d != null && (d.revoked || !d.approved || d.pubkey != pubkey)) {
       await _violation('revoked');
+      return;
+    }
+    if (!isClient && _node._accessEnded(deviceId)) {
+      await _violation('access-ended');
       return;
     }
     final allowed = _node._spacesFor(deviceId);

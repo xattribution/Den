@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import 'screens/access_ended_screen.dart';
 import 'screens/family_screen.dart';
 
 /// `/family`, and `/family/member/:id` for one person's page. Adding devices lives in Advanced
@@ -17,3 +18,6 @@ GoRoute familyRoute({List<RouteBase> addDevice = const []}) => GoRoute(
         GoRoute(path: 'member/:id', builder: (_, s) => FamilyScreen(selected: s.pathParameters['id'])),
       ],
     );
+
+/// `/ended`: a sitter's device after their last day.
+GoRoute accessEndedRoute() => GoRoute(path: '/ended', builder: (_, _) => const AccessEndedScreen());

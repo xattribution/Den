@@ -14,9 +14,11 @@ import '../state/family_needs.dart';
 import '../state/trust_actions.dart';
 import '../words/family_words.dart';
 import '../words/oversight.dart';
+import '../words/sitter.dart';
 import 'family_parts.dart';
 import 'invite_sheet.dart';
 import 'person_sheets.dart';
+import 'sitter_sheet.dart';
 
 /// Everything about one person, written as sentences (Family.dc.html's card, then the rest of
 /// their page): their picture and who they are, what they may do as switches that say what they
@@ -81,6 +83,7 @@ class _PersonPageState extends State<PersonPage> {
     final manage = app.allows(DenAction.manageFamily);
     final trust = app.allowsTrust(DenAction.manageFamily);
     final isMe = app.me?.id == m.id;
+    final ended = m.accessEndedOn(app.today);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -95,8 +98,9 @@ class _PersonPageState extends State<PersonPage> {
         if (manage) ...[
           sectionGap,
           _about(context, app, m, trust: trust, isMe: isMe),
+          if (ended && trust) ...[sectionGap, AccessEndedNotice(member: m)],
           sectionGap,
-          _devices(context, app, m, trust: trust),
+          _devices(context, app, m, trust: trust && !ended),
           if (trust && !isMe && !_lastParent(den, m)) ...[sectionGap, _remove(context, m)],
         ],
       ],
@@ -122,30 +126,28 @@ class _PersonPageState extends State<PersonPage> {
           reason: (family?.assistant.enabled ?? false) ? null : 'Turn on the AI helper in Settings first',
         ),
     ];
+    final who = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(header: true, child: Text(m.name, style: t.section(c.ink).withWeight(FontWeight.w800))),
+        const SizedBox(height: 2),
+        Text(FamilyWords.memberLine(m, app.today), style: t.meta(c.ink2)),
+      ],
+    );
+    final picture = canChangePicture(app.den.actor, m, family)
+        ? OutlinedButton(
+            onPressed: () => showPictureSheet(context, m),
+            child: const Text('Change picture', maxLines: 1, softWrap: false),
+          )
+        : null;
+    // The button goes under the name once the text is large, so the name never squeezes.
+    final large = MediaQuery.textScalerOf(context).scale(1) > 1.35;
     final rows = <Widget>[
       Padding(
         padding: const EdgeInsets.symmetric(vertical: Sp.m),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Semantics(header: true, child: Text(m.name, style: t.section(c.ink).withWeight(FontWeight.w800))),
-                  const SizedBox(height: 2),
-                  Text(FamilyWords.memberLine(m, app.today), style: t.meta(c.ink2)),
-                ],
-              ),
-            ),
-            if (manage) ...[
-              const SizedBox(width: Sp.m),
-              OutlinedButton(
-                onPressed: () => showPictureSheet(context, m),
-                child: const Text('Change picture', maxLines: 1, softWrap: false),
-              ),
-            ],
-          ],
-        ),
+        child: picture != null && large
+            ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [who, const SizedBox(height: Sp.m), picture])
+            : Row(children: [Expanded(child: who), if (picture != null) ...[const SizedBox(width: Sp.m), picture]]),
       ),
       Padding(
         padding: const EdgeInsets.only(bottom: Sp.m),
@@ -216,6 +218,14 @@ class _PersonPageState extends State<PersonPage> {
             onTap: trust && !isMe ? () => showRoleSheet(context, m) : null,
             chevron: trust && !isMe,
           ),
+          if (m.role == Role.guest)
+            NavRow(
+              icon: PhosphorIconsRegular.calendarX,
+              label: 'Has Den',
+              value: untilWords(m, app.formats, app.today),
+              onTap: trust ? () => showUntilSheet(context, m) : null,
+              chevron: trust,
+            ),
           NavRow(
             icon: PhosphorIconsRegular.cake,
             label: 'Birthday',

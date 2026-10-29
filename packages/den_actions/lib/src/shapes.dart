@@ -47,9 +47,11 @@ final Map<String, Object?> memberShape = S.object({
   'role': _str('parent, adult, kid or guest.'),
   'tier': _strOrNull('For kids: preReader, little, big or teen.'),
   'marker': _str('Their color.'),
-  'picture': _str('Their picture: a name from Den\'s picture pack (fox, whale, rocket...), or "initial" for the first letter of their name.'),
+  'picture': _str('Their picture: a name from Den\'s picture pack (fox, whale, rocket...), "initial" for the first letter '
+      'of their name, or "photo:<id>" when they have a photo.'),
   'animal': _str('The animal older versions of Den showed; picture replaces it.'),
   'birthday': _strOrNull('Birthday, YYYY-MM-DD.'),
+  'until': _strOrNull('For a sitter: the last day they have access, YYYY-MM-DD.'),
   'grants': _strings('Extra permissions a kid has: events, chores, lists, points.'),
   'order': _int('Display order.'),
 });

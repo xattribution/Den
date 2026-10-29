@@ -10,6 +10,7 @@ import '../design/sheet.dart';
 import '../design/tokens.dart';
 import '../design/widgets.dart';
 import '../features/add/add.dart';
+import '../features/family/family.dart' show AccessWatch;
 import 'app_state.dart';
 
 /// The adult app's frame. On a phone: the screen over a tab bar with Today, Calendar, Add in the
@@ -115,7 +116,7 @@ class AppShell extends StatelessWidget {
         ),
       );
     }
-    return CallbackShortcuts(bindings: shortcuts, child: Focus(autofocus: true, child: frame));
+    return AccessWatch(child: CallbackShortcuts(bindings: shortcuts, child: Focus(autofocus: true, child: frame)));
   }
 }
 
