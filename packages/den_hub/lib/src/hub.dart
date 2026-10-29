@@ -95,7 +95,7 @@ class DenHub {
   static Future<DenHub> start(Den den, HubConfig config) async {
     final log = config.log ?? HubLog();
     final client = config.httpClient ?? http.Client();
-    final node = SyncNode(den);
+    final node = SyncNode(den, invites: HubInviteBook());
     final ctx = HubContext(
       den: den,
       gate: DenGate(den),

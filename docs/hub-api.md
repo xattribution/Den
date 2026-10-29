@@ -1721,8 +1721,11 @@ each word may be its first four letters). Answer `200`:
 ```
 
 The hub starts accepting the invite on `/ws` (see ARCHITECTURE.md, "Pairing"); the device joins
-with it there, pinning the hub's key from the invite. An invite works for every device that uses
-it until it expires; each one still needs a parent's approval. Errors: `400 invalid_input` (not
+with it there, pinning the hub's key from the invite. An invite is for one person, once: it stops
+working (`404`, "used already") when a parent approves a device that joined with it, or once
+three devices have joined with it without one being approved (a second device, or Den started
+over, before anyone approved; a code that leaked puts no more than three requests in front of a
+parent). Each device still needs a parent's approval. Errors: `400 invalid_input` (not
 four words from the list), `404 not_found` (no such invite, expired, or its parent's device was
 revoked since), `429 rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from one client, against every
 invite, or 200 from all clients together; and per client, redeeming counts against the browser

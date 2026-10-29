@@ -565,7 +565,8 @@ receive; the session's limit then applies.
   to be that person's device; a parent approves with one tap on their own device. Wrong words count against every
   invite, per client: 10 in 10 minutes and the hub stops answering that client for a while, and
   200 in 10 minutes from everyone together (twenty clients' worth, so no one client can use
-  them up) and it stops answering everyone. Recovery codes count the same way. The hub drops an invite
+  them up) and it stops answering everyone. Recovery codes count the same way. An invite is used once: the hub drops it when a parent
+  approves a device that joined with it, or after three devices joined with it unapproved. The hub drops an invite
   whose parent device has since been revoked or no longer belongs to a parent.
 - **Recovery words** ("I lost my phone"): the joiner connects to a device that serves sessions
   (the hub) with no family, and sends `pair {kind: recovery, key, proof}`: `key` is hex SHA-256
