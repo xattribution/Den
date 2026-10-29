@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:den_actions/times.dart';
 import 'package:den_core/den_core.dart';
 
-
 /// One occurrence of an event changed or cancelled on its own.
 class IcsException {
   /// Creates an exception for the occurrence originally starting at [occurrence].
@@ -106,9 +105,59 @@ String _offset(Duration d) {
   return '${d.isNegative ? '-' : '+'}${_two(m ~/ 60)}${_two(m % 60)}';
 }
 
+/// What follows the `@` in the UIDs of the feeds people subscribe to on their own calendars
+/// (`<eventId>@den`). They keep it: a calendar app knows an event by its UID, so changing it
+/// would make every subscribed calendar drop each event and add it again.
+const String legacyUidDomain = 'den';
+
+/// What follows the `@` in the UIDs of family [familyId]'s shared feed: `<eventId>@<familyId>.den`,
+/// so a hub that subscribes to it can tell its own family's events from another family's.
+String sharedUidDomain(String familyId) => '$familyId.den';
+
+final RegExp _denUid = RegExp(r'@(den|[a-z2-7]+\.den)$');
+
+/// Whether [uid] (an imported event's `source.ref`) came from a Den feed: a shared feed
+/// (`@<familyId>.den`) or a calendar link of the older kind (`@den`). A family's shared feed leaves
+/// such events out, so no family's events travel on to a third family or come back to their own.
+bool isDenUid(String? uid) => uid != null && _denUid.hasMatch(uid);
+
+/// Whether [uid] is one of family [familyId]'s own events, from its shared feed.
+bool isOwnUid(String uid, String? familyId) => familyId != null && uid.endsWith('@${sharedUidDomain(familyId)}');
+
+/// The family whose shared feed [uid] came from (`<eventId>@<familyId>.den`), else null.
+String? sharedFamilyOf(String uid) {
+  final m = _sharedUid.firstMatch(uid);
+  return m?.group(1);
+}
+
+final RegExp _sharedUid = RegExp(r'@([a-z2-7]+)\.den$');
+
+/// A weak ETag for an iCalendar file [text] that [writeIcs] wrote: a hash of every line but
+/// `DTSTAMP`, which says when the file was written and so changes every time. The same events
+/// give the same ETag, so a subscriber's conditional GET gets `304`.
+String icsEtag(String text) {
+  final lines = text.split('\r\n').where((l) => !l.startsWith('DTSTAMP:')).join('\r\n');
+  return 'W/"${hashToken(lines).substring(0, 32)}"';
+}
+
+/// Whether an `If-None-Match` header [header] names [etag], compared weakly (RFC 9110, 13.1.2).
+bool etagMatches(String? header, String etag) {
+  if (header == null) return false;
+  String bare(String tag) => tag.trim().startsWith('W/') ? tag.trim().substring(2) : tag.trim();
+  final want = bare(etag);
+  return header.split(',').any((t) => t.trim() == '*' || bare(t) == want);
+}
+
 /// Writes events as an iCalendar file (RFC 5545): a VEVENT per series with RRULE and EXDATE,
-/// a RECURRENCE-ID VEVENT per changed occurrence, and VTIMEZONEs for the zones used.
-String writeIcs({required String name, required String zone, required List<IcsExportEvent> events, required int now}) {
+/// a RECURRENCE-ID VEVENT per changed occurrence, and VTIMEZONEs for the zones used. Each
+/// event's UID is `<eventId>@<uidDomain>`.
+String writeIcs({
+  required String name,
+  required String zone,
+  required List<IcsExportEvent> events,
+  required int now,
+  String uidDomain = legacyUidDomain,
+}) {
   final body = <String>[];
   final zones = <String>{};
   var earliest = now, latest = now;
@@ -119,7 +168,7 @@ String writeIcs({required String name, required String zone, required List<IcsEx
     if (!allDay && tz != 'UTC') zones.add(tz);
     if (e.start < earliest) earliest = e.start;
     if (e.end > latest) latest = e.end;
-    final uid = '${e.id}@den';
+    final uid = '${e.id}@$uidDomain';
     final stamp = 'DTSTAMP:${_stamp(DateTime.fromMillisecondsSinceEpoch(now, isUtc: true))}Z';
     List<String> describe(String title, String location, String notes) => [
           'SUMMARY:${_escape(title)}',

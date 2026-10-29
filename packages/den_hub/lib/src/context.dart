@@ -27,7 +27,8 @@ class HubContext {
     required this.node,
     required this.http,
     http_client.Client? fetch,
-  }) : fetch = fetch ?? NetGuard(resolve: config.resolver, allow: config.fetchAllow).client();
+  }) : fetch = fetch ??
+            NetGuard(resolve: config.resolver, allow: config.fetchAllow, hubs: [?config.publicUrl, ...config.peerHubs]).client();
 
   /// The hub's engine.
   final Den den;
@@ -51,7 +52,8 @@ class HubContext {
   final http_client.Client http;
 
   /// Outgoing HTTP to addresses callers gave the hub (calendar feeds, OAuth client metadata):
-  /// [NetGuard]'s client, which refuses the hub's own machine and network.
+  /// [NetGuard]'s client, which refuses the hub's own machine and network (except the
+  /// configured hubs' names, [HubConfig.peerHubs], which may lead to loopback).
   final http_client.Client fetch;
 
   /// In a family, approved, log loaded: the API answers.

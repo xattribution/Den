@@ -53,6 +53,7 @@ class HubConfig {
     this.log,
     this.httpClient,
     this.fetchAllow = const [],
+    this.peerHubs = const [],
     this.resolver,
     this.fetchClient,
     this.feedInterval = const Duration(minutes: 30),
@@ -135,6 +136,12 @@ class HubConfig {
   /// internet (`DEN_FETCH_ALLOW`, addresses or CIDRs): a calendar server at home. Empty by
   /// default, so a feed or a redirect can't reach the hub's own machine or network.
   final List<IpNetwork> fetchAllow;
+
+  /// The other families' hubs on this server (`DEN_PEER_HUBS`, `https` addresses): their names
+  /// may lead to this machine's loopback, where the server's reverse proxy answers, so a shared
+  /// calendar can be fetched from them. Only these names and the hub's own [publicUrl] get that
+  /// ([NetGuard]); empty by default.
+  final List<Uri> peerHubs;
 
   /// Looks host names up for those fetches; null is the system's resolver (tests pass a fake).
   final HostResolver? resolver;

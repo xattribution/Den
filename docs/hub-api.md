@@ -55,7 +55,8 @@ feed), and the mDNS advertisement.
 - [Calendar links: Den in a phone's calendar](#calendar-links-den-in-a-phones-calendar):
   [`GET /api/v1/feeds`](#get-apiv1feeds) ·
   [`POST /api/v1/feeds`](#post-apiv1feeds) ·
-  [`DELETE /api/v1/feeds/{id}`](#delete-apiv1feedsid)
+  [`DELETE /api/v1/feeds/{id}`](#delete-apiv1feedsid) ·
+  [A calendar for another family](#a-calendar-for-another-family-sharedics-and-watch)
 - [Getting back in: server-assisted recovery](#getting-back-in-server-assisted-recovery):
   [`GET /api/v1/recovery/key`](#get-apiv1recoverykey) ·
   [`POST /api/v1/recovery/tickets`](#post-apiv1recoverytickets) ·
@@ -1792,7 +1793,10 @@ family's calendar, or for one person's, and the phone's calendar app subscribes 
 reach `/api/v1`, MCP or any other feed. Nor does an API token open a feed (`401`): pasted into a
 calendar app or service, it would be a key to the whole API in someone else's settings.
 
-The feed reads with the permissions of the parent who made the link, exactly as the ICS feed
+A link for another family (`feed: "shared"`) is different: it reads as the family, not as its
+maker, and holds the family's Everyone events only
+([A calendar for another family](#a-calendar-for-another-family-sharedics-and-watch)). Every
+other feed reads with the permissions of the parent who made the link, exactly as the ICS feed
 does for a token acting as that parent: their own "Just me" events are in it, a kid's or a
 teen's private events only while the family's oversight lets parents see them (and they drop
 out when it stops), and `parents` events for parents. A person's link holds the events they're
@@ -1817,12 +1821,14 @@ The family's links, newest first, never their addresses:
             "made": "2026-10-28T15:00:00.000Z", "made_ms": 1793199600000}]}
 ```
 
-`feed` is `family` or the member id whose events the link holds (`feed_name` is then their name).
+`feed` is `family`, `shared` (for another family; `feed_name` is the family's name), or the
+member id whose events the link holds (`feed_name` is then their name).
 
 ### `POST /api/v1/feeds`
 
-Body `{"feed": "family", "label": "Alex's iPhone"}`: `feed` is `family` (the default) or a
-member id; `label` (1 to 60 characters) says where the calendar goes. Answer `201`, the only
+Body `{"feed": "family", "label": "Alex's iPhone"}`: `feed` is `family` (the default),
+`shared` (a link for another family: `.../shared.ics`), or a member id; `label` (1 to 60
+characters) says where the calendar goes, or which family it's for. Answer `201`, the only
 time the address is shown:
 
 ```json
@@ -1843,15 +1849,69 @@ time the address is shown:
 Both are built on the hub's public URL (`DEN_PUBLIC_URL`), else the address the request came
 to; a phone's calendar fetches it from wherever it is, so the hub has to be reachable there
 (over HTTPS) for the calendar to stay up to date. `GET` on the address answers
-`text/calendar` as the ICS feed does; on another file under the same secret, `404`; once the
-link is off, `401`. Errors: `400 invalid_input` (no such member, a missing or long label),
+`text/calendar` as the ICS feed does, with a weak `ETag` (the same events give the same ETag:
+the file's `DTSTAMP` is left out of it) and `304` to an `If-None-Match` that names it; on
+another file under the same secret, `404`; once the link is off, `401`. The UIDs in a family's
+or a person's feed are `<eventId>@den`, as they always were (a calendar app knows an event by
+its UID). Errors: `400 invalid_input` (no such member, a missing or long label),
 `409 too_many` (50 links), `503 not_ready`.
 
 ### `DELETE /api/v1/feeds/{id}`
 
 Turns a link off: `{"ok": true}`, and calendars subscribed to it stop updating at their next
 refresh (they keep what they last fetched until the person removes the subscription).
-`404 not_found` for an unknown id.
+`404 not_found` for an unknown id. A hub watching a shared link hears `revoked` at once.
+
+### A calendar for another family: `shared.ics` and `watch`
+
+One way and read-only: family A makes a `shared` link and gives its address to family B, whose
+parent adds it like any calendar by link (Settings, Calendars). B's hub copies A's events into
+B's own log, read-only, and keeps them up to date.
+
+`GET /ics/<secret>/shared.ics` holds the family's **Everyone** events (space `f`) with their
+full details: titles, times, places, notes, repeats and changed or cancelled occurrences, and
+categories. Never Parents-only or Just-me events, whoever made the link, and never events the
+family itself copied in from a Den feed (an imported event whose `source.ref` is a Den UID,
+`@<familyId>.den` or `@den`), so a family's events never come back to it (A → B → A) or travel
+on to a third family (A → B → C). A school's calendar the family brought into Everyone is
+theirs, and is shared. UIDs are `<eventId>@<familyId>.den`; a hub that fetches any feed leaves
+out events whose UID ends in its own `@<familyId>.den`. `ETag` and `304` as above.
+
+`GET /ics/<secret>/watch` (server-sent events, the same secret; `404` for a link that isn't
+`shared`, `401` once it's off): the subscriber's hub keeps it open instead of polling.
+
+```
+retry: 10000
+
+event: hello
+data: {"etag":"W/\"5f0c...\""}
+
+event: changed
+data: {"etag":"W/\"9a2e...\""}
+
+event: revoked
+data: {}
+```
+
+- `hello` comes first, with the feed's ETag now: a subscriber whose last fetch had another ETag
+  missed a change and fetches.
+- `changed` comes about a second after the family's events, exceptions, categories or name
+  change (changes in that second are one `changed`), and only when the shared feed's ETag is
+  no longer the one the watchers were last told: a Parents-only edit or an imported event never
+  makes one.
+- `revoked` comes when a parent turns the link off, or when it stops working because its maker
+  left the family or the device it was made on was removed; then the stream closes.
+- A comment (`: ping`) every 25 seconds keeps it open through proxies; the answer carries
+  `Cache-Control: no-cache, no-transform` so a compressing proxy passes events on at once.
+- At most 4 streams per link (a fifth closes the oldest) and 200 per hub (`429` beyond).
+
+The subscriber's hub recognizes a Den share by its address (`/ics/denfeed_.../shared.ics`),
+keeps the watch open (reconnecting after a drop, waiting longer after each failure, up to 5
+minutes), fetches on `changed` (a conditional GET), and also fetches every 15 minutes in case a
+stream can't stay open. On `revoked`, or `401` from the feed, it removes every event it copied
+from that share and sets the subscription's status to "The Kotvas family stopped sharing their
+calendar", which the family's parents see under it in Settings, Calendars. Any other calendar
+that stops working keeps what it had and says the link doesn't work.
 
 ## Getting back in: server-assisted recovery
 

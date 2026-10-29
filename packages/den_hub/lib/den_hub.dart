@@ -14,14 +14,16 @@ export 'src/config.dart';
 export 'src/edge.dart' show IpNetwork;
 export 'src/hub.dart';
 export 'src/log.dart';
-export 'src/net_guard.dart' show BlockedAddress, HostResolver, NetGuard, isPublicAddress, systemResolver;
+export 'src/net_guard.dart' show BlockedAddress, HostResolver, NetGuard, isPublicAddress, parsePeerHubs, systemResolver;
 export 'src/setup.dart' show HubSetup, SetupStage, setupAlphabet, setupLink, setupTries, restrictToOwner, linkOpenFile, removedNotice;
 export 'src/mcp/http.dart' show decodeMcpHeader, encodeMcpHeader, mcpRequestHeaders;
 export 'src/mcp/server.dart'
     show McpMeta, McpReply, McpServer, RpcError, legacyProtocolVersions, mcpProtocolVersions, modernProtocolVersions;
 export 'src/mcp/stdio.dart' show serveMcpStdio;
 export 'src/ics/expand.dart' show expandCalendar, groupSeries, IcsOccurrence, IcsSeries;
-export 'src/ics/feeds.dart' show FeedService;
+export 'src/ics/feeds.dart' show FeedService, familyPhrase, sharePoll;
+export 'src/ics/watch.dart' show shareWatchUri;
+export 'src/ics/write.dart' show icsEtag, isDenUid;
 export 'src/ics/parse.dart' show parseIcs, parseIcsDuration, zoneForTzid, IcsCalendar, IcsEvent, IcsTime, IcsFormatException;
 export 'src/recovery.dart' show HubRecovery, RecoveryRefused, RecoveryTicket, recoveryCliFile, recoveryTicketsDoc;
 export 'src/reminders.dart' show ReminderService, Notice;

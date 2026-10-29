@@ -49,6 +49,9 @@ ArgParser cliParser() {
         help: 'Reverse proxies whose X-Forwarded-* headers to believe, addresses or CIDRs (env DEN_TRUSTED_PROXIES)')
     ..addOption('fetch-allow',
         help: 'Private networks calendar feeds may be fetched from, addresses or CIDRs (env DEN_FETCH_ALLOW)')
+    ..addOption('peer-hubs',
+        help: 'The other families\' hubs on this server, whose shared calendars may be fetched through this '
+            'machine\'s own reverse proxy: https addresses or names (env DEN_PEER_HUBS)')
     ..addOption('csp', help: 'Replace the web app\'s Content-Security-Policy (env DEN_CSP)')
     ..addOption('log-level', help: 'debug, info, warn or error (env DEN_LOG)')
     ..addFlag('public',
@@ -172,6 +175,12 @@ Future<int> serve(ArgResults a, DataDir data, int port, CliIo io) async {
   } on FormatException catch (e) {
     throw CliUsage('DEN_FETCH_ALLOW: ${e.message}');
   }
+  final List<Uri> peerHubs;
+  try {
+    peerHubs = parsePeerHubs(opt('peer-hubs', 'DEN_PEER_HUBS') ?? '');
+  } on FormatException catch (e) {
+    throw CliUsage('DEN_PEER_HUBS: ${e.message}');
+  }
   final public = opt('public-url', 'DEN_PUBLIC_URL');
   final publicUrl = public == null || public.isEmpty ? null : Uri.parse(public);
   final exposed = a['public'] as bool? ?? _envFlag(env['DEN_PUBLIC']);
@@ -195,6 +204,7 @@ Future<int> serve(ArgResults a, DataDir data, int port, CliIo io) async {
     allowedOrigins: [...?env['DEN_ALLOWED_ORIGINS']?.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty)],
     trustedProxies: proxies,
     fetchAllow: fetchAllow,
+    peerHubs: peerHubs,
     public: exposed,
     contentSecurityPolicy: opt('csp', 'DEN_CSP'),
     mailbox: a['mailbox'] as bool? ?? _envFlag(env['DEN_MAILBOX']) ?? false,

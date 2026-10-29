@@ -13,7 +13,7 @@ const Duration feedTimeout = Duration(seconds: 15);
 
 /// What fetching a feed gave.
 class FeedFetch {
-  const FeedFetch._({this.text, this.etag, this.modified, this.notModified = false, this.problem});
+  const FeedFetch._({this.text, this.etag, this.modified, this.notModified = false, this.problem, this.status});
 
   /// The body, when it changed.
   final String? text;
@@ -29,6 +29,10 @@ class FeedFetch {
 
   /// Why it failed, in words for people; null on success.
   final String? problem;
+
+  /// The HTTP status the server answered a failed fetch with (401 when a link was turned off);
+  /// null on success, or when there was no answer.
+  final int? status;
 
   /// Whether the problem is worth retrying later (the server or network, not the link).
   bool get temporary => problem != null && !problem!.startsWith('That link');
@@ -70,11 +74,13 @@ Future<FeedFetch> fetchFeed(http.Client client, String address, {String? etag, S
     }
     if (response.statusCode == 404 || response.statusCode == 410 || response.statusCode == 401 || response.statusCode == 403) {
       await response.stream.drain<void>();
-      return FeedFetch._(problem: 'That link doesn\'t work anymore: the server answered ${response.statusCode}');
+      return FeedFetch._(
+          problem: 'That link doesn\'t work anymore: the server answered ${response.statusCode}', status: response.statusCode);
     }
     if (response.statusCode != 200) {
       await response.stream.drain<void>();
-      return FeedFetch._(problem: 'The calendar\'s server answered ${response.statusCode}. Den will try again.');
+      return FeedFetch._(
+          problem: 'The calendar\'s server answered ${response.statusCode}. Den will try again.', status: response.statusCode);
     }
     final declared = response.contentLength;
     if (declared != null && declared > maxFeedBytes) {
