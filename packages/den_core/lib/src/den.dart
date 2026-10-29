@@ -2441,8 +2441,9 @@ class Den {
 
   /// Asks to spend points on a reward for [member] (default: the actor). Rewards that don't
   /// need approval, and anyone's whose parents turned off "Rewards need my OK"
-  /// ([Family.rewardsNeedOk]), are approved at once. Refused when the balance, less what
-  /// requests still waiting for a parent would spend, is short.
+  /// ([Family.rewardsNeedOk]), are approved at once, except a points manager's own request,
+  /// which always waits for someone else (they could make any reward need no asking). Refused
+  /// when the balance, less what requests still waiting for a parent would spend, is short.
   Future<String> requestReward(String rewardId, {String? member}) async {
     final rewardEntry = _requireLive(RecordType.reward, rewardId, 'That reward doesn\'t exist');
     final reward = Reward(rewardEntry.rec);
@@ -2456,13 +2457,15 @@ class Den {
           '${waiting > 0 ? ', since $waiting are waiting on a request' : ''}');
     }
     final id = newId();
+    final a = actor;
+    final ownAsManager = a != null && a.id == who && can(a, DenAction.managePoints);
     await _commit([
       _Draft(RecordType.redemption, id, Space.family, {
         'reward': rewardId,
         'member': who,
         'cost': reward.cost,
         // No OK is needed when the reward says so or a parent let this person trade without asking.
-        'status': reward.needsApproval && (family?.rewardsNeedOk(who) ?? true)
+        'status': ownAsManager || (reward.needsApproval && (family?.rewardsNeedOk(who) ?? true))
             ? RedemptionStatus.requested.name
             : RedemptionStatus.approved.name,
         'decidedBy': null,

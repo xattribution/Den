@@ -591,7 +591,9 @@ class Validator {
       if (status == RedemptionStatus.approved.name && needsOk && !manager) {
         return _deny('A parent needs to approve that reward');
       }
-      if (forSelf && needsOk && status != RedemptionStatus.requested.name) {
+      // Someone who may change rewards could make one need no asking and take it: asking for
+      // themselves, a points manager always waits for someone else.
+      if (forSelf && (needsOk || manager) && status != RedemptionStatus.requested.name) {
         return _deny('Someone else needs to approve ${x.who}\'s reward');
       }
       if (c.fields['decidedBy'] != null && c.fields['decidedBy'] != c.actor) {

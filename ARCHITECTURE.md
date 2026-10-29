@@ -441,7 +441,9 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
   `Family.ownsPicture` allows it; a `photo` record follows the same rule, and a picture naming
   `photo:<id>` must name one of that person's.
 - Nobody gives or takes their own points or decides their own reward request (a points manager
-  asking for themselves waits for someone else like anyone). Balances can't be checked here, since
+  asking for themselves waits for someone else like anyone, and always creates it `requested`,
+  even for a reward that needs no asking: they could make any reward need none, at any price).
+  Balances can't be checked here, since
   they derive from completions in spaces a replica may not hold, so `Den` checks them: a request
   is refused when the balance less the requester's requests still waiting is short, and approving
   one is refused when the balance no longer covers it.

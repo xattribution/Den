@@ -352,5 +352,40 @@ void main() {
       await den.decideRedemption(request, approve: true);
       expect(den.points().totals[leo], 10);
     });
+
+    test('a points manager asking for themselves waits for someone else, even for a reward that needs no asking', () async {
+      await den.updateMember(leo, {'grants': [Grant.points]});
+      await sync(den, tablet);
+      // Leo may change rewards: he makes this one need no asking, and free.
+      await tablet.updateReward(money, {'needsApproval': false, 'cost': 0});
+      final free = await tablet.requestReward(money);
+      await tablet.updateReward(money, {'cost': 30});
+      final priced = await tablet.requestReward(money);
+      expect(tablet.points().pending.map((r) => r.id), unorderedEquals([free, priced]));
+      await expectLater(tablet.decideRedemption(priced, approve: true), throwsA(isA<PermissionDenied>()));
+      // Nor can a device of his write one approved at once.
+      clock.advance(const Duration(minutes: 1));
+      final forged = await forge(
+        tablet.keys,
+        counter: 900,
+        millis: clock.now,
+        type: RecordType.redemption,
+        rid: 'forgedtreat',
+        actor: leo,
+        fields: {'reward': money, 'member': leo, 'cost': 30, 'status': 'approved', 'decidedBy': null},
+      );
+      expect((await den.ingest([forged])).invalid[forged.id], contains('Someone else needs to approve'));
+      await sync(tablet, den);
+      expect(den.points().totals[leo], 40, reason: 'nothing spent until a parent says yes');
+      await den.decideRedemption(priced, approve: true);
+      expect(den.points().totals[leo], 10);
+      // Anyone else's "no asking" rewards stay granted at once.
+      await den.updateMember(leo, {'grants': <Grant>[]});
+      await den.updateReward(bedtime, {'cost': 5});
+      await sync(den, tablet);
+      await tablet.requestReward(bedtime);
+      await sync(tablet, den);
+      expect(den.points().totals[leo], 5);
+    });
   });
 }
