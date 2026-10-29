@@ -12,7 +12,8 @@ paste, run as root (or with `sudo`) on the server.
 - [Private: home networks plus Tailscale](#private-home-networks-plus-tailscale), the recommended
   setup: [who can reach it](#who-can-reach-this-server), [install](#install-private),
   [commands](#everyday-commands-private), [moving](#moving-a-private-server),
-  [maintenance](#maintenance-private), [what's closed](#closed-on-purpose)
+  [several families](#several-families), [maintenance](#maintenance-private),
+  [what's closed](#closed-on-purpose)
 - [What you need](#what-you-need)
 - [Install (setup A)](#install-setup-a): [B](#setup-b-cloudflare-tunnel), [C](#setup-c-tailscale),
   [D](#setup-d-a-computer-at-home), [E](#setup-e-several-families-on-one-server)
@@ -36,7 +37,7 @@ paste, run as root (or with `sudo`) on the server.
 | **B** | A VPS behind a Cloudflare Tunnel | No open ports; Cloudflare holds the certificate and sees the traffic at its edge |
 | **C** | Tailscale only | Only devices on your tailnet reach it, at its `ts.net` name; every phone needs the Tailscale app, at home too |
 | **D** | A computer at home | On the home network, for the Den app (found by mDNS). For iPhones' Home Screen app, which needs HTTPS, run setup C on that computer instead |
-| **E** | Several families on one server | A hub per family, each with its own address and data, behind one Caddy |
+| **E** | Several families on one server | A hub per family, each with its own address and data, behind one Caddy. The private setup does this too: [Several families](#several-families) |
 
 ## Private: home networks plus Tailscale
 
@@ -202,6 +203,8 @@ unless someone picks an exit node. Don't (the policy allows none anyway).
   console; in the policy, add `autogroup:shared` to the first grant's `src`. It fits a relative
   who already runs a tailnet of their own.
 
+More than one family on the server: [Tailscale for several families](#tailscale-for-several-families).
+
 ### For the family (private)
 
 Send this, with your family's address in it:
@@ -237,7 +240,8 @@ Tailscale stay as they are through a reset. What differs or adds:
 | The firewall as loaded | `nft list table inet den_fw` |
 | Tailscale | `tailscale status` |
 | Restore | As in [Restore](#restore); then open Den on a phone at home or with Tailscale on, as the hub waits for one to sync (`den_hub status` says `Catching up after a restore` until then) |
-| Update | A backup and `docker tag den-hub den-hub:previous` as in [Updating](#updating), then `git pull` and `./install.sh`: it updates the firewall and its units too, and runs `docker compose up -d --build` |
+| Update | A backup and `docker tag den-hub den-hub:previous` as in [Updating](#updating), then `git pull` and `./install.sh`: it updates the firewall and its units too, and runs `docker compose up -d --build`, which updates every family's hub |
+| [Several families](#several-families) | `sudo ./install.sh add-family`, `remove-family`, `families`; the commands above with `hub-smith` for smith's hub |
 
 **Backups off the server** go over Tailscale, as SSH is closed to the internet: with the
 server's Tailscale name or address,
@@ -250,22 +254,25 @@ The family keeps the address and the hub, as in [Moving to a new server](#moving
 the private setup also moves the names that point at the server. Your computer reaches the old
 server over Tailscale, and the new one at its public address until it joins.
 
+With [several families](#several-families) on the server, they all move together: `.env` lists
+them, and the backup and restore below cover each.
+
 1. **The new server.** `git clone` as in [Install (private)](#install-private), then from your
    computer copy `.env` across:
    `scp -3 root@old-den:den/deploy/private/.env root@<new address>:den/deploy/private/.env`.
    On the new server, `sudo ./install.sh`: it joins the tailnet as `tag:den-server` too, sets up
-   the firewall and starts an empty hub.
-2. **Back up the old one**, with its hub stopped:
-   `docker compose stop hub && docker compose run --rm backup`.
-3. **Copy the backup**, from your computer, over Tailscale both ways now:
-   `scp -3 'root@old-den:den/deploy/private/backups/den-*.denbackup' root@new-den:den/deploy/private/backups/`.
-4. **Restore on the new one:** `docker compose stop hub`, then
-   `docker compose run --rm backup restore backups/den-2026-10-28-0317.denbackup` (the newest),
-   then `docker compose up -d`.
-5. **Point the names at it:**
+   the firewall and starts an empty hub for each family.
+2. **Back up the old one**, with its hubs stopped:
+   `docker compose stop && docker compose run --rm backup`.
+3. **Copy the backups**, from your computer, over Tailscale both ways now:
+   `scp -3 -r root@old-den:den/deploy/private/backups root@new-den:den/deploy/private/`.
+4. **Restore on the new one**, every family from its newest backup: `docker compose stop`, then
+   `docker compose run --rm backup restore newest`, then `docker compose up -d`.
+5. **Point the names at it**, each family's:
    - **Public DNS:** the `A` (and `AAAA`) record of `den.example.com`, to the new public address.
-   - **Split DNS:** Tailscale admin console, DNS, the nameserver for `den.example.com`, to the new
-     server's Tailscale address (`tailscale ip -4` there).
+     (Other families' names that are a `CNAME` to it follow by themselves.)
+   - **Split DNS:** Tailscale admin console, DNS, the nameserver for `den.example.com` (and for
+     each other family's address), to the new server's Tailscale address (`tailscale ip -4` there).
    - **The tailnet policy:** nothing to change while the new server carries `tag:den-server`
      (if it doesn't: Machines, its menu, Edit ACL tags). Once the old server is off, remove it
      (Machines, its menu, Remove), so the tag means one server again.
@@ -274,9 +281,140 @@ server over Tailscale, and the new one at its public address until it joins.
    (the most recent is best), and let it sync: a restored hub writes nothing of its own until a
    phone has ([Restore](#restore)). Then `docker compose exec hub /app/bin/den_hub status` says
    `In a family and serving.` and no longer `Catching up after a restore`. Check from one phone
-   at home and one with Tailscale on.
+   at home and one with Tailscale on. Each family does the same with its own hub (`hub-smith`).
 7. **Retire the old one:** `docker compose down` and `tailscale logout` there; delete it a few
    days later.
+
+### Several families
+
+One server carries a few families. Each gets its own hub, with its own keys, data, address and
+backups, behind the same Caddy, dnsmasq, firewall and backup service. The family `install.sh`
+set up stays exactly as it is.
+
+**How many fit.** Measured with five families on one server (fresh hubs): each hub about 8 MiB at
+rest and 16–17 MiB after serving a burst of 800 requests (about 25 MiB resident), Caddy 13–21
+MiB, dnsmasq under 2 MiB, Docker itself about 120 MiB; no CPU at rest, about 1% per hub during
+the burst. Hubs in use with a family on them run at 15–20 MiB. So three families' hubs take
+60–80 MiB and five take 100–130 MiB: with Caddy, Docker, Tailscale and the system, well under
+1 GB of the 2 GB server. The 2 GB is for building the hub (about 1.2 GB at the peak), and that
+doesn't grow: one image serves every family, built once per update. Keep the swap from
+[Building on a small server](#building-on-a-small-server), or use
+[published images](#published-images).
+
+#### Adding a family
+
+```sh
+cd den/deploy/private
+sudo ./install.sh add-family smith den-smith.example.com "home.smith-ddns.example another.ddns.example"
+```
+
+The name is short (letters and digits); the address is the family's own, in a zone your
+Cloudflare token has; the homes are their DDNS names, DNS only (leave them out for Tailscale
+only; run it again with the same name and address and a new list to change them). It checks that
+the token sees the address's zone, adds a line for the family to `.env`
+(`DEN_FAMILY_SMITH=den-smith.example.com 47735 home.smith-ddns.example ...`), writes
+`compose.families.yaml` and `Caddyfile.families` from those lines (generated: don't edit them),
+starts the family's hub on the next port with its own volume, restarts Caddy and dnsmasq with the
+new address (every family's app reconnects within a moment), lets their homes through the
+firewall, and prints, with your values filled in:
+
+1. **Public DNS**, DNS only: a `CNAME` from their address to yours (`den.example.com`), so a move
+   changes one record; or an `A` record.
+2. **Tailscale:** a split-DNS nameserver for their address (none if it ends in an address that
+   has one: `smith.den.example.com` is covered by `den.example.com`'s); a group for them,
+   `"group:family-smith"`, in the policy and in the `src` of the grant to `tag:den-server`; and
+   their invitations ([Tailscale for several families](#tailscale-for-several-families)).
+3. **The setup code** for their first parent's phone. Then send them
+   [their message](#for-the-family-private), with their address in it.
+
+**Certificates.** Caddy gets every address's certificate with the one token in `.env`, so any
+name in the token's zone works. For an address in another zone of your Cloudflare account, add
+that zone to the token (API Tokens, the token's Edit, Zone Resources); add-family stops, changing
+nothing, until the token sees it. A zone in someone else's Cloudflare account can't work with your
+token: use a name in yours. If the token loses a zone later, that address's certificate stops
+renewing (`docker compose logs caddy` says so weeks ahead), and only that family notices.
+
+#### The families on this server
+
+`sudo ./install.sh families` prints this for your server:
+
+| Family | Address | Hub | Port (127.0.0.1) | Data (volume) | Backups |
+| --- | --- | --- | --- | --- | --- |
+| The first | `DEN_DOMAIN`, like `den.example.com` | `hub` | 47733 | `den_den-hub` | `backups/` |
+| `smith` | `den-smith.example.com` | `hub-smith` | 47735 | `den_den-smith` | `backups/smith/` |
+| The next ones | theirs | `hub-<name>` | 47737, 47739, … | `den_den-<name>` | `backups/<name>/` |
+
+#### Commands, per family
+
+From `den/deploy/private`, with `hub-smith` for smith (`hub` is the first family's). The rest of
+[Everyday commands (private)](#everyday-commands-private) is the same for everyone.
+
+| Task | Command |
+| --- | --- |
+| Health, every hub | `docker compose ps` |
+| Logs | `docker compose logs -f --tail 100 hub-smith` |
+| Status, setup code | `docker compose exec hub-smith /app/bin/den_hub status` (or `setup-code`, `open-linking`, `recover`) |
+| Back up every family | `docker compose run --rm backup` (the nightly crontab line in [Backups](#backups) runs this) |
+| Back up one | `docker compose run --rm backup smith` (`hub` for the first) |
+| Restore one | `docker compose stop hub-smith`, `docker compose run --rm backup restore backups/smith/den-2026-10-28-0317.denbackup`, `docker compose up -d hub-smith`, then a phone of theirs as in [Restore](#restore) |
+| Restore every family | `docker compose stop`, `docker compose run --rm backup restore newest`, `docker compose up -d` |
+| Update | As for one family ([Everyday commands (private)](#everyday-commands-private)): every hub runs the one image, so they update, and roll back, together |
+| Move to a new server | All together: [Moving a private server](#moving-a-private-server) |
+| Reset one hub, keep the family | `docker compose rm -sf hub-smith && docker volume rm den_den-smith && docker compose up -d hub-smith`, then a parent's phone as in [Reset the hub, keep the family](#reset-the-hub-keep-the-family) |
+| Take a family off | `sudo ./install.sh remove-family smith` |
+
+**Taking a family off** stops and removes `hub-smith`, takes its address out of Caddy and dnsmasq
+and its homes out of the firewall, and keeps its data: the volume `den_den-smith` stays, and
+`add-family smith` with the same address brings the same hub back, family and all.
+`remove-family smith --delete-data` deletes the volume too. Either way the backups stay in
+`backups/smith/`, and its DNS record, split-DNS entry and Tailscale group are yours to delete.
+
+#### What keeps families apart
+
+- **Their own hub.** Each family's hub has its own keys and volume, and knows only its own
+  address (`DEN_PUBLIC_URL`). No hub can open another's data.
+- **Their own address.** Caddy sends each address to its own hub and nowhere else; a request
+  that names another family's address over a connection made for this one is refused (421).
+- **One allowlist for every home.** The firewall lets all the families' homes reach 443, so
+  someone at the Smiths' can open the Joneses' address. They get Den's sign-in page and no
+  further: nothing in the Joneses' hub opens without a device a Jones parent let in, and the
+  hub's public posture (limits per address, a parent's say before a browser links) holds.
+- **No per-family filter in Caddy, on purpose.** Caddy could refuse one family's address to the
+  other families' homes (`remote_ip` per site, from the same lists). It isn't worth it: it guards a
+  door the hub's sign-in already guards; Caddy reads its addresses only when it starts, so each
+  home's new address would restart Caddy and cut every family's sync for a moment; it can't
+  tell families apart over Tailscale anyway; and it's one more way to lock a
+  family out the day their address changes. Worth another look only if a family's home shares
+  its address with strangers ([Home addresses](#home-addresses), shared addresses).
+- **On Tailscale**, each family has its own group, and every group reaches the same server on
+  443 and 53. So anyone in any family can reach every family's address on the server and look up
+  their names, as they could from a home: they get the sign-in page. They can't reach another
+  family's data, anyone's phones or computers, SSH, the hubs' own ports or anything else on your
+  tailnet; the Tailscale app shows them the server and nothing else. The split-DNS list is part
+  of the tailnet's settings, so a curious member can read every family's Den address (they're
+  in public certificate logs anyway).
+- **You.** As root on the server and admin of the tailnet, you can read every family's data and
+  see their devices, as with one family. One passphrase seals every family's backups.
+
+#### Tailscale for several families
+
+| | Invite them to your tailnet | Share the server with them | A tailnet per family |
+| --- | --- | --- | --- |
+| They | Install Tailscale, accept the invitation | Each person: a Tailscale account of their own (they're its admin), accept the share, add the split-DNS nameserver in their own admin console | Install Tailscale, accept the invitation to their tailnet |
+| You | A group, the grant, a split-DNS entry, the invitations | Share the server with each person; `autogroup:shared` in the grant | Run another tailnet, and a second Tailscale on the server to join it (install.sh joins one) |
+| Split DNS | Yours: one entry per address reaches them | Theirs: split DNS is a tailnet's own setting, and a shared-in user doesn't get yours | Yours, in each tailnet |
+| Your 6 free users | Each person counts | Shared-in people don't | Each tailnet has its own 6 |
+
+**Invite them to your tailnet.** For families who aren't technical, it's the one where they do
+nothing but install an app and accept an invitation; the policy, the names and split DNS stay in
+one place, which you run. The cost is the free plan's 6 users across every family: three families
+with two parents each, plus you, is 7. To stay within it, give each family one Tailscale login (a
+parent's, or one made for the household) and sign in with it on all of that family's devices: Den
+still knows each person as themselves, as its own sign-in is per device. Past 6 users, Tailscale's
+Standard plan charges per user, for everyone ([tailscale.com/pricing](https://tailscale.com/pricing)).
+Sharing fits a relative who already runs a tailnet: a share reaches only the person who accepts it,
+and each of them sets up split DNS in their own console. A tailnet per family is the most apart,
+and the most for you to run; this setup doesn't build it.
 
 ### Maintenance (private)
 
@@ -312,7 +450,7 @@ published addresses reach 443, for those paths only. For Claude, whose servers c
 `160.79.104.0/21` (check Anthropic's current list):
 
 1. In `.env`, `DEN_ALLOW_EXTRA=160.79.104.0/21`; then `sudo systemctl start den-allowlist`.
-2. In `Caddyfile`, inside the `{$DEN_DOMAIN}` block, before `reverse_proxy`:
+2. In `Caddyfile`, inside the `{$DEN_DOMAIN}` block, after its `import den` line:
 
    ```caddyfile
    @assistant_elsewhere {
@@ -354,7 +492,8 @@ entirely until you start the timer again:
 
 ```sh
 cd den/deploy/private
-docker compose --profile '*' down -v --rmi all
+docker compose --profile '*' down -v --rmi all     # every family's hub and data
+docker volume ls -q --filter label=com.docker.compose.project=den | xargs -r docker volume rm   # families removed earlier, data kept
 docker image rm den-hub:previous     # if you kept one when updating
 docker builder prune -af
 systemctl disable --now den-allowlist.timer
