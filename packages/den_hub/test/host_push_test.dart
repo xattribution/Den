@@ -299,6 +299,38 @@ void main() {
       expect(b64url(again.pushKey.publicKey), host);
       await again.stop();
     });
+
+    test("the host's key is owner-only from the start: host/ is 0700, no copy is left beside it", () async {
+      h.host.pushKey;
+      final dir = Directory('${shared.path}/$hostStateDir');
+      if (!Platform.isWindows) expect(dir.statSync().modeString(), 'rwx------');
+      expect(File('${dir.path}/$hostPushFile.tmp').existsSync(), isFalse);
+      // Made in a fresh data directory, the same holds before anything else was written there.
+      final fresh = await Directory.systemTemp.createTemp('den-host-key');
+      addTearDown(() => fresh.delete(recursive: true));
+      final state = HostState(fresh.path);
+      final made = state.pushKey();
+      final file = File('${fresh.path}/$hostStateDir/$hostPushFile');
+      if (!Platform.isWindows) {
+        expect(Directory('${fresh.path}/$hostStateDir').statSync().modeString(), 'rwx------');
+        expect(file.statSync().modeString(), 'rw-------');
+      }
+      expect(HostState(fresh.path).pushKey().publicKey, made.publicKey, reason: 'read back, not made again');
+    });
+
+    test("a host whose key can't be read won't start, and never replaces the key", () async {
+      final fresh = await Directory.systemTemp.createTemp('den-host-key');
+      addTearDown(() => fresh.delete(recursive: true));
+      final file = File('${fresh.path}/$hostStateDir/$hostPushFile');
+      file.parent.createSync(recursive: true);
+      file.writeAsStringSync('{"v":1,"vapid":');
+      await expectLater(
+        DenHost.start(HostConfig(port: 0, host: InternetAddress.loopbackIPv4, dataDir: fresh.path, log: HubLog.silent())),
+        throwsA(isA<StateError>().having((e) => e.message, 'message', contains("push key"))),
+      );
+      expect(file.readAsStringSync(), '{"v":1,"vapid":', reason: 'left as it was, for the operator to restore');
+      expect(() => HostState(fresh.path).pushKey(), throwsStateError);
+    });
   });
 }
 

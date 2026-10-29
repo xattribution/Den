@@ -148,34 +148,71 @@ class HostState {
 
   VapidKeys? _pushKey;
 
-  /// The host's own Web Push key ([hostPushFile]), made on first use and kept owner-only; in
-  /// memory without a data directory. An unreadable file is replaced, and browsers that
-  /// subscribed with the old key subscribe again.
+  /// Reads the host's push key ([hostPushFile]) as the host starts, when it has one. A file that
+  /// can't be read stops the host ([StateError]) rather than a new key quietly taking its place:
+  /// every browser that turned reminders on with the old one would stop getting them.
+  void loadPushKey() {
+    final dir = dataDir;
+    if (dir == null || _pushKey != null) return;
+    final file = File(_path(dir, hostPushFile));
+    if (file.existsSync()) _pushKey = _readPushKey(file);
+  }
+
+  /// The host's own Web Push key ([hostPushFile]), made on first use; in memory without a data
+  /// directory. It is written owner-only from the start (`host/` 0700, the file 0600 before the
+  /// key goes in, then renamed into place), and a host that can't make it so ([FileSystemException])
+  /// or can't read the one it has ([StateError]) says so instead of serving with another.
   VapidKeys pushKey() {
     final have = _pushKey;
     if (have != null) return have;
     final dir = dataDir;
-    final file = dir == null ? null : File(_path(dir, hostPushFile));
-    if (file != null && file.existsSync()) {
-      try {
-        final json = jsonDecode(file.readAsStringSync());
-        if (json is Map && json['vapid'] is String) return _pushKey = VapidKeys.fromPrivate(unb64url(json['vapid'] as String));
-      } on Object {
-        // Made again below.
-      }
+    if (dir == null) return _pushKey = VapidKeys.generate();
+    final file = File(_path(dir, hostPushFile));
+    if (file.existsSync()) return _pushKey = _readPushKey(file);
+    final made = VapidKeys.generate();
+    ownerOnlyDir(file.parent);
+    final temp = File('${file.path}.tmp');
+    if (temp.existsSync()) temp.deleteSync();
+    temp.createSync(exclusive: true);
+    ownerOnlyFile(temp.path);
+    temp.writeAsStringSync(jsonEncode({'v': 1, 'vapid': b64url(made.privateKey)}), flush: true);
+    temp.renameSync(file.path);
+    return _pushKey = made;
+  }
+
+  static VapidKeys _readPushKey(File file) {
+    Object? problem;
+    try {
+      final json = jsonDecode(file.readAsStringSync());
+      if (json is Map && json['vapid'] is String) return VapidKeys.fromPrivate(unb64url(json['vapid'] as String));
+    } on Object catch (e) {
+      problem = e;
     }
-    final made = _pushKey = VapidKeys.generate();
-    if (file != null) {
-      try {
-        file.parent.createSync(recursive: true);
-        final temp = File('${file.path}.tmp')..writeAsStringSync(jsonEncode({'v': 1, 'vapid': b64url(made.privateKey)}), flush: true);
-        restrictToOwner(temp.path);
-        temp.renameSync(file.path);
-      } on Object {
-        // Kept in memory for this run.
-      }
+    throw StateError(
+      "The host's push key (${file.path}) can't be read${problem == null ? '' : ' ($problem)'}. Restore it from a backup. "
+      'To make a new one instead, move the file away: every browser that turned reminders on with it then turns them on again.',
+    );
+  }
+
+  /// Makes [dir] (and what leads to it) and leaves it to its owner alone: `chmod 700`, or on
+  /// Windows the owner's access only (best effort there). Throws when `chmod` fails.
+  static void ownerOnlyDir(Directory dir) {
+    dir.createSync(recursive: true);
+    _chmod(dir.path, '700');
+  }
+
+  /// Leaves the file at [path] to its owner alone: `chmod 600`; on Windows, best effort.
+  static void ownerOnlyFile(String path) => _chmod(path, '600');
+
+  static void _chmod(String path, String mode) {
+    if (Platform.isWindows) {
+      restrictToOwner(path);
+      return;
     }
-    return made;
+    final done = Process.runSync('chmod', [mode, path]);
+    if (done.exitCode != 0) {
+      throw FileSystemException("Couldn't leave it to its owner alone (chmod $mode: ${'${done.stderr}'.trim()})", path);
+    }
   }
 
   /// Deletes `vapid.json`, which earlier builds of the host kept every family's Web Push key in
@@ -284,12 +321,7 @@ class HostState {
   void save() {
     final file = _registry;
     if (file == null) return;
-    file.parent.createSync(recursive: true);
-    try {
-      if (!Platform.isWindows) Process.runSync('chmod', ['700', file.parent.path]);
-    } on Object {
-      // Best effort.
-    }
+    ownerOnlyDir(file.parent);
     final temp = File('${file.path}.tmp');
     temp.writeAsStringSync(
       const JsonEncoder.withIndent('  ').convert({
