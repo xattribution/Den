@@ -163,6 +163,66 @@ void main() {
       expect(den.points().totals[leo], 0);
     });
 
+    test('someone who edits chores moves a chore worth stars to Just me; its price comes along, unset', () async {
+      final gma = await den.addMember(name: 'Grandma', role: Role.adult);
+      final phone = await joinDevice(den, clock, member: gma, name: 'Grandma phone', kind: DeviceKind.phone);
+      final plants = await den.addChore(
+        title: 'Water plants',
+        owner: OwnerMember(gma),
+        schedule: const ChoreSchedule.once('2026-10-01'),
+        points: 3,
+        steps: const [ChoreStep(id: 'deck', text: 'The deck', points: 1)],
+      );
+      final cat = await den.addChore(title: 'Feed cat', owner: OwnerMember(gma), schedule: const ChoreSchedule.once('2026-10-01'), points: 2);
+      await sync(den, phone);
+      clock.advance(const Duration(minutes: 1));
+      await phone.setChoreDone(plants, '2026-10-01', true);
+      await phone.updateChore(plants, {'audience': Audience.justMe});
+      expect(phone.chore(plants)!.space, Space.member(gma));
+      expect(phone.chore(plants)!.points, 3);
+      // A copy that changes the price, a chore with no original in everyone's space, and a new
+      // price still need the points permission.
+      clock.advance(const Duration(minutes: 1));
+      final pricier = await forge(
+        phone.keys,
+        counter: 800,
+        millis: clock.now,
+        type: RecordType.chore,
+        rid: cat,
+        space: Space.member(gma),
+        actor: gma,
+        fields: {...den.chore(cat)!.rec.fields, 'points': 9},
+      );
+      final moved = await forge(
+        phone.keys,
+        counter: 801,
+        millis: clock.now + 1,
+        type: RecordType.chore,
+        rid: 'nooriginal',
+        space: Space.member(gma),
+        actor: gma,
+        fields: {...den.chore(plants)!.rec.fields},
+      );
+      final greedy = await forge(
+        phone.keys,
+        counter: 802,
+        millis: clock.now + 2,
+        type: RecordType.chore,
+        rid: plants,
+        space: Space.member(gma),
+        actor: gma,
+        fields: {'points': 9},
+      );
+      await sync(phone, den);
+      final result = await den.ingest([pricier, moved, greedy]);
+      expect(result.invalid[moved.id], contains('worth'));
+      expect(result.invalid[greedy.id], contains('worth'));
+      expect(result.invalid[pricier.id], contains('worth'));
+      expect(den.chore(plants)!.space, Space.member(gma));
+      expect(den.chore(plants)!.points, 3);
+      expect(den.points().totals[gma], 4, reason: 'what was earned (the chore and its step) moved with it, once');
+    });
+
     test('a new price doesn\'t change what was already earned', () async {
       final dishes = await den.addChore(
         title: 'Dishes',

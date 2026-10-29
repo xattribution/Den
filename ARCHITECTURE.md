@@ -429,7 +429,9 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
   every write it makes for an API or MCP caller.
 - Setting what a chore or step is worth (a new chore or step with points, or a new price) needs
   the points permission as well as the chores one; recording a completion's worth above the
-  price at the time does too.
+  price at the time does too. The copy that moving a chore out of everyone's space writes, at
+  the price it had there, sets none: every replica holding the copy holds `f` too. Moving one
+  into `f` still needs it, since a replica holding `f` may not hold where it came from.
 - Writes into `p` need a parent or a hub; writes into `m:X` need X, a parent the oversight policy
   allows, or a hub.
 - Kids complete only chores they own that day, "anyone" chores, and steps they own (checking the

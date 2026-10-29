@@ -370,7 +370,10 @@ class Validator {
         return x.has(DenAction.editEvents) ? null : _deny('${x.who} can\'t add or change events');
       case RecordType.chore:
         if (!x.has(DenAction.editChores)) return _deny('${x.who} can\'t add or change chores');
-        if (_setsPoints(c, x.existing) && !x.has(DenAction.managePoints)) {
+        // Moving a chore to another space writes a copy: one of a chore in everyone's space
+        // (which every replica holding the copy holds too) at the same price sets none.
+        final original = x.existing ?? (c.space == Space.family ? null : store.at(Space.family, RecordType.chore, c.rid));
+        if (_setsPoints(c, original) && !x.has(DenAction.managePoints)) {
           return _deny('${x.who} can\'t set how many stars a chore is worth');
         }
         return null;
