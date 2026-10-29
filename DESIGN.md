@@ -468,10 +468,15 @@ tap happened, and shows it in a `DoneRow`.
   goals as one kind ("reach 25 stars by Saturday, each week"), and Recent. Points on or off
   lives in Settings, under Family (`PointsSwitch`).
 - **Lists** (Lists.dc.html): the lists as chips, pinned first; one add field that reads "2
-  milk @Costco, eggs"; groceries grouped by store with store chips; "In the cart" below with
-  Clear; adding, removing, clearing and "Add to groceries" (meals) each say what they did in
-  place, with Undo. More holds Share, Copy, Reorder, Edit and Delete. iPad: the lists in a
-  column beside the chosen one.
+  milk @Costco, eggs", with where new things go as a store chip in it ("Costco ▾", "Any
+  store ▾": the store showing, or as picked from a short card of stores and New store…; it
+  stays for the next things, and "@Costco" moves it); groceries grouped by store with store
+  chips. A tap crosses an item off where it is (filled ring, struck in ink) and another tap
+  there takes it back: nothing moves while the list is open. "Clear checked (3)" floats at the
+  bottom end once something is checked and turns into what it did, with Undo. Adding,
+  removing and "Add to groceries" (meals) each say what they did in place, with Undo. More
+  holds Share, Copy, Reorder, Edit and Delete. iPad: the lists in a column beside the chosen
+  one. Today's Groceries add the same way.
 - **Family**: Needs you, the people (face, name, who they are), parent controls as switches.
 - **Add**: one field that understands a sentence, the kinds as chips, one button naming what it
   will add.
@@ -554,6 +559,11 @@ why.
 - Safe areas: the title starts below the top inset; the tab bar is its height plus the bottom
   inset; nothing tappable in the inset; sheets pad their bottom by the inset.
 - Every editable field is 17 or larger at every text size (iOS zooms into smaller ones).
+- The page never scrolls: `html` and `body` are pinned to the screen (`index.html`), and
+  `den_web.js` puts the page back at the top whenever Safari moves it for the keyboard, then has
+  Flutter measure again. The keyboard's height comes from the page (`WebSafeArea`), so a
+  keyboard closed with its own button rather than Return leaves nothing lifted. A sheet rises
+  over the keyboard once; what's inside it lays out as if there were none.
 - `MediaQuery.disableAnimations` must follow Reduce Motion (read `prefers-reduced-motion` if it
   doesn't). Dynamic Type doesn't reach web apps, so the Text size setting lives in Settings.
 

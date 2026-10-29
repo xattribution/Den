@@ -151,6 +151,9 @@ jobs:
       # The service worker, against a fake build, in Node.
       - working-directory: app
         run: node test/web/sw_test.mjs web/sw.js
+      # The page around the keyboard (den_web.js, index.html), against a fake iPhone, in Node.
+      - working-directory: app
+        run: node test/web/viewport_test.mjs web/den_web.js web/index.html
       # The web app as the hub serves it (deploy/hub/Dockerfile): CanvasKit and fonts from the
       # hub, no CDN; and the fallback fonts the hub image ships are still where the build names
       # them.

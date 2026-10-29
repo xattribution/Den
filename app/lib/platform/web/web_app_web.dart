@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 /// `window.denWeb` from web/den_web.js; null in a page without it (tests in a browser).
 @JS('denWeb')
@@ -101,6 +102,25 @@ Future<String> pickPhoto(bool camera) {
 
 void listen(void Function(String route) onOpen) {
   _denWeb?.listen(((String route) => onOpen(route)).toJS);
+}
+
+// A page cached from before the keyboard fix has a denWeb without these two, so they're looked
+// up rather than declared.
+
+String? viewport() {
+  final web = _denWeb;
+  if (web == null || !web.has('viewport')) return null;
+  try {
+    return web.callMethod<JSString>('viewport'.toJS).toDart;
+  } on Object {
+    return null;
+  }
+}
+
+void onViewport(void Function(String json) onChange) {
+  final web = _denWeb;
+  if (web == null || !web.has('onViewport')) return;
+  web.callMethod<JSAny?>('onViewport'.toJS, ((String json) => onChange(json)).toJS);
 }
 
 List<double> insets() {

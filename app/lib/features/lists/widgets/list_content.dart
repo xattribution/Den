@@ -14,11 +14,14 @@ import '../../../design/words.dart';
 import '../state/list_actions.dart';
 import '../state/lists_model.dart';
 import '../words/list_words.dart';
+import 'item_adder.dart';
 
 /// One list's content (Lists.dc.html): when it's needed by, the one add field ("2 milk
-/// @Costco, eggs"), the open items (on a shopping list grouped by store, with store chips to
-/// show one), and what's done ("In the cart") with Clear. Checking is one tap; adding, removing,
-/// clearing and "Add to groceries" each say what they did in place, with Undo.
+/// @Costco, eggs") with where new things go, and the items (on a shopping list grouped by store,
+/// with store chips to show one). Checking is one tap and happens in place: the item stays where
+/// it is, crossed off, until "Clear checked" ([ClearChecked], floating over the page) takes the
+/// checked ones away. Nothing moves while the list is open. Adding, removing and "Add to
+/// groceries" each say what they did in place, with Undo.
 class ListContent extends StatefulWidget {
   const ListContent({super.key, required this.list, this.focusAdd = false});
 
@@ -32,10 +35,17 @@ class ListContent extends StatefulWidget {
 }
 
 class _ListContentState extends State<ListContent> {
-  /// Null shows every store; the empty string the items with none.
+  /// The store chip showing: null shows every store; the empty string the items with none.
   String? _store;
+
+  /// Where new things go (a shopping list's add chip); null is any store. It follows the store
+  /// chip showing, and stays as picked for the next things added.
+  String? _addTo;
   Done? _added;
-  Done? _cleared;
+
+  /// The stores in the order their groups first showed, so checking, adding or clearing never
+  /// moves a group while the list is open.
+  final _storeOrder = <String>[];
 
   /// Items removed here, by id, with where they were so the note stays in their place.
   final _removed = <String, (Item, Done)>{};
@@ -48,12 +58,19 @@ class _ListContentState extends State<ListContent> {
     super.didUpdateWidget(old);
     if (old.list.list.id != widget.list.list.id) {
       _store = null;
+      _addTo = null;
       _added = null;
-      _cleared = null;
+      _storeOrder.clear();
       _removed.clear();
       _sent.clear();
     }
   }
+
+  /// Shows one store (or all of them), and new things go there too.
+  void _show(String? store) => setState(() {
+        _store = store;
+        _addTo = store == null || store.isEmpty ? null : store;
+      });
 
   Future<void> _undo(Done note, VoidCallback forget) async {
     final receipt = note.receipt;
@@ -64,11 +81,21 @@ class _ListContentState extends State<ListContent> {
 
   Future<bool> _add(String text) async {
     final lv = widget.list;
-    final items = parseItems(text, knownStores: DenScope.read(context).den.stores);
-    if (items.isEmpty) return false;
+    final shopping = lv.list.kind == ListKind.shopping;
+    final read = parseItems(text, knownStores: DenScope.read(context).den.stores);
+    if (read.isEmpty) return false;
+    final to = shopping ? _addTo : null;
+    final items = [for (final i in read) (text: i.text, qty: i.qty, store: i.store ?? to)];
     final result = await perform(context, () => context.listActions.addItems(lv.list.id, items));
     if (result == null || !mounted) return false;
-    setState(() => _added = (message: 'Added ${itemNames(items)}', receipt: result.receipt));
+    // "@Costco" moves the chip, so the next things go there too.
+    final typed = read.lastWhere((i) => i.store != null, orElse: () => read.last).store;
+    final stores = {for (final i in items) i.store};
+    final at = shopping && stores.length == 1 && stores.single != null ? ' at ${stores.single}' : '';
+    setState(() {
+      if (shopping && typed != null) _addTo = typed;
+      _added = (message: 'Added ${itemNames(read)}$at', receipt: result.receipt);
+    });
     return true;
   }
 
@@ -76,14 +103,6 @@ class _ListContentState extends State<ListContent> {
     final result = await perform(context, () => context.listActions.remove(item));
     if (result == null || !mounted) return;
     setState(() => _removed[item.id] = (item, (message: 'Removed ${item.text}', receipt: result.receipt)));
-  }
-
-  Future<void> _clear(int count) async {
-    final lv = widget.list;
-    final result = await perform(context, () => context.listActions.clearChecked(lv.list.id));
-    if (result == null || !mounted) return;
-    final n = (result.data['removed'] as int?) ?? count;
-    setState(() => _cleared = (message: 'Cleared $n done ${n == 1 ? 'item' : 'items'}', receipt: result.receipt));
   }
 
   Future<void> _toGroceries(Item item) async {
@@ -103,22 +122,34 @@ class _ListContentState extends State<ListContent> {
     final t = context.text;
     final lv = app.den.list(widget.list.list.id) ?? widget.list;
     final kind = lv.list.kind;
+    final shopping = kind == ListKind.shopping;
     final canEdit = app.canChangeItems;
     final canCheck = app.allows(DenAction.checkItems);
 
-    final open = [for (final i in lv.items) if (!i.checked) i];
-    final done = [for (final i in lv.items) if (i.checked) i];
-    final storeOrder = app.den.stores;
-    final stores = open.map((i) => i.store ?? '').where((s) => s.isNotEmpty).toSet().toList()
-      ..sort((a, b) {
-        final ia = storeOrder.indexOf(a), ib = storeOrder.indexOf(b);
-        if (ia != ib) return (ia < 0 ? 999 : ia).compareTo(ib < 0 ? 999 : ib);
-        return a.compareTo(b);
-      });
-    final noStore = open.any((i) => (i.store ?? '').isEmpty);
+    // Every item where it is, checked or not; removed ones keep their place for their note.
+    final shown = [
+      ...lv.items,
+      for (final r in _removed.values)
+        if (!lv.items.any((i) => i.id == r.$1.id)) r.$1,
+    ]..sort((a, b) => a.order.compareTo(b.order));
+
+    // Groups keep the order they first showed in (the family's most used stores first).
+    final present = {for (final i in shown) if ((i.store ?? '').isNotEmpty) i.store!};
+    if (present.any((s) => !_storeOrder.contains(s))) {
+      final used = app.den.stores;
+      final fresh = present.where((s) => !_storeOrder.contains(s)).toList()
+        ..sort((a, b) {
+          final ia = used.indexOf(a), ib = used.indexOf(b);
+          if (ia != ib) return (ia < 0 ? 999 : ia).compareTo(ib < 0 ? 999 : ib);
+          return a.compareTo(b);
+        });
+      _storeOrder.addAll(fresh);
+    }
+    final stores = [for (final s in _storeOrder) if (present.contains(s)) s];
+    final noStore = shown.any((i) => (i.store ?? '').isEmpty);
     if (_store != null && _store!.isNotEmpty && !stores.contains(_store)) _store = null;
     if (_store == '' && !noStore) _store = null;
-    final byStore = kind == ListKind.shopping && stores.isNotEmpty;
+    final byStore = shopping && stores.isNotEmpty;
 
     Widget row(Item item) {
       final removed = _removed[item.id];
@@ -145,18 +176,6 @@ class _ListContentState extends State<ListContent> {
             : null,
       );
     }
-
-    // Removed items keep their place, so their note can stand where they were.
-    final shown = [
-      ...open,
-      for (final r in _removed.values)
-        if (!lv.items.any((i) => i.id == r.$1.id) && !r.$1.checked) r.$1,
-    ]..sort((a, b) => a.order.compareTo(b.order));
-    final doneShown = [
-      ...done,
-      for (final r in _removed.values)
-        if (!lv.items.any((i) => i.id == r.$1.id) && r.$1.checked) r.$1,
-    ]..sort((a, b) => a.order.compareTo(b.order));
 
     final groups = <String, List<Item>>{};
     if (byStore) {
@@ -186,7 +205,8 @@ class _ListContentState extends State<ListContent> {
       reason: '${app.me?.name ?? 'You'} can check things off here, but adding needs the lists permission. A parent can turn it on in Family.',
       child: AddItemRow(
         hint: switch (kind) {
-          ListKind.shopping => 'Add milk, eggs, 2 lemons',
+          // Short enough to read beside the store chip.
+          ListKind.shopping => 'Add milk, eggs',
           ListKind.packing => 'Add sunscreen, 2 towels',
           ListKind.meal => 'Add a meal, like Tacos',
           ListKind.checklist => 'Add something to do',
@@ -194,6 +214,9 @@ class _ListContentState extends State<ListContent> {
         enabled: canEdit,
         autofocus: widget.focusAdd,
         onAdd: _add,
+        stores: shopping ? [..._storeOrder, for (final s in app.den.stores) if (!_storeOrder.contains(s)) s] : null,
+        store: _addTo,
+        onStore: (store) => setState(() => _addTo = store),
       ),
     ));
     final added = _added;
@@ -211,25 +234,22 @@ class _ListContentState extends State<ListContent> {
     ));
 
     if (byStore && (stores.length > 1 || (stores.isNotEmpty && noStore))) {
-      int count(String s) => open.where((i) => (i.store ?? '') == s).length;
+      // How many are still to get at each store.
+      String label(String name, String s) {
+        final n = lv.items.where((i) => !i.checked && (i.store ?? '') == s).length;
+        return n == 0 ? name : '$name $n';
+      }
+
       children.add(Padding(
         padding: const EdgeInsets.only(top: Sp.l),
         child: ChipRow(
           inset: 0,
           children: [
-            TagChip(label: 'All stores', selected: _store == null, onTap: () => setState(() => _store = null)),
+            TagChip(label: 'All stores', selected: _store == null, onTap: () => _show(null)),
             for (final s in stores)
-              TagChip(
-                label: '$s ${count(s)}',
-                selected: _store == s,
-                onTap: () => setState(() => _store = _store == s ? null : s),
-              ),
+              TagChip(label: label(s, s), selected: _store == s, onTap: () => _show(_store == s ? null : s)),
             if (noStore)
-              TagChip(
-                label: 'Anywhere ${count('')}',
-                selected: _store == '',
-                onTap: () => setState(() => _store = _store == '' ? null : ''),
-              ),
+              TagChip(label: label('Anywhere', ''), selected: _store == '', onTap: () => _show(_store == '' ? null : '')),
           ],
         ),
       ));
@@ -241,11 +261,6 @@ class _ListContentState extends State<ListContent> {
         child: GroupCard(
           child: EmptyState(compact: true, message: 'Nothing on ${lv.list.title} yet.'),
         ),
-      ));
-    } else if (shown.isEmpty && done.isNotEmpty) {
-      children.add(Padding(
-        padding: const EdgeInsets.only(top: DenLayout.sectionGap),
-        child: GroupCard(child: EmptyState(compact: true, message: 'Everything on ${lv.list.title} is done.')),
       ));
     }
 
@@ -272,48 +287,6 @@ class _ListContentState extends State<ListContent> {
       ));
     }
 
-    final cleared = _cleared;
-    if (doneShown.isNotEmpty || cleared != null) {
-      children.add(Padding(
-        padding: const EdgeInsets.only(top: DenLayout.sectionGap),
-        child: DoneSwap(
-          done: cleared == null || done.isNotEmpty
-              ? null
-              : GroupCard(
-                  child: DoneRow(
-                    message: cleared.message,
-                    onUndo: cleared.receipt?.undoable == true ? () => _undo(cleared, () => _cleared = null) : null,
-                  ),
-                ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsetsDirectional.only(start: DenLayout.headingInset),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Semantics(
-                        header: true,
-                        child: Text(kind == ListKind.shopping ? 'In the cart' : 'Done', style: t.label(c.ink2)),
-                      ),
-                    ),
-                    if (canEdit && done.isNotEmpty)
-                      TextButton(
-                        onPressed: () => _clear(done.length),
-                        child: Text('Clear ${done.length}'),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: Sp.xs),
-              GroupCard(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: ruled(doneShown.map(row), indent: 42))),
-            ],
-          ),
-        ),
-      ));
-    }
-
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
   }
 
@@ -323,8 +296,9 @@ class _ListContentState extends State<ListContent> {
       );
 }
 
-/// One item: a 28 pt ring, the words, and the quantity at the end; done is a filled ring and
-/// struck words. A tap checks it; a long press (or a screen reader's action) edits it, and a
+/// One item: a 28 pt ring, the words, and the quantity at the end; done is a filled ring,
+/// words crossed off in ink, and who checked it, in the same place. A tap checks it (and a tap
+/// in the same place takes it back); a long press (or a screen reader's action) edits it, and a
 /// swipe removes it. On a meal plan, "Add to groceries" at the end.
 class _ItemRow extends StatelessWidget {
   const _ItemRow({
@@ -405,9 +379,11 @@ class _ItemRow extends StatelessWidget {
                       ExcludeSemantics(
                         child: Text(
                           tidy(item.text),
+                          // Crossed off in ink, the way a pen crosses off a paper list.
                           style: t.body(checked ? c.ink2 : c.ink).copyWith(
                                 decoration: checked ? TextDecoration.lineThrough : null,
-                                decorationColor: c.ink2,
+                                decorationColor: c.ink,
+                                decorationThickness: 1.5,
                               ),
                         ),
                       ),
@@ -445,20 +421,6 @@ class _ItemRow extends StatelessWidget {
       child: row,
     );
   }
-}
-
-/// The one add field: what to add, read by [parseItems] ("2 milk @Costco, eggs"), and the
-/// round Add button. Return adds and keeps the keyboard up.
-class AddItemRow extends StatelessWidget {
-  const AddItemRow({super.key, required this.hint, required this.onAdd, this.enabled = true, this.autofocus = false});
-
-  final String hint;
-  final Future<bool> Function(String text) onAdd;
-  final bool enabled;
-  final bool autofocus;
-
-  @override
-  Widget build(BuildContext context) => InlineAdd(hint: hint, onAdd: onAdd, enabled: enabled, autofocus: autofocus);
 }
 
 /// Change an item's words, quantity or store, or remove it.
@@ -534,8 +496,9 @@ class _ItemSheetState extends State<_ItemSheet> {
             ),
           ],
         );
+    // The sheet itself rises over the keyboard.
     return Padding(
-      padding: EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.xl + MediaQuery.viewInsetsOf(context).bottom),
+      padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.xl),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
