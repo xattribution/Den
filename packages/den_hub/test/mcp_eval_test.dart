@@ -218,5 +218,13 @@ void main() {
     final added = await tool(secret, 'add_items', {'list': 'Groceries', 'items': ['Butter']});
     expect(failed(added), isFalse, reason: text(added));
     expect(f.hubDen.history(type: RecordType.item).first.actorName, 'Alex');
+
+    // Alex stops being a parent: the old connection reads nothing more (no Parents-only things for
+    // a script whose parent left) until a parent chooses who it acts as.
+    await f.phone.updateMember(alex, {'role': Role.adult.name});
+    await f.toHub();
+    expect(f.hubDen.member(alex)!.isParent, isFalse);
+    final stopped = await f.call('GET', '/api/v1/members', token: secret);
+    expect(stopped.status, 401, reason: stopped.text);
   });
 }

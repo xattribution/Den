@@ -337,11 +337,12 @@ class _ChangeSheetState extends State<_ChangeSheet> {
 }
 
 /// "As Mia": who a connection acts as. One approved before every connection acted as someone
-/// acts as the parent who approved it; "Reads only" when that parent is gone.
+/// acts as the parent who approved it; stopped when that parent left or is no longer a parent,
+/// until a parent taps Change and chooses who it acts as.
 String actsAs(BuildContext context, Connection connection) {
   final den = DenScope.read(context).den;
   final id = den.connectionActsAs(connection);
-  if (id == null) return 'Reads only';
+  if (id == null) return 'Stopped: tap Change to choose who it acts as';
   return 'As ${den.member(id)?.name ?? 'a removed person'}';
 }
 
