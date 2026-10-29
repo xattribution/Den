@@ -12,7 +12,8 @@ import '../tokens.dart';
 ///
 /// Tiles are ink on the well, never a marker color: on this pad an animal is a letter of the
 /// secret, not a person. When [hidden], the slots fill with dots instead of the animals picked,
-/// for signing in where others can see the screen.
+/// for signing in where others can see the screen. Not [enabled] (while a wrong try makes
+/// someone wait), the animals stay in view but can't be tapped.
 class PatternPad extends StatefulWidget {
   const PatternPad({
     super.key,
@@ -20,11 +21,13 @@ class PatternPad extends StatefulWidget {
     this.length = 4,
     this.hidden = false,
     this.tile = 80,
+    this.enabled = true,
   });
 
   final ValueChanged<String> onComplete;
   final int length;
   final bool hidden;
+  final bool enabled;
 
   /// Edge of one animal tile; at least the 72-dp kids' target.
   final double tile;
@@ -81,7 +84,7 @@ class PatternPadState extends State<PatternPad> {
                     child: _AnimalTile(
                       animal: Animal.values[row * 3 + col],
                       size: tile,
-                      onTap: _picked.length < widget.length ? () => _tap(Animal.values[row * 3 + col]) : null,
+                      onTap: widget.enabled && _picked.length < widget.length ? () => _tap(Animal.values[row * 3 + col]) : null,
                     ),
                   ),
               ],
@@ -91,9 +94,9 @@ class PatternPadState extends State<PatternPad> {
         SizedBox(
           height: Targets.kid,
           child: TextButton.icon(
-            onPressed: _picked.isEmpty ? null : () => setState(_picked.removeLast),
+            onPressed: _picked.isEmpty || !widget.enabled ? null : () => setState(_picked.removeLast),
             icon: const Icon(PhosphorIconsBold.arrowUUpLeft, size: 22),
-            label: Text('Undo', style: context.type.title(_picked.isEmpty ? c.ink3 : c.ink)),
+            label: Text('Undo', style: context.type.title(_picked.isEmpty || !widget.enabled ? c.ink3 : c.ink)),
             style: TextButton.styleFrom(minimumSize: const Size(120, Targets.kid)),
           ),
         ),

@@ -126,3 +126,25 @@ String choresDone(List<ChoreDay> days) => '${days.where((d) => d.done).length} o
 
 /// The Groceries link: "14 items", "1 item", "Empty".
 String itemCount(int n) => n == 0 ? 'Empty' : '$n ${n == 1 ? 'item' : 'items'}';
+
+/// "PIN" or "pattern", for how [m] signs in on shared screens.
+String _secretWord(Member? m) => m?.signIn.kind == 'pattern' ? 'pattern' : 'PIN';
+
+/// "Alex's PIN", or "your PIN" on Alex's own phone.
+String _whoseSecret(FamilyReads app, String member) {
+  final m = app.memberById(member);
+  final whose = member == app.me?.id ? 'your' : "${m?.name ?? 'someone'}'s";
+  return '$whose ${_secretWord(m)}';
+}
+
+/// What a shared screen said: "Someone tried Alex's PIN on Kitchen display 10 times".
+String signInTriesSentence(FamilyReads app, SignInTries told) {
+  final where = app.den.device(told.device)?.name ?? 'a shared screen';
+  return 'Someone tried ${_whoseSecret(app, told.member)} on $where ${told.tries} times';
+}
+
+/// When: "Today, 7:42 AM".
+String signInTriesWhen(FamilyReads app, SignInTries told) {
+  final f = app.formats;
+  return '${f.relative(f.localDate(told.at), app.today)}, ${f.time(told.at)}';
+}

@@ -31,6 +31,7 @@ const Map<String, String> deviceLocal = {
   'leaveFamily': 'Forgetting the family is done on the device that leaves',
   'actAs': 'Who is acting on a shared screen',
   'verifySignIn': 'Checking a PIN or pattern on a shared screen',
+  'noteSignInTries': 'A shared screen telling the parents someone kept getting a PIN wrong there',
   'requestRecovery': 'A new phone lets itself in with a parent\'s recovery words or the hub\'s proof',
 };
 

@@ -91,7 +91,8 @@ class _KidScreenState extends State<KidScreen> {
   }
 }
 
-/// The parent's PIN, to take their phone back from a kid.
+/// The parent's PIN, to take their phone back from a kid. A wrong one makes the next try wait,
+/// as on a shared screen.
 class _ParentPin extends StatefulWidget {
   const _ParentPin({required this.parent});
   final Member parent;
@@ -105,14 +106,14 @@ class _ParentPinState extends State<_ParentPin> {
   String? _error;
 
   Future<void> _check(String secret) async {
-    final ok = await context.signInActions.verify(widget.parent.id, secret);
+    final check = await context.signInActions.verify(widget.parent.id, secret);
     if (!mounted) return;
-    if (ok) {
+    if (check.ok) {
       Navigator.of(context).pop(true);
     } else {
       setState(() {
         _round++;
-        _error = "That's not ${widget.parent.name}'s PIN. Try again.";
+        _error = "That's not ${widget.parent.name}'s PIN.";
       });
     }
   }
@@ -121,6 +122,7 @@ class _ParentPinState extends State<_ParentPin> {
   Widget build(BuildContext context) {
     final c = context.colors;
     final t = context.text;
+    final waiting = context.signInActions.waitFor(widget.parent.id) > Duration.zero;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l),
       child: Column(
@@ -129,8 +131,11 @@ class _ParentPinState extends State<_ParentPin> {
           SheetHeader(title: "${widget.parent.name}'s PIN"),
           Text('So the phone goes back to ${widget.parent.name}, not to a kid.', style: t.body(c.ink)),
           const SizedBox(height: Sp.l),
-          Center(child: PinPad(key: ValueKey(_round), onComplete: _check)),
-          if (_error != null) ...[
+          Center(child: PinPad(key: ValueKey(_round), onComplete: _check, enabled: !waiting)),
+          if (waiting) ...[
+            const SizedBox(height: Sp.m),
+            SignInWait(member: widget.parent.id, lead: _error, onDone: () => setState(() => _error = null)),
+          ] else if (_error != null) ...[
             const SizedBox(height: Sp.m),
             Text(_error!, style: t.meta(c.destructive), textAlign: TextAlign.center),
           ],

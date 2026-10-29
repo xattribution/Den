@@ -161,7 +161,8 @@ void main() {
     });
     await client.whenLive();
     await eventually(() => !hub.catchingUp);
-    expect(File('${second.path}/$restoreMarkerDoc.json').existsSync(), isFalse);
+    // The marker leaves memory at once and its file on the state's write queue, just after.
+    await eventually(() => !File('${second.path}/$restoreMarkerDoc.json').existsSync());
     expect(hubDen.events.map((e) => e.title), contains('Dentist'));
 
     // Now it writes again, under a new change id.

@@ -366,6 +366,7 @@ commit too (`Den.restoreAll`).
 | `subscription` | `p` | ICS feed: `url`, `label`, `category`, `assignee`, `space` for imported events, `include`, `exclude`, `skipAllDay`, `status` |
 | `photo` | `f` | A person's photo: `member`, `mime` (`image/jpeg`\|`image/webp`), `data` (base64). The schema reads the format and size from the headers: a 256 px square of at most 40 KB, its `mime` matching its bytes. Never changed: a new picture is a new record |
 | `connection` | `p` | AI or automation access: `label`, `kind` (`token`\|`oauth`), `scopes`, `member` (whose permissions it uses; null = parent-level), `tokenHash` (SHA-256 hex of a token a parent made; null for OAuth, whose hourly access tokens the hub keeps in its own state), `client` (OAuth client id), `status` (`pending`\|`active`\|`revoked`), `expires`. A hub may create `pending` OAuth connections and set or clear `tokenHash` on approved ones; only a parent's device may set `active` or change scopes. The hub writes a `pending` one only after a parent's own device admits the sign-in request (a request needs no credentials, so the hub holds it until then), and turns down pending ones nobody approved within 15 minutes |
+| `signInTries` | `f` | Append-only, from a shared display about itself, with no actor: `device` (the display), `member` (whose PIN or pattern), `tries` (wrong in a row there). The display writes one at every tenth wrong try; a parent's own device says so in Needs you, and History shows it ("Kitchen display counted 10 wrong tries at Alex's PIN"). Nothing else may write one, and it is never changed |
 
 **Points are derived, not stored.** A done completion awards the chore's points to the day's owner
 (`completion.owner`, else the rotation's owner that day, else the chore owner, else `doneBy`) and
@@ -466,10 +467,22 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
   they derive from completions in spaces a replica may not hold, so `Den` checks them: a request
   is refused when the balance less the requester's requests still waiting is short, and approving
   one is refused when the balance no longer covers it.
+- A shared display may add a `signInTries` record about itself, for nobody; no other device may,
+  and nobody changes one.
 - Members may change their own `signIn`. The family always keeps at least one parent. On a shared
   display a parent with no PIN or pattern never verifies (`Den.verifySignIn`), so once a family
   has a shared display its parents need one to act there; the app asks for one when a parent
   makes a device a shared display.
+- A wrong PIN or pattern makes that person's next try on the same screen wait 20 seconds (on a
+  shared display, and on a parent's phone handed to a kid). The screen keeps the count on the
+  device, so restarting Den doesn't skip the wait, and at every tenth wrong try in a row a shared
+  display adds a `signInTries` record: a parent's own device says so in Needs you ("Someone tried
+  Alex's PIN on Kitchen display 10 times") and History shows it. What remains: `signIn` is in
+  `f`, so every family device holds the hash (PBKDF2, 20,000 rounds), and a determined teen with
+  a laptop and a family device's data could still find a 4-digit PIN or a 4-animal pattern
+  offline. The stakes are bounded: as that person on a shared screen they can give stars, approve
+  rewards and change chores, all of which History shows as done there, and never make a trust
+  decision.
 
 ## Parental controls
 

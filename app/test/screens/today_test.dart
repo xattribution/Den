@@ -75,7 +75,7 @@ void main() {
       expect(find.text('Tomorrow'), findsOneWidget);
     });
 
-    testWidgets('a new family: nothing needs anyone, and each empty part says how to start', (tester) async {
+    testWidgets('a new family: only the recovery words need anyone, and each empty part says how to start', (tester) async {
       final state = (await tester.runAsync(() async {
         final den = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate(), now: () => demoNow.millisecondsSinceEpoch);
         await den.createFamily(
@@ -88,7 +88,9 @@ void main() {
         return AppState(den);
       }))!;
       await shootAt(tester, 'today_empty_phone', state: state, location: '/today');
-      expect(find.text('Needs you'), findsNothing);
+      // Sam skipped the words, and has the family's only parent device.
+      expect(find.text('Needs you'), findsOneWidget);
+      expect(findWords('Save your recovery words'), findsOneWidget);
       expect(find.text('Add event'), findsOneWidget);
       expect(find.text('Add chore'), findsOneWidget);
       expect(find.text('Empty'), findsOneWidget);

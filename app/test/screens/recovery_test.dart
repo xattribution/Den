@@ -138,6 +138,13 @@ Future<AppState> _alexRecovered(WidgetTester tester) => real(tester, () async {
       return AppState(phone);
     });
 
+/// The demo family on Alex's phone before Alex saved recovery words.
+Future<AppState> _noWords(WidgetTester tester) => real(tester, () async {
+      final state = await demoState();
+      await state.den.setRecoveryKey(state.den.actor!.id, null);
+      return state;
+    });
+
 /// The demo family with a hub in the closet, approved by Alex's phone.
 Future<AppState> _withHub(WidgetTester tester) => real(tester, () async {
       final state = await demoState();
@@ -211,7 +218,7 @@ void main() {
     });
 
     testWidgets('I wrote them down saves the key their words stretch to, then Add people', (tester) async {
-      final state = await demo(tester);
+      final state = await _noWords(tester);
       final router = await _routed(tester, state, '/welcome/words');
       expect(findWords('Save these 12 words'), findsOneWidget);
       await _tapAndWait(tester, find.text('I wrote them down'), ms: 3000);
@@ -238,7 +245,7 @@ void main() {
 
   group('A parent\'s own page', () {
     testWidgets('Recovery words, not set up yet', (tester) async {
-      final state = await demo(tester);
+      final state = await _noWords(tester);
       await shootWith(tester, 'recovery_section_phone', FamilyScreen(selected: _id(state, 'Alex')), state: state, size: _tall, pushed: true);
       expect(findWords('Recovery words'), findsOneWidget);
       expect(find.text('Make my words'), findsOneWidget);
@@ -251,7 +258,7 @@ void main() {
     });
 
     testWidgets('Make my words shows twelve, and saving them sets the key', (tester) async {
-      final state = await demo(tester);
+      final state = await _noWords(tester);
       await pumpScreen(tester, FamilyScreen(selected: _id(state, 'Alex')), state: state, size: _tall, pushed: true);
       await tester.tap(find.text('Make my words'));
       await tester.pumpAndSettle();

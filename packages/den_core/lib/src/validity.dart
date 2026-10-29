@@ -418,6 +418,19 @@ class Validator {
         return x.has(DenAction.manageFamily) ? null : _deny('Only parents can manage calendar feeds');
       case RecordType.connection:
         return _connection(x);
+      case RecordType.signInTries:
+        // A shared screen tells the parents that someone kept getting a person's PIN or pattern
+        // wrong there: a new record each time, about itself, for nobody.
+        if (!x.creating) return _schema('That can\'t be changed after it\'s made');
+        if (x.device.mode != DeviceMode.shared || c.actor != null) {
+          return _deny('Only a shared screen says that, for nobody');
+        }
+        if (c.fields['device'] != c.device) return _schema('A shared screen says that only about itself');
+        final member = c.fields['member'];
+        if (member is! String || store.liveAt(Space.family, RecordType.member, member) == null) {
+          return _schema('That person isn\'t in the family');
+        }
+        return null;
       case RecordType.photo:
         final member = c.fields['member'] ?? x.existing?.fields['member'];
         if (member is! String || store.liveAt(Space.family, RecordType.member, member) == null) {

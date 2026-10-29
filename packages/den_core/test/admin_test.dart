@@ -5,6 +5,9 @@ import 'package:test/test.dart';
 
 import 'support.dart';
 
+int maxCounter(Den den) =>
+    den.changesSince(const {}).where((c) => c.device == den.deviceId).fold(0, (m, c) => c.counter > m ? c.counter : m);
+
 void main() {
   late TestClock clock;
   late Den den;
@@ -108,6 +111,43 @@ void main() {
       await expectLater(den.setSignIn(zoe, kind: 'pattern', secret: '9999'), throwsA(isA<InvalidInput>()));
       await den.setSignIn(zoe, kind: 'none');
       expect(await den.verifySignIn(zoe, ''), isTrue);
+    });
+
+    test('a shared screen tells the parents about wrong tries, for nobody, and History says so', () async {
+      final leo = await den.addMember(name: 'Leo', role: Role.kid);
+      await den.setSignIn(dana, kind: 'pin', secret: '2468');
+      final display = await joinDevice(den, clock, mode: DeviceMode.shared, name: 'Kitchen', kind: DeviceKind.display);
+      await sync(den, display);
+      clock.advance(const Duration(minutes: 1));
+      display.actAs(leo, window: const Duration(minutes: 5));
+      await display.noteSignInTries(dana, 10);
+      await sync(display, den);
+      final told = den.signInTries.single;
+      expect([told.device, told.member, told.tries], [display.deviceId, dana, 10]);
+      expect(told.rec.createdBy, isNull, reason: 'the screen saw it, not whoever was signed in there');
+      final entry = den.history(type: RecordType.signInTries).single;
+      expect('${entry.actorName} ${entry.verb} ${entry.title}', "Kitchen counted 10 wrong tries at Dana's PIN");
+
+      await expectLater(den.noteSignInTries(dana, 10), throwsA(isA<PermissionDenied>()), reason: 'a phone saw nothing');
+      final tablet = await joinDevice(den, clock, member: leo);
+      clock.advance(const Duration(minutes: 1));
+      final next = <Den, int>{};
+      Future<Change> say(Den from, Map<String, Object?> fields, {String? actor, String? rid, int at = 0}) async => forge(
+            from.keys,
+            counter: next[from] = (next[from] ?? maxCounter(from)) + 1,
+            millis: clock.now + at,
+            type: RecordType.signInTries,
+            rid: rid ?? newId(),
+            fields: fields,
+            actor: actor,
+          );
+      final fromTablet = await say(tablet, {'device': tablet.deviceId, 'member': dana, 'tries': 10}, actor: leo);
+      final asLeo = await say(display, {'device': display.deviceId, 'member': dana, 'tries': 10}, actor: leo);
+      final aboutAnother = await say(display, {'device': tablet.deviceId, 'member': dana, 'tries': 10}, at: 1);
+      final changed = await say(display, {'tries': 1}, rid: told.id, at: 2);
+      final result = await den.ingest([fromTablet, asLeo, aboutAnother, changed]);
+      expect(result.invalid.keys, unorderedEquals([fromTablet.id, asLeo.id, aboutAnother.id, changed.id]));
+      expect(den.signInTries.single.tries, 10);
     });
 
     test('a parent with no sign-in never verifies on a shared screen', () async {
