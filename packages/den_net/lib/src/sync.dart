@@ -830,6 +830,24 @@ class SyncNode {
         return result;
       });
 
+  /// Counts the counters [peer] vouches for (its `completeVector`, sent as `through`) as held:
+  /// changes up to them in spaces this device never receives, so a removal made here names
+  /// them in `revokedAfter` and keeps what the peer holds (a teen's private items on the hub,
+  /// say). Only from a peer that may hold every space this device may, and never for the
+  /// peer's own changes or this device's; the engine takes them only while nothing it was sent
+  /// is waiting or was refused ([Den.ingest]).
+  Future<void> _takeThrough(SyncPeer peer, Object? raw) => _queue.run(() async {
+        if (raw is! Map || peer._refused) return;
+        final mine = _spacesFor(den.deviceId);
+        if (mine.isEmpty || !_spacesFor(peer.deviceId).containsAll(mine)) return;
+        final through = <String, int>{
+          for (final e in raw.entries)
+            if (e.key is String && e.value is int && e.key != peer.deviceId && e.key != den.deviceId)
+              e.key as String: e.value as int,
+        };
+        if (through.isNotEmpty) await den.ingest(const [], through: through);
+      });
+
   void _scheduleChangeScan() {
     if (_scanScheduled || _closed) return;
     _scanScheduled = true;
@@ -901,6 +919,13 @@ class SyncPeer {
   /// Client side: waiting for a server this device doesn't know yet to show its record.
   bool _vouching = false;
   final List<Map<String, Object?>> _deferred = [];
+
+  /// Whether this peer sent a change whose signature didn't hold: then nothing it vouches for
+  /// (`through`) counts, for the rest of the session.
+  bool _refused = false;
+
+  /// The `through` last sent to this peer ([_through]), so an unchanged one isn't sent again.
+  Map<String, int>? _sentThrough;
 
   Den get _den => _node.den;
 
@@ -1315,12 +1340,13 @@ class SyncPeer {
       if (needed) outgoing.addAll(_den.changesSince(since, spaces: {space}));
     }
     _haveHandled = true;
+    final through = _sentThrough = _through();
     outgoing.sort((a, b) => a.hlc.compareTo(b.hlc));
     // Changes, then keys, then the end marker: a revocation always precedes the keys it rotated,
     // and a joiner holds its keys by the time it counts itself caught up.
     await _sendBatches('changes', outgoing);
     await _sendMissingKeys();
-    await _send({'t': 'changes', 'list': const <Object?>[], 'done': true});
+    await _send({'t': 'changes', 'list': const <Object?>[], 'done': true, 'through': ?through});
     if (probes.isNotEmpty) await _send({'t': 'probe', 'vv': probes});
     _initialSent = true;
     if (!_sentHave) await _sendHave();
@@ -1392,7 +1418,11 @@ class SyncPeer {
     for (final c in list) {
       _noteKnown(c.space, c.device, c.counter);
     }
-    if (accepted.isNotEmpty) await _node._ingestFrom(this, accepted);
+    if (accepted.isNotEmpty) {
+      final result = await _node._ingestFrom(this, accepted);
+      if (result != null && result.rejected.isNotEmpty) _refused = true;
+    }
+    if (m.containsKey('through')) await _node._takeThrough(this, m['through']);
     if (initial && m['done'] == true) {
       _initialReceived = true;
       _checkLive();
@@ -1505,14 +1535,36 @@ class SyncPeer {
         _noteKnown(space, c.device, c.counter);
       }
     }
+    // What this replica holds in every space, when that covers the peer's: sent with the push,
+    // or on its own when it moved and nothing else did (a teen's private items reaching the hub
+    // move it for a parent's phone that never receives them).
+    var through = _through();
+    if (through != null && _sameVector(through, _sentThrough)) through = null;
+    if (through != null) _sentThrough = through;
     if (out.isNotEmpty) {
       out.sort((a, b) => a.hlc.compareTo(b.hlc));
-      await _sendBatches('push', out);
+      await _sendBatches('push', out, through: through);
+    } else if (through != null) {
+      await _send({'t': 'push', 'list': const <Object?>[], 'through': through});
     }
     if (mySpacesChanged) await _sendHave();
   }
 
-  Future<void> _sendBatches(String type, List<Change> changes, {bool finalFlag = false}) async {
+  /// This replica's `completeVector`, to send as `through` when it may hold every space the
+  /// peer may (by this replica's view): the peer then counts those counters as held, changes in
+  /// spaces it never receives included (ARCHITECTURE.md, "Version vectors"). Null otherwise.
+  Map<String, int>? _through() {
+    final mine = _node._spacesFor(_den.deviceId);
+    final theirs = _node._spacesFor(deviceId);
+    if (mine.isEmpty || theirs.isEmpty || !mine.containsAll(theirs)) return null;
+    return _den.completeVector;
+  }
+
+  static bool _sameVector(Map<String, int> a, Map<String, int>? b) =>
+      b != null && a.length == b.length && a.entries.every((e) => b[e.key] == e.value);
+
+  /// Sends [changes] in batches; [through] goes with the last, once the peer has them all.
+  Future<void> _sendBatches(String type, List<Change> changes, {bool finalFlag = false, Map<String, int>? through}) async {
     var batch = <Map<String, Object?>>[];
     var bytes = 0;
     Future<void> flush({required bool last}) async {
@@ -1520,6 +1572,7 @@ class SyncPeer {
         't': type,
         'list': batch,
         if (finalFlag) 'done': last,
+        if (last && through != null) 'through': through,
       });
       batch = [];
       bytes = 0;

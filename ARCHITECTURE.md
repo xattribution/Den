@@ -122,7 +122,13 @@ device id to the highest contiguous counter held. Sync sends whatever the peer l
 that receives only some spaces would see holes where other spaces' changes go, so a sender whose
 spaces include the receiver's also sends its `completeVector` (counters up to which it holds every
 change in every space); after a clean batch the receiver counts those counters as held
-(`Den.ingest(changes, through: ...)`).
+(`Den.ingest(changes, through: ...)`). den_net sends it as `through` with the end of its first
+answer and with pushes, and on its own when only it moved (a teen's private items reaching the
+hub move it for a parent's phone that never receives them). The receiver takes it only from a
+peer whose spaces, by its own view, include all of its own, never for the peer's own changes or
+its own, and not after that peer sent a change whose signature failed. This is what lets a
+removal made on a parent's phone name, in `revokedAfter`, the changes the hub holds in spaces the
+phone doesn't receive.
 
 ### Genesis and trust
 
