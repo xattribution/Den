@@ -88,6 +88,7 @@ class ActionSpec {
     required Map<String, Object?> output,
     required this.scopes,
     this.needs = const [],
+    this.person = false,
     required this.effect,
     this.idempotent = false,
     this.confirm = Confirm.none,
@@ -127,6 +128,10 @@ class ActionSpec {
   /// decides each change: this only keeps the action out of their list, and buttons out of
   /// their screens.
   final List<DenAction> needs;
+
+  /// Only for a caller who is someone: not offered to a connection acting for nobody (a
+  /// parent-level automation), which has no "own" for it to work on.
+  final bool person;
 
   /// Read, write or destructive.
   final Effect effect;
@@ -173,6 +178,7 @@ class ActionSpec {
         output: outputSchema,
         scopes: scopes,
         needs: needs,
+        person: person,
         effect: effect,
         idempotent: idempotent,
         confirm: confirm,

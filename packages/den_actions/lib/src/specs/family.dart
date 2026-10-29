@@ -117,6 +117,7 @@ List<ActionSpec> familyActions() => [
         }, required: ['picture']),
         output: S.output({'member': memberShape}),
         scopes: const {Scope.admin},
+        person: true,
         effect: Effect.write,
         idempotent: true,
         engine: const {'setPicture'},

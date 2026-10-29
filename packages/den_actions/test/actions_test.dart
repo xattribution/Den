@@ -176,6 +176,9 @@ void main() {
     final photo = await runner.run(on(Surface.mcp), 'set_picture', {'person': 'Leo', 'picture': 'photo:abcdefghijklmnop'});
     expect(photo.isError, isTrue);
     expect(runner.spec('set_picture')!.engine, {'setPicture'});
+    final nobody = ActionContext(den, surface: Surface.mcp, caller: 'automation');
+    expect(runner.available(nobody).map((s) => s.mcpName), isNot(contains('set_picture')), reason: 'nobody has an own picture');
+    expect(runner.available(on(Surface.mcp)).map((s) => s.mcpName), contains('set_picture'));
     expect(notExposed['setPhoto'], contains('can\'t add one'));
     final family = await runner.run(on(Surface.mcp), 'get_family', const {});
     final members = (family.data['members'] as List).cast<Map<String, Object?>>();
