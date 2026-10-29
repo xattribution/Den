@@ -7,10 +7,11 @@ import '../../../app/app_state.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/capabilities.dart';
 import '../widgets/device_sync.dart';
+import '../widgets/hubs_section.dart';
 
-/// Advanced → Hub and sync: how this device syncs, the hub, and adding devices the plumbing way
-/// (a hub with its setup code, a browser on a computer, a device in the same room). People join
-/// with an invite from their page in Family instead.
+/// Advanced → Hub and sync: how this device syncs, the family's hubs (with Remove), and adding
+/// devices the plumbing way (a hub with its setup code, a browser on a computer, a device in the
+/// same room). People join with an invite from their page in Family instead.
 class HubScreen extends StatelessWidget {
   const HubScreen({super.key});
 
@@ -18,11 +19,15 @@ class HubScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.watch(const {});
     final trust = app.allowsTrust(DenAction.manageFamily);
-    final hub = app.den.devices.where((d) => d.mode == DeviceMode.hub && d.approved && !d.revoked).firstOrNull;
+    final hubs = app.network?.hubDevices ??
+        app.den.devices.where((d) => d.mode == DeviceMode.hub && d.approved && !d.revoked).toList();
+    // "Another hub" also when this device is the family's hub.
+    final hub = hubs.firstOrNull ?? (app.network?.isHub ?? false ? app.den.thisDevice : null);
     return DenPage(
       title: 'Hub and sync',
       children: [
         const DeviceSyncSection(),
+        if (app.network != null && hubs.isNotEmpty) const HubsSection(),
         DenSection(
           title: 'Add a device',
           child: Column(

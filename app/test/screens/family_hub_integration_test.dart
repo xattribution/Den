@@ -100,6 +100,79 @@ void main() {
     expect(network.hubs.map((h) => h.toString()), ['ws://127.0.0.1:${hub.port}/ws']);
   });
 
+  test('Reset the hub, keep the family: the new hub takes over its address, and the old one hears it was removed',
+      () async {
+    // The old hub, added from Sam's phone, and Sam's laptop syncing through it.
+    final oldDen = await freshDen();
+    final oldHub = await DenHub.start(oldDen, HubConfig(port: 0, mdns: false, log: HubLog.silent(), name: 'Closet hub'));
+    final port = oldHub.port;
+    final (phone, network, pairing) = await addHub(oldHub);
+    await until(() => network.syncedWith(oldDen.deviceId), what: 'the phone to sync with the old hub');
+    final laptop = await freshDen();
+    await laptop.requestJoin(
+      familyId: phone.familyId!,
+      founderPubkey: phone.founderPubkey!,
+      deviceName: "Sam's laptop",
+      kind: DeviceKind.desktop,
+    );
+    await phone.ingest(laptop.changesSince(const {}));
+    await phone.approveDevice(laptop.deviceId, member: phone.owner!.id);
+    await laptop.ingest(phone.changesSince(const {}));
+    final address = Uri.parse('ws://127.0.0.1:$port/ws');
+    final laptopNet = DenNetwork(laptop, hubs: [address], localHub: noHub());
+    addTearDown(laptopNet.dispose);
+    await laptopNet.start();
+    await until(() => laptopNet.syncedWith(oldDen.deviceId), what: 'the laptop to sync with the old hub');
+
+    // The server is reset: the old hub's data is gone, and a fresh hub answers at its address.
+    await oldHub.stop();
+    final newDen = await freshDen();
+    final newHub = await DenHub.start(newDen, HubConfig(port: port, mdns: false, log: HubLog.silent(), name: 'Closet hub'));
+    addTearDown(newHub.stop);
+    // (The phone's HTTP client may still hold a connection to the old server; the next try opens
+    // a new one, as a person trying again would.)
+    HubInfo? found;
+    for (var tries = 0; found == null && tries < 3; tries++) {
+      try {
+        found = await pairing.hubStatus('127.0.0.1:$port');
+      } on PairingException {
+        if (tries == 2) rethrow;
+      }
+    }
+    final info = found!;
+    expect(info.device, newDen.deviceId);
+    expect(network.hubsAt(info.base, except: info.device).map((d) => d.id), [oldDen.deviceId],
+        reason: 'the add-hub flow offers to remove the hub that used this address');
+    final session = pairing.setUpHub(info, newHub.setupCode!);
+    await until(() => session.stage == HubSetupStage.confirm || session.stage == HubSetupStage.failed, what: 'the new hub to ask');
+    await session.approve();
+    expect(session.stage, HubSetupStage.done, reason: session.error);
+
+    // Both hubs are approved and both are called "Closet hub"; the phone goes on with the new one.
+    await until(() => network.syncedWith(newDen.deviceId), what: 'the phone to sync with the new hub');
+    expect(network.hubDevices.map((d) => d.id), [newDen.deviceId, oldDen.deviceId]);
+    await phone.revokeDevice(oldDen.deviceId);
+    expect(network.hubDevices.map((d) => d.id), [newDen.deviceId]);
+
+    // The laptop never heard of the new hub: the hub shows its record, and the laptop syncs.
+    await laptopNet.start();
+    await until(() => laptopNet.syncedWith(newDen.deviceId), what: 'the laptop to sync with the new hub');
+    await until(() => laptop.device(oldDen.deviceId)?.revoked ?? false, what: 'the laptop to learn the old hub was removed');
+
+    // The old hub comes back somewhere else, still thinking it's in the family. The laptop tries
+    // it first, refuses it, tells it why, and goes straight on to the new hub.
+    final revived = await DenHub.start(oldDen, HubConfig(port: 0, mdns: false, log: HubLog.silent(), name: 'Closet hub'));
+    addTearDown(revived.stop);
+    final laptopAgain = DenNetwork(laptop, hubs: [Uri.parse('ws://127.0.0.1:${revived.port}/ws'), address], localHub: noHub());
+    addTearDown(laptopAgain.dispose);
+    await laptopNet.close();
+    await laptopAgain.start();
+    await until(() => laptopAgain.syncedWith(newDen.deviceId), what: 'the laptop to move on to the new hub');
+    await until(() => oldDen.thisDevice!.revoked, what: 'the old hub to hear it was removed');
+    final status = await HubClient().status(Uri.parse('http://127.0.0.1:${revived.port}'));
+    expect(status.stage, 'removed');
+  });
+
   test('A wrong setup code says how many tries are left', () async {
     final (_, hub) = await startHub();
     final phone = await parentPhone();

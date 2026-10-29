@@ -229,6 +229,45 @@ Future<AppState> littleKidTablet(WidgetTester tester) => real(tester, () async {
       return AppState(tablet);
     });
 
+/// A hub device named [name] approved by [phone], as the phone holds it.
+Future<Den> approveHub(Den phone, {String name = 'Den hub'}) async {
+  final hub = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate(), now: phone.now);
+  await hub.requestJoin(
+    familyId: phone.familyId!,
+    founderPubkey: phone.founderPubkey!,
+    deviceName: name,
+    kind: DeviceKind.hub,
+    mode: DeviceMode.hub,
+  );
+  await phone.ingest(hub.changesSince(const {}));
+  await phone.approveDevice(hub.deviceId, mode: DeviceMode.hub);
+  return hub;
+}
+
+/// The demo family after "reset the hub, keep the family", on Alex's phone: the old "Den hub",
+/// approved Sep 18 and last synced with on Oct 2 at the home address, and the new "Den hub" at
+/// the same address, approved today and synced with a few minutes ago.
+Future<({AppState state, String oldHub, String newHub})> replacedHub(WidgetTester tester) => real(tester, () async {
+      final storage = MemoryStorage();
+      final keys = await DeviceKeys.generate();
+      final before = await createDemoFamily(storage: storage, keys: keys, now: DateTime.utc(2026, 9, 18, 15));
+      final oldHub = await approveHub(before);
+      await before.close();
+      final phone = await Den.open(storage: storage, keys: keys, now: () => demoNow.millisecondsSinceEpoch);
+      final newHub = await approveHub(phone);
+      final address = Uri.parse('ws://192.168.1.20:47733/ws');
+      final network = DenNetwork(
+        phone,
+        localHub: FakeLocalHub(),
+        hubs: [address],
+        seen: {
+          oldHub.deviceId: HubSighting(DateTime.utc(2026, 10, 2, 23, 40).millisecondsSinceEpoch, address),
+          newHub.deviceId: HubSighting(demoNow.subtract(const Duration(minutes: 4)).millisecondsSinceEpoch, address),
+        },
+      );
+      return (state: AppState(phone, network: network), oldHub: oldHub.deviceId, newHub: newHub.deviceId);
+    });
+
 /// A fixed hub, for screenshots of adding one.
 final HubInfo closetHub = HubInfo(
   base: Uri.parse('http://192.168.1.20:47733'),
