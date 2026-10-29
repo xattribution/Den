@@ -151,7 +151,7 @@ void main() {
       await pumpScreen(tester, FamilyScreen(selected: maya), state: state, size: _tall, pushed: true);
       await tester.tap(findWords('Can keep things private from parents'));
       await tester.pumpAndSettle();
-      expect(find.textContaining("Parents won't see it"), findsOneWidget);
+      expect(find.textContaining("can't be unseen"), findsOneWidget);
       expect(state.den.family!.parentsSeePrivate(maya), isTrue, reason: 'nothing saves before the yes');
       await matchShot('family_switch_confirm_phone');
       await _tapAndWait(tester, find.text('Turn on'));
