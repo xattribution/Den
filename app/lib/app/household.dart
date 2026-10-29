@@ -46,8 +46,12 @@ class FamilyLog {
   /// Asked to join, and a parent hasn't let this device in yet.
   bool get waiting => den.hasFamily && !den.isApproved;
 
-  /// Whether [id] names this family: its family id, or the name its log is kept under.
-  bool isId(String id) => id == this.id || id == membership.id;
+  /// Whether [id] names this family: its family id, compared as den_core writes them (lower
+  /// case), so an upper-case twin of an id this device holds is this family, never another.
+  bool isId(String id) {
+    final want = id.toLowerCase();
+    return want == this.id.toLowerCase() || want == membership.id.toLowerCase();
+  }
 
   @override
   String toString() => 'FamilyLog($id, $name)';
@@ -101,6 +105,7 @@ class Household extends ChangeNotifier {
     }
     final logs = <FamilyLog>[];
     final gone = <Membership>[];
+    final unopened = <Membership>[];
     for (final m in listed) {
       try {
         final log = await store.open(m);
@@ -111,18 +116,22 @@ class Household extends ChangeNotifier {
           gone.add(m);
         }
       } on Object catch (e) {
+        // Kept in the list (its keychain may just not be readable yet), and its reminders stay.
+        unopened.add(m);
         debugPrint("Den couldn't open the family ${m.label ?? m.id}: $e");
       }
     }
     for (final m in gone) {
-      // The first log's storage stays Den's own, to start over in.
-      if (!m.primary) await store.forget(m);
+      // The first log's storage stays Den's own, to start over in; nothing another family is
+      // kept under is ever deleted.
+      if (!m.primary && !listed.any((o) => !identical(o, m) && o.sharesStorageWith(m))) await store.forget(m);
     }
     if (logs.isEmpty) {
       final first = listed.firstWhere((m) => m.primary, orElse: () => const Membership(id: 'family', primary: true));
       logs.add(await store.open(first));
+      unopened.removeWhere((m) => identical(m, first));
     }
-    final household = Household(logs, store: store, active: await Memberships.loadActive());
+    final household = Household(logs, store: store, active: await Memberships.loadActive()).._unopened.addAll(unopened);
     if (gone.isNotEmpty) await household._persist();
     return household;
   }
@@ -131,6 +140,15 @@ class Household extends ChangeNotifier {
   final List<FamilyLog> _logs;
   late FamilyLog _active;
   bool _all = false;
+
+  /// Families this device holds whose engine didn't open this time (a keychain not readable
+  /// yet): still listed, and their reminders are left with the OS until they open again.
+  List<Membership> get unopened => List.unmodifiable(_unopened);
+  final List<Membership> _unopened = [];
+
+  /// Families being prepared right now, by id: a second prepare of one waits for none and is
+  /// refused, so two can never wipe each other.
+  final Set<String> _pending = {};
   final Map<FamilyLog, VoidCallback> _watching = {};
   bool _disposed = false;
 
@@ -189,28 +207,55 @@ class Household extends ChangeNotifier {
   }
 
   /// Starts an engine for the family [familyId] that this device is about to join through the
-  /// hub at [hub], with new keys of its own. It isn't one of [logs] until [adopt] takes it in;
-  /// [discard] lets it go. Throws [StateError] when this device already holds the family: one
-  /// engine per family.
+  /// hub at [hub], with new keys of its own, kept under a fresh random slot. It isn't one of
+  /// [logs] until [adopt] takes it in; [discard] lets it go. Throws [StateError] when this device
+  /// already holds the family, or is preparing it, or when [familyId] isn't a family id as
+  /// den_core makes them (an upper-case twin of one included): one engine per family. Anything
+  /// that fails once the log was made deletes it again.
   Future<FamilyLog> prepare(String familyId, {Uri? hub, String? label}) async {
     final store = this.store;
     if (store == null) throw StateError('This device can\'t hold another family');
     if (!Membership.validId(familyId)) throw StateError('That isn\'t a family Den knows how to keep');
-    if (byId(familyId) != null) throw StateError('This device is in that family already');
+    if (byId(familyId) != null || _unopened.any((m) => m.id == familyId)) {
+      throw StateError('This device is in that family already');
+    }
+    if (!_pending.add(familyId)) throw StateError('This device is joining that family already');
+    String slot;
+    do {
+      slot = Membership.newSlot();
+    } while (_logs.any((l) => l.membership.slot == slot) || _unopened.any((m) => m.slot == slot));
     final membership = Membership(
       id: familyId,
       hub: hub == null ? null : Uri(scheme: hub.scheme, host: hub.host, port: hub.hasPort ? hub.port : null).toString(),
       label: label,
       color: _freeColor().name,
+      slot: slot,
     );
-    return store.open(membership, fresh: true);
+    try {
+      return await store.open(membership, fresh: true);
+    } catch (_) {
+      _pending.remove(familyId);
+      try {
+        await store.forget(membership);
+      } on Object {
+        // Nothing more to take away.
+      }
+      rethrow;
+    }
   }
 
   /// Takes in [log], prepared for a family this device asked to join, once the request went
   /// out: it is listed and saved, and the device shows it.
   Future<void> adopt(FamilyLog log) async {
     if (_logs.contains(log)) return;
+    // Joining may still be under way (no family yet); a family it holds must be the one it was
+    // made for.
+    final joined = log.den.familyId;
+    if (joined != null && joined != log.membership.id) {
+      throw StateError('That engine joined another family than the one it was made for');
+    }
     if (byId(log.id) != null) throw StateError('This device is in that family already');
+    _pending.remove(log.membership.id);
     // The first family gets the color its tag had all along: the first one.
     final first = _logs.where((l) => l.membership.primary).firstOrNull;
     if (first != null && first.membership.color == null && _logs.length == 1) {
@@ -224,11 +269,14 @@ class Household extends ChangeNotifier {
     _changed();
   }
 
-  /// Lets go of a log [prepare] made that never joined: closes it and deletes it.
+  /// Lets go of a log [prepare] made that didn't join after all: closes it and deletes it (a
+  /// join request that reached the family is taken back first by whoever sent it:
+  /// `AnotherFamilyPairing`).
   Future<void> discard(FamilyLog log) async {
     if (_logs.contains(log)) return remove(log);
+    _pending.remove(log.membership.id);
     await _close(log);
-    await store?.forget(log.membership);
+    if (!_logs.any((l) => l.membership.sharesStorageWith(log.membership))) await store?.forget(log.membership);
   }
 
   /// Takes [log] off this device: closes its engine and connection and deletes its log, keys
@@ -247,7 +295,8 @@ class Household extends ChangeNotifier {
     // After the screens moved off it: a frame may still draw it as it goes.
     await Future<void>.delayed(Duration.zero);
     await _close(log);
-    await store?.forget(log.membership);
+    // Never what another family is kept under.
+    if (!_logs.any((l) => l.membership.sharesStorageWith(log.membership))) await store?.forget(log.membership);
   }
 
   Marker _freeColor() {
@@ -321,14 +370,15 @@ class Household extends ChangeNotifier {
       }
       l.membership = m.copyWith(label: l.den.family?.name);
     }
-    await store.save([for (final l in _logs) l.membership], _activeChoice);
+    // A family that didn't open this time stays listed.
+    await store.save([for (final l in _logs) l.membership, ..._unopened], _activeChoice);
   }
 
   String? get _activeChoice => showingAll ? Memberships.all : _active.id;
 
   Future<void> _saveActive() async {
-    if (_logs.length < 2) return;
-    await store?.save([for (final l in _logs) l.membership], _activeChoice);
+    if (_logs.length + _unopened.length < 2) return;
+    await store?.save([for (final l in _logs) l.membership, ..._unopened], _activeChoice);
   }
 
   void _changed() {
@@ -375,6 +425,11 @@ class DeviceHouseholdStore implements HouseholdStore {
 
   @override
   Future<FamilyLog> open(Membership log, {bool fresh = false}) async {
+    if (fresh) {
+      // Nothing an earlier try left under these names: settings included.
+      await DenNetwork.forget(log);
+      await AppState.forget(log.pref);
+    }
     final den = fresh ? await Boot.startFresh(log) : await Boot.startLog(log);
     final network = await DenNetwork.load(den, log: log.primary ? null : log);
     final calendars = log.primary && phoneCalendars && PhoneCalendars.supported ? PhoneCalendars(den, DeviceCalendarSource()) : null;

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'device_keychain.dart';
@@ -49,8 +50,15 @@ class Boot {
   }
 
   /// Deletes what this device kept for [log]: its change log and its keys. The engine over it
-  /// must be closed first.
+  /// must be closed first. Names another listed family is kept under (compared as a file
+  /// system that ignores case would) are never deleted.
   static Future<void> forgetLog(Membership log) async {
+    final listed = await Memberships.load();
+    final shared = listed.any((o) => !(o.id == log.id && o.slot == log.slot && o.primary == log.primary) && o.sharesStorageWith(log));
+    if (shared) {
+      debugPrint('Den kept ${log.storage}: another family on this device is kept under that name.');
+      return;
+    }
     await deleteDeviceStorage(log.storage);
     try {
       await (await _keyStore()).delete(log.keys);

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:den_core/den_core.dart' show newId;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -12,18 +13,30 @@ enum MembershipKind { family, group }
 ///
 /// | | The first log ([primary]) | Every later one |
 /// | --- | --- | --- |
-/// | Change log (web) | IndexedDB database `den` | `den-<id>` |
-/// | Change log (phones, computers) | `<app support>/den/` | `<app support>/den-<id>/` |
-/// | Device keys (keychain) | `den.device.keys` | `den.device.keys.<id>` |
-/// | This device's settings for it (hubs, notices put away) | `den.hubs`, `den.seen`, ... | `den.hubs.<id>`, `den.seen.<id>`, ... |
+/// | Change log (web) | IndexedDB database `den` | `den-<slot>` |
+/// | Change log (phones, computers) | `<app support>/den/` | `<app support>/den-<slot>/` |
+/// | Device keys (keychain) | `den.device.keys` | `den.device.keys.<slot>` |
+/// | This device's settings for it (hubs, notices put away) | `den.hubs`, `den.seen`, ... | `den.hubs.<slot>`, `den.seen.<slot>`, ... |
+/// | The hub this app can run for it ("Keep the family online") | `<app support>/hub/` | `<app support>/hub-<slot>/` |
 ///
 /// The first log keeps the names Den always used, so a device in one family is never touched
-/// by having this list, and has no list at all until it joins a second family.
+/// by having this list, and has no list at all until it joins a second family. Every later log
+/// is kept under a [slot] this device picked at random, never under anything a server said (a
+/// family id): no answer can name a directory, and two names that differ only in case (one
+/// directory on macOS and Windows) never come from outside.
 @immutable
 class Membership {
-  const Membership({required this.id, this.kind = MembershipKind.family, this.hub, this.label, this.primary = false, this.color});
+  const Membership({
+    required this.id,
+    this.kind = MembershipKind.family,
+    this.hub,
+    this.label,
+    this.primary = false,
+    this.color,
+    this.slot,
+  });
 
-  /// The log's id: its family's id.
+  /// The log's id: its family's id, as den_core makes them ([validId]).
   final String id;
 
   final MembershipKind kind;
@@ -42,25 +55,50 @@ class Membership {
   /// families"), by [Marker] name; null draws the tag in ink.
   final String? color;
 
+  /// The name this device keeps a later log under: random, lowercase, its own ([newSlot]).
+  /// Null for the first log.
+  final String? slot;
+
   /// The first log's change log: IndexedDB database `den`, or the `den` directory.
   static const primaryStorage = 'den';
 
   /// The first log's device keys in the keychain.
   static const primaryKeys = 'den.device.keys';
 
-  /// Its change log's name: [primaryStorage], or `den-<id>`.
-  String get storage => primary ? primaryStorage : '$primaryStorage-$id';
+  /// The first log's in-app hub data directory.
+  static const primaryHub = 'hub';
 
-  /// Its device keys' keychain item: [primaryKeys], or `den.device.keys.<id>`.
-  String get keys => primary ? primaryKeys : '$primaryKeys.$id';
+  String get _name => slot ?? id;
 
-  /// This device's setting [key] for this log: the key itself for the first log, `<key>.<id>`
+  /// Its change log's name: [primaryStorage], or `den-<slot>`.
+  String get storage => primary ? primaryStorage : '$primaryStorage-$_name';
+
+  /// Its device keys' keychain item: [primaryKeys], or `den.device.keys.<slot>`.
+  String get keys => primary ? primaryKeys : '$primaryKeys.$_name';
+
+  /// The data directory of the hub this app runs for it: [primaryHub], or `hub-<slot>`.
+  String get hubData => primary ? primaryHub : '$primaryHub-$_name';
+
+  /// This device's setting [key] for this log: the key itself for the first log, `<key>.<slot>`
   /// for the others.
-  String pref(String key) => primary ? key : '$key.$id';
+  String pref(String key) => primary ? key : '$key.$_name';
 
-  /// Whether [id] can name a log's storage: letters, digits, `-` and `_`, 1 to 64 (a family id
-  /// is 16 lowercase base32 letters).
-  static bool validId(String id) => RegExp(r'^[A-Za-z0-9_-]{1,64}$').hasMatch(id);
+  static final RegExp _form = RegExp(r'^[a-z2-7]{16}$');
+  static final RegExp _placeholder = RegExp(r'^[a-z0-9]{1,64}$');
+
+  /// Whether [id] is a family id as den_core makes them: 16 lowercase base32 letters (80 bits of
+  /// a hash). Anything else, an upper-case twin of a real id included, is refused.
+  static bool validId(String id) => _form.hasMatch(id);
+
+  /// Whether [slot] is one this device would have picked ([newSlot]).
+  static bool validSlot(String slot) => _form.hasMatch(slot);
+
+  /// A fresh random slot: 16 lowercase base32 letters.
+  static String newSlot() => newId();
+
+  /// Whether this log is kept under the same names as [other] (compared as a case-insensitive
+  /// file system would).
+  bool sharesStorageWith(Membership other) => storage.toLowerCase() == other.storage.toLowerCase();
 
   Membership copyWith({String? hub, String? label, String? color}) => Membership(
         id: id,
@@ -69,6 +107,7 @@ class Membership {
         label: label ?? this.label,
         primary: primary,
         color: color ?? this.color,
+        slot: slot,
       );
 
   Map<String, Object?> toJson() => {
@@ -78,20 +117,29 @@ class Membership {
         'label': ?label,
         if (primary) 'primary': true,
         'color': ?color,
+        'slot': ?slot,
       };
 
+  /// Reads a listed log; null when it isn't one this device could have written: a later log
+  /// whose id isn't a family id ([validId]) or whose slot isn't one this device picks. (A later
+  /// log listed before slots were kept is named by its id, which [validId] holds to lowercase.
+  /// The first log's id names nothing, and is a placeholder until its family exists.)
   static Membership? fromJson(Object? json) {
     if (json is! Map) return null;
     final id = json['id'];
-    if (id is! String || !validId(id)) return null;
     String? text(String key) => json[key] is String ? json[key] as String : null;
+    final primary = json['primary'] == true;
+    if (id is! String || (primary ? !_placeholder.hasMatch(id) : !validId(id))) return null;
+    final slot = text('slot');
+    if (!primary && slot != null && !validSlot(slot)) return null;
     return Membership(
       id: id,
       kind: MembershipKind.values.asNameMap()[json['kind']] ?? MembershipKind.family,
       hub: text('hub'),
       label: text('label'),
-      primary: json['primary'] == true,
+      primary: primary,
       color: text('color'),
+      slot: primary ? null : slot,
     );
   }
 
@@ -103,20 +151,21 @@ class Membership {
       other.hub == hub &&
       other.label == label &&
       other.primary == primary &&
-      other.color == color;
+      other.color == color &&
+      other.slot == slot;
 
   @override
-  int get hashCode => Object.hash(id, kind, hub, label, primary, color);
+  int get hashCode => Object.hash(id, kind, hub, label, primary, color, slot);
 
   @override
-  String toString() => 'Membership($id${primary ? ', primary' : ''}${label == null ? '' : ', $label'})';
+  String toString() => 'Membership($id${primary ? ', primary' : ', $slot'}${label == null ? '' : ', $label'})';
 }
 
 /// The logs this device holds ([key], `den.memberships`) and which one it shows ([activeKey]).
 /// A device in one family has neither: the list is written when a second family joins, and
 /// stays, so the device knows which names are whose from then on.
 abstract final class Memberships {
-  /// The list, as JSON: `[{id, kind, hub, label, primary, color}]`.
+  /// The list, as JSON: `[{id, kind, hub, label, primary, color, slot}]`.
   static const key = 'den.memberships';
 
   /// What the device shows: a log's id, or [all].
@@ -125,7 +174,8 @@ abstract final class Memberships {
   /// "All my families".
   static const all = 'all';
 
-  /// The list; empty on a device that never held a second family.
+  /// The list; empty on a device that never held a second family. One entry per family, one
+  /// first log, and never two kept under the same names.
   static Future<List<Membership>> load() async {
     try {
       final text = (await SharedPreferences.getInstance()).getString(key);
@@ -135,8 +185,7 @@ abstract final class Memberships {
       final out = <Membership>[];
       for (final item in json) {
         final m = Membership.fromJson(item);
-        // One engine per log, and one first log.
-        if (m == null || out.any((o) => o.id == m.id || (o.primary && m.primary))) continue;
+        if (m == null || out.any((o) => o.id == m.id || (o.primary && m.primary) || o.sharesStorageWith(m))) continue;
         out.add(m);
       }
       return out;
