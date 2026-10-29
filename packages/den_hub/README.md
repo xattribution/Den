@@ -42,7 +42,8 @@ beside it.
 | `restore --in FILE --passphrase-env VAR [--force]` | Refuses while a hub runs on the directory (stop it, then `docker compose run --rm hub restore ...`); `--force` first removes the hub that is there. It leaves `hub/restored.json`: until an approved device of the family has synced with it, the hub writes nothing of its own (calendar feeds and the OAuth sweep wait; API and MCP writes and OAuth tokens answer `503 catching_up` with `Retry-After`), so what it wrote after the backup comes back from the devices first and its change counter moves past it. `status` says `Catching up after a restore` until then |
 
 Data directory: `keys.json` (device keys, owner-only), `log/` (change log), `hub/` (reminders
-sent, OAuth clients and refresh-token hashes, the capture reader, the assistant's provider and key
+sent, OAuth clients and the hashes of the access and refresh tokens issued to them (never in the
+family's log), the capture reader, the assistant's provider and key
 in `assistant.json` and its usage in `assistant_usage.json`, feed caches, invites waiting in
 `invites.json`, the Web Push key and subscriptions in `push.json`), `notify.json` (optional
 reminder targets), `hub.lock` (one process at a time).
@@ -165,8 +166,10 @@ addresses match exactly, except loopback `http` ones, which match on any port (R
 `resource` (RFC 8707) must be the hub or its `/mcp`, at `/oauth/authorize` and `/oauth/token`
 (`invalid_target` otherwise), and every redirect carries `iss`. `/oauth/token` does the
 authorization code with PKCE and refresh-token rotation with reuse detection. Access tokens last
-an hour and are stored only as hashes in the connection record; refresh tokens (90 days) only as
-hashes in `hub/oauth.json`. Which paths must be public for each assistant is in
+an hour and refresh tokens 90 days; both are stored only as hashes in `hub/oauth.json` (owner-only,
+in backups), never in the family's log, so an hourly token doesn't become a synced change. A hub
+moves the access token hash an older hub wrote into a connection record there once, and clears it
+from the log. Which paths must be public for each assistant is in
 [docs/hosting.md](../../docs/hosting.md#connecting-ai-assistants).
 
 ## Fetching what callers give the hub

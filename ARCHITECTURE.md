@@ -177,7 +177,9 @@ family online") with no `_via`. A shared display never makes them, whoever verif
 neither does a hub nobody owns. A change carrying `_via` (the hub acting for an API token or MCP
 client) never touches a device record at all, its own included, so a connection can't switch the
 hub back to a personal device and act as its owner. The hub keeps its narrow part of connections: asking for OAuth access
-(`pending`), recording token hashes for active ones, and revoking. Adding a member isn't a trust
+(`pending`), clearing the token hash an older hub recorded on an active one, and revoking. It
+keeps the hashes of the hourly OAuth access tokens and refresh tokens it issues in its own state
+(`<data>/hub/oauth.json`, owner-only, in backups), not the log. Adding a member isn't a trust
 decision (a parent's import through the hub does it): nothing can act for a new member until a
 parent approves a device or an AI connection for them on their own device.
 
@@ -319,7 +321,7 @@ commit too (`Den.restoreAll`).
 | `item` | same as list | `list`, `text`, `qty`, `store`, `checked`, `checkedBy`, `order` (fractional index string), `toGroceries` (meal items) |
 | `subscription` | `p` | ICS feed: `url`, `label`, `category`, `assignee`, `space` for imported events, `include`, `exclude`, `skipAllDay`, `status` |
 | `photo` | `f` | A person's photo: `member`, `mime` (`image/jpeg`\|`image/webp`), `data` (base64). The schema reads the format and size from the headers: a 256 px square of at most 40 KB, its `mime` matching its bytes. Never changed: a new picture is a new record |
-| `connection` | `p` | AI or automation access: `label`, `kind` (`token`\|`oauth`), `scopes`, `member` (whose permissions it uses; null = parent-level), `tokenHash` (SHA-256 hex), `client` (OAuth client id), `status` (`pending`\|`active`\|`revoked`), `expires`. A hub may create `pending` OAuth connections and set `tokenHash` on approved ones; only a parent's device may set `active` or change scopes. The hub writes a `pending` one only after a parent's own device admits the sign-in request (a request needs no credentials, so the hub holds it until then), and turns down pending ones nobody approved within 15 minutes |
+| `connection` | `p` | AI or automation access: `label`, `kind` (`token`\|`oauth`), `scopes`, `member` (whose permissions it uses; null = parent-level), `tokenHash` (SHA-256 hex of a token a parent made; null for OAuth, whose hourly access tokens the hub keeps in its own state), `client` (OAuth client id), `status` (`pending`\|`active`\|`revoked`), `expires`. A hub may create `pending` OAuth connections and set or clear `tokenHash` on approved ones; only a parent's device may set `active` or change scopes. The hub writes a `pending` one only after a parent's own device admits the sign-in request (a request needs no credentials, so the hub holds it until then), and turns down pending ones nobody approved within 15 minutes |
 
 **Points are derived, not stored.** A done completion awards the chore's points to the day's owner
 (`completion.owner`, else the rotation's owner that day, else the chore owner, else `doneBy`) and

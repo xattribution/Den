@@ -1387,7 +1387,10 @@ requests with the same code and lets the right one in; the hub then writes a `pe
 `approveConnection`, choosing scopes and whose permissions it uses, exactly as before. Requests
 expire after 15 minutes (the sign-in page then returns `access_denied`), at most 20 wait at once,
 one address can start 10 in 15 minutes, and the hub turns down pending connections nobody
-approved within 15 minutes.
+approved within 15 minutes. The access tokens (an hour each) and refresh tokens the hub then
+issues are kept as hashes in its own state (`<data>/hub/oauth.json`, its user only, in backups),
+never in the family's log, which keeps only the connection itself: who it is for, its scopes,
+whether it is on. A parent turning it off ends its tokens at once.
 
 Both endpoints are signed by a parent's own device ([`DeviceRequest`](#capture-reading-for-every-device),
 not a shared display); anyone else gets `401` or `403 permission_denied`.

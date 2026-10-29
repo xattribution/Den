@@ -70,7 +70,8 @@ class _Pending {
 /// metadata document at an https `client_id`, which MCP prefers; dynamic registration; or a
 /// client a parent created for an assistant that can do neither, such as Alexa+),
 /// authorization approved by a parent in the Den app, and tokens with PKCE and refresh-token
-/// rotation. Access tokens live only as hashes in the connection record. A `resource` a client
+/// rotation. Access and refresh tokens live only as hashes in the hub's own state ([OAuthStore]),
+/// never in the family's log: an hourly token is no fact the family needs. A `resource` a client
 /// names (RFC 8707) must be this hub's MCP endpoint or the hub itself, and every answer to the
 /// client's browser names the hub as its issuer (`iss`, RFC 9207).
 ///
@@ -83,7 +84,7 @@ class _Pending {
 class OAuthServer implements HubService {
   /// Creates the server for [hub]; [auth] checks the parent's signed requests.
   OAuthServer(this.hub, this.auth)
-      : store = OAuthStore(hub.state),
+      : store = hub.oauthStore,
         documents = ClientMetadataDocuments(hub.fetch, now: hub.now);
 
   /// Shared hub context.
@@ -117,7 +118,32 @@ class OAuthServer implements HubService {
   @override
   Future<void> start() async {
     _sweeper = Timer.periodic(const Duration(minutes: 1), (_) => unawaited(sweep()));
+    await adoptLoggedTokens();
     await sweep();
+  }
+
+  /// Moves the access token hashes older hubs wrote into connection records to the hub's own
+  /// state, so the tokens apps hold now keep working until they expire, and clears them from the
+  /// log, once per connection. Nothing while the hub catches up after a restore.
+  Future<void> adoptLoggedTokens() async {
+    if (!hub.ready || hub.catchingUp) return;
+    final now = hub.now();
+    var moved = 0;
+    await hub.gate.asHub(() async {
+      for (final c in hub.den.connections) {
+        final hash = c.tokenHash;
+        if (c.kind != ConnectionKind.oauth || hash == null) continue;
+        final expires = c.expires;
+        if (c.status == ConnectionStatus.active && expires != null && expires > now) {
+          await store.keepAccess(hash, connection: c.id, client: c.client, expires: expires);
+        }
+        if (c.status == ConnectionStatus.active) {
+          await hub.den.setConnectionToken(c.id, null);
+          moved++;
+        }
+      }
+    });
+    if (moved > 0) hub.log.info('Moved $moved app token${moved == 1 ? '' : 's'} out of the family\'s log into the hub\'s own state');
   }
 
   @override
@@ -705,7 +731,6 @@ class OAuthServer implements HubService {
     final reused = store.usedBy(token);
     if (reused != null) {
       await store.revokeConnection(reused);
-      await _setTokenHash(reused, hashToken(store.secret()));
       hub.log.warn('A used refresh token came back; ended that connection\'s tokens');
       return _badClient(r, 'invalid_grant', 'That refresh token was already used');
     }
@@ -717,23 +742,19 @@ class OAuthServer implements HubService {
     return _issue(r, client, grant.connection);
   }
 
-  Future<bool> _setTokenHash(String connection, String hash, {int? expires}) => hub.gate.asHub(() async {
-        final c = hub.den.connections.firstWhereOrNull((x) => x.id == connection);
-        if (c == null || c.status != ConnectionStatus.active) return false;
-        await hub.den.setConnectionToken(connection, hash, expires: expires);
-        return true;
-      });
-
   Future<Response> _issue(Request r, OAuthClient client, String connection) async {
+    final c = hub.den.connectionWithId(connection);
+    if (c == null || c.status != ConnectionStatus.active) {
+      return _tokenError(r, 'invalid_grant', 'This app\'s access was turned off in the Den app');
+    }
     final access = store.secret();
     final lifetime = hub.config.accessTokenLifetime;
-    final ok = await _setTokenHash(connection, hashToken(access), expires: hub.now() + lifetime.inMilliseconds);
-    if (!ok) return _tokenError(r, 'invalid_grant', 'This app\'s access was turned off in the Den app');
     store.prune(hub.now());
+    await store.issueAccess(access, connection: connection, client: client.id, expires: hub.now() + lifetime.inMilliseconds);
     final refresh = await store.issueRefresh(
       RefreshGrant(connection, client.id, hub.now() + hub.config.refreshTokenLifetime.inMilliseconds),
     );
-    final scopes = await hub.gate.asHub(() => hub.den.connections.firstWhereOrNull((x) => x.id == connection)?.scopes ?? const <Scope>{});
+    final scopes = c.scopes;
     return jsonResponse({
       'access_token': access,
       'token_type': 'Bearer',

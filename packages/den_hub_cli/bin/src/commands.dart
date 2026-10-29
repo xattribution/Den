@@ -72,8 +72,8 @@ Future<int> mcp(ArgResults a, DataDir data, int port, CliIo io) async {
       node: SyncNode(den),
       http: http.Client(),
     );
-    if (accessForToken(den, token) == null) throw StateError('That token doesn\'t work. Make one in the Den app.');
-    await serveMcpStdio(McpServer(ctx), () => accessForToken(den, token), io.input, io.out.writeln);
+    if (ctx.access(token) == null) throw StateError('That token doesn\'t work. Make one in the Den app.');
+    await serveMcpStdio(McpServer(ctx), () => ctx.access(token), io.input, io.out.writeln);
     await ctx.node.close();
     ctx.http.close();
     return 0;

@@ -118,6 +118,9 @@ void main() {
     expect((await maya.client.status())!.ready, isFalse);
     final set = await alex.client.configure(claude);
     expect(set.ready, isTrue);
+    if (!Platform.isWindows) {
+      expect(FileStat.statSync('${dir.path}/hub').modeString(), 'rwx------', reason: 'the hub\'s state is its owner\'s alone');
+    }
     expect(set.reader!.name, 'Claude');
     expect(set.reader!.place, ReaderPlace.provider);
     expect(set.reader!.reads(ReaderInput.image), isTrue);

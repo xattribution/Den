@@ -446,7 +446,7 @@ class DenHub {
   /// Whether [request] carries a bearer token that resolves to a working connection.
   bool _tokenWorks(Request request) {
     final token = bearerToken(request.headers['authorization']);
-    return token != null && _ctx.ready && accessForToken(den, token) != null;
+    return token != null && _ctx.ready && _ctx.access(token) != null;
   }
 
   int _bodyLimit(Request request) => switch (request.url.path) {

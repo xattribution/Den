@@ -174,7 +174,7 @@ class RestApi {
   Access authenticate(Request request, Scope? scope) {
     if (!hub.ready) throw ApiError.notReady();
     hub.checkFailures(request);
-    final access = accessForToken(hub.den, bearerToken(request.headers['authorization']));
+    final access = hub.access(bearerToken(request.headers['authorization']));
     if (access == null) {
       hub.failed(request);
       throw ApiError.unauthorized();

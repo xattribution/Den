@@ -156,7 +156,7 @@ class McpHttp {
     if (!hub.ready) throw ApiError.notReady();
     hub.checkFailures(request);
     final token = bearerToken(request.headers['authorization']);
-    final access = accessForToken(hub.den, token);
+    final access = hub.access(token);
     if (access == null && token != null) hub.failed(request);
     return access;
   }
