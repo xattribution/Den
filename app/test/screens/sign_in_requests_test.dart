@@ -63,9 +63,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(hub.admitted, ['q1']);
     expect(find.text('Claude (claude.ai) wants to connect'), findsNothing);
-    expect(find.text('Approve Claude below once it shows up.'), findsWidgets);
+    expect(findWords('Claude is in. Approve it below once it shows up.'), findsOneWidget);
 
-    await tester.tap(find.text('Decline').first);
+    await tester.tap(find.text('Turn away').first);
     await tester.pumpAndSettle();
     expect(hub.declined, ['q2']);
     expect(find.textContaining('wants to connect'), findsNothing);

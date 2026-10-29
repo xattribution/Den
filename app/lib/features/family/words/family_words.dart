@@ -3,29 +3,47 @@ import 'package:den_core/den_core.dart';
 /// The words family, device and connection screens use for engine enums, so every
 /// screen says the same thing the same way.
 abstract final class FamilyWords {
+  /// What a family calls each role: a parent, a grown-up who helps (a co-parent who isn't an
+  /// admin, a grandparent), a sitter, a kid.
   static String role(Role r) => switch (r) {
         Role.parent => 'Parent',
-        Role.adult => 'Adult',
+        Role.adult => 'Grown-up',
         Role.kid => 'Kid',
-        Role.guest => 'Guest',
+        Role.guest => 'Sitter',
       };
 
-  /// "a parent", "an adult".
-  static String aRole(Role r) => '${r == Role.adult ? 'an' : 'a'} ${role(r).toLowerCase()}';
+  /// "a parent", "a grown-up".
+  static String aRole(Role r) => 'a ${role(r).toLowerCase()}';
 
-  /// What [name] may do as [r], said before a role change is saved.
+  /// What [name] does as [r], in the present: the sentence on their page.
+  static String roleNow(String name, Role r) => switch (r) {
+        Role.parent => '$name runs the family: people, devices, stars and the AI helper.',
+        Role.adult => "$name adds and changes plans, chores and lists, but doesn't manage people, devices or stars.",
+        Role.kid => '$name checks off chores and asks for rewards, and adds only what you allow.',
+        Role.guest => "$name sees the family's plans and checks things off, but doesn't add or change anything.",
+      };
+
+  /// What [name] will do as [r], said before a role change is saved.
   static String roleChange(String name, Role r) => switch (r) {
-        Role.parent => '$name will manage the family: people, devices, settings and points.',
-        Role.adult => "$name will add and change plans, chores and lists, but won't manage people, devices or points.",
-        Role.kid => '$name will do their own chores and ask for rewards, and add only what you allow.',
+        Role.parent => "$name will run the family: people, devices, stars and the AI helper, and see what's kept for parents.",
+        Role.adult => "$name will add and change plans, chores and lists, but won't manage people, devices or stars.",
+        Role.kid => '$name will check off chores and ask for rewards, and add only what you allow.',
         Role.guest => "$name will see the family's plans and check things off, but won't add or change anything.",
       };
 
   static String tier(Tier t) => switch (t) {
-        Tier.preReader => 'Pre-reader',
-        Tier.little => 'Little',
-        Tier.big => 'Big kid',
-        Tier.teen => 'Teen',
+        Tier.preReader => 'Under 6',
+        Tier.little => '6 to 8',
+        Tier.big => '9 to 12',
+        Tier.teen => '13 or older',
+      };
+
+  /// What a kid of [t] gets, in one line.
+  static String tierMeans(Tier t) => switch (t) {
+        Tier.preReader => "Gets the kids' screen with pictures and read-aloud.",
+        Tier.little => "Gets the kids' screen: big pictures and buttons.",
+        Tier.big => 'Uses the regular app and can add to lists.',
+        Tier.teen => 'Uses the regular app and can add to lists, events and chores.',
       };
 
   static String deviceKind(DeviceKind k) => switch (k) {
@@ -56,22 +74,15 @@ abstract final class FamilyWords {
         Scope.calendar => 'Calendar',
         Scope.chores => 'Chores',
         Scope.lists => 'Lists',
-        Scope.points => 'Points',
-        Scope.admin => 'Admin',
+        Scope.points => 'Stars',
+        Scope.admin => 'Family settings',
       };
 
   /// "Read, Calendar and Lists", in the enum's order.
   static String scopes(Set<Scope> scopes) {
     final words = [for (final s in Scope.values) if (scopes.contains(s)) scope(s)];
-    return joinAnd(words, empty: 'No access');
+    return joinAnd(words, empty: 'Nothing');
   }
-
-  static String grant(Grant g) => switch (g) {
-        Grant.events => 'Add events',
-        Grant.chores => 'Add chores',
-        Grant.lists => 'Add lists',
-        Grant.points => 'Manage points',
-      };
 
   /// "Mia", "Mia and Leo", "Mia, Leo and Ava".
   static String joinAnd(List<String> words, {String empty = ''}) {
@@ -112,16 +123,18 @@ abstract final class FamilyWords {
     return (y, m, d);
   }
 
-  /// A member's role in words: "Parent", or for kids their age group and age, "Little kid · 8".
+  /// Who someone is, as Family.dc.html says it: "Parent", "Grown-up", "Kid, 11", "Teen, 14",
+  /// or for a kid with no birthday their age group, "Kid, 6 to 8".
   static String memberLine(Member m, String today) {
     if (m.role != Role.kid) return role(m.role);
-    final group = switch (m.tier) {
-      null => 'Kid',
-      Tier.little => 'Little kid',
-      final t => tier(t),
-    };
     final age = ageOn(m.birthday, today);
-    return age == null ? group : '$group · $age';
+    final teen = m.tier == Tier.teen || (age != null && age >= 13);
+    if (age != null) return '${teen ? 'Teen' : 'Kid'}, $age';
+    return switch (m.tier) {
+      null => 'Kid',
+      Tier.teen => 'Teen',
+      final t => 'Kid, ${tier(t).toLowerCase()}',
+    };
   }
 
   /// "0:42", "1:00", "9:59".

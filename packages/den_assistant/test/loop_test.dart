@@ -346,6 +346,7 @@ void main() {
     final result = await loop.ask('Hi', system: _system);
     expect(result.end, TurnEnd.failed);
     expect(result.error, 'Claude is busy right now. Try again in a minute.');
+    expect(result.failure?.kind, ModelFailure.busy, reason: 'the exception itself, for an app to tell refusals apart');
     expect(result.modelCalls, 0);
   });
 

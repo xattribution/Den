@@ -1,11 +1,12 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 
-import '../../../platform/calendars/phone_calendars.dart';
+import '../../../app/app_state.dart';
+import '../../../design/layout.dart';
+import '../../../design/sheet.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
-import '../../../app/app_state.dart';
-import '../../../design/forms/forms.dart';
+import '../../../platform/calendars/phone_calendars.dart';
 
 /// The words for who sees a calendar brought in from this phone, "Off" for one left out.
 const Map<Audience?, String> phoneCalendarChoices = {
@@ -15,9 +16,9 @@ const Map<Audience?, String> phoneCalendarChoices = {
   Audience.justMe: 'Just me',
 };
 
-/// Settings → Calendars on this phone: every calendar the phone holds, grouped by account, each
-/// brought into Den for Everyone, Parents or Just me, or left off. Calendar colors stay on the
-/// phone; in Den a hue means a person.
+/// Settings → Calendars → Calendars on this phone: every calendar the phone holds, grouped by
+/// account, each brought into Den for Everyone, Parents or Just me, or left off. Calendar colors
+/// stay on the phone; in Den a hue means a person.
 class PhoneCalendarsScreen extends StatefulWidget {
   const PhoneCalendarsScreen({super.key});
 
@@ -40,123 +41,107 @@ class _PhoneCalendarsScreenState extends State<PhoneCalendarsScreen> {
   Widget build(BuildContext context) {
     final calendars = context.watch(const {}).phoneCalendars;
     if (calendars == null) {
-      return const FormFrame(
+      return const DenPage(
         title: 'Calendars on this phone',
-        children: [EmptyLine(message: 'Only a phone has calendars to bring in.')],
+        children: [EmptyState(message: 'Only a phone has calendars to bring in.')],
       );
     }
     return ListenableBuilder(
       listenable: calendars,
-      builder: (context, _) => FormFrame(title: 'Calendars on this phone', children: _body(context, calendars)),
+      builder: (context, _) => DenPage(title: 'Calendars on this phone', children: _body(context, calendars)),
     );
   }
 
   List<Widget> _body(BuildContext context, PhoneCalendars calendars) {
+    final c = context.colors;
+    final t = context.text;
     switch (calendars.access) {
       case null:
         return const [];
       case PhoneAccess.ask:
         return [
-          EmptyLine(
-            message: "Den can't read this phone's calendars yet.",
-            actionLabel: 'Allow access',
-            onAction: calendars.requestAccess,
+          GroupCard(
+            child: EmptyState(
+              compact: true,
+              message: "Den can't read this phone's calendars yet.",
+              actionLabel: 'Allow access',
+              onAction: calendars.requestAccess,
+            ),
           ),
         ];
       case PhoneAccess.denied:
         return [
-          FormBlock(
-            child: AttentionLine(
+          GroupCard(
+            child: ErrorState(
               message: "Calendar access is off for Den. Turn it on in the phone's Settings.",
-              action: OutlinedButton(onPressed: calendars.openSettings, child: const Text('Open Settings')),
+              actionLabel: 'Open Settings',
+              onAction: calendars.openSettings,
             ),
           ),
         ];
       case PhoneAccess.restricted:
-        return const [
-          FormBlock(child: AttentionLine(message: 'Screen Time or a device policy blocks calendar access on this phone.')),
-        ];
+        return const [NoticeLine(message: 'Screen Time or a device policy blocks calendar access on this phone.')];
       case PhoneAccess.granted:
         break;
     }
-    if (calendars.calendars.isEmpty) return const [EmptyLine(message: 'This phone has no calendars.')];
+    if (calendars.calendars.isEmpty) return const [EmptyState(message: 'This phone has no calendars.')];
 
     final accounts = <String, List<PhoneCalendar>>{};
     for (final cal in calendars.calendars) {
       accounts.putIfAbsent(cal.account.isEmpty ? 'On this phone' : cal.account, () => []).add(cal);
     }
+    final at = calendars.syncedAt;
+    final updated = calendars.syncing ? 'Updating' : (at == null ? null : 'Updated ${context.watch(const {}).formats.time(at)}');
     return [
-      InfoHeader(
-        'Who sees each',
-        info: 'Events from a calendar you bring in show in Den for the people you choose, read-only. '
-            'Den checks this phone for changes whenever you open it.',
-        action: _Updated(calendars),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: DenLayout.headingInset),
+        child: Text(
+          'Events from a calendar you bring in show in Den for the people you choose, read-only.${updated == null ? '' : ' $updated.'}',
+          style: t.meta(c.ink2),
+        ),
       ),
-      for (final account in accounts.entries) ...[
-        SectionHeader(account.key),
-        for (final cal in account.value)
-          _CalendarRow(
-            calendar: cal,
-            audience: calendars.picks[cal.id],
-            count: calendars.countFor(cal.id),
-            onChanged: (audience) => calendars.choose(cal.id, audience),
+      for (final account in accounts.entries)
+        DenSection(
+          title: account.key,
+          child: Column(
+            children: ruled([
+              for (final cal in account.value)
+                NavRow(
+                  label: cal.name,
+                  detail: calendars.picks[cal.id] == null
+                      ? null
+                      : '${calendars.countFor(cal.id)} event${calendars.countFor(cal.id) == 1 ? '' : 's'}',
+                  value: phoneCalendarChoices[calendars.picks[cal.id]],
+                  onTap: () => _choose(context, calendars, cal),
+                ),
+            ]),
           ),
-      ],
+        ),
     ];
   }
-}
 
-/// When the last pass finished, or that one is running.
-class _Updated extends StatelessWidget {
-  const _Updated(this.calendars);
-  final PhoneCalendars calendars;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final at = calendars.syncedAt;
-    final words = calendars.syncing ? 'Updating' : (at == null ? null : 'Updated ${context.watch(const {}).formats.time(at)}');
-    if (words == null) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(right: Sp.s),
-      child: Text(words, style: context.type.meta(c.ink2)),
-    );
-  }
-}
-
-class _CalendarRow extends StatelessWidget {
-  const _CalendarRow({required this.calendar, required this.audience, required this.count, required this.onChanged});
-
-  final PhoneCalendar calendar;
-  final Audience? audience;
-  final int count;
-  final ValueChanged<Audience?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Container(
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: c.rule))),
-      padding: const EdgeInsets.fromLTRB(Sp.l, Sp.m, Sp.l, Sp.m),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Expanded(child: Text(calendar.name, style: context.type.bodyStrong(c.ink))),
-              if (audience != null)
-                Text('$count event${count == 1 ? '' : 's'}', style: context.type.meta(c.ink2)),
-            ],
-          ),
-          const SizedBox(height: Sp.s),
-          Semantics(
-            label: 'Who sees ${calendar.name}',
-            child: Segmented<Audience?>(options: phoneCalendarChoices, value: audience, onChanged: onChanged),
-          ),
-        ],
+  Future<void> _choose(BuildContext context, PhoneCalendars calendars, PhoneCalendar cal) async {
+    final current = calendars.picks[cal.id];
+    final picked = await showDenSheet<(Audience?,)>(
+      context,
+      builder: (sheet) => Padding(
+        padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SheetHeader(title: 'Who sees ${cal.name}?'),
+            GroupCard(
+              child: ChoiceRows<Audience?>(
+                choices: [for (final e in phoneCalendarChoices.entries) Choice(e.key, e.value)],
+                value: current,
+                onChanged: (a) => Navigator.of(sheet).pop((a,)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
+    if (picked != null) await calendars.choose(cal.id, picked.$1);
   }
 }

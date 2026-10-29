@@ -51,7 +51,7 @@ A hub whose `DEN_PUBLIC_URL` is `https` (or with `DEN_PUBLIC=1`) assumes strange
 - `/health` answers only `{"ok": true, "api": 1, "ready": true}`, and `/api/v1/hub/status` of a
   hub already in a family says only that it is paired. The setup endpoints work only until the hub
   is in a family, and each address gets five wrong setup codes before it has to wait.
-- A new browser can ask for a link code only while a parent has **Add a device** open in the app
+- A new browser can ask for a link code only while a parent has **A browser on a computer** open in the app (Settings → Advanced → Hub and sync)
   (which tells the hub), or for a few minutes after you run, on the server:
   `docker compose -f deploy/hosted/compose.yaml exec hub /app/bin/den_hub open-linking`.
   Invites by message need neither: the invite is a parent's consent already.
@@ -171,7 +171,7 @@ The hub also fetches out: the client documents Claude and ChatGPT identify thems
 own machine and network; `DEN_FETCH_ALLOW` admits a calendar server at home.
 
 Whichever assistant, the person connecting sees Den's sign-in page with a code, and a parent
-approves the request in the Den app (Settings → AI and automations), choosing what it may do and
+approves the request in the Den app (Settings → Advanced → AI and automations, which also has these steps), choosing what it may do and
 whose permissions it uses. The add-a-connector address is `https://den.example.com/mcp`.
 
 - **Claude** (claude.ai, Desktop, mobile, Claude Code): add Den as a custom connector with that

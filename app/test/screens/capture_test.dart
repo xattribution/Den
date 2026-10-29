@@ -10,7 +10,8 @@ import 'package:den_app/platform/capture/platform_capture.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
 import 'package:den_app/features/add/screens/capture_screen.dart';
-import 'package:den_app/features/advanced/screens/connections_screen.dart';
+import 'package:den_app/features/advanced/screens/reader_screen.dart';
+import 'package:den_app/features/settings/screens/family_settings_screen.dart';
 import 'package:den_app/features/lists/lists.dart';
 import 'package:den_app/app/app_state.dart';
 import 'package:den_capture/den_capture.dart';
@@ -334,7 +335,7 @@ void main() {
       final state = await demoIn(tester);
       final settings = CaptureSettings(secrets: MemoryCaptureSecrets('sk-ant-test'), reader: ReaderChoice.claude, hasClaudeKey: true);
       Capture.service = serviceFor(settings: settings);
-      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
+      await pumpScreen(tester, const ReaderScreen(), state: state, size: tallPhone);
       expect(find.text('API key saved on this device'), findsOneWidget);
       await matchShot('settings_capture_claude_phone');
       final readers = await tester.runAsync(Capture.service.readers);
@@ -343,14 +344,14 @@ void main() {
 
     testWidgets('choosing "Show me first" sets the family to review', (tester) async {
       final state = await demoIn(tester);
-      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
+      await pumpScreen(tester, const FamilySettingsScreen(), state: state, size: tallPhone);
       await tester.runAsync(() async {
         await tester.tap(find.text('Show me first'));
         await Future<void>.delayed(const Duration(milliseconds: 200));
       });
       await tester.pumpAndSettle();
       expect(state.den.family!.captureNeedsReview, isTrue);
-      await matchShot('settings_capture_device_phone');
+      await matchShot('settings_family_review_phone');
     });
 
     testWidgets('a parent choosing Claude first, without the device', (tester) async {
@@ -428,8 +429,8 @@ void main() {
       final state = await withHub(tester);
       final (client, _) = fakeHub(claudeOnHub);
       Capture.service = serviceFor(hub: client);
-      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
-      expect(find.text('Claude on the hub'), findsOneWidget);
+      await pumpScreen(tester, const ReaderScreen(), state: state, size: tallPhone);
+      expect(find.textContaining('Claude on the hub'), findsOneWidget);
       expect(find.text('API key saved on the hub'), findsOneWidget);
       await matchShot('settings_capture_hub_phone');
     });
@@ -438,22 +439,22 @@ void main() {
       final state = await withHub(tester);
       final (client, saved) = fakeHub(HubReaderStatus.none.toJson());
       Capture.service = serviceFor(hub: client);
-      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
-      expect(find.text('Nothing on the hub yet'), findsOneWidget);
+      await pumpScreen(tester, const ReaderScreen(), state: state, size: tallPhone);
+      expect(find.textContaining('Nothing on the hub yet'), findsOneWidget);
       await tester.tap(find.text('A model at home').last);
       await tester.pumpAndSettle();
-      await tester.enterText(find.widgetWithText(TextField, 'Address the hub reaches it at'), '127.0.0.1:11434');
+      await tester.enterText(find.widgetWithText(TextField, '127.0.0.1:11434'), '127.0.0.1:11434');
       await tester.tap(find.text('Save on the hub'));
       await tester.pumpAndSettle();
       expect(saved.single, {'kind': 'home', 'address': '127.0.0.1:11434', 'device_first': true});
-      expect(find.text('Home model on the hub'), findsOneWidget);
+      expect(find.textContaining('Home model on the hub'), findsOneWidget);
     });
 
     testWidgets('without a hub there is nothing to set up there', (tester) async {
       final state = await demoIn(tester);
       final (client, _) = fakeHub(claudeOnHub);
       Capture.service = serviceFor(hub: client);
-      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
+      await pumpScreen(tester, const ReaderScreen(), state: state, size: tallPhone);
       expect(find.text('The family\'s hub'), findsNothing);
     });
 

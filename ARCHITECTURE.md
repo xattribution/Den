@@ -666,8 +666,8 @@ design/            tokens, theme, type, motion, layout, pictures, pictograms; wi
 platform/          capabilities.dart, storage/, sync/, notifications/, background/, calendars/,
                    capture/, web/, time_zone.dart
 features/<bucket>/ screens/, widgets/, state/, words/, routes.dart, <bucket>.dart
-                   today, calendar, chores, rewards, lists, add, family, onboarding,
-                   shared_screens, settings, advanced
+                   today, calendar, chores, rewards, lists, add, assistant, family,
+                   onboarding, shared_screens, settings, advanced
 ```
 
 - `design/` imports Flutter, Phosphor and den_core's model types, never `Den`, `AppState`,
@@ -699,6 +699,23 @@ devices, acting) changes, and `context.view(model)` also keeps a computed view (
 changes or the day turns. `context.app` still rebuilds on everything; the wall and the kids'
 screens use it, since they show everything. The router's redirect runs again only when who's who
 or the wall setting changes, and the app itself rebuilds only for the theme and the wall setting.
+
+**The AI helper** (`features/assistant`, off by default; DESIGN.md, "AI helper"). Add sends a
+question or a change to `/ask` (a sheet, or a panel from 840 pt) with an `AskRequest`, which also
+holds the conversation, an `AskSession`, for as long as the route lives and no longer. The
+session runs den_assistant's `AssistantLoop` on the device: its tools are den_actions' specs
+this person may call (`assistantTools`), run by the session's own `ActionRunner` as
+`Surface.assistant` through `actionExecutor`, so writes are signed by this device with the
+person's own permissions and marked `{kind: assistant, reader}` for History; receipts are what
+Undo and "undo that" take back. Each turn's system prompt is `ContextPacker` over an
+`AssistantSnapshot` built from the app's own views (`TodayModel`, the next seven days, what the
+person may do, their recent History). The model is den_assistant's adapter for the hub's
+provider with `ModelEndpoint.hub`: every request goes to `POST /api/v1/assistant/model`, signed
+with `DeviceRequest` like capture's, on the web (where the CSP allows only the hub) and in the
+native apps alike, so no device holds a key. `GET /api/v1/assistant` says first whether this
+person may ask, and the hub's refusals (`403`, `429 daily_limit`, `402`, `502`) come back as
+`ModelException.code` for the words people see. Closing Ask closes the session: a turn still
+running changes nothing more.
 
 ## The web app
 

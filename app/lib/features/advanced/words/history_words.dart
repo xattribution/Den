@@ -217,6 +217,7 @@ String? routeForRecord(FamilyReads app, String type, String id) {
       }
       return null;
     case RecordType.member:
+      return app.den.member(id) == null ? '/family' : '/family/member/$id';
     case RecordType.device:
       return '/family';
     case RecordType.adjustment:

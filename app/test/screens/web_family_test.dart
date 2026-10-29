@@ -1,16 +1,13 @@
 import 'dart:convert';
 
 import 'package:den_app/platform/sync/hub_push.dart';
-import 'package:den_app/platform/sync/pairing.dart';
 import 'package:den_app/design/widgets.dart' show ActionRow;
-import 'package:den_app/features/family/widgets/device_parts.dart';
 import 'package:den_app/features/settings/screens/web_reminders.dart';
 import 'package:den_app/features/today/screens/today_screen.dart';
 import 'package:den_app/platform/web/web_app.dart';
 import 'package:den_app/platform/web/web_insets.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -72,37 +69,6 @@ void main() {
     expect(findWords("${zoe.name}'s iPhone joined as ${zoe.name}"), findsOneWidget, reason: 'the row says what it did, in place');
   });
 
-  testWidgets('An invite by message: the words, Send and Copy', (tester) async {
-    final state = await demo(tester);
-    final copied = <String>[];
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      if (call.method == 'Clipboard.setData') copied.add((call.arguments as Map)['text'] as String);
-      return null;
-    });
-    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
-    final invite = InviteMessage(
-      words: const ['maple', 'river', 'candle', 'tiger'],
-      link: Uri.parse('https://den.example.com/#/join/maple-river-candle-tiger'),
-      expires: demoNow.add(const Duration(days: 3)).millisecondsSinceEpoch,
-      familyName: 'The Carters',
-      forName: 'Grandma',
-      qr: 'den://join?f=7Q2KX4M9PA3TBV6W&fk=Zm91bmRlcg&d=8CQ3HPLA&k=aW52aXRlcg&s=c2VjcmV0c2VjcmV0MTI4&x=1792170000',
-    );
-    await pumpScreen(
-      tester,
-      SingleChildScrollView(child: InvitePanel(now: () => demoNow)),
-      state: state,
-      pairing: FakePairing(now: demoNow, invite: invite),
-    );
-    expect(find.text('maple river candle tiger'), findsOneWidget);
-    expect(find.text('Send invite'), findsOneWidget);
-    await matchShot('family_invite_message_phone');
-    await tester.tap(find.text('Copy invite'));
-    await tester.pumpAndSettle();
-    expect(copied.single, invite.text);
-    expect(find.text('Copied. Paste it into a message to them.'), findsOneWidget);
-  });
-
   testWidgets('Reminders in Safari say to add Den to the Home Screen first', (tester) async {
     final state = await demo(tester);
     await pumpScreen(
@@ -120,7 +86,7 @@ void main() {
       const WebReminders(web: WebAppInfo(ios: true, iosVersion: (major: 16, minor: 3), standalone: true, secure: true)),
       state: state,
     );
-    expect(find.textContaining('need iOS 16.4 or later'), findsOneWidget);
+    expect(find.textContaining('or later. Update it in Settings'), findsOneWidget);
   });
 
   testWidgets('Reminders on a Home Screen iPhone: one tap, and an honest note when it fails', (tester) async {

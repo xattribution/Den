@@ -10,6 +10,7 @@ import '../widgets/sign_in.dart';
 import '../../../design/glyphs.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
+import '../state/display.dart';
 import '../state/kids.dart';
 import '../../../app/app_state.dart';
 import '../../family/family.dart';
@@ -98,12 +99,9 @@ class _WallScreenState extends State<WallScreen> {
     final layout = wallLayoutOf(den.thisDevice);
     final today = app.today;
 
-    final Widget main = switch (layout) {
-      DisplayLayout.today => _TodayBoard(onAct: () => setState(() {})),
-      DisplayLayout.month => MonthView(anchor: today),
-      DisplayLayout.lists => const _ListsBoard(),
-      DisplayLayout.week || DisplayLayout.photos => FamilyWeek(startDate: today, showChores: false, fillHeight: true),
-    };
+    final Widget main = layout == DisplayLayout.today
+        ? _TodayBoard(onAct: () => setState(() {}))
+        : FamilyWeek(startDate: today, showChores: false, fillHeight: true);
 
     final onlyAnyone = layout == DisplayLayout.today;
     final strip = _TodayStrip(onAct: () => setState(() {}), onlyAnyone: onlyAnyone);
@@ -484,30 +482,6 @@ class _ListPanel extends StatelessWidget {
             child: Text('and $more more', style: context.type.meta(c.ink2)),
           ),
       ],
-    );
-  }
-}
-
-/// The "Lists" layout: every list side by side, pinned first.
-class _ListsBoard extends StatelessWidget {
-  const _ListsBoard();
-
-  @override
-  Widget build(BuildContext context) {
-    final den = context.den;
-    final c = context.colors;
-    final lists = [...den.lists]..sort((a, b) => (b.list.pinned ? 1 : 0) - (a.list.pinned ? 1 : 0));
-    if (lists.isEmpty) return const EmptyLine(message: 'No lists yet.');
-    return ListView.separated(
-      scrollDirection: Axis.horizontal,
-      itemCount: lists.length,
-      separatorBuilder: (_, _) => VerticalDivider(width: 1, color: c.rule),
-      itemBuilder: (context, i) => SizedBox(
-        width: 380,
-        child: SingleChildScrollView(
-          child: _ListPanel(state: lists[i], onAct: () {}),
-        ),
-      ),
     );
   }
 }

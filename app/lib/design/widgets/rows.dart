@@ -173,10 +173,20 @@ class _InfoText extends StatelessWidget {
   Widget build(BuildContext context) => Text(tidy(value), style: context.text.body(context.colors.ink));
 }
 
-/// A row that goes somewhere: an optional ink glyph, a label (and a detail), and a chevron.
-/// 56 tall at least. For "Or add one thing", settings and menus.
+/// A row that goes somewhere: an optional ink glyph, a label (and a detail), its current
+/// [value] at the end ("Off", "Kid mode"), and a chevron. 56 tall at least. For "Or add one
+/// thing", settings and menus.
 class NavRow extends StatelessWidget {
-  const NavRow({super.key, required this.label, required this.onTap, this.icon, this.detail, this.leading, this.chevron = true});
+  const NavRow({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.detail,
+    this.leading,
+    this.chevron = true,
+    this.value,
+  });
 
   final String label;
   final VoidCallback? onTap;
@@ -186,6 +196,9 @@ class NavRow extends StatelessWidget {
   final Widget? leading;
   final String? detail;
   final bool chevron;
+
+  /// What it's set to now, in meta ink2 before the chevron. It wraps rather than being cut off.
+  final String? value;
 
   @override
   Widget build(BuildContext context) {
@@ -200,27 +213,38 @@ class NavRow extends StatelessWidget {
         constraints: const BoxConstraints(minHeight: 56),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: Sp.s),
-          child: Row(
-            children: [
-              if (leading != null) ...[leading!, const SizedBox(width: Sp.m)],
-              if (icon != null && leading == null) ...[
-                Icon(icon, size: 22, color: enabled ? c.ink : c.ink3),
-                const SizedBox(width: 14),
-              ],
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(label, style: t.body(enabled ? c.ink : c.ink3)),
-                    if (detail != null) Text(tidy(detail!), style: t.meta(c.ink2)),
-                  ],
+          child: LayoutBuilder(
+            builder: (context, box) => Row(
+              children: [
+                if (leading != null) ...[leading!, const SizedBox(width: Sp.m)],
+                if (icon != null && leading == null) ...[
+                  Icon(icon, size: 22, color: enabled ? c.ink : c.ink3),
+                  const SizedBox(width: 14),
+                ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(label, style: t.body(enabled ? c.ink : c.ink3)),
+                      if (detail != null) Text(tidy(detail!), style: t.meta(c.ink2)),
+                    ],
+                  ),
                 ),
-              ),
-              if (chevron) ...[
-                const SizedBox(width: Sp.s),
-                Icon(PhosphorIconsBold.caretRight, size: 18, color: c.ink3),
+                if (value != null) ...[
+                  const SizedBox(width: Sp.s),
+                  // At the end beside the chevron, never more than half the row: a long value
+                  // wraps there instead of squeezing the label.
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: box.maxWidth / 2),
+                    child: Text(value!, style: t.meta(c.ink2), textAlign: TextAlign.end),
+                  ),
+                ],
+                if (chevron) ...[
+                  const SizedBox(width: Sp.s),
+                  Icon(PhosphorIconsBold.caretRight, size: 18, color: c.ink3),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

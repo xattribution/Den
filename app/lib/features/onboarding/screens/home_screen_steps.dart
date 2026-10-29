@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
-import '../../../design/forms/forms.dart';
+import '../../../design/widgets.dart';
 
 /// Safari on an iPhone or iPad: put Den on the Home Screen first, in three steps. The Home
 /// Screen app keeps its own storage, apart from Safari's, so a family started in Safari
@@ -19,49 +19,33 @@ class HomeScreenSteps extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    Widget step(int n, IconData icon, String text) => Padding(
-          padding: const EdgeInsets.fromLTRB(Sp.l, Sp.m, Sp.l, 0),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 28,
-                child: Text('$n', style: context.type.title(c.ink)),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(top: 2, right: Sp.m),
-                child: Icon(icon, size: 24, color: c.ink),
-              ),
-              Expanded(child: Text(text, style: context.type.body(c.ink))),
-            ],
-          ),
-        );
-
+    final t = context.text;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const InfoHeader(
-          'Add Den to your Home Screen',
-          info: 'From the Home Screen, Den opens like an app, works without a connection and can send '
-              "reminders. It keeps its own storage there, separate from Safari's.",
+        DenSection(
+          title: 'Add Den to your Home Screen',
+          child: NumberedSteps(steps: [
+            ipad ? 'Tap Share at the top of Safari.' : "Tap Share at the bottom of Safari. If you don't see it, tap the three dots first.",
+            'Tap Add to Home Screen, then Add.',
+            'Open Den from your Home Screen.',
+          ]),
         ),
-        step(
-          1,
-          PhosphorIconsRegular.export,
-          ipad
-              ? 'Tap Share at the top of Safari.'
-              : "Tap Share at the bottom of Safari. If you don't see it, tap the three dots first.",
-        ),
-        step(2, PhosphorIconsRegular.plusSquare, 'Tap Add to Home Screen, then Add.'),
-        step(3, PhosphorIconsRegular.houseLine, 'Open Den from your Home Screen.'),
-        if (code != null) ...[
-          FormBlock(
-            top: Sp.xl,
-            child: Text('Then type this code when Den asks for it:', style: context.type.body(c.ink2)),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, Sp.m, DenLayout.headingInset, 0),
+          child: Text(
+            'From the Home Screen, Den opens like an app, works without a connection and can send reminders.',
+            style: t.meta(c.ink2),
           ),
-          FormBlock(
-            top: Sp.xs,
-            child: SelectableText(code!, style: context.type.heading(c.ink)),
+        ),
+        if (code != null) ...[
+          const SizedBox(height: DenLayout.sectionGap),
+          DenSection(
+            title: 'Then type this code',
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: Sp.l),
+              child: SelectableText(code!, style: t.sheetTitle(c.ink).copyWith(fontSize: 24)),
+            ),
           ),
         ],
       ],

@@ -388,7 +388,7 @@ take plain values and den_core model types, never the app's state, so any featur
 | `ActionRow` | A row that asks for one thing (Needs you, requests) | Face, bold sentence, detail, one action. The action sits under the words below 360 pt (a phone's card) and past 135 % text, at the end otherwise (an iPad column). |
 | `DoneRow`, `DoneSwap` | What a row did, with Undo in place | `DoneSwap(done: …, child: row)` crossfades on the UI spring; pass a receipt's undo as `onUndo`. Never a toast. |
 | `InfoRow` | One fact on a detail page (Repeats, Due, Who sees it) | Label in meta beside the value, or over it on a narrow card and at large text. |
-| `NavRow` | A row that goes somewhere (menus, "Or add one thing") | Optional glyph or face, label, detail, chevron; 56 tall. |
+| `NavRow` | A row that goes somewhere (menus, "Or add one thing", settings) | Optional glyph or face, label, detail, what it's set to (`value`: "Off"), chevron; 56 tall. |
 | `FaceStack` | Who something is for | `DenAvatar`s 26 across, each ringed in the card color. |
 | `CheckPill` | A chore (or anything checked off) as a pill | Ring in the person's color. Ring tap checks; label tap opens details (steps, Give to…). `stars: null` when points are off. With steps, the ring fills as an arc and "1 of 4" follows the name once a step is done. |
 | `CheckRow`, `CheckRing` | The same as a full-width row (PadToday's chores); the ring alone (a step) | 32 pt ring in a 48 target, whose it is at the end; 60 tall. `CheckRing(progress:)` draws steps as an arc of the person's color: never a digit in a ring (the slashed zero reads as a glitch at that size). |
@@ -407,6 +407,12 @@ take plain values and den_core model types, never the app's state, so any featur
 | `NoticeLine` | How things stand (offline) | Ink glyph and a plain line, no colored box. |
 | `DisabledReason` | A control that can't be used now | Keeps the control and says why under it. |
 | `PageHeader` | A screen's title, the date above it, the person's face | 30/800 (`large` on iPad). |
+| `DenPage`, `Ungapped`, `PageBackButton` | A page pushed over the app (Family, Settings, a setup step) | Round back button and the 30/800 title, sections `sectionGap` apart at a readable width, `bottom` for the one primary button within reach of the thumb. Wrap a child that may draw nothing in `Ungapped` and give it its own bottom gap. |
+| `SheetHeader` | A sheet's title and the pill that closes it | "Close" on the card color; `primary` ("Done" on a picture) in ink. |
+| `SwitchLine` | A setting said as a sentence ("Can add to lists") | Detail line under it, the switch at the end, the whole row flips it, 64 tall. `onChanged: null` with a `reason` keeps it visible and says why it can't change. |
+| `ChoiceRows`, `Choice` | A setting with a few answers (Day, Night, Auto) | Rows in a section's card, an ink check before the chosen one. Not for views (`DenSegmented`), not for on and off (`SwitchLine`). |
+| `LabeledField` | A text field with its label | The label above in meta ink2, never floating inside; an error under it in red text with its icon. |
+| `NumberedSteps` | Steps to follow in another app (a connector, a Shortcut) | Bold numbers in their own column, reading text beside them; a step may be a widget (an address to copy). |
 | `DenTabBar`, `DenSidebar`, `NavPlace` | The app's navigation | The shell owns them; screens never draw their own. |
 | `showPeoplePicker` | Choosing a person (Give to…, Who?, Who's driving?) | A sheet of faces; `anyoneLabel` adds "Anyone". |
 | `showDenSheet` | Every sheet | Springs, drag to close, centered form sheet on iPad. |
@@ -433,7 +439,8 @@ tap happened, and shows it in a `DoneRow`.
   button that says where it goes ("Add to calendar", "Add to Groceries"). What was added stays
   in the sheet with Undo, and Undo brings the words back. Photo of a flyer (a phone's camera),
   a photo or PDF, and on the web Paste (text, or a screenshot) go to the review page. "Or add
-  one thing" offers Event, Chore and Grocery item, each only to someone who may.
+  one thing" offers Event, Chore and Grocery item, each only to someone who may. With the AI
+  helper on for the person, the field reads "Add or ask anything" (see "AI helper").
 - **Calendar**: the month as the title and a Today button; a week strip in a card (selected day
   in ink, people's dots); person filters; the day's events as solid blocks by time; on iPad the
   family week (a column per person, a row per day, everyone's events across the row).
@@ -459,6 +466,51 @@ tap happened, and shows it in a `DoneRow`.
 - **Kid**: "Hi, Leo" with their picture, a star card with their goal bar, 2 to 4 big chore tiles.
 - **An event**: a solid block in the owner's color with the title (tap to change), then the
   details as rows that open in place.
+
+## AI helper
+
+Optional, and off until a parent turns it on (Settings, AI helper). It is a word ("Ask") and a
+speech bubble, never a sparkle, a wand or a glow, and it lives in Add, not in a tab of its own
+(`features/assistant`).
+
+- **Who sees it.** Parents once it's on, and each other person a parent switches on (never a
+  little kid or a pre-reader). Never on a wall display or a shared screen, and never without a
+  family hub, which runs it and keeps the key.
+- **Add or ask.** The field reads "Add or ask anything" ("Ask anything" for someone who may ask
+  but not add). The rule, in this order:
+  1. A **question** goes to the helper: it ends with a question mark, or starts with a question
+     word (what, when, where, who, which, why, how, is, are, can, will, does, did, "do we", tell,
+     show, find, plan...).
+  2. A **change to something already there** goes to the helper: any part of it starts with
+     move, reschedule, postpone, push, cancel, delete, remove, rename, swap, give, mark, undo,
+     uncheck, approve or decline ("add milk and move soccer to 6").
+  3. Otherwise **Den's own reader** takes it as it does today: when it finds something
+     ("milk", "Soccer Wednesday at 5 for Leo"), its chips show and Add adds at once, with Undo,
+     and a quiet "Ask instead" under the button. When it finds nothing, it's the helper's.
+  Photos, PDFs and pastes still go to the review page. The rule is `addOrAsk`
+  (`features/assistant/words`); a word on the list that also starts a chore ("Give the dog his
+  pill") reaches the helper, which can add it too.
+- **Answers** open in Ask: a sheet on phones, a panel at the right edge from 840 pt with the page
+  behind in view (an iPad turning keeps the conversation). What was asked, quietly, beside the
+  person's face; the answer in plain sentences; then each change as a row: a filled check in the
+  person's color, what it did ("Moved Dentist to 4:00 PM Tue") and Undo in place. Taken back, the
+  ring empties and the row says "Took back: ...". "Undo that" takes back the newest change still
+  in place, without asking the helper.
+- **Do it / Not now.** A change that needs a tap (someone else's things, a whole series, a
+  removal) shows first as a card on the card color: the question ("Remove the chore Feed the
+  cat?"), what it would change from the preview on a fork ("Removes Feed the cat"), any warning
+  with an ink icon, and "Do it" (ink) and "Not now". Nothing changes before the tap; a spoken yes
+  doesn't count.
+- **Limits and outages, plainly.** A limit a parent set is a line with an ink icon: "That's 20
+  questions today. Ask a parent for more.", "The family's AI budget is used up for October."
+  Off or not set up says who can change it. A hub or a company that doesn't answer is red text
+  and icon with Try again ("Claude can't be reached right now. Try again in a few minutes.").
+  "Asking Claude" shows only after a second; nothing pulses.
+- **Kids** a parent turned it on for get 72 pt buttons, "Read it to me" (the kids' app's
+  read-aloud), simpler words and only the tools they may use.
+- **Session only.** The conversation lives while Ask is open on that device and is forgotten
+  when it closes; closing Ask stops a turn still running from changing anything more. What it
+  changed shows in History as "from the assistant (Claude)", like any other change.
 
 ## Parental oversight
 
