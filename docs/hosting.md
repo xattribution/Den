@@ -474,7 +474,8 @@ The new hub is a new device. The phone that added it sees that the old one used 
 and offers **Remove the old hub**: do that, so phones stop looking for it. If you skipped it,
 remove it later under Hub and sync, where each hub shows when this phone last saw it and when it
 was added; the old one is the one not seen since the reset. Until then phones still sync, with
-whichever hub answers at the address.
+whichever hub answers at the address. If the family lets the hub help them get back in, the new
+hub has a new recovery key: see [If a parent loses their phone](#if-a-parent-loses-their-phone).
 
 ### Factory reset
 
