@@ -2495,10 +2495,13 @@ class Den {
 
   /// The latest change that turned whether parents see [memberId]'s "Just me" items one way or
   /// the other, or null when nobody ever has: what that person's Today and History tell them.
-  PrivacyChange? privacyChange(String memberId) {
+  PrivacyChange? privacyChange(String memberId) =>
+      _memo('privacy|$memberId', const {RecordType.family}, visible: false, () => _privacyChange(memberId));
+
+  PrivacyChange? _privacyChange(String memberId) {
     final entry = 'oversight.$memberId';
     bool sees(Object? v) => (v is Map ? v['parentsSeePrivate'] : null) as bool? ?? true;
-    final applied = _mat.applied;
+    final applied = _mat.appliedToFamily;
     for (var i = applied.length - 1; i >= 0; i--) {
       final a = applied[i];
       final c = a.change;

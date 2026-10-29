@@ -245,6 +245,24 @@ void main() {
     await reopened.close();
   });
 
+  test('privacy notices read the same from a snapshot', () async {
+    final teen = await den.addMember(name: 'Ana', role: Role.kid, tier: Tier.teen);
+    clock.advance(const Duration(days: 1));
+    await den.updateFamily({'oversight.$teen': {'parentsSeePrivate': false}});
+    for (var i = 0; i < snapshotEvery; i++) {
+      clock.advance(const Duration(minutes: 3));
+      await den.addItem(groceries, text: 'More $i');
+    }
+    await den.debugIdle();
+    final notice = den.privacyChange(teen)!;
+    expect(notice.parentsSee, isFalse);
+    final reopened = await openDen(clock, storage: await copyOf(storage), keys: keys);
+    expect(reopened.debugOpenedFromSnapshot, isTrue);
+    final again = reopened.privacyChange(teen)!;
+    expect([again.change, again.by, again.at, again.parentsSee], [notice.change, notice.by, notice.at, notice.parentsSee]);
+    await reopened.close();
+  });
+
   test('leaving the family removes the snapshot with the log', () async {
     expect(storage.snapshot, isNotNull);
     await den.leaveFamily();

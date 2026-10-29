@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:den_core/den_core.dart';
@@ -19,6 +21,10 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildPool(int seed) async {
   final dana = a.actor!.id;
   final priya = await a.addMember(name: 'Priya', role: Role.parent);
   final leo = await a.addMember(name: 'Leo', role: Role.kid);
+  final sitter = await a.addMember(name: 'Sam', role: Role.guest);
+  final photo = File('test/fixtures/canvas_photo.jpg').readAsBytesSync();
+  final reward = await a.addReward(title: 'Movie night', cost: 2);
+  await a.adjustPoints(leo, 40, 'Start');
   final clockB = TestClock(clock.now), clockT = TestClock(clock.now), clockH = TestClock(clock.now);
   final b = await joinDevice(a, clockB, member: priya, name: 'Priya phone', kind: DeviceKind.phone);
   final t = await joinDevice(a, clockT, member: leo, name: 'Leo tablet');
@@ -39,7 +45,7 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildPool(int seed) async {
     c.advance(Duration(seconds: 1 + random.nextInt(600)));
     final kid = d == t;
     try {
-      switch (random.nextInt(16)) {
+      switch (random.nextInt(21)) {
         case 0:
           final start = c.now + random.nextInt(7) * 86400000;
           await d.addEvent(
@@ -141,6 +147,23 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildPool(int seed) async {
             fields: {'member': leo, 'delta': 50, 'reason': 'Forged', 'by': leo},
             actor: leo,
           ));
+        case 16:
+          // Photos: a record of up to 40 KB that a member's picture names; the kid's own when
+          // allowed, else refused.
+          if (random.nextBool()) {
+            await d.setPhoto(kid ? leo : (random.nextBool() ? leo : dana), photo);
+          } else {
+            await d.setPicture(leo, random.nextBool() ? Picture.pack[random.nextInt(8)] : Picture.initial);
+          }
+        case 17:
+          final setting = random.nextBool() ? OversightSetting.rewardsNeedOk : OversightSetting.ownPicture;
+          await d.updateFamily({'oversight.$leo.$setting': random.nextBool()});
+        case 18:
+          // Asking for a reward, approved at once when Leo's parents turned off "needs my OK".
+          final r = await d.requestReward(reward, member: leo);
+          if (!kid && random.nextBool()) await d.decideRedemption(r, approve: random.nextBool());
+        case 19:
+          await d.updateMember(sitter, {'until': '2026-03-${10 + random.nextInt(18)}'});
         default:
           final lists = d.lists;
           if (lists.isEmpty) return;
@@ -187,6 +210,15 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildPool(int seed) async {
     await op(const [0, 1, 3][random.nextInt(3)]);
     if (random.nextInt(4) == 0) await exchange(a, b);
   }
+  forged.add(await forge(
+    t.keys,
+    counter: forgedCounter++,
+    millis: clockT.now,
+    type: RecordType.photo,
+    rid: 'forgedphoto',
+    fields: {'member': dana, 'mime': 'image/jpeg', 'data': base64Encode(photo)},
+    actor: leo,
+  ));
   final pool = {
     for (final d in devices)
       for (final c in d.changesSince({})) c.id: c,
@@ -209,6 +241,8 @@ String stateOf(Materializer m) => canonicalJson({
           ],
       ],
       'rejected': m.rejected,
+      // Read before the history, which a restored snapshot reads only when asked.
+      'family': [for (final a in m.appliedToFamily) [a.change.id, a.before, a.absent.toList()..sort()]],
       'applied': [
         for (final a in m.applied) [a.change.id, a.created, a.verb, a.title, a.before, a.absent.toList()..sort()],
       ],
@@ -245,6 +279,8 @@ void main() {
         clocks = [for (final c in pool) c.hlc.millis]..sort();
         expect(reference.rejected, isNotEmpty, reason: 'the pool has changes that don\'t count');
         expect(reference.validator.cutoffs, isNotEmpty, reason: 'the pool has a revocation with a cutoff');
+        expect(reference.store.liveOfType(RecordType.photo), isNotEmpty, reason: 'the pool has photos');
+        expect(pool.where((c) => c.type == RecordType.redemption), isNotEmpty, reason: 'and rewards asked for');
       });
 
       test('adding changes in any order and any batches gives what a full replay gives', () {

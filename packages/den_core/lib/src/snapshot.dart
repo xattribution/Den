@@ -49,6 +49,7 @@ class SnapshotCapture {
     required this.records,
     required this.rejected,
     required this.window,
+    required this.family,
     required this.history,
     required this.historyText,
     required this.historyMore,
@@ -71,6 +72,10 @@ class SnapshotCapture {
   /// From [windowStart] on: each change with its [Undo] (or the rejected marker) and, when it
   /// counted, how it was applied.
   final List<(Change, Object, Applied?)> window;
+
+  /// The valid changes to the family record before [windowStart], kept with the state so they
+  /// can be read without the history.
+  final List<Applied> family;
 
   /// How the valid changes before [windowStart] were applied; null when they are still in
   /// [historyText], a previous snapshot's history not yet read, followed by [historyMore].
@@ -142,7 +147,9 @@ class SnapshotCapture {
     }
     out
       ..write('],"devices":')
-      ..write(jsonEncode(devices.keys.toList()));
+      ..write(jsonEncode(devices.keys.toList()))
+      ..write(',"family":')
+      ..write(jsonEncode([for (final a in family) _appliedRow(a)]));
     out.write(',"window":[');
     for (var i = 0; i < window.length; i++) {
       if (i > 0) out.write(',');

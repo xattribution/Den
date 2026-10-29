@@ -92,6 +92,7 @@ class Materializer {
     if (lazy != null) {
       _lazyApplied = null;
       _lazyNewest = null;
+      _familyBefore = const [];
       List<Applied>? before;
       try {
         before = lazy();
@@ -110,6 +111,17 @@ class Materializer {
 
   /// The clock of the newest valid change, without reading a snapshot's history.
   Hlc? get newestApplied => _applied.isNotEmpty ? _applied.last.change.hlc : _lazyNewest;
+
+  /// The valid changes to the family record, in HLC order, without reading a snapshot's history
+  /// (Today reads them, for privacy notices, right after opening).
+  List<Applied> get appliedToFamily => [
+        if (_lazyApplied != null) ..._familyBefore,
+        for (final a in _applied)
+          if (a.change.type == RecordType.family) a,
+      ];
+
+  /// While the history is unread: the valid changes to the family record before the window.
+  List<Applied> _familyBefore = const [];
 
   /// Validates a change as the next one after everything applied.
   Rejection? check(Change c) => validator.check(c);
@@ -220,6 +232,7 @@ class Materializer {
       ..addAll(other.applied);
     _lazyApplied = null;
     _lazyNewest = null;
+    _familyBefore = const [];
     _steps
       ..clear()
       ..addAll(List<Object?>.filled(_log.length, null));
@@ -261,6 +274,7 @@ class Materializer {
     _applied.clear();
     _lazyApplied = null;
     _lazyNewest = null;
+    _familyBefore = const [];
     _steps.clear();
     _windowStart = 0;
     _applyFrom(0);
@@ -381,6 +395,11 @@ class Materializer {
       records: records,
       rejected: Map.of(rejected),
       window: window,
+      family: [
+        if (_lazyApplied != null) ..._familyBefore,
+        for (final a in _applied.sublist(0, appliedFrom))
+          if (a.change.type == RecordType.family) a,
+      ],
       history: _lazyApplied == null ? _applied.sublist(0, appliedFrom) : null,
       historyText: _lazyApplied == null ? null : _lazyHistoryText,
       historyMore: _lazyApplied == null ? const [] : _applied.sublist(0, appliedFrom),
@@ -507,6 +526,10 @@ class Materializer {
       _applied.add(a);
       _steps.add(undo);
     }
+    _familyBefore = [
+      for (final row in state['family']! as List)
+        _appliedOf(row as List, _byId[row[0]] ?? (throw const FormatException('The family history doesn\'t match'))),
+    ];
     final applyBefore = w - [for (var i = 0; i < w; i++) if (rejected.containsKey(covered[i].id)) i].length;
     final newest = state['newest'];
     _lazyNewest = newest is String ? Hlc.parse(newest) : null;
@@ -528,7 +551,10 @@ class Materializer {
             }
             return out;
           };
-    if (_lazyApplied == null) _lazyNewest = null;
+    if (_lazyApplied == null) {
+      _lazyNewest = null;
+      _familyBefore = const [];
+    }
     return rest;
   }
 
