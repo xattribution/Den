@@ -1,0 +1,26 @@
+# Den's firewall (docs/hosting.md, "Who can reach this server"): loads table inet den_fw at boot,
+# before the network, Docker or Tailscale come up, then puts back the homes' last known good
+# addresses. den-allowlist.timer keeps them current from there.
+#
+# Stopping this unit leaves the firewall in place on purpose (there's no ExecStop). To take it
+# away, see docs/hosting.md, "Uninstall". Don't enable the stock nftables.service next to it:
+# its configuration starts with `flush ruleset`, which also wipes Docker's and Tailscale's rules.
+
+[Unit]
+Description=Den firewall: only the family's homes and Tailscale reach this server
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target docker.service tailscaled.service
+After=nftables.service
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/den/den_fw.nft
+ExecStartPost=-/usr/local/sbin/den-allowlist --offline
+ExecReload=/usr/sbin/nft -f /etc/den/den_fw.nft
+ExecReload=-/usr/local/sbin/den-allowlist --offline
+
+[Install]
+WantedBy=sysinit.target
