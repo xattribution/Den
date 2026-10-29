@@ -13,6 +13,7 @@ export 'avatar.dart';
 export 'photos.dart';
 export 'feedback.dart';
 export 'pickers/people_picker.dart';
+export 'pickers/sheet_pickers.dart';
 export 'widgets/buttons.dart';
 export 'widgets/chips.dart';
 export 'widgets/choices.dart';
@@ -93,17 +94,39 @@ class CheckDot extends StatelessWidget {
           width: target,
           height: target,
           child: Center(
-            child: AnimatedContainer(
-              duration: DenMotion.reduced(context) ? Duration.zero : DenMotion.uiSettle,
-              curve: DenMotion.uiCurve,
-              width: size,
-              height: size,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: done ? c.ink : Colors.transparent,
-                border: Border.all(color: done ? c.ink : (enabled ? c.ink2 : c.ink3), width: 2),
-              ),
-              child: done ? Icon(PhosphorIconsBold.check, size: size * 0.62, color: c.onPrimary) : null,
+            // Fills on the check spring, like every check (CheckRing).
+            child: SpringValue(
+              value: done ? 1 : 0,
+              spring: DenMotion.check,
+              builder: (context, fill, _) {
+                final on = fill.clamp(0.0, 1.0);
+                return SizedBox.square(
+                  dimension: size,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Color.lerp(enabled ? c.ink2 : c.ink3, c.ink, on)!, width: 2),
+                        ),
+                        child: SizedBox.square(dimension: size),
+                      ),
+                      if (fill > 0.001)
+                        Transform.scale(
+                          scale: fill.clamp(0.0, 1.1),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(shape: BoxShape.circle, color: c.ink),
+                            child: SizedBox.square(
+                              dimension: size,
+                              child: Icon(PhosphorIconsBold.check, size: size * 0.62, color: c.onPrimary),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ),

@@ -132,6 +132,46 @@ void main() {
     expect(out, contains('Setup: waiting_for_code'));
   });
 
+  test('status of a hub the family removed says so, running or not', () async {
+    final removedPath = '${tmp.path}${Platform.pathSeparator}removed';
+    final hubDen = await DataDir(removedPath).open();
+    await hubDen.requestJoin(
+      familyId: phone.familyId!,
+      founderPubkey: phone.founderPubkey!,
+      deviceName: 'Old hub',
+      kind: DeviceKind.hub,
+      mode: DeviceMode.hub,
+    );
+    await phone.ingest(hubDen.changesSince(const {}));
+    await phone.approveDevice(hubDen.deviceId, mode: DeviceMode.hub);
+    await hubDen.ingest(phone.changesSince(const {}));
+    await phone.revokeDevice(hubDen.deviceId);
+    await hubDen.ingest(phone.changesSince(hubDen.versionVector));
+    final notice = RegExp(r'This hub was removed from the family on [A-Z][a-z]{2} \d{1,2}; reset it to add it again\.');
+
+    final logged = <String>[];
+    final hub = await DenHub.start(hubDen, HubConfig(
+      port: 0,
+      host: InternetAddress.loopbackIPv4,
+      mdns: false,
+      log: HubLog(level: LogLevel.info, sink: logged.add),
+    ));
+    final (running, out, err) = await run(['status', '--data', removedPath, '--port', '${hub.port}']);
+    await hub.stop();
+    await hubDen.close();
+    expect(running, 0, reason: err);
+    expect(out, matches(notice));
+    expect(out, isNot(contains('Setup:')));
+    expect(logged.where((l) => l.contains('This hub was removed from the family on ')), hasLength(1),
+        reason: 'it says so as it starts');
+    expect(logged.where((l) => l.contains('Setup code')), isEmpty, reason: 'a setup code would get nowhere');
+
+    final (stopped, out2, err2) = await run(['status', '--data', removedPath, '--port', '9']);
+    expect(stopped, 0, reason: err2);
+    expect(out2, contains('Not running'));
+    expect(out2, matches(notice));
+  });
+
   test('backup and restore round-trip under a passphrase', () async {
     final file = '${tmp.path}${Platform.pathSeparator}hub.denbackup';
     final env = {'DEN_PASS': 'correct horse battery'};

@@ -132,14 +132,15 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
     };
   }
 
-  Future<void> _pickDate(String? initial, ValueChanged<String> onPicked) async {
+  Future<void> _pickDate(String? initial, ValueChanged<String> onPicked, {String title = 'Pick a day'}) async {
     final app = context.watch(pointsReads);
     final d = app.formats.dateTime(initial ?? app.today);
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime(d.year, d.month, d.day),
-      firstDate: DateTime(d.year - 1),
-      lastDate: DateTime(d.year + 3),
+    final picked = await showDayPicker(
+      context,
+      title: title,
+      initial: DateTime(d.year, d.month, d.day),
+      first: DateTime(d.year - 1),
+      last: DateTime(d.year + 3),
     );
     if (picked != null) onPicked(DateFormat('yyyy-MM-dd').format(picked));
   }
@@ -171,8 +172,7 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
       appBar: AppBar(
         title: Text(_isNew ? 'New goal' : 'Edit goal'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: Sp.s),
+          BarAction(
             child: FilledButton(onPressed: _saving ? null : _save, child: Text(_isNew ? 'Add goal' : 'Save goal')),
           ),
         ],

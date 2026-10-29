@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/widgets.dart';
 
 /// How much room a screen has, by available width rather than device type.
@@ -103,13 +105,42 @@ class ReadableWidth extends StatelessWidget {
       );
 }
 
-/// Follows the platform's text size up to 200 %. Put it once above the app's routes.
+/// The text size a person picks in Settings, on top of the system's own (which a Home Screen web
+/// app never hears about: Dynamic Type doesn't reach Safari's pages).
+enum TextSize {
+  /// The system's size as it is.
+  standard(1),
+
+  /// 20 pt body text where the system says 17.
+  larger(20 / 17),
+
+  /// 23 pt body text where the system says 17: iOS's largest size before the accessibility sizes.
+  largest(23 / 17);
+
+  const TextSize(this.factor);
+
+  /// What it multiplies the system's text size by.
+  final double factor;
+}
+
+/// Follows the platform's text size times the person's [TextSize] up to 200 %, never past it.
+/// Put it once above the app's routes.
 class DenTextScale extends StatelessWidget {
-  const DenTextScale({super.key, required this.child});
+  const DenTextScale({super.key, required this.child, this.size = TextSize.standard});
 
   final Widget child;
+  final TextSize size;
+
+  /// The text scale for a system [scale] and the person's [size]: their product, held to
+  /// [DenLayout.maxTextScale].
+  static double combined(double scale, TextSize size) => math.min(scale * size.factor, DenLayout.maxTextScale);
 
   @override
-  Widget build(BuildContext context) =>
-      MediaQuery.withClampedTextScaling(maxScaleFactor: DenLayout.maxTextScale, child: child);
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final system = media.textScaler.scale(1);
+    final scale = combined(system, size);
+    if (scale == system) return child;
+    return MediaQuery(data: media.copyWith(textScaler: TextScaler.linear(scale)), child: child);
+  }
 }

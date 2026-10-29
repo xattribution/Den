@@ -134,42 +134,79 @@ String? stepWords((int, int)? steps, {required bool done}) {
 /// the color over the ring: an empty ring at the start, closing as steps are checked. Never a
 /// digit inside: at this size the font's slashed zero reads as a glitch. 26 across on a pill,
 /// 32 to 34 on a row.
+///
+/// Checking it fills it on the check spring ([DenMotion.check], the one small settle allowed):
+/// the color grows from the middle and the check lands with it. Steps close the arc on the UI
+/// spring. A second tap mid-way turns it around; under Reduce Motion the two looks crossfade.
 class CheckRing extends StatelessWidget {
-  const CheckRing({super.key, required this.color, required this.done, this.progress, this.size = 26});
+  const CheckRing({super.key, required this.color, required this.done, this.progress, this.size = 26, this.checkColor});
 
   final Color color;
   final bool done;
   final double? progress;
   final double size;
 
+  /// The check's color on the filled ring: dark ink on a person's color by default (lists, which
+  /// are nobody's, fill with ink2 and a card-colored check).
+  final Color? checkColor;
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final stroke = size > 28 ? 2.5 : 2.0;
-    if (done) {
-      return Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: color, border: Border.all(color: color, width: stroke)),
-        alignment: Alignment.center,
-        child: Icon(PhosphorIconsBold.check, size: (size * 0.62).roundToDouble(), color: c.onMarker),
-      );
-    }
     final p = progress;
-    if (p == null) {
-      return Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: color, width: stroke)),
+    final check = Icon(PhosphorIconsBold.check, size: (size * 0.62).roundToDouble(), color: checkColor ?? c.onMarker);
+    Widget ring = SizedBox.square(
+      dimension: size,
+      child: DecoratedBox(decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: color, width: stroke))),
+    );
+    if (p != null) {
+      ring = SpringValue(
+        value: p,
+        builder: (context, value, _) => CustomPaint(
+          size: Size.square(size),
+          painter: _ArcPainter(value.clamp(0.0, 1.0), color, stroke),
+        ),
       );
     }
-    return TweenAnimationBuilder<double>(
-      tween: Tween(end: p),
-      duration: DenMotion.reduced(context) ? Duration.zero : DenMotion.uiSettle,
-      curve: DenMotion.uiCurve,
-      builder: (context, value, _) => CustomPaint(
-        size: Size.square(size),
-        painter: _ArcPainter(value, color, stroke),
+    return RepaintBoundary(
+      child: SpringValue(
+        value: done ? 1 : 0,
+        spring: DenMotion.check,
+        child: check,
+        builder: (context, fill, check) {
+          if (fill <= 0.001) return ring;
+          if (fill >= 0.999 && fill <= 1.001) {
+            return Container(
+              width: size,
+              height: size,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: color, border: Border.all(color: color, width: stroke)),
+              alignment: Alignment.center,
+              child: check,
+            );
+          }
+          // Mid-way: the ring, the color growing inside it, the check scaling in with it.
+          return SizedBox.square(
+            dimension: size,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                ring,
+                Transform.scale(
+                  scale: fill.clamp(0.0, 1.1),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+                    child: SizedBox.square(dimension: size),
+                  ),
+                ),
+                Opacity(
+                  opacity: fill.clamp(0.0, 1.0),
+                  child: Transform.scale(scale: fill.clamp(0.0, 1.1), child: check),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -424,34 +461,57 @@ class DenSegmented<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final t = context.text;
-    return DecoratedBox(
-      decoration: ShapeDecoration(shape: const StadiumBorder(), color: c.fill),
-      child: Padding(
-        padding: const EdgeInsets.all(Sp.xs),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final MapEntry(:key, value: label) in options.entries)
-              DenPressable(
-                onTap: () {
-                  if (key != value) onChanged(key);
-                },
-                selected: key == value,
-                color: key == value ? c.primary : null,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 36, minWidth: 72),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: Sp.l),
-                    child: Center(
-                      widthFactor: 1,
-                      child: Text(label, style: key == value ? t.label(c.onPrimary) : t.control(c.ink2)),
-                    ),
-                  ),
-                ),
+    final segments = [
+      for (final MapEntry(:key, value: label) in options.entries)
+        DenPressable(
+          onTap: () {
+            if (key != value) onChanged(key);
+          },
+          selected: key == value,
+          color: key == value ? c.primary : null,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 36, minWidth: 72),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Sp.l),
+              child: Center(
+                widthFactor: 1,
+                child: Text(label, style: key == value ? t.label(c.onPrimary) : t.control(c.ink2), maxLines: 1, softWrap: false),
               ),
-          ],
+            ),
+          ),
         ),
-      ),
+    ];
+    return LayoutBuilder(
+      builder: (context, box) {
+        // Labels never shrink or wrap; when large text makes them wider than the room, the
+        // segments wrap onto a second line in a rounded track instead.
+        final scaler = MediaQuery.textScalerOf(context);
+        var needed = Sp.xs * 2;
+        for (final label in options.values) {
+          final painter = TextPainter(
+            text: TextSpan(text: label, style: t.label(c.ink)),
+            textDirection: TextDirection.ltr,
+            textScaler: scaler,
+            maxLines: 1,
+          )..layout();
+          needed += (painter.width + Sp.l * 2).clamp(72.0, double.infinity);
+        }
+        final fits = needed <= box.maxWidth;
+        return DecoratedBox(
+          decoration: ShapeDecoration(
+            shape: fits
+                ? const StadiumBorder()
+                : const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(Radii.section))),
+            color: c.fill,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(Sp.xs),
+            child: fits
+                ? Row(mainAxisSize: MainAxisSize.min, children: segments)
+                : Wrap(spacing: Sp.xs, runSpacing: Sp.xs, children: segments),
+          ),
+        );
+      },
     );
   }
 }

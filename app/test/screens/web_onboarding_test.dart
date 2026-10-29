@@ -9,6 +9,7 @@ import 'package:den_app/features/onboarding/screens/welcome_screen.dart';
 import 'package:den_app/app/app_state.dart';
 import 'package:den_app/platform/web/web_app.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
@@ -150,6 +151,65 @@ void main() {
     final state = await empty(tester);
     await pumpScreen(tester, const WaitingScreen(ticket: JoinTicket(familyId: 'F')), state: state);
     expect(find.text('Start over with a new invite'), findsOneWidget);
+  });
+
+  /// What a parent's invite message says (InviteMessage.text), with real invite words.
+  const message = 'Zoe, join The Carters on Den: https://den.example.com/#/join/maple-river-canoe-tiger\n\n'
+      'On an iPhone or iPad, open the link in Safari, add Den to your Home Screen, then open Den from there. '
+      'If it asks for a code, type: maple river canoe tiger\n\nThis invite works until Monday, October 19.';
+
+  test('The whole invite message gives its words and the hub', () {
+    final whole = inviteFrom(message);
+    expect(whole.words, ['maple', 'river', 'canoe', 'tiger']);
+    expect(whole.hub, 'https://den.example.com');
+    // A messaging app that dropped the link still leaves the words to type.
+    final noLink = inviteFrom(message.replaceFirst('https://den.example.com/#/join/maple-river-canoe-tiger', 'the link'));
+    expect(noLink.words, ['maple', 'river', 'canoe', 'tiger']);
+    expect(noLink.hub, isNull);
+    expect(inviteFrom('maple-river-canoe-tiger').words, ['maple', 'river', 'canoe', 'tiger']);
+  });
+
+  group('Paste on Join', () {
+    String? clipboard;
+    setUp(() => clipboard = null);
+    String fieldText(WidgetTester tester, int index) =>
+        tester.widget<TextField>(find.byType(TextField).at(index)).controller!.text;
+
+    Future<void> pumpJoin(WidgetTester tester) async {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.getData') return clipboard == null ? null : {'text': clipboard};
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+      final state = await empty(tester);
+      await pumpScreen(tester, const JoinScreen(scan: false), state: state, pushed: true);
+    }
+
+    testWidgets('fills the four words from the whole invite message, and the hub', (tester) async {
+      clipboard = message;
+      await pumpJoin(tester);
+      await tester.tap(find.text('Paste the invite'));
+      await tester.pumpAndSettle();
+      expect(fieldText(tester, 0), 'maple river canoe tiger');
+      expect(fieldText(tester, 1), 'https://den.example.com');
+      await matchShot('onboarding_join_pasted_phone');
+    });
+
+    testWidgets('takes the words with spaces or dashes', (tester) async {
+      clipboard = ' Maple-River-Canoe-Tiger ';
+      await pumpJoin(tester);
+      await tester.tap(find.text('Paste the invite'));
+      await tester.pumpAndSettle();
+      expect(fieldText(tester, 0), 'maple river canoe tiger');
+    });
+
+    testWidgets("says so when there's no invite on the clipboard", (tester) async {
+      clipboard = 'Pick up milk on the way home';
+      await pumpJoin(tester);
+      await tester.tap(find.text('Paste the invite'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('no invite on the clipboard'), findsOneWidget);
+    });
   });
 
   test('An invite pasted whole gives its words and the hub', () {

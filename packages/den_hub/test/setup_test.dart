@@ -140,4 +140,30 @@ void main() {
     expect(browser.owner?.name, 'Alex');
     await attempt.peer.close();
   });
+
+  test('a hub the family removed hears so from the first phone that refuses it, and says so', () async {
+    final logged = <String>[];
+    final f = await HubFixture.start(
+      configure: (c) => HubConfig(port: 0, host: InternetAddress.loopbackIPv4, mdns: false, log: HubLog(level: LogLevel.info, sink: logged.add)),
+    );
+    addTearDown(f.stop);
+    expect((await f.call('GET', '/api/v1/hub/status')).body['stage'], 'ready');
+
+    // Removed on a parent's phone ("Reset the hub, keep the family" left it behind).
+    await f.phone.revokeDevice(f.hubDen.deviceId);
+    final phoneNode = SyncNode(f.phone);
+    addTearDown(phoneNode.close);
+    final peer = await phoneNode.connect(await connectWebSocket(Uri.parse('ws://127.0.0.1:${f.hub.port}/ws')));
+    await peer.closed;
+    expect(peer.closeReason, 'removed');
+
+    final notice = RegExp(r'^This hub was removed from the family on [A-Z][a-z]{2} \d{1,2}; reset it to add it again$');
+    await eventually(() async => (await f.call('GET', '/api/v1/hub/status')).body['stage'] == 'removed');
+    final status = await f.call('GET', '/api/v1/hub/status');
+    expect(status.body['removed'], matches(notice));
+    expect(status.body, containsPair('paired', false));
+    expect(status.body, containsPair('setup_needed', false), reason: 'a setup code would get nowhere');
+    expect(f.hub.setupCode, isNull);
+    expect(logged.where((l) => l.contains('This hub was removed from the family on ')), hasLength(1));
+  });
 }

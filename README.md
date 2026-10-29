@@ -2,7 +2,7 @@
 
 The family's calendar, chores, lists and points, on the family's own devices.
 
-![Den on Android: today's events with person colors, a ride nobody has taken, and chores by person](docs/screens/android-today.png)
+![Den's Today on an iPad and a phone: what needs you (a ride nobody is driving, a reward to approve, a late chore), today's events, and chores by person](docs/screens/today-ipad-and-phone.png)
 
 Every phone keeps the whole family, encrypted, and works without a connection. A **hub**, one
 small always-on server you run, keeps everyone in sync while phones sleep, serves Den as a web

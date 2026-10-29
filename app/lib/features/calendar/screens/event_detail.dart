@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/app_state.dart';
 import '../../../app/navigation.dart';
+import '../../../app/words.dart';
 import '../../../design/layout.dart';
 import '../../../design/motion.dart';
 import '../../../design/sheet.dart';

@@ -477,9 +477,15 @@ docker compose exec hub /app/bin/den_hub setup-code
 
 Then, on a parent's phone: Settings, Advanced, Hub and sync, Add a device, **Another hub**, with
 `https://den.example.com` and the new setup code. Compare the words and approve; the phone sends
-the hub the whole family, and the other phones catch up through it. The old hub stays in the
-family's devices (the app can't remove a hub yet), and a phone may keep expecting it at this
-address instead of the new one, which is another reason to prefer the backup.
+the hub the whole family, and the other phones catch up through it, the ones that haven't heard
+of the new hub yet too (it shows them the parent's approval).
+
+The new hub is a new device. The phone that added it sees that the old one used the same address
+and offers **Remove the old hub**: do that, so phones stop looking for it. If you skipped it,
+remove it later under Hub and sync, where each hub shows when this phone last saw it and when it
+was added; the old one is the one not seen since the reset. Until then phones still sync, with
+whichever hub answers at the address. If the family lets the hub help them get back in, the new
+hub has a new recovery key: see [If a parent loses their phone](#if-a-parent-loses-their-phone).
 
 ### Factory reset
 
@@ -612,9 +618,10 @@ elsewhere: [Building on a small server](#building-on-a-small-server).
 **The setup code is lost.** `docker compose exec hub /app/bin/den_hub setup-code` prints it
 again; it says so if the hub is already in a family.
 
-**The hub was removed from the family.** Phones that know refuse to sync with it, though the hub
-itself may still say `In a family and serving`: nobody tells a removed device. It can't come back
-with the same keys, so [reset the hub](#reset-the-hub-keep-the-family) and add it again.
+**The hub was removed from the family.** A parent removed it (Hub and sync, **Remove**). The first
+phone that reaches it refuses it and tells it so, and from then on `den_hub status` and the hub's
+log say "This hub was removed from the family on Oct 28; reset it to add it again". It can't come
+back with the same keys, so [reset the hub](#reset-the-hub-keep-the-family) and add it again.
 
 ## The AI helper
 

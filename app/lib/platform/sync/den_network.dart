@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:collection/collection.dart';
 import 'package:den_core/den_core.dart';
@@ -15,12 +16,20 @@ import '../capabilities.dart';
 /// through the relay. Without a hub, devices still pair and sync directly. On desktops and
 /// Android a parent can make this device the hub itself ([keepOnline]).
 class DenNetwork extends ChangeNotifier {
-  DenNetwork(this.den, {List<Uri> hubs = const [], this.relay, LocalHub? localHub, String? joinHub, String? turnedAway})
-      : node = SyncNode(den),
+  DenNetwork(
+    this.den, {
+    List<Uri> hubs = const [],
+    this.relay,
+    LocalHub? localHub,
+    String? joinHub,
+    String? turnedAway,
+    Map<String, HubSighting> seen = const {},
+  })  : node = SyncNode(den),
         localHub = localHub ?? LocalHub.create(),
         _hubs = [...hubs],
         _joinHub = joinHub,
-        _turnedAway = turnedAway {
+        _turnedAway = turnedAway,
+        _seen = {...seen} {
     this.localHub.addListener(notifyListeners);
   }
 
@@ -28,6 +37,7 @@ class DenNetwork extends ChangeNotifier {
   static const _relayKey = 'den.relay';
   static const _joinHubKey = 'den.joinHub';
   static const _turnedAwayKey = 'den.turnedAway';
+  static const _seenKey = 'den.hubsSeen';
 
   /// Restores the saved hub addresses and relay for this device.
   static Future<DenNetwork> load(Den den) async {
@@ -39,6 +49,7 @@ class DenNetwork extends ChangeNotifier {
       relay: relay == null ? null : Uri.tryParse(relay),
       joinHub: prefs.getString(_joinHubKey),
       turnedAway: prefs.getString(_turnedAwayKey),
+      seen: HubSighting.decode(prefs.getString(_seenKey)),
     );
   }
 
@@ -56,6 +67,9 @@ class DenNetwork extends ChangeNotifier {
   /// The device id a parent turned away while it waited, so it stops asking (a new invite, with
   /// new keys, is the way back in).
   String? _turnedAway;
+
+  /// When and where this device last synced with each of the family's hubs, by device id.
+  final Map<String, HubSighting> _seen;
 
   /// The relay this family uses to reach the hub from outside the house, if any.
   Uri? relay;
@@ -78,9 +92,47 @@ class DenNetwork extends ChangeNotifier {
   /// Saved hub sync addresses, `ws://host:47733/ws` form.
   List<Uri> get hubs => List.unmodifiable(_hubs);
 
-  /// The family's hub device, once one has been approved.
-  Device? get hubDevice =>
-      den.devices.firstWhereOrNull((d) => d.mode == DeviceMode.hub && d.approved && !d.revoked && d.id != den.deviceId);
+  /// The family's hub device, once one has been approved: the first of [hubDevices].
+  Device? get hubDevice => hubDevices.firstOrNull;
+
+  /// The family's approved hubs other than this device, the one to use first: the hub this
+  /// device is synced with now, then the one it synced with most recently, then the newest
+  /// approved. After "reset the hub, keep the family" there are two, often with the same name,
+  /// until a parent removes the old one; name order would pick the dead one half the time.
+  List<Device> get hubDevices {
+    final live = _status.state == SyncState.live || _status.state == SyncState.syncing ? _status.device : null;
+    Hlc approvedAt(Device d) => d.rec.fieldTimes['approved'] ?? d.rec.updated;
+    return den.devices.where((d) => d.mode == DeviceMode.hub && d.approved && !d.revoked && d.id != den.deviceId).toList()
+      ..sort((a, b) {
+        if (a.id == live || b.id == live) return a.id == live ? -1 : 1;
+        final seen = (_seen[b.id]?.at ?? 0).compareTo(_seen[a.id]?.at ?? 0);
+        return seen != 0 ? seen : approvedAt(b).compareTo(approvedAt(a));
+      });
+  }
+
+  /// When this device last synced with [hub], or null if it never has. "Now" while it is.
+  DateTime? lastSeen(String hub) {
+    if (_status.device == hub && _status.state == SyncState.live) return DateTime.fromMillisecondsSinceEpoch(den.now());
+    final at = _seen[hub]?.at;
+    return at == null ? null : DateTime.fromMillisecondsSinceEpoch(at);
+  }
+
+  /// Whether this device is synced with [hub] right now.
+  bool syncedWith(String hub) => _status.device == hub && _status.state == SyncState.live;
+
+  /// The family's hubs (other than [except]) that a hub at [address] would replace: those this
+  /// device last reached at the same host and port and, for hubs it never recorded an address
+  /// for, all of them when the address is one already saved here.
+  List<Device> hubsAt(Uri address, {String? except}) {
+    bool same(Uri a) => a.host == address.host && _port(a) == _port(address);
+    final saved = _hubs.any(same);
+    return [
+      for (final d in hubDevices)
+        if (d.id != except && (_seen[d.id]?.address == null ? saved : same(_seen[d.id]!.address!))) d,
+    ];
+  }
+
+  static int _port(Uri u) => u.hasPort ? u.port : (u.scheme == 'https' || u.scheme == 'wss' ? 443 : 80);
 
   /// Whether this device is itself the family's hub.
   bool get isHub => den.thisDevice?.mode == DeviceMode.hub;
@@ -104,18 +156,25 @@ class DenNetwork extends ChangeNotifier {
       _setStatus(const SyncStatus(SyncState.live));
       return;
     }
+    final hubs = hubDevices;
+    final usual = hubs.isEmpty ? null : _seen[hubs.first.id]?.address;
+    // Direct addresses aren't pinned to one hub: any hub the family approved may answer there,
+    // and one it removed is told so and tried last (SyncClient). The address the preferred hub
+    // last answered at goes first; relay tunnels name each hub.
     final endpoints = <Uri>{
       ...?_servingHub(),
+      if (usual != null && _hubs.contains(usual)) usual,
       ..._hubs,
       ...await local.discoverHubs(den.familyId!),
-      if (relay != null && hubDevice != null) relayConnectUri(relay!, hubDevice!.id),
+      if (relay != null)
+        for (final h in hubs) relayConnectUri(relay!, h.id),
     }.toList();
     if (_disposed) return;
     if (endpoints.isEmpty) {
       _setStatus(const SyncStatus(SyncState.offline, lastError: 'no hub'));
       return;
     }
-    _run(SyncClient(node: node, endpoints: endpoints, expectDevice: hubDevice?.id));
+    _run(SyncClient(node: node, endpoints: endpoints));
   }
 
   void _run(SyncClient client) {
@@ -199,13 +258,16 @@ class DenNetwork extends ChangeNotifier {
     }
   }
 
-  /// Adds a hub address typed by a person or found in an invite, saves it and reconnects.
+  /// Adds a hub address typed by a person or found in an invite, saves it and reconnects (also
+  /// when it was saved already: a new hub may answer there now).
   Future<void> addHub(String address) async {
     if (_disposed) return;
     final uri = syncUriFor(address);
-    if (uri == null || _hubs.contains(uri)) return;
-    _hubs.add(uri);
-    await _save();
+    if (uri == null) return;
+    if (!_hubs.contains(uri)) {
+      _hubs.add(uri);
+      await _save();
+    }
     await start();
   }
 
@@ -228,8 +290,10 @@ class DenNetwork extends ChangeNotifier {
   Future<List<Uri>> hubBases() async {
     if (!den.hasFamily || (!isHub && hubDevice == null)) return const [];
     Uri http(Uri sync) => Uri(scheme: sync.scheme == 'wss' ? 'https' : 'http', host: sync.host, port: sync.port);
+    final live = _status.state == SyncState.live ? _status.endpoint : null;
     return <Uri>{
       if (isHub) ...localHub.addresses,
+      if (live != null && (live.scheme == 'ws' || live.scheme == 'wss') && live.path == '/ws') http(live),
       for (final s in [...?_servingHub(), ..._hubs]) http(s),
       for (final s in await local.discoverHubs(den.familyId!)) http(s),
     }.toList();
@@ -275,7 +339,7 @@ class DenNetwork extends ChangeNotifier {
             : "This device is set to be the family's hub, but it can't run one. Turn that off from a parent's phone.",
       };
     }
-    final hub = hubDevice?.name ?? 'the hub';
+    final hub = den.device(_status.device ?? '')?.name ?? hubDevice?.name ?? 'the hub';
     return switch (_status.state) {
       SyncState.live => 'Up to date with $hub',
       SyncState.syncing => 'Catching up with $hub',
@@ -290,11 +354,35 @@ class DenNetwork extends ChangeNotifier {
 
   void _setStatus(SyncStatus status) {
     if (_disposed) return;
+    final before = _status;
     _status = status;
+    _noteSighting(before, status);
     notifyListeners();
     final error = status.lastError;
     if ((error == 'declined' || error == 'revoked') && den.hasFamily && !den.isApproved && !turnedAway) {
       unawaited(_turnAway());
+    }
+  }
+
+  /// Remembers when and where this device was last synced with a hub: as it goes live, and
+  /// as the connection ends.
+  void _noteSighting(SyncStatus before, SyncStatus now) {
+    final wasLive = before.state == SyncState.live ? before : null;
+    final sighting = now.state == SyncState.live ? now : wasLive;
+    final hub = sighting?.device;
+    if (sighting == null || hub == null || (wasLive != null && now.state == SyncState.live && before.device == hub)) return;
+    final endpoint = sighting.endpoint;
+    final direct = endpoint != null && (endpoint.scheme == 'ws' || endpoint.scheme == 'wss') && endpoint.path == '/ws';
+    _seen[hub] = HubSighting(den.now(), direct ? endpoint : _seen[hub]?.address);
+    unawaited(_saveSeen());
+  }
+
+  Future<void> _saveSeen() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_seenKey, HubSighting.encode(_seen));
+    } on Object {
+      // Only a preference for which hub to try first.
     }
   }
 
@@ -351,4 +439,34 @@ class DenNetwork extends ChangeNotifier {
     unawaited(node.close());
     super.dispose();
   }
+}
+
+/// When this device last synced with a hub, and the direct address it reached it at (null
+/// through the relay).
+class HubSighting {
+  const HubSighting(this.at, this.address);
+
+  /// Milliseconds since the epoch.
+  final int at;
+  final Uri? address;
+
+  static Map<String, HubSighting> decode(String? text) {
+    if (text == null) return {};
+    final out = <String, HubSighting>{};
+    try {
+      for (final e in (jsonDecode(text) as Map<String, Object?>).entries) {
+        final v = e.value;
+        if (v is! Map || v['at'] is! int) continue;
+        final address = Uri.tryParse(v['address'] as String? ?? '');
+        out[e.key] = HubSighting(v['at'] as int, address == null || address.host.isEmpty ? null : address);
+      }
+    } on Object {
+      // A preference; start over.
+    }
+    return out;
+  }
+
+  static String encode(Map<String, HubSighting> seen) => jsonEncode({
+        for (final e in seen.entries) e.key: {'at': e.value.at, if (e.value.address != null) 'address': e.value.address.toString()},
+      });
 }
