@@ -13,6 +13,7 @@ import 'hlc.dart';
 import 'ids.dart';
 import 'materializer.dart';
 import 'model.dart';
+import 'names.dart';
 import 'order_keys.dart';
 import 'parallel.dart';
 import 'permissions.dart';
@@ -3054,9 +3055,24 @@ class Den {
         e.diffs.any((d) => has(d.after) || has(d.before));
   }
 
-  List<SearchHit> search(String query, {int limit = 50}) {
+  /// Words a question asked of search carries that don't name anything.
+  static const Set<String> _searchFiller = {
+    'a', 'an', 'the', 'is', 'are', 'when', 'what', 'where', 'who', 'at', 'on', 'in', 'for', 'to', 'of', 'my', 'our',
+    'and', 'with', 'next', 'this', 'whats', "what's", 'find',
+  };
+
+  /// Finds people, events, chores, lists and items by words, best first. A record matches when
+  /// the whole query is in its title (best), in its place or notes, or when every word of the
+  /// query is somewhere in it: its title, place, notes, store, list, or the people it's for (so
+  /// "dentist jimmy" finds Jimmy's dentist visit, and "Jimmy" his events and chores too). A word
+  /// of four letters or more also matches one a letter or two off ("socer"). Removed things,
+  /// which History keeps, are left out unless [includeHistory].
+  List<SearchHit> search(String query, {int limit = 50, bool includeHistory = false}) {
     final q = query.trim().toLowerCase();
     if (q.isEmpty) return const [];
+    final all = searchWords(q);
+    final content = [for (final w in all) if (!_searchFiller.contains(w)) w];
+    final words = content.isEmpty ? all : content;
     final hits = <(int, int, SearchHit)>[];
     final seen = <String>{};
     int rank(String text) {
@@ -3067,39 +3083,57 @@ class Den {
       return t.contains(q) ? 3 : -1;
     }
 
-    void add(int typeOrder, String text, SearchHit hit, [List<String> also = const []]) {
+    void add(int typeOrder, String text, SearchHit hit, [List<String> also = const [], List<String> people = const []]) {
       var r = rank(text);
       for (final extra in also) {
         final ar = rank(extra);
         if (ar >= 0 && (r < 0 || ar + 4 < r)) r = ar + 4;
       }
+      if (r < 0 && words.isNotEmpty) {
+        final hay = searchWords([text, ...also, ...people].join(' ').toLowerCase());
+        final exact = words.every((w) => hay.any((h) => h.startsWith(w) || (w.length >= 3 && h.contains(w))));
+        if (exact) {
+          r = 8;
+        } else if (words.every((w) => hay.any((h) => h.startsWith(w) || nearlySame(w, h)))) {
+          r = 10;
+        }
+      }
       if (r < 0 || !seen.add('${hit.type}/${hit.id}')) return;
       hits.add((r, typeOrder, hit));
     }
 
+    List<String> names(Iterable<String> ids) => [for (final id in ids) ?member(id)?.name];
     for (final m in members) {
       add(0, m.name, SearchHit(type: RecordType.member, id: m.id, title: m.name));
     }
     final now = _now();
     for (final e in events) {
       final next = seriesStarts(e, _zone, notBefore: now).firstOrNull ?? e.start;
-      add(1, e.title, SearchHit(type: RecordType.event, id: e.id, title: e.title, detail: e.location.isEmpty ? null : e.location, when: next), [e.location, e.notes]);
+      add(1, e.title, SearchHit(type: RecordType.event, id: e.id, title: e.title, detail: e.location.isEmpty ? null : e.location, when: next),
+          [e.location, e.notes], names(e.assignees));
     }
     for (final c in chores) {
-      add(2, c.title, SearchHit(type: RecordType.chore, id: c.id, title: c.title), [c.notes]);
+      final owners = switch (c.owner) {
+        OwnerMember(:final id) => [id],
+        OwnerRotation(:final ids) => ids,
+        OwnerAnyone() => const <String>[],
+      };
+      add(2, c.title, SearchHit(type: RecordType.chore, id: c.id, title: c.title), [c.notes], names(owners));
     }
     for (final l in lists) {
       add(3, l.list.title, SearchHit(type: RecordType.list, id: l.list.id, title: l.list.title));
       for (final i in l.items) {
-        add(4, i.text, SearchHit(type: RecordType.item, id: i.id, title: i.text, detail: l.list.title), [i.store ?? '']);
+        add(4, i.text, SearchHit(type: RecordType.item, id: i.id, title: i.text, detail: l.list.title), [i.store ?? ''], [l.list.title]);
       }
     }
-    final readable = readableSpaces;
-    for (final a in _mat.applied.reversed) {
-      final c = a.change;
-      if (!readable.contains(c.space) || a.title.isEmpty) continue;
-      if (!const {RecordType.event, RecordType.chore, RecordType.list, RecordType.item}.contains(c.type)) continue;
-      add(5, a.title, SearchHit(type: c.type, id: c.rid, title: a.title, detail: 'History', when: c.hlc.millis));
+    if (includeHistory) {
+      final readable = readableSpaces;
+      for (final a in _mat.applied.reversed) {
+        final c = a.change;
+        if (!readable.contains(c.space) || a.title.isEmpty) continue;
+        if (!const {RecordType.event, RecordType.chore, RecordType.list, RecordType.item}.contains(c.type)) continue;
+        add(12, a.title, SearchHit(type: c.type, id: c.rid, title: a.title, detail: 'History', when: c.hlc.millis));
+      }
     }
     hits.sort((a, b) {
       if (a.$1 != b.$1) return a.$1.compareTo(b.$1);

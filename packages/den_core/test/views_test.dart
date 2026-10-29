@@ -153,12 +153,13 @@ void main() {
     final item = await den.addItem(list, text: 'Orange slices for soccer');
     final old = await den.addItem(list, text: 'Soccer socks');
     await den.removeItem(old);
-    final hits = den.search('soccer');
+    final hits = den.search('soccer', includeHistory: true);
     expect(hits.first.title, 'Soccer practice');
     expect(hits.first.when, at('2026-10-20', '17:00'));
     expect(hits.map((h) => h.type), containsAll([RecordType.event, RecordType.chore, RecordType.list, RecordType.item]));
     expect(hits.firstWhere((h) => h.id == item).detail, 'Soccer snacks');
     expect(hits.firstWhere((h) => h.id == old).detail, 'History');
+    expect(den.search('soccer').map((h) => h.id), isNot(contains(old)), reason: 'removed things only when asked');
     expect(den.search('riverside').single.title, 'Soccer practice');
     expect(den.search('zo').single.type, RecordType.member);
     expect(den.search('  '), isEmpty);

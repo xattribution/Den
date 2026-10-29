@@ -8,6 +8,7 @@ export 'src/family_controls.dart';
 export 'src/hlc.dart';
 export 'src/ids.dart' show newId, base32, randomBytes;
 export 'src/model.dart';
+export 'src/names.dart';
 export 'src/permissions.dart';
 export 'src/recovery.dart'
     show
