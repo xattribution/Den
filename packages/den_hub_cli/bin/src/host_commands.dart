@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/args.dart';
+import 'package:den_core/den_core.dart' show DeviceKeys;
 import 'package:den_hub/cli_support.dart' show restoreMarkerDoc;
 import 'package:den_hub/den_hub.dart';
 import 'package:http/http.dart' as http;
@@ -86,13 +87,30 @@ Future<Map<String, Object?>?> getJsonAt(Uri url, String? hostname) async {
   }
 }
 
+/// GETs [url] as if at [hostname]: its status and JSON object (empty when it isn't one), for any
+/// status; null when nothing answers. A host still opening a family answers `503`, and runs.
+Future<({int status, Map<String, Object?> json})?> probeAt(Uri url, String? hostname) async {
+  try {
+    final r = await http.get(url, headers: {'host': ?hostname}).timeout(const Duration(seconds: 2));
+    Object? json;
+    try {
+      json = jsonDecode(r.body);
+    } on FormatException {
+      json = null;
+    }
+    return (status: r.statusCode, json: json is Map ? json.cast<String, Object?>() : <String, Object?>{});
+  } on Object {
+    return null;
+  }
+}
+
 /// Asks the host running on [port] over [data] something only `den_hub` on this machine may
 /// (`/api/v1/host/...`), with the secret it left in `host/cli-secret`. Null when no host runs
 /// there (or an older hub does, which has no secret).
 Future<({int status, Map<String, Object?> json})?> hostCall(
     int port, DataDir data, String method, String path, {Object? body}) async {
   final base = Uri.parse('http://127.0.0.1:$port');
-  if (await getJsonAt(base.resolve('/health'), null) == null) return null;
+  if (await probeAt(base.resolve('/health'), null) == null) return null;
   final secret = HostState.readCliSecret(data.path);
   if (secret == null) return null;
   final request = http.Request(method, base.resolve(path))..headers[DenHost.secretHeader] = secret;
@@ -160,7 +178,8 @@ Future<int> addFamily(ArgResults a, DataDir data, int port, CliIo io) async {
   final name = normalizeHostname(url.host)!;
   final first = primaryUrl(data, io.environment);
   if (first != null && normalizeHostname(first.host) == name) throw StateError('$name is the first family\'s address.');
-  final running = await hostCall(port, data, 'POST', '/api/v1/host/families', body: {'public_url': '$url'});
+  final id = a['id'] as String?;
+  final running = await hostCall(port, data, 'POST', '/api/v1/host/families', body: {'public_url': '$url', 'id': ?id});
   if (running != null) {
     if (running.status != 201) throw StateError(_errorOf(running.json, running.status));
     final code = running.json['setup_code'], device = running.json['device'];
@@ -181,8 +200,13 @@ Future<int> addFamily(ArgResults a, DataDir data, int port, CliIo io) async {
   }
   try {
     final state = HostState(data.path);
-    final previous = state.find(name);
-    if (previous != null && !previous.removed) throw StateError('$name is on this host already.');
+    if (state.logs.any((l) => l.hostname == name)) throw StateError('$name is on this host already.');
+    final gone = state.removedAt(name);
+    if (id != null && !gone.any((l) => l.id == id)) throw StateError('No family taken off $name has the id $id.');
+    if (id == null && gone.length > 1) {
+      throw StateError('More than one family was taken off $name (${gone.map((l) => l.id).join(', ')}): say which with --id.');
+    }
+    final previous = id == null ? gone.firstOrNull : gone.firstWhere((l) => l.id == id);
     final log = previous?.copyWith(removed: false) ??
         HostedLog(id: HostedLog.newId(), publicUrl: url, added: DateTime.now().toUtc().millisecondsSinceEpoch);
     if (previous == null) await data.log(log.id).keys();
@@ -194,6 +218,75 @@ Future<int> addFamily(ArgResults a, DataDir data, int port, CliIo io) async {
   } finally {
     await data.unlock();
   }
+}
+
+/// [path] with `..` and symbolic links resolved, without a trailing separator.
+String _real(String path) {
+  String out;
+  try {
+    out = Directory(path).resolveSymbolicLinksSync();
+  } on FileSystemException {
+    out = Directory(path).absolute.uri.normalizePath().toFilePath();
+  }
+  while (out.length > 1 && out.endsWith(Platform.pathSeparator)) {
+    out = out.substring(0, out.length - 1);
+  }
+  return out;
+}
+
+/// The hub device id in [dir]'s `keys.json`, or null without one.
+Future<String?> _deviceOf(DataDir dir) async {
+  if (!dir.exists) return null;
+  try {
+    return await (await DeviceKeys.fromJson((jsonDecode(await dir.keysFile.readAsString()) as Map).cast<String, Object?>())).deviceId();
+  } on Object {
+    return null;
+  }
+}
+
+/// The hub device id in a `keys.json` file's [bytes], or null.
+Future<String?> deviceInKeys(List<int> bytes) async {
+  try {
+    return await (await DeviceKeys.fromJson((jsonDecode(utf8.decode(bytes)) as Map).cast<String, Object?>())).deviceId();
+  } on Object {
+    return null;
+  }
+}
+
+/// The family on the host in [data] other than the one in [target] whose hub is [device] (its
+/// address, or `the first family`), or null.
+Future<String?> hubElsewhere(DataDir data, DataDir target, String device, Uri? first) async {
+  final mine = _real(target.path);
+  for (final k in await _knownHubs(data, first)) {
+    final dir = k.id == null ? data : data.log(k.id!);
+    if (k.device == device && _real(dir.path) != mine) return k.hostname ?? k.id ?? 'the first family';
+  }
+  return null;
+}
+
+/// A hub this host has had: the first family's, each family `host.json` lists (taken off or
+/// not), and any copy in `logs/` it doesn't list (an adopt that stopped halfway).
+typedef _Known = ({String device, String? hostname, String? id, bool removed, bool listed});
+
+Future<List<_Known>> _knownHubs(DataDir data, Uri? first) async {
+  final out = <_Known>[];
+  final mine = await _deviceOf(data);
+  if (mine != null) out.add((device: mine, hostname: first == null ? null : normalizeHostname(first.host), id: null, removed: false, listed: true));
+  final state = HostState(data.path);
+  for (final l in state.all) {
+    final device = await _deviceOf(data.log(l.id));
+    if (device != null) out.add((device: device, hostname: l.hostname, id: l.id, removed: l.removed, listed: true));
+  }
+  final logs = Directory('${data.path}${Platform.pathSeparator}$hostLogsDir');
+  if (logs.existsSync()) {
+    for (final e in logs.listSync()) {
+      final id = e.uri.pathSegments.where((x) => x.isNotEmpty).last;
+      if (e is! Directory || state.log(id) != null) continue;
+      final device = await _deviceOf(data.log(id));
+      if (device != null) out.add((device: device, hostname: null, id: id, removed: false, listed: false));
+    }
+  }
+  return out;
 }
 
 /// What `adopt` learns about a hub's data directory, from the directory alone.
@@ -222,6 +315,11 @@ class _Hub {
 /// browsers keep their reminders. The other hub must be stopped; its directory is copied, never
 /// changed, except for a note that makes it wait for a phone before writing anything, should it
 /// ever start again. `--dry-run` says what it would do and changes nothing.
+///
+/// Run again for a hub the host already serves at that address (a merge that stopped after the
+/// copy), it says so and succeeds, changing nothing. A hub the host has, or had (a family taken
+/// off it), is never adopted again, by whatever path it is reached (`..` and symbolic links are
+/// resolved, and the host's own data directory is refused).
 Future<int> adopt(ArgResults a, DataDir data, int port, CliIo io) async {
   if (a.rest.length != 1) throw CliUsage('Give the other hub\'s data directory: den_hub adopt /path/to/its/data --hostname ADDRESS');
   final source = DataDir(a.rest.single);
@@ -229,10 +327,29 @@ Future<int> adopt(ArgResults a, DataDir data, int port, CliIo io) async {
   final name = normalizeHostname(url.host)!;
   final dry = a['dry-run'] == true;
   if (!source.exists) throw StateError('There\'s no hub in ${source.path} (no keys.json).');
-  final from = Directory(source.path).absolute.path;
-  final into = Directory(data.path).absolute.path;
+  final from = _real(source.path);
+  final into = _real(data.path);
   if (from == into || from.startsWith('$into${Platform.pathSeparator}')) {
-    throw StateError('${source.path} is this host\'s own data directory, or inside it.');
+    throw StateError('${source.path} is this host\'s own data directory, or inside it (a family on this host, or taken off it).');
+  }
+  final first = primaryUrl(data, io.environment);
+  final device = await _deviceOf(source);
+  final known = await _knownHubs(data, first);
+  for (final k in known) {
+    if (k.device != device) continue;
+    if (k.listed && !k.removed && k.hostname == name) {
+      if (!dry) _markMoved(source, data, k.id ?? '', io);
+      io.out.writeln('The host serves this hub at $name already: nothing to do.');
+      return 0;
+    }
+    if (!k.listed) {
+      // A copy an adopt left without telling the host: nothing ever served it.
+      if (!dry) await Directory(data.log(k.id!).path).delete(recursive: true);
+      continue;
+    }
+    throw StateError(k.removed
+        ? 'This host had that hub at ${k.hostname ?? k.id}, taken off; add-family --hostname ${k.hostname ?? '<its address>'} brings it back.'
+        : 'This host serves that hub already${k.hostname == null ? '' : ', at ${k.hostname}'}.');
   }
   try {
     await source.lock();
@@ -241,8 +358,8 @@ Future<int> adopt(ArgResults a, DataDir data, int port, CliIo io) async {
   }
   try {
     final hub = await _Hub.of(source);
-    final first = primaryUrl(data, io.environment);
     if (first != null && normalizeHostname(first.host) == name) throw StateError('$name is the first family\'s address.');
+    if (HostState(data.path).logs.any((l) => l.hostname == name)) throw StateError('$name is a family\'s address on this host already.');
 
     // What the host holds now, from the running host, else from its directories.
     final running = await hostCall(port, data, 'GET', '/api/v1/host');
@@ -352,27 +469,52 @@ void _markMoved(DataDir source, DataDir data, String id, CliIo io) {
 /// back), unless `--delete-data`.
 Future<int> removeFamily(ArgResults a, DataDir data, int port, CliIo io) async {
   final family = a['family'] as String?;
-  if (family == null || family.isEmpty) throw CliUsage('--family is required: the family\'s address');
-  final target = familyTarget(data, family, io.environment);
-  if (target.first) throw StateError('That\'s the first family, whose data is the host\'s own directory. It can\'t be removed.');
-  final log = target.log!;
-  final running = await hostCall(port, data, 'DELETE', '/api/v1/host/families/${log.id}');
-  if (running != null) {
-    if (running.status != 200) throw StateError(_errorOf(running.json, running.status));
-  } else {
-    await data.lock();
-    try {
-      HostState(data.path).put(log.copyWith(removed: true));
-    } finally {
-      await data.unlock();
-    }
+  if (family == null || family.isEmpty) throw CliUsage('--family is required: the family\'s address (or, for one taken off, its id)');
+  final first = primaryUrl(data, io.environment);
+  final name = familyName(family);
+  if (first != null && name != null && normalizeHostname(first.host) == name) {
+    throw StateError('That\'s the first family, whose data is the host\'s own directory. It can\'t be removed.');
   }
-  if (a['delete-data'] == true) {
-    await Directory(target.data.path).delete(recursive: true);
-    io.out.writeln('The host no longer serves ${target.label}, and its data is deleted.');
+  final state = HostState(data.path);
+  final log = state.find(family.trim()) ?? (name == null ? null : state.find(name));
+  if (log == null) {
+    final gone = name == null ? const <HostedLog>[] : state.removedAt(name);
+    throw StateError(gone.length > 1
+        ? 'More than one family was taken off $name (${gone.map((l) => l.id).join(', ')}): give --family its id.'
+        : 'There\'s no family at $family on this host. den_hub families lists them.');
+  }
+  final label = log.hostname ?? log.id;
+  final dir = data.log(log.id);
+  final delete = a['delete-data'] == true;
+  if (!log.removed) {
+    final running = await hostCall(port, data, 'DELETE', '/api/v1/host/families/${log.id}');
+    if (running != null) {
+      if (running.status != 200) throw StateError(_errorOf(running.json, running.status));
+    } else {
+      await data.lock();
+      try {
+        HostState(data.path).put(log.copyWith(removed: true));
+      } finally {
+        await data.unlock();
+      }
+    }
+  } else if (!delete) {
+    io.out.writeln('The host doesn\'t serve $label already. Its data stays in ${dir.path}.');
+    return 0;
+  }
+  if (delete) {
+    // Nothing serves it now; its own lock says no backup or restore has it open either.
+    await dir.lock();
+    try {
+      await Directory(dir.path).delete(recursive: true);
+    } finally {
+      await dir.unlock();
+    }
+    HostState(data.path).forget(log.id);
+    io.out.writeln('The host no longer serves $label, and its data is deleted.');
   } else {
-    io.out.writeln('The host no longer serves ${target.label}. Its data stays in ${target.data.path}: '
-        'den_hub add-family --hostname ${target.label} brings the family back.');
+    io.out.writeln('The host no longer serves $label. Its data stays in ${dir.path}: '
+        'den_hub add-family --hostname $label brings the family back.');
   }
   return 0;
 }
@@ -383,19 +525,25 @@ Future<int> families(ArgResults a, DataDir data, int port, CliIo io) async {
   final state = HostState(data.path);
   final first = primaryUrl(data, io.environment);
   if (running != null) {
+    final open = <String>{};
     for (final f in (running.json['families'] as List?) ?? const []) {
       if (f is! Map) continue;
       final id = f['id'] as String?;
+      if (id != null) open.add(id);
       final where = id == null ? data.path : data.log(id).path;
       final what = f['ready'] == true ? 'in a family: ${f['family_name'] ?? f['family']}' : 'setup: ${f['stage']}';
       io.out.writeln('${f['public_url'] ?? '(no address)'}  $what  hub ${f['device']}  data $where');
+    }
+    for (final l in state.all) {
+      if (open.contains(l.id)) continue;
+      io.out.writeln('${l.publicUrl ?? '(no address)'}  ${l.removed ? 'taken off (id ${l.id})' : 'not open yet: tried again'}  data ${data.log(l.id).path}');
     }
     return 0;
   }
   io.out.writeln('Not running. From ${data.path}/$hostStateDir/host.json:');
   io.out.writeln('${first ?? '(the first family, no address known)'}  data ${data.path}');
   for (final l in state.all) {
-    io.out.writeln('${l.publicUrl ?? '(no address)'}  data ${data.log(l.id).path}${l.removed ? '  (taken off: not served)' : ''}');
+    io.out.writeln('${l.publicUrl ?? '(no address)'}  data ${data.log(l.id).path}${l.removed ? '  (taken off: not served; id ${l.id})' : ''}');
   }
   return 0;
 }

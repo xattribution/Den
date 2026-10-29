@@ -265,8 +265,15 @@ const String catchingUpStatus = 'Catching up after a restore: the hub writes not
 Future<int> status(FamilyTarget target, int port, CliIo io) async {
   final data = target.data;
   final base = Uri.parse('http://127.0.0.1:$port');
-  final health = await getJsonAt(base.resolve('/health'), target.hostname);
+  final probe = await probeAt(base.resolve('/health'), target.hostname);
   final catchingUp = data.file('hub/$restoreMarkerDoc.json').existsSync();
+  if (probe != null && probe.status == 503) {
+    // A host still opening this family (or every family, at no family's address).
+    io.out.writeln('Running, but ${target.label} isn\'t open yet: the host is starting it, or tries it again shortly. '
+        'docker compose logs hub says why.');
+    return 0;
+  }
+  final health = probe?.json;
   if (health != null) {
     final setup = await getJsonAt(base.resolve('/api/v1/hub/status'), target.hostname);
     // In the public posture /health leaves out the name, device and version, and a hub in a
@@ -319,7 +326,7 @@ Future<int> recover(ArgResults a, FamilyTarget target, int port, CliIo io) async
   if (!data.exists) throw StateError('There\'s no hub in ${data.path} yet. Run den_hub serve first.');
   final base = Uri.parse('http://127.0.0.1:$port');
   final Map<String, Object?> ticket;
-  if (await _getJson(base.resolve('/health')) != null) {
+  if (await probeAt(base.resolve('/health'), null) != null) {
     final file = data.file('hub/$recoveryCliFile');
     if (!file.existsSync()) {
       throw StateError('The hub running on port $port didn\'t leave its recovery secret in ${data.path}. '
@@ -490,6 +497,15 @@ Future<int> restore(ArgResults a, DataDir root, CliIo io) async {
   }
   try {
     final files = (json['files'] as Map).cast<String, String>();
+    // A backup goes back to its own family: never over another family's place on this host, with
+    // that family's hub still in its own.
+    final keys = files['keys.json'];
+    final device = keys == null ? null : await deviceInKeys(base64.decode(keys));
+    final elsewhere = device == null ? null : await hubElsewhere(root, data, device, primaryUrl(root, io.environment));
+    if (elsewhere != null) {
+      throw StateError('That backup is of the hub of $elsewhere on this host, not of the family it would replace. '
+          'Restore it with --family set to that family\'s address.');
+    }
     if (data.exists) await data.clearForRestore();
     final written = await data.writeFiles({for (final e in files.entries) e.key: base64.decode(e.value)});
     // The hub writes nothing of its own until a device of the family has synced with it.

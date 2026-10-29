@@ -83,7 +83,8 @@ ArgParser cliParser() {
     ..addFlag('force', help: 'Replace an existing hub in the data directory', negatable: false);
   _common(root.addCommand('add-family'))
     ..addOption('hostname', help: "The new family's own address, den-smith.example.com")
-    ..addOption('url', help: 'Its address with a scheme and port, when not https on 443');
+    ..addOption('url', help: 'Its address with a scheme and port, when not https on 443')
+    ..addOption('id', help: 'Which family to bring back, when more than one was taken off the address');
   _common(root.addCommand('adopt'))
     ..addOption('hostname', help: "The family's own address, den-smith.example.com (its old DEN_PUBLIC_URL)")
     ..addOption('url', help: 'Its address with a scheme and port, when not https on 443')
@@ -300,6 +301,12 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
       peerHubs: peerHubs,
       openLog: (l) => openLog(l, fresh: false),
       createLog: (l) => openLog(l, fresh: true),
+      // One family answers at any address while host.json lists no other, as a hub always has.
+      single: true,
+      // Until the first family is attached, its address answers 503, never another family.
+      expected: [?publicUrl?.host],
+      // A family that doesn't open is tried again this often (DEN_HOST_RETRY, seconds).
+      retryInterval: Duration(seconds: int.tryParse(env['DEN_HOST_RETRY'] ?? '')?.clamp(1, 3600) ?? 30),
     ));
     try {
       final den = await data.open();
@@ -313,19 +320,9 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
         await den.close();
         rethrow;
       }
-      for (final hosted in host.state.logs) {
-        try {
-          final t = await openLog(hosted, fresh: false);
-          try {
-            await host.add(t.den, t.config, id: hosted.id, onClosed: t.close);
-          } catch (_) {
-            await t.close();
-            rethrow;
-          }
-        } on Object catch (e) {
-          log.error('Not serving ${hosted.hostname ?? hosted.id}: ${e is StateError ? e.message : e.runtimeType}');
-        }
-      }
+      // Every other family host.json lists; one that doesn't open is tried again, and its address
+      // answers 503 (and /health fails) until it does.
+      await host.openConfigured();
     } catch (_) {
       await host.stop();
       rethrow;

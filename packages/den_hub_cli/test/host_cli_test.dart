@@ -10,6 +10,7 @@ import 'package:den_core/den_core.dart';
 import 'package:den_hub/cli_support.dart' show restoreMarkerDoc;
 import 'package:den_hub/den_hub.dart';
 import 'package:den_net/den_net.dart';
+import 'package:http/http.dart' as http;
 import 'package:test/test.dart';
 
 import '../bin/src/cli.dart';
@@ -26,7 +27,7 @@ Future<DenHost> serveAt(String path, {List<String> args = const []}) => openHost
       cliParser().commands['serve']!.parse(['--port', '0', '--host', '127.0.0.1', '--no-mdns', ...args]),
       DataDir(path),
       0,
-      CliIo(input: const Stream.empty(), out: StringBuffer(), err: StringBuffer(), environment: const {'DEN_LOG': 'error'}),
+      CliIo(input: const Stream.empty(), out: StringBuffer(), err: StringBuffer(), environment: const {'DEN_LOG': 'error', 'DEN_HOST_RETRY': '1'}),
     );
 
 /// A hub in its own data directory at [path], approved into [phone]'s family with the space keys
@@ -231,5 +232,113 @@ void main() {
     await fresh.stop();
     final backup = jsonDecode(utf8.decode(await decryptBackup(await File(file).readAsBytes(), env.values.single))) as Map;
     expect((backup['files'] as Map).keys, isNot(contains(startsWith('host/'))), reason: "one family's files only");
+  });
+
+  test('adopt: never the host\'s own directories, by any path, nor a hub it has or had; run again, it is done', () async {
+    final phone = await createDemoFamily();
+    addTearDown(phone.close);
+    await ownHub(at('smith'), phone);
+    final args = ['--data', at('host'), '--port', '9'];
+    final (adopted, _, adoptErr) = await run(['adopt', at('smith'), '--hostname', 'den-smith.test', ...args]);
+    expect(adopted, 0, reason: adoptErr);
+    final log = HostState(at('host')).find('den-smith.test')!;
+    final inside = '${at('host')}/logs/${log.id}';
+
+    // The same hub again at its address: done already, nothing changes.
+    final (again, againOut, againErr) = await run(['adopt', at('smith'), '--hostname', 'den-smith.test', ...args]);
+    expect(again, 0, reason: againErr);
+    expect(againOut, contains('already'));
+    expect(HostState(at('host')).all, hasLength(1));
+    // The same hub at another address, or a family's own directory by any path.
+    final (elsewhere, _, elsewhereErr) = await run(['adopt', at('smith'), '--hostname', 'den-other.test', ...args]);
+    expect(elsewhere, 1);
+    expect(elsewhereErr, contains('serves that hub already'));
+    Link(at('alias')).createSync(inside);
+    for (final path in [inside, '${at('smith')}/../host/logs/${log.id}', at('alias'), at('host')]) {
+      final (code, _, err) = await run(['adopt', path, '--hostname', 'den-new.test', ...args]);
+      expect(code, 1, reason: path);
+      expect(err, anyOf(contains("own data directory"), contains('serves that hub already')), reason: path);
+    }
+    // Taken off, its directory stays, and is never adopted again: add-family brings it back.
+    final (removed, _, removeErr) = await run(['remove-family', '--family', 'den-smith.test', ...args]);
+    expect(removed, 0, reason: removeErr);
+    final copy = at('copy');
+    await Process.run('cp', ['-r', inside, copy]);
+    final (twice, _, twiceErr) = await run(['adopt', copy, '--hostname', 'den-new.test', ...args]);
+    expect(twice, 1);
+    expect(twiceErr, contains('taken off'));
+    // And remove-family --delete-data deletes what a family taken off left.
+    final (deleted, deletedOut, deletedErr) = await run(['remove-family', '--family', 'den-smith.test', '--delete-data', ...args]);
+    expect(deleted, 0, reason: deletedErr);
+    expect(deletedOut, contains('deleted'));
+    expect(Directory(inside).existsSync(), isFalse);
+    expect(HostState(at('host')).all, isEmpty);
+  });
+
+  test("a family that doesn't open: its address answers 503, the host is unhealthy, it is tried again, and its address stays its own", () async {
+    final phone = await createDemoFamily();
+    addTearDown(phone.close);
+    await ownHub(at('smith'), phone);
+    final (adopted, _, adoptErr) = await run(['adopt', at('smith'), '--hostname', 'den-smith.test', '--data', at('host'), '--port', '9']);
+    expect(adopted, 0, reason: adoptErr);
+    final log = HostState(at('host')).find('den-smith.test')!;
+    // A backup holding its lock while the host starts.
+    final busy = DataDir(at('host')).log(log.id);
+    await busy.lock();
+    final host = await serveAt(at('host'));
+    final args = ['--data', at('host'), '--port', '${host.port}'];
+    try {
+      expect(host.tenants, hasLength(1));
+      final status = await http.get(host.localUrl.resolve('/api/v1/hub/status'), headers: {'host': 'den-smith.test'});
+      expect(status.statusCode, 503);
+      expect(status.headers['retry-after'], isNotNull);
+      expect((await http.get(host.localUrl.resolve('/health'))).statusCode, 503, reason: 'Docker waits for every family');
+      final (_, statusOut, _) = await run(['status', '--family', 'den-smith.test', ...args]);
+      expect(statusOut, contains("isn't open yet"));
+      final (_, list, _) = await run(['families', ...args]);
+      expect(list, contains('not open yet'));
+      final (taken, _, takenErr) = await run(['add-family', '--hostname', 'den-smith.test', ...args]);
+      expect(taken, 1);
+      expect(takenErr, contains("address on this host already"));
+      await busy.unlock();
+      await eventually(() => host.tenants.length == 2);
+      expect((await http.get(host.localUrl.resolve('/api/v1/hub/status'), headers: {'host': 'den-smith.test'})).statusCode, 200);
+      expect((await http.get(host.localUrl.resolve('/health'))).statusCode, 200);
+    } finally {
+      await host.stop();
+    }
+  });
+
+  test('a family taken off an address more than once comes back by its id; a backup goes back to its own family only', () async {
+    final state = HostState(at('host'));
+    for (final id in ['old1', 'old2']) {
+      await DataDir(at('host')).log(id).keys();
+      state.put(HostedLog(id: id, publicUrl: Uri.parse('https://den-smith.test'), added: 1, removed: true));
+    }
+    await DataDir(at('host')).keys();
+    final args = ['--data', at('host'), '--port', '9'];
+    final (ambiguous, _, err) = await run(['add-family', '--hostname', 'den-smith.test', ...args]);
+    expect(ambiguous, 1);
+    expect(err, contains('--id'));
+    final (chosen, _, chosenErr) = await run(['add-family', '--hostname', 'den-smith.test', '--id', 'old2', ...args]);
+    expect(chosen, 0, reason: chosenErr);
+    expect(HostState(at('host')).find('den-smith.test')!.id, 'old2');
+
+    // old2's backup can't be restored over the first family, whose own hub is elsewhere.
+    final env = {'DEN_BACKUP_PASSPHRASE': 'correct horse battery'};
+    final file = at('old2.denbackup');
+    final (backedUp, _, backupErr) = await run(
+        ['backup', '--family', 'den-smith.test', '--data', at('host'), '--out', file, '--passphrase-env', 'DEN_BACKUP_PASSPHRASE'],
+        env: env);
+    expect(backedUp, 0, reason: backupErr);
+    final (wrong, _, wrongErr) = await run(
+        ['restore', '--data', at('host'), '--in', file, '--passphrase-env', 'DEN_BACKUP_PASSPHRASE', '--force'],
+        env: env);
+    expect(wrong, 1);
+    expect(wrongErr, contains('den-smith.test'));
+    final (right, _, rightErr) = await run(
+        ['restore', '--family', 'den-smith.test', '--data', at('host'), '--in', file, '--passphrase-env', 'DEN_BACKUP_PASSPHRASE', '--force'],
+        env: env);
+    expect(right, 0, reason: rightErr);
   });
 }

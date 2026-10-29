@@ -694,7 +694,8 @@ class DenHost implements HostLink {
       throw ApiError.invalid('No family taken off ${url.host} has that id.', field: 'id');
     }
     if (id == null && gone.length > 1) {
-      throw ApiError(409, 'ambiguous', 'More than one family was taken off ${url.host}: say which with its id.',
+      throw ApiError(409, 'ambiguous',
+          'More than one family was taken off ${url.host} (${gone.map((l) => l.id).join(', ')}): say which with --id.',
           details: {'ids': [for (final l in gone) l.id]});
     }
     final previous = id == null ? gone.firstOrNull : gone.firstWhere((l) => l.id == id);
