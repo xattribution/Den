@@ -6,10 +6,19 @@
 // know the keyboard is gone, the field keeps its focus until a tap elsewhere, and Paste still
 // fills the field. Screenshots go to the output folder for a look.
 //
-// Not part of CI (it needs Playwright and a release build). From app/:
+// Given a second build (test/web/ask_e2e_app.dart: the demo family with the AI helper on), it
+// does the same in Ask: opens it from Today's pill, types in its field, brings the keyboard up
+// and closes it with the arrow, keeps typing, and asks. That build is served the way the hub
+// serves the app, under its Content-Security-Policy, and this server plays the hub's helper
+// endpoints at the same origin, so the helper's real calls are checked too.
+//
+// Not part of CI (it needs Playwright and release builds). From app/:
 //   flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/
-//   NODE_PATH=<dir with playwright> node test/web/keyboard_e2e.mjs build/web chromium [out-dir]
-//   (or webkit; CHROME_EXECUTABLE picks the Chromium binary)
+//   flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ \
+//     -t test/web/ask_e2e_app.dart -o "$PWD/build/web_ask"
+//   NODE_PATH=<dir with playwright> node test/web/keyboard_e2e.mjs build/web webkit [out-dir] [build/web_ask]
+//   (or chromium; CHROME_EXECUTABLE picks the Chromium binary)
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -23,21 +32,90 @@ const { chromium, webkit } = require('playwright');
 const root = path.resolve(process.argv[2] ?? 'build/web');
 const engine = process.argv[3] ?? 'chromium';
 const out = path.resolve(process.argv[4] ?? 'build/keyboard_e2e');
+const askRoot = process.argv[5] ? path.resolve(process.argv[5]) : null;
 fs.mkdirSync(out, { recursive: true });
 
 const types = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json',
   '.wasm': 'application/wasm', '.png': 'image/png', '.ttf': 'font/ttf', '.otf': 'font/otf', '.svg': 'image/svg+xml',
 };
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://x');
-  let file = path.join(root, decodeURIComponent(url.pathname));
-  if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(root, 'index.html');
-  res.writeHead(200, { 'content-type': types[path.extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store' });
-  fs.createReadStream(file).pipe(res);
-});
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
-const origin = `http://127.0.0.1:${server.address().port}`;
+/** The hub's Content-Security-Policy for the web app (den_hub's webAppPolicy), for [dir]'s index.html. */
+function hubPolicy(dir, connect) {
+  const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+  const hashes = [...html.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script\s*>/gi)]
+    .filter((m) => m[1].trim())
+    .map((m) => `'sha256-${crypto.createHash('sha256').update(m[1]).digest('base64')}'`);
+  return [
+    "default-src 'self'",
+    ["script-src 'self' 'wasm-unsafe-eval'", ...hashes].join(' '),
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    `connect-src 'self' ${connect}`,
+    "media-src 'self' data: blob:",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
+
+/** The AI helper's two hub endpoints, as the hub answers them for a parent with Claude set up. */
+const helper = {
+  calls: [],
+  status: {
+    provider: 'anthropic',
+    speaker: 'Claude',
+    models: [{ model: 'claude-haiku-5-5', size: 'small' }],
+    you: { allowed: true },
+    this_month: { month: '2026-10', stopped: false },
+  },
+  answer: 'Zoe has her swim lesson at 4:30 PM. Nobody is driving her yet.',
+  reply() {
+    return {
+      id: 'msg_e2e', type: 'message', role: 'assistant', model: 'claude-haiku-5-5',
+      content: [{ type: 'text', text: this.answer }],
+      stop_reason: 'end_turn', stop_sequence: null,
+      usage: { input_tokens: 900, output_tokens: 20 },
+    };
+  },
+};
+
+/** Serves [dir] with single-page fallback; with [hub], under the hub's policy and with its helper endpoints. */
+async function serve(dir, { hub = false } = {}) {
+  let policy = null;
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://x');
+    if (hub && url.pathname.startsWith('/api/v1/assistant')) {
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        helper.calls.push({ method: req.method, path: url.pathname, provider: req.headers['x-den-provider'], body });
+        const json = url.pathname === '/api/v1/assistant' && req.method === 'GET' ? helper.status
+          : url.pathname === '/api/v1/assistant/model' && req.method === 'POST' ? helper.reply() : null;
+        res.writeHead(json ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify(json ?? { error: { code: 'not_found', message: 'Not found' } }));
+      });
+      return;
+    }
+    let file = path.join(dir, decodeURIComponent(url.pathname));
+    if (!file.startsWith(dir) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(dir, 'index.html');
+    const headers = { 'content-type': types[path.extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store' };
+    if (policy) headers['content-security-policy'] = policy;
+    res.writeHead(200, headers);
+    fs.createReadStream(file).pipe(res);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const at = `http://127.0.0.1:${server.address().port}`;
+  if (hub) policy = hubPolicy(dir, at.replace('http:', 'ws:'));
+  return { server, origin: at };
+}
+
+const main = await serve(root);
+const origin = main.origin;
 
 const W = 390, H = 844, KEYBOARD = 336;
 const iphone = {
@@ -89,18 +167,21 @@ function stage(iPhone) {
   };
   window.__flutterResizes = 0;
   vv.addEventListener('resize', () => { window.__flutterResizes++; });
+  window.__csp = [];
+  document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(`${e.violatedDirective} ${e.blockedURI}`));
 }
 
 const browserType = engine === 'webkit' ? webkit : chromium;
 const browser = await browserType.launch(engine === 'chromium' && process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {});
 const failures = [];
 
-async function open(semantics) {
+/** A page at [url]; with [semantics], the app's accessibility tree on and [ready] in it. */
+async function open(semantics, url = `${origin}/#/welcome/join`, ready = 'flt-semantics-host input, flt-semantics-host textarea') {
   const context = await browser.newContext(iphone);
   await context.addInitScript(stage, !semantics);
   const page = await context.newPage();
   page.on('pageerror', (e) => failures.push(`page error: ${e.message}`));
-  await page.goto(`${origin}/#/welcome/join`);
+  await page.goto(url);
   await page.waitForSelector('flutter-view', { timeout: 60000 });
   // The scene is drawn in the glass pane's shadow root.
   await page.waitForFunction(
@@ -111,7 +192,7 @@ async function open(semantics) {
   await page.waitForTimeout(2500);
   if (semantics) {
     await page.evaluate(() => document.querySelector('flt-semantics-placeholder')?.click());
-    await page.waitForSelector('flt-semantics-host input, flt-semantics-host textarea', { state: 'attached', timeout: 20000 });
+    await page.waitForSelector(ready, { state: 'attached', timeout: 20000 });
   }
   return { context, page };
 }
@@ -290,10 +371,182 @@ try {
   }
 } catch (e) {
   failures.push(e.message);
-} finally {
-  await browser.close();
-  server.close();
 }
+
+/** The words in the app's accessibility tree: labels, and the text of the innermost nodes. */
+const spoken = (page) => page.evaluate(() => [...document.querySelectorAll('flt-semantics-host *')]
+  .map((e) => `${e.getAttribute('aria-label') ?? ''} ${e.childElementCount === 0 ? e.textContent ?? '' : ''}`)
+  .join(' '));
+
+/** The middle of the first accessibility node with [role] that says [words], as its label or its
+ * text, once it is there (null after 15 s). */
+const findNode = async (page, words, role = 'button') => {
+  try {
+    const handle = await page.waitForFunction(({ words, role }) => {
+      const says = (e) => (e.getAttribute('aria-label') ?? '').trim() === words || (e.textContent ?? '').trim() === words;
+      const el = [...document.querySelectorAll(`flt-semantics-host [role="${role}"]`)].find(says);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null;
+    }, { words, role }, { timeout: 15000 });
+    return await handle.jsonValue();
+  } catch {
+    return null;
+  }
+};
+
+if (askRoot) {
+  const ask = await serve(askRoot, { hub: true });
+  const today = `${ask.origin}/#/today`;
+  // The page being checked, for a look when something fails.
+  let showing = null;
+  try {
+    // A look with the accessibility tree: where Today's pill, Ask's field and its button are, and
+    // the helper's calls from a chip to the answer on screen.
+    const look = await open(true, today, 'flt-semantics-host [role="button"]');
+    showing = look.page;
+    await look.page.screenshot({ path: path.join(out, `${engine}_ask_0_today.png`) });
+    const pill = await findNode(look.page, 'Ask about your day');
+    assert.ok(pill, 'Today has the Ask pill');
+    await look.page.mouse.click(pill.x, pill.y);
+    // The sheet has stopped moving: the field is in the same place twice running, on screen.
+    await look.page.waitForFunction(() => {
+      const r = document.querySelector('flt-semantics-host textarea')?.getBoundingClientRect();
+      if (!r) return false;
+      const last = window.__fieldY;
+      window.__fieldY = Math.round(r.y);
+      return last === window.__fieldY && r.bottom <= window.innerHeight;
+    }, null, { timeout: 30000, polling: 400 });
+    const field = await look.page.evaluate(() => {
+      const r = document.querySelector('flt-semantics-host textarea').getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    });
+    const button = await findNode(look.page, 'Ask');
+    if (!button) {
+      await look.page.screenshot({ path: path.join(out, `${engine}_ask_0_no_button.png`) });
+      const buttons = await look.page.evaluate(() => [...document.querySelectorAll('flt-semantics-host [role]')]
+        .map((e) => `${e.getAttribute('role')}:${e.getAttribute('aria-label') ?? ''}|${e.childElementCount ? '' : e.textContent}`).join(' ; '));
+      console.error(`no Ask button; the tree has: ${buttons}`);
+    }
+    assert.ok(button, 'Ask has its Ask button');
+    assert.match(await spoken(look.page), /What can I help with\?/, 'an empty chat greets the person');
+    assert.ok(helper.calls.some((c) => c.method === 'GET' && c.path === '/api/v1/assistant'), 'Ask asked the hub as it opened');
+    const chip = await findNode(look.page, "Ask: What's on today?");
+    assert.ok(chip, 'a chip to ask what\'s on today');
+    await look.page.mouse.click(chip.x, chip.y);
+    await look.page.waitForFunction(
+      (answer) => [...document.querySelectorAll('flt-semantics-host *')]
+        .some((e) => (e.getAttribute('aria-label') ?? '').includes(answer) || (e.childElementCount === 0 && (e.textContent ?? '').includes(answer))),
+      helper.answer,
+      { timeout: 20000 },
+    );
+    // The accessibility tree hears the answer a little before the canvas shows it.
+    await look.page.waitForTimeout(2000);
+    await look.page.screenshot({ path: path.join(out, `${engine}_ask_0_answered.png`) });
+    const asked = helper.calls.filter((c) => c.path === '/api/v1/assistant/model');
+    assert.equal(asked.length, 1, 'one model call, through the hub at the same origin');
+    assert.equal(asked[0].provider, 'anthropic');
+    assert.match(asked[0].body, /What's on today\?/);
+    const blocked = await look.page.evaluate(() => window.__csp.filter((v) => v.startsWith('connect-src')));
+    assert.deepEqual(blocked, [], 'the hub\'s policy lets the helper\'s calls through');
+    await look.context.close();
+
+    // The iPhone: Today's pill opens Ask, and its field gets the focus and the keyboard.
+    const { context, page } = await open(false, today);
+    showing = page;
+    const shot = (name) => page.screenshot({ path: path.join(out, `${engine}_ask_${name}.png`) });
+    const state = () => page.evaluate(() => {
+      const view = document.querySelector('flutter-view').getBoundingClientRect();
+      const body = document.body.getBoundingClientRect();
+      return {
+        scrollY: window.scrollY,
+        pan: window.__keyboard.top,
+        view: [view.x, view.y, view.width, view.height],
+        body: [body.x, body.y, body.width, body.height],
+        active: document.activeElement?.tagName,
+        value: document.activeElement?.value,
+        app: JSON.parse(window.denWeb.viewport()),
+        resizes: window.__flutterResizes,
+      };
+    });
+    await page.touchscreen.tap(pill.x, pill.y);
+    await page.waitForTimeout(2500);
+    // A tap while the sheet still settles can miss on a busy machine: tap until the field has it.
+    for (let i = 0; i < 4; i++) {
+      await page.touchscreen.tap(field.x, field.y);
+      await page.waitForTimeout(800);
+      if (await page.evaluate(() => ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName))) break;
+    }
+    await page.keyboard.type('Who is driving Zoe');
+    const before = await shot('1_focused');
+    let s = await state();
+    assert.ok(['INPUT', 'TEXTAREA'].includes(s.active), `Ask's field has the browser's focus (${s.active})`);
+
+    // Up, with Safari panning to the field; then the close arrow, the pan left behind.
+    await page.evaluate((k) => window.__keyboard.up(k), KEYBOARD);
+    await page.evaluate(() => window.__keyboard.pan(180));
+    await page.waitForTimeout(1200);
+    s = await state();
+    await shot('2_keyboard_up');
+    assert.equal(s.pan, 0, 'the page is put back at the top while the keyboard is up');
+    assert.equal(s.app.keyboard, KEYBOARD, 'the app hears the keyboard');
+    const resizes = s.resizes;
+    await page.evaluate((k) => window.__keyboard.closeWithArrow(k), KEYBOARD);
+    await page.waitForTimeout(1500);
+    s = await state();
+    const after = await shot('3_closed_with_arrow');
+    assert.equal(s.pan, 0, 'the pan is settled');
+    assert.equal(s.scrollY, 0);
+    assert.deepEqual(s.view, [0, 0, W, H], 'Flutter fills the screen again: no black band');
+    assert.deepEqual(s.body, [0, 0, W, H]);
+    assert.equal(s.app.keyboard, 0, 'the app hears the keyboard is gone');
+    assert.ok(['INPUT', 'TEXTAREA'].includes(s.active), 'the field keeps the focus');
+    assert.ok(s.resizes > resizes + 1, 'Flutter was asked to measure the page again');
+    const changed = difference(before, after);
+    assert.ok(changed < 0.02, `Ask is as it was before the keyboard (${(changed * 100).toFixed(2)} % differs)`);
+
+    // Still typing; then up again and gone with only a scroll, a little short and panned.
+    await page.keyboard.type(' to swimming');
+    // The words drawn (the field wraps to a second line) before the next look is taken.
+    await page.waitForTimeout(1500);
+    s = await state();
+    assert.equal(s.value, 'Who is driving Zoe to swimming', 'what was typed is kept, and more goes after it');
+    const typed = await shot('4_typing');
+    await page.evaluate((k) => window.__keyboard.up(k), KEYBOARD);
+    await page.waitForTimeout(1200);
+    await page.evaluate(() => window.__keyboard.closeQuietly(300, 24));
+    await page.waitForTimeout(1500);
+    s = await state();
+    const quiet = await shot('5_closed_quietly');
+    assert.equal(s.pan, 0, 'the pan is settled');
+    assert.equal(s.app.keyboard, 0, '24 px short is no keyboard');
+    const moved = difference(typed, quiet);
+    assert.ok(moved < 0.02, `nothing stays lifted (${(moved * 100).toFixed(2)} % differs)`);
+
+    // Ask: the question goes to the helper through the hub, and the screen stays whole.
+    const calls = helper.calls.length;
+    await page.touchscreen.tap(button.x, button.y);
+    await page.waitForTimeout(2500);
+    await shot('6_asked');
+    const sent = helper.calls.slice(calls).filter((c) => c.path === '/api/v1/assistant/model');
+    assert.equal(sent.length, 1, 'the question went to the helper');
+    assert.match(sent[0].body, /Who is driving Zoe to swimming/);
+    s = await state();
+    assert.deepEqual(s.view, [0, 0, W, H]);
+    await context.close();
+  } catch (e) {
+    failures.push(`Ask: ${e.message}`);
+    await showing?.screenshot({ path: path.join(out, `${engine}_ask_failed.png`) }).catch(() => {});
+    const tree = await showing?.evaluate(() => (document.querySelector('flt-semantics-host')?.outerHTML ?? '')
+      .replace(/ style="[^"]*"/g, '').slice(0, 6000)).catch(() => null);
+    if (tree != null) console.error(`  the accessibility tree when it failed:\n    ${tree || '(empty)'}`);
+  } finally {
+    ask.server.close();
+  }
+}
+
+await browser.close();
+main.server.close();
 
 if (failures.length) {
   console.error(`keyboard e2e (${engine}): FAILED\n  ${failures.join('\n  ')}`);

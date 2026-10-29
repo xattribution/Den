@@ -313,7 +313,7 @@ Breakpoints by available width, not device (`DenLayout.forWidth`, `DenLayoutBuil
 - Text columns never pass 680 (`ReadableWidth`); grids reflow.
 - Kid mode tiles: 2, 3 or 4 across (`DenWidth.kidColumns`), 72 pt targets.
 - iPad pointer and keyboard: hover shading on rows, context menus with the row's actions,
-  shortcuts (⌘N add, ⌘F search, ⌘1 to ⌘5 sections, space checks the focused chore), a visible
+  shortcuts (⌘N add, ⌘F search, ⌘K ask, ⌘1 to ⌘5 sections, space checks the focused chore), a visible
   focus ring. Rotation and split view keep the screen and scroll position.
 - The counter iPad uses the wide layout at Display scale 1.3 with the family week as home.
 
@@ -494,7 +494,8 @@ tap happened, and shows it in a `DoneRow`.
 ## Screens (phone)
 
 - **Today**: the date and the greeting for the time of day, the person's face at the right
-  (it opens Family, Points, History and Settings); Needs you, for whoever may settle each thing
+  (it opens Family, Points, History and Settings); "Ask about your day" while the AI helper is on
+  for them (see "AI helper"); Needs you, for whoever may settle each thing
   (rides in the next 48 hours, reward requests while points are on, late chores from today and
   yesterday, devices and AI connections asking to join, lists due), one action each, which
   turns into what it did with Undo in place; Today's events (time column, title, who and
@@ -562,12 +563,25 @@ tap happened, and shows it in a `DoneRow`.
 ## AI helper
 
 Optional, and off until a parent turns it on (Settings, AI helper). It is a word ("Ask") and a
-speech bubble, never a sparkle, a wand or a glow, and it lives in Add, not in a tab of its own
-(`features/assistant`).
+speech bubble, never a sparkle, a wand or a glow. It is not a tab of its own: the phone's tab bar
+keeps its four places and Add (`features/assistant`).
 
 - **Who sees it.** Parents once it's on, and each other person a parent switches on (never a
   little kid or a pre-reader). Never on a wall display or a shared screen, and never without a
-  family hub, which runs it and keeps the key.
+  family hub, which runs it and keeps the key. The rule is `askEntry`.
+- **Ways in**, each only for someone it's on for: a wide pill under Today's greeting ("Ask about
+  your day", on the card color, 52 tall); "Ask" in the iPad sidebar after Search; "Open Ask" in
+  Add under "Or add one thing" (Add's round button is on every phone tab); ⌘K (Ctrl+K) with a
+  keyboard, the field ready to type. While it's off, a parent gets one quiet row at the end of
+  Today ("Ask in your own words", "Set up the AI helper in Settings") and ⌘K opens Ask saying what
+  it does, with "Set up the helper"; nobody else sees anything, and ⌘K stays the browser's.
+- **An empty chat** greets the person ("Hi Alex. What can I help with?") with what can be asked
+  and three or four chips from the family's own day: what's on today (tomorrow from 5 PM), who's
+  driving to the next event with a ride to sort out, "Add milk to Costco" (the store most of the
+  groceries are for), who still has chores. A question chip asks at once; a change chip only
+  fills the field, its example word chosen, so a chip never changes anything. A kid gets their
+  chores, their stars and their own rides. A kid whose questions for the day are used up, or a
+  spent budget, gets those words in place of the chips and the field: never a dead button.
 - **Add or ask.** The field reads "Add or ask anything" ("Ask anything" for someone who may ask
   but not add). The rule, in this order:
   1. A **question** goes to the helper: it ends with a question mark, or starts with a question
@@ -597,12 +611,15 @@ speech bubble, never a sparkle, a wand or a glow, and it lives in Add, not in a 
   questions today. Ask a parent for more.", "The family's AI budget is used up for October."
   Off or not set up says who can change it. A hub or a company that doesn't answer is red text
   and icon with Try again ("Claude can't be reached right now. Try again in a few minutes.").
-  "Asking Claude" shows only after a second; nothing pulses.
-- **Kids** a parent turned it on for get 72 pt buttons, "Read it to me" (the kids' app's
+  "Asking Claude" fades in only after a second and gives way to the answer; nothing pulses.
+- **Kids** a parent turned it on for get 72 pt buttons and chips, "Read it to me" (the kids' app's
   read-aloud), simpler words and only the tools they may use.
-- **Session only.** The conversation lives while Ask is open on that device and is forgotten
-  when it closes; closing Ask stops a turn still running from changing anything more. What it
-  changed shows in History as "from the assistant (Claude)", like any other change.
+- **One conversation, in memory only.** The device keeps the conversation while the app runs:
+  Ask closed and opened again shows it, and Add's words go on from it. "New chat" (beside Done)
+  starts over; so does someone else using the device, or 3 hours untouched, or a new day. It is
+  never written to the device or the family's log. Closing Ask stops a turn still running from
+  changing anything more ("Stopped when Ask closed. Nothing more changed.", with Ask again). What
+  it changed shows in History as "from the assistant (Claude)", like any other change.
 
 ## Parental oversight
 

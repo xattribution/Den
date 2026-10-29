@@ -130,6 +130,9 @@ enum ProblemKind {
 
   /// The hub or the company behind it couldn't answer: red words and Try again.
   down,
+
+  /// Ask was closed while the helper worked: a plain line and Ask again.
+  stopped,
 }
 
 /// Why the helper couldn't answer, in words for people.
@@ -139,12 +142,13 @@ class HelperProblem {
   const HelperProblem.limit(this.message) : kind = ProblemKind.limit;
   const HelperProblem.refused(this.message) : kind = ProblemKind.refused;
   const HelperProblem.down(this.message) : kind = ProblemKind.down;
+  const HelperProblem.stopped(this.message) : kind = ProblemKind.stopped;
 
   final ProblemKind kind;
   final String message;
 
   /// Whether trying again may work.
-  bool get retry => kind == ProblemKind.down;
+  bool get retry => kind == ProblemKind.down || kind == ProblemKind.stopped;
 }
 
 const _months = [
@@ -251,3 +255,44 @@ String previewLine(String verb, String title) {
 
 /// "Asking Claude", while the helper works for more than a moment.
 String askingWords(String speaker) => 'Asking $speaker';
+
+/// A turn that stopped because Ask was closed.
+const String stoppedWords = 'Stopped when Ask closed. Nothing more changed.';
+
+/// The first line of an empty conversation: "Hi Alex. What can I help with?"
+String askGreeting(String? name, {required bool kid}) {
+  final hi = name == null || name.isEmpty ? 'Hi.' : 'Hi $name.';
+  return kid ? '$hi What do you want to know?' : '$hi What can I help with?';
+}
+
+/// What can be asked, under the greeting. Stars only while the family keeps them.
+String askHelpWords({required bool kid, required bool stars}) {
+  if (kid) return stars ? 'Ask about your chores, stars, lists or the calendar.' : 'Ask about your chores, lists or the calendar.';
+  return 'Ask about the calendar, chores${stars ? ', stars' : ''} or lists, or ask for a change. '
+      'Every change shows here with Undo.';
+}
+
+/// What the helper is, for a parent while it's off (Ask's set-up view).
+const String askSetUpWords =
+    'Ask about the family\'s day in your own words, or ask for a change, like "What\'s on tomorrow?" or '
+    '"Add milk to Costco". Every change shows with Undo.';
+
+/// The helper is off for the family, said to a parent who can turn it on.
+const String askOffForParentWords = 'The AI helper is off. You can turn it on in Settings.';
+
+/// Today's way into Ask.
+const String askTodayLabel = 'Ask about your day';
+
+/// Today's quiet way to set the helper up, for a parent while it's off.
+const String askSetUpLabel = 'Ask in your own words';
+const String askSetUpDetail = 'Set up the AI helper in Settings';
+
+/// The button to Settings, AI helper.
+const String askSetUpAction = 'Set up the helper';
+
+/// Add's way into Ask, while the helper is on.
+const String askOpenLabel = 'Open Ask';
+const String askOpenDetail = 'Questions and changes in your own words';
+
+/// Starts the conversation over.
+const String newChatLabel = 'New chat';

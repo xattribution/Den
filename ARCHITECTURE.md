@@ -1097,9 +1097,14 @@ changes or the day turns. `context.app` still rebuilds on everything; the wall a
 screens use it, since they show everything. The router's redirect runs again only when who's who
 or the wall setting changes, and the app itself rebuilds only for the theme and the wall setting.
 
-**The AI helper** (`features/assistant`, off by default; DESIGN.md, "AI helper"). Add sends a
-question or a change to `/ask` (a sheet, or a panel from 840 pt) with an `AskRequest`, which also
-holds the conversation, an `AskSession`, for as long as the route lives and no longer. The
+**The AI helper** (`features/assistant`, off by default; DESIGN.md, "AI helper"). Ask is `/ask`
+(a sheet, or a panel from 840 pt). Add sends a question or a change there with an `AskRequest`;
+Today's pill, the sidebar, Add's "Open Ask" and ⌘K open it with `AskRequest.open()`. Which of
+those a person sees is `askEntry` (open, a parent's way to set it up, or nothing). The
+conversation, an `AskSession`, is kept by `AskChats` in memory for the app's lifetime (one per
+device, for whoever is using it), so Ask closed and opened again shows it and Add's words go on
+from it; "New chat", someone else on the device, a family that gets a hub, or 3 hours untouched
+(or a new day) let it go. Nothing of it is written to the device or the log. The
 session runs den_assistant's `AssistantLoop` on the device: its tools are den_actions' specs
 this person may call (`assistantTools`), run by the session's own `ActionRunner` as
 `Surface.assistant` through `actionExecutor`, so writes are signed by this device with the
@@ -1109,10 +1114,12 @@ Undo and "undo that" take back. Each turn's system prompt is `ContextPacker` ove
 person may do, their recent History). The model is den_assistant's adapter for the hub's
 provider with `ModelEndpoint.hub`: every request goes to `POST /api/v1/assistant/model`, signed
 with `DeviceRequest` like capture's, on the web (where the CSP allows only the hub) and in the
-native apps alike, so no device holds a key. `GET /api/v1/assistant` says first whether this
-person may ask, and the hub's refusals (`403`, `429 daily_limit`, `402`, `502`) come back as
-`ModelException.code` for the words people see. Closing Ask closes the session: a turn still
-running changes nothing more.
+native apps alike, so no device holds a key. `GET /api/v1/assistant` (asked again each time Ask
+opens, `AskSession.peek`) says first whether this person may ask, so a kid's used-up day or a
+spent budget shows before anything is typed, and the hub's refusals (`403`, `429 daily_limit`,
+`402`, `502`) come back as `ModelException.code` for the words people see. Closing Ask stops a
+turn still running (`AskSession.stop`): it changes nothing more and says so, while the
+conversation stays.
 
 ## The web app
 

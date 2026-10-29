@@ -34,8 +34,9 @@ bool _canCapture(AppState app) =>
 ///
 /// When a parent has turned the AI helper on for the person, the field reads "Add or ask
 /// anything": Den's own reader still adds plain things at once, and a question, a change to
-/// something already there, or words Den can't place go to the helper (`/ask`). Photos and files
-/// still go to the review page. See DESIGN.md, "AI helper".
+/// something already there, or words Den can't place go to the helper (`/ask`), going on from the
+/// conversation Ask is keeping. "Open Ask" under the rest opens that conversation as it is.
+/// Photos and files still go to the review page. See DESIGN.md, "AI helper".
 Future<void> showAddSheet(BuildContext context) {
   final router = GoRouter.of(context);
   return showDenSheet<void>(
@@ -103,6 +104,12 @@ class _AddSheetState extends State<AddSheet> {
     final spoken = _spoken;
     _close();
     widget.open('/ask', extra: AskRequest(words, spoken: spoken));
+  }
+
+  /// Opens Ask as it is, with nothing to send.
+  void _openAsk() {
+    _close();
+    widget.open('/ask', extra: AskRequest.open());
   }
 
   /// Adds what Den found; the field clears for the next thing.
@@ -192,6 +199,7 @@ class _AddSheetState extends State<AddSheet> {
       if (app.canChangeItems)
         NavRow(icon: PhosphorIconsRegular.shoppingCart, label: 'Grocery item', onTap: () => _go('/lists/groceries/add')),
     ];
+    final ask = askAddRow(context, app, onOpen: _openAsk);
 
     return ListenableBuilder(
       listenable: _add,
@@ -268,6 +276,7 @@ class _AddSheetState extends State<AddSheet> {
                 ),
                 GroupCard(child: Column(children: ruled(choices, indent: 36))),
               ],
+              if (ask != null) ...[const SizedBox(height: DenLayout.sectionGap), ask],
             ],
           ),
         ),
