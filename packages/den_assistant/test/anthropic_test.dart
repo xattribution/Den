@@ -241,5 +241,33 @@ void main() {
             .having((e) => e.kind, 'kind', ModelFailure.rateLimited)),
       );
     });
+
+    test('keeps the hub\'s error code, so a kid\'s daily limit and a busy hub can be told apart', () {
+      ModelException refusal(int status, String code, String message) {
+        try {
+          AnthropicChatModel.parse(
+            status,
+            {
+              'error': {'code': code, 'message': message},
+            },
+            model: 'claude-haiku-5-5',
+            viaHub: true,
+          );
+        } on ModelException catch (e) {
+          return e;
+        }
+        fail('expected a ModelException');
+      }
+
+      expect(refusal(429, 'daily_limit', 'That\'s all for today.').code, 'daily_limit');
+      expect(refusal(429, 'busy', 'The hub is busy.').code, 'busy');
+      final spent = refusal(402, 'budget_spent', 'The budget is spent.');
+      expect((spent.status, spent.code), (402, 'budget_spent'));
+      final down = refusal(502, 'provider_unreachable', 'Couldn\'t reach Claude.');
+      expect(down.code, 'provider_unreachable');
+      expect(down.kind, ModelFailure.busy);
+      expect(down.retry, isTrue);
+      expect(down.message, 'Claude can\'t be reached right now. Try again in a few minutes.');
+    });
   });
 }
