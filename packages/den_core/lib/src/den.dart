@@ -1162,7 +1162,7 @@ class Den {
   /// and AI-access changes, and asking for a reward.
   Future<UndoResult> undo(Iterable<String> changeIds) => _locked(() async {
         final plan = _planUndo(changeIds);
-        final made = await _commitNow(plan.drafts);
+        final made = await _commitNow(_closingRequests(plan.drafts));
         return UndoResult(changes: [for (final c in made) c.id], skipped: plan.skipped);
       });
 
@@ -2453,12 +2453,38 @@ class Den {
     return id;
   }
 
+  /// Changes a reward. Retiring it (`active: false`) declines the requests for it still waiting
+  /// for a parent, so nobody waits on a reward that's gone; bringing it back doesn't reopen
+  /// them (undo does).
   Future<void> updateReward(String id, Map<String, Object?> patch) async {
     _requireLive(RecordType.reward, id, 'That reward doesn\'t exist');
-    await _commit([
+    await _commit(_closingRequests([
       _Draft(RecordType.reward, id, Space.family,
           _cleanPatch(patch, typeSpecs[RecordType.reward]!.fields.keys.toSet())),
-    ]);
+    ]));
+  }
+
+  /// [drafts], plus a decline for every request waiting on a reward they retire or remove. A
+  /// request the actor made for themselves stays: nobody decides their own.
+  List<_Draft> _closingRequests(List<_Draft> drafts) {
+    final closing = {
+      for (final d in drafts)
+        if (d.type == RecordType.reward && (d.fields['active'] == false || d.fields['_deleted'] == true)) d.rid,
+    };
+    if (closing.isEmpty) return drafts;
+    final who = actor?.id;
+    return [
+      ...drafts,
+      for (final e in _mat.store.liveOfType(RecordType.redemption))
+        if (e.space == Space.family &&
+            closing.contains(e.fields['reward']) &&
+            e.fields['status'] == RedemptionStatus.requested.name &&
+            (who == null || e.fields['member'] != who))
+          _Draft(RecordType.redemption, e.id, Space.family, {
+            'status': RedemptionStatus.declined.name,
+            'decidedBy': who,
+          }),
+    ];
   }
 
   /// Asks to spend points on a reward for [member] (default: the actor). Rewards that don't
@@ -2498,8 +2524,17 @@ class Den {
 
   /// Approving is refused when the balance no longer covers the request, so approving several
   /// requests made at once can't overdraw it.
+  /// Approving needs someone other than the person it's for and the person who asked for it
+  /// (a parent asking on a kid's behalf waits for the other parent, like anyone): otherwise a
+  /// connection acting as a parent could ask and approve in two calls.
   Future<void> decideRedemption(String id, {required bool approve}) async {
     final r = Redemption(_requireLive(RecordType.redemption, id, 'That request doesn\'t exist').rec);
+    final who = actor?.id;
+    if (approve && r.status == RedemptionStatus.requested && who != null && (r.member == who || r.rec.createdBy == who)) {
+      throw PermissionDenied(r.member == who
+          ? 'Someone else needs to approve ${member(who)?.name ?? 'your'}\'s reward'
+          : '${member(who)?.name ?? 'Whoever'} asked for this, so someone else needs to approve it');
+    }
     final balance = points().totals[r.member] ?? 0;
     if (approve && r.status == RedemptionStatus.requested && balance < r.cost) {
       throw InvalidInput('${member(r.member)?.name ?? 'They'} has $balance stars, not the ${r.cost} this costs');
