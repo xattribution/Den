@@ -1,0 +1,96 @@
+#!/usr/sbin/nft -f
+# Den's firewall for the private setup (docs/hosting.md, "Who can reach this server").
+#
+# One table, ours: everything that arrives for this server is dropped unless it is
+#   - an answer to something the server asked for itself (updates, certificates, DNS),
+#   - on Tailscale's interface, where the tailnet's access policy has already decided,
+#   - Tailscale's own UDP 41641, so phones can connect directly instead of through a relay,
+#   - HTTPS (TCP 443) from one of the family's homes (the sets home_v4 and home_v6),
+#   - SSH from the addresses in ssh_v4 and ssh_v6 (empty by default: SSH over Tailscale only),
+#   - the bits of ICMP, neighbour discovery and DHCP that keep the network itself working.
+# den-allowlist fills the sets from the homes' DDNS names every 3 minutes.
+#
+# Docker and Tailscale keep their own tables (ip filter, ip nat, ip raw, ...), so this file never
+# flushes the ruleset: it replaces table inet den_fw and nothing else. A packet must get through
+# every table's chain on its hook, so their rules can't open what this table drops.
+#
+# Load it with `nft -f den_fw.nft`; check it with `nft -c -f den_fw.nft`. install.sh installs it
+# as /etc/den/den_fw.nft, with SSH_PORT set to the port sshd listens on.
+
+define SSH_PORT = 22
+
+# Create the table if it isn't there, then delete it, so the definition below starts empty
+# whether this is the first load or the hundredth. It all happens in one transaction.
+table inet den_fw
+delete table inet den_fw
+
+table inet den_fw {
+	# The homes' public addresses, from their DDNS names: IPv4 addresses, and IPv6 networks
+	# (the home's /64 by default, as every device at home has its own IPv6 address in it).
+	set home_v4 {
+		type ipv4_addr
+		flags interval
+	}
+	set home_v6 {
+		type ipv6_addr
+		flags interval
+	}
+
+	# Where SSH may come from besides Tailscale: empty unless .env asks (DEN_SSH_FROM_HOMES,
+	# DEN_SSH_ALLOW).
+	set ssh_v4 {
+		type ipv4_addr
+		flags interval
+	}
+	set ssh_v6 {
+		type ipv6_addr
+		flags interval
+	}
+
+	chain input {
+		type filter hook input priority filter; policy drop;
+
+		ct state invalid drop
+		ct state established,related accept
+		iif "lo" accept
+
+		# The tailnet. Tailscale has already applied the access policy (tailscale-acl.hujson)
+		# to everything that comes out of this interface: family members reach 443 and 53,
+		# admins also SSH.
+		iifname "tailscale0" accept
+
+		# Tailscale's direct connections. WireGuard answers nothing that isn't signed by a
+		# key the tailnet knows, so this port looks closed to everyone else.
+		udp dport 41641 accept
+
+		# Den, from the family's homes.
+		tcp dport 443 ip saddr @home_v4 accept
+		tcp dport 443 ip6 saddr @home_v6 accept
+
+		# SSH, beyond Tailscale, only from the addresses .env lists.
+		tcp dport $SSH_PORT ip saddr @ssh_v4 accept
+		tcp dport $SSH_PORT ip6 saddr @ssh_v6 accept
+
+		# ICMP errors, so path MTU discovery and failures work (most arrive as "related"
+		# above already). No echo: the server doesn't answer pings from the internet.
+		icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
+		icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem } accept
+		# IPv6 can't work without neighbour discovery; hop limit 255 means it came from the
+		# local link, not from across the internet.
+		icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } ip6 hoplimit 255 accept
+
+		# DHCP answers, on providers that hand out the server's address with DHCP.
+		udp sport 67 udp dport 68 accept
+		ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept
+	}
+
+	# Docker sends traffic for a container's published port (`ports:` in a compose file)
+	# through NAT straight to the container: it goes through the forward hook and never
+	# reaches the input chain above. Nothing in this setup publishes a port, but if a
+	# container ever does, this keeps it closed to the internet. Containers' own traffic out,
+	# and anything arriving through Tailscale, pass as before.
+	chain forward {
+		type filter hook forward priority filter - 10; policy accept;
+		ct state new ct status dnat iifname != "tailscale0" iifname != "docker0" iifname != "br-*" drop
+	}
+}
