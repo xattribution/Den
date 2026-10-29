@@ -15,7 +15,10 @@
 # again on every run), and sets COMPOSE_FILE in .env so that plain `docker compose ...` reads both
 # compose files:
 #   compose.families.yaml   hub-smith: the hub service again, on its own port and 127.0.0.1, with
-#                           its own volume den-smith; dnsmasq's answer for its address; the backup
+#                           its own volume den-smith; for every hub, every family's address on
+#                           this server pointed at Caddy on 127.0.0.1 (extra_hosts) and listed in
+#                           DEN_PEER_HUBS, so a calendar one family shares with another is fetched
+#                           on this machine; dnsmasq's answer for its address; the backup
 #                           service's view of its data; and Caddy's copy of
 #   Caddyfile.families      a site for each family's address, to its own hub only
 # den-allowlist reads the same lines and lets each family's homes reach 443.
@@ -120,16 +123,45 @@ family_hub_service() { # NAME ADDRESS PORT: the family's hub, as a compose servi
       DEN_PORT: "$3"
       # Each family's own address: its links, sign-in pages and OAuth name it, and no other.
       DEN_PUBLIC_URL: https://$2
+$(families_peers_env)
+$(families_peers_hosts)
     volumes:
       # Its own volume, never shared with another family.
       - den-$1:/data
 
 EOF
 }
+
+# Calendars shared between the families on this server (docs/hosting.md, "Calendars shared
+# between families on this server"). Each hub sees every family's address as 127.0.0.1, where
+# Caddy answers it (this server's own network), so one hub fetches another family's shared
+# calendar through Caddy with the certificate checked, without leaving the machine, and without
+# depending on the server reaching its own public address (which a provider that puts the public
+# address in front of the server doesn't loop back, and the firewall would drop as a stranger).
+# DEN_PEER_HUBS lets the hub's NetGuard reach loopback for these names only, over https.
+families_addresses() { # every family's address here: the first's as ${DEN_DOMAIN} (compose fills it in), then the others'
+  printf '%s\n' '${DEN_DOMAIN}'
+  local f
+  for f in $(families_names); do family_domain "$f"; done
+}
+families_peers_env() { # the DEN_PEER_HUBS line, in a hub's environment
+  printf '      DEN_PEER_HUBS: "%s"' "$(families_addresses | paste -sd ' ' -)"
+}
+families_peers_hosts() { # the extra_hosts a hub needs: every family's address at Caddy, here
+  local a
+  printf '    extra_hosts:\n'
+  for a in $(families_addresses); do printf '      - "%s:127.0.0.1"\n' "$a"; done
+}
 family_backup_mount() { printf '      - den-%s:/families/%s\n' "$1" "$1"; }
 family_volume_decl() { printf '  den-%s:\n' "$1"; }
 family_start() { # NAME: start (or keep) its hub, and the shared services with the new files
-  run docker compose up -d --no-deps --wait --wait-timeout 300 "hub-$1" dnsmasq caddy
+  run docker compose up -d --no-deps --wait --wait-timeout 300 "hub-$1" $(families_other_hubs "$1") dnsmasq caddy
+}
+families_other_hubs() { # [NAME]: every other hub on this server; up -d restarts those whose list
+  # of families (DEN_PEER_HUBS, extra_hosts) changed, and leaves the rest running
+  local f
+  printf 'hub'
+  for f in $(families_names); do [ "$f" = "${1:-}" ] || printf ' hub-%s' "$f"; done
 }
 family_stop() { # NAME: stop and remove its hub; its volume stays
   run docker compose rm --stop --force "hub-$1"
@@ -167,6 +199,14 @@ families_compose() {
 # (docs/hosting.md, "Several families"). COMPOSE_FILE in .env adds this file to compose.yaml.
 
 services:
+EOF
+  cat <<EOF
+  # The first family's hub (compose.yaml) sees the other families' addresses on this machine too.
+  hub:
+    environment:
+$(families_peers_env)
+$(families_peers_hosts)
+
 EOF
   for f in $(families_names); do
     family_hub_service "$f" "$(family_domain "$f")" "$(family_port "$f")"
@@ -374,7 +414,7 @@ families_remove() {
     family_stop "$name"
     if [ "$CHECK" = 0 ]; then sed -i "/^$(family_key "$name")=/d" .env; fi
     families_render
-    run docker compose up -d --no-deps --wait --wait-timeout 300 dnsmasq caddy
+    run docker compose up -d --no-deps --wait --wait-timeout 300 $(families_other_hubs) dnsmasq caddy
     families_firewall
   else
     step "$name isn't on this server any more; its data is"
