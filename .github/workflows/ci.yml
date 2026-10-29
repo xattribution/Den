@@ -1,10 +1,15 @@
 name: ci
 
+# Actions minutes cost money on a private repository, and every check here also runs on a
+# developer's machine (tool/local_ci.sh). So CI runs only when asked:
+#   - a release tag (v*) runs everything and publishes the images and the release;
+#   - a pull request runs once it has the label "run-ci" (and on later pushes while it has it);
+#   - "Run workflow" in the Actions tab runs the checks by hand.
 on:
   push:
-    branches: [main]
     tags: ['v*']
   pull_request:
+    types: [labeled, synchronize, reopened]
   workflow_dispatch:
 
 concurrency:
@@ -19,6 +24,8 @@ jobs:
   # Tags, manual runs and changes to this file run every job.
   changes:
     name: What changed
+    # Every other job needs this one, so this condition gates the whole run.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-ci')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -218,7 +225,8 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     needs: [packages, app]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # macOS and Windows minutes cost several times Linux's: release tags only.
+    if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
@@ -271,13 +279,13 @@ jobs:
           name: den-${{ matrix.target }}
           path: ${{ matrix.artifact }}
 
-  # Build the hub and relay images on every change that touches them (one platform, nothing
-  # pushed), so a broken Dockerfile or a web build that fails under --csp shows up in review
-  # rather than at release.
+  # On a labeled pull request or a manual run, build the hub and relay images when the change
+  # touches them (one platform, nothing pushed), so a broken Dockerfile or a web build that
+  # fails under --csp shows up in review rather than at release.
   image-check:
     name: Image builds (${{ matrix.image }})
     needs: [changes]
-    if: github.event_name == 'pull_request' && needs.changes.outputs.images == 'true'
+    if: github.event_name != 'push' && needs.changes.outputs.images == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
