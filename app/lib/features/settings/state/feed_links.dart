@@ -4,7 +4,8 @@ import '../../../platform/sync/hub_api.dart';
 /// A read-only address for the family's calendar (or one person's) that a phone's calendar app
 /// subscribes to: "Show Den in iPhone Calendar". The hub makes it for a parent's own device and
 /// shows its address once ([url], [webcal]); after that it is listed by [label] and can be
-/// turned off. See docs/hub-api.md, "Calendar links".
+/// turned off. A [shared] one is for another family: their hub adds it as a calendar by link and
+/// gets the family's Everyone events only. See docs/hub-api.md, "Calendar links".
 class FeedLink {
   const FeedLink({
     required this.id,
@@ -31,7 +32,7 @@ class FeedLink {
   final String id;
   final String label;
 
-  /// `family`, or the member whose events it holds.
+  /// `family`, `shared` (for another family), or the member whose events it holds.
   final String feed;
   final String? feedName;
   final String? madeBy;
@@ -44,14 +45,20 @@ class FeedLink {
   final String? webcal;
 
   bool get family => feed == 'family';
+
+  /// For another family: the family's Everyone events only.
+  bool get shared => feed == sharedFeed;
+
+  /// The [feed] of a link for another family.
+  static const String sharedFeed = 'shared';
 }
 
 /// Where calendar links come from: the hub, or a fake in tests.
 abstract interface class FeedLinksSource {
   Future<List<FeedLink>> list();
 
-  /// Makes a link for [feed] (`family` or a member id), named [label]; the answer holds its
-  /// address, this once.
+  /// Makes a link for [feed] (`family`, `shared` or a member id), named [label]; the answer
+  /// holds its address, this once.
   Future<FeedLink> create({required String feed, required String label});
 
   Future<void> remove(String id);

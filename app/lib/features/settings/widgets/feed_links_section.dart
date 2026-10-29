@@ -19,9 +19,11 @@ import '../state/feed_links.dart';
 /// Settings, Calendars: "Show Den in iPhone Calendar". One tap makes a read-only link to the
 /// family's calendar on the hub and hands it to the phone's calendar app as a subscription
 /// (`webcal://`), so Den's events show beside work and school ones there and stay up to date.
-/// "Just one person's" makes one for someone's events. The links made so far are listed by where
-/// they went, each with Turn off. Where the calendar app doesn't ask on its own, it says plainly
-/// how to add the link by hand, with Copy link.
+/// "Just one person's" makes one for someone's events. "A link for another family" makes one for
+/// the family's Everyone events only, to send to another family, whose hub adds it as a calendar
+/// by link and keeps it up to date (until Groups carry the offer and the one-tap accept). The
+/// links made so far are listed by where they went, each with Turn off. Where the calendar app
+/// doesn't ask on its own, it says plainly how to add the link by hand, with Copy link.
 class FeedLinksSection extends StatefulWidget {
   const FeedLinksSection({super.key, this.source, this.web, this.open});
 
@@ -50,6 +52,15 @@ class _FeedLinksSectionState extends State<FeedLinksSection> {
   String? _error;
   String? _removing;
   String? _removeError;
+  bool _forFamily = false;
+  final _family = TextEditingController();
+  String? _familyError;
+
+  @override
+  void dispose() {
+    _family.dispose();
+    super.dispose();
+  }
 
   @override
   void didChangeDependencies() {
@@ -100,7 +111,7 @@ class _FeedLinksSectionState extends State<FeedLinksSection> {
     }
   }
 
-  Future<void> _make({String feed = 'family'}) async {
+  Future<void> _make({String feed = 'family', String? label}) async {
     final source = _source;
     if (source == null) return;
     final app = DenScope.read(context);
@@ -111,14 +122,19 @@ class _FeedLinksSectionState extends State<FeedLinksSection> {
       _copied = false;
     });
     try {
-      final link = await source.create(feed: feed, label: _labelFor(app));
+      final link = await source.create(feed: feed, label: label ?? _labelFor(app));
       if (!mounted) return;
       setState(() {
         _made = link;
         _links = [link, ...?_links];
+        if (link.shared) {
+          _forFamily = false;
+          _family.clear();
+        }
       });
       final webcal = link.webcal;
-      if (webcal != null) {
+      // A link for another family goes to them, not to this phone's calendar.
+      if (webcal != null && !link.shared) {
         final opened = await _openCalendar(webcal);
         if (mounted) setState(() => _opened = opened);
       }
@@ -129,6 +145,17 @@ class _FeedLinksSectionState extends State<FeedLinksSection> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// A link for another family, named for them: "The Smiths".
+  Future<void> _forAnotherFamily() async {
+    final name = _family.text.trim();
+    if (name.length > 60) {
+      setState(() => _familyError = 'Keep it to 60 letters or fewer.');
+      return;
+    }
+    setState(() => _familyError = null);
+    await _make(feed: FeedLink.sharedFeed, label: name.isEmpty ? 'Another family' : name);
   }
 
   Future<void> _justOne() async {
@@ -208,7 +235,7 @@ class _FeedLinksSectionState extends State<FeedLinksSection> {
                               children: [
                                 Text(link.label, style: t.body(c.ink)),
                                 Text(
-                                  tidy('${link.family ? "Everyone's events" : "${link.feedName ?? 'One person'}'s events"}, '
+                                  tidy('${link.shared ? 'Everyone events, for another family' : link.family ? "Everyone's events" : "${link.feedName ?? 'One person'}'s events"}, '
                                       'since ${f.short(f.localDate(link.made))}'),
                                   style: t.meta(c.ink2),
                                 ),
@@ -230,7 +257,9 @@ class _FeedLinksSectionState extends State<FeedLinksSection> {
                     child: _removing != link.id
                         ? const SizedBox(width: double.infinity)
                         : ConfirmPanel(
-                            message: "$_app stops getting Den's changes. What it has stays until you remove it there.",
+                            message: link.shared
+                                ? "The other family's Den stops showing your events."
+                                : "$_app stops getting Den's changes. What it has stays until you remove it there.",
                             confirmLabel: 'Turn off ${link.label}',
                             destructive: true,
                             busy: _busy,
@@ -245,7 +274,35 @@ class _FeedLinksSectionState extends State<FeedLinksSection> {
         ),
       ));
     }
-    if (made != null && made.url != null) {
+    if (made != null && made.url != null && made.shared) {
+      children.add(GroupCard(
+        padding: const EdgeInsets.all(DenLayout.cardPadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(tidy('Send this link to ${made.label}.'), style: t.rowTitle(c.ink)),
+            const SizedBox(height: Sp.xs),
+            Text(
+              tidy('A parent there adds it in Den: Settings, Calendars, Add a calendar by link. Their Den '
+                  'keeps it up to date until you turn it off here.'),
+              style: t.body(c.ink2),
+            ),
+            const SizedBox(height: Sp.m),
+            Wrap(
+              spacing: Sp.s,
+              runSpacing: Sp.s,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _copy(made.url!),
+                  icon: Icon(_copied ? PhosphorIconsBold.check : PhosphorIconsRegular.copy, size: 20),
+                  label: Text(_copied ? 'Copied' : 'Copy link'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ));
+    } else if (made != null && made.url != null) {
       children.add(GroupCard(
         padding: const EdgeInsets.all(DenLayout.cardPadding),
         child: Column(
@@ -304,6 +361,44 @@ class _FeedLinksSectionState extends State<FeedLinksSection> {
         Hang(
           by: Sp.m,
           child: TextButton(onPressed: _busy ? null : _justOne, child: const Text("Just one person's events")),
+        ),
+        Hang(
+          by: Sp.m,
+          child: TextButton(
+            onPressed: _busy ? null : () => setState(() => _forFamily = !_forFamily),
+            child: const Text('A link for another family'),
+          ),
+        ),
+        DenReveal(
+          visible: _forFamily,
+          child: !_forFamily
+              ? const SizedBox(width: double.infinity)
+              : Padding(
+                  padding: const EdgeInsets.only(top: Sp.s),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        tidy('Everyone events only: titles, times, places and notes. Never Parents-only or Just-me '
+                            'things, and never calendars another family shared with you.'),
+                        style: t.body(c.ink2),
+                      ),
+                      const SizedBox(height: Sp.m),
+                      LabeledField(
+                        label: 'Which family is it for?',
+                        error: _familyError,
+                        child: TextField(
+                          controller: _family,
+                          textCapitalization: TextCapitalization.words,
+                          style: t.body(c.ink),
+                          decoration: const InputDecoration(hintText: 'The Smiths'),
+                        ),
+                      ),
+                      const SizedBox(height: Sp.m),
+                      FilledButton(onPressed: _busy ? null : _forAnotherFamily, child: const Text('Make the link')),
+                    ],
+                  ),
+                ),
         ),
         if (_error != null) ...[
           const SizedBox(height: Sp.xs),
