@@ -366,6 +366,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'founderDevice': id(),
     'capture': oneOf(['direct', 'review']),
     'pointsEnabled': flag(),
+    'colors': names(ColorPack.values),
     'oversight': _oversight,
     'assistant': shape({
       'enabled': flag(),

@@ -1,5 +1,10 @@
 ## Unreleased
 
+- `family.colors` (optional, `ColorPack`: `bright`, `deep`, `soft` or `bold`; `Family.colors`
+  reads `bright` when it's unset or unknown): which shades of the eight person colors the whole
+  family sees. People keep their `marker`, so a pack changes shades, never who has which color.
+  A parent sets it with `updateFamily`; Undo puts the old pack back.
+
 - Faster to open, to take in late changes and to answer the screens, with the same results:
   a change that arrives late rewinds to its place instead of replaying the log; storage that
   implements the new `SnapshotStorage` (`FileStorage` does) keeps a snapshot that `Den.open`
