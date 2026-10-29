@@ -191,7 +191,9 @@ sheet. Body text is 17. Figures are tabular, so times and counts line up.
 ## Words: scaling and wrapping
 
 - **Text follows the system size** up to 200 % (`DenTextScale` clamps above that, never below
-  135 %). Nothing holding text has a fixed height; use a minimum.
+  135 %), times the person's own Text size (Settings, Appearance: Default, Larger at 20 pt
+  body, Largest at 23 pt), which is how a Home Screen web app gets larger words at all. The
+  product still stops at 200 %, and every screen is checked there (`text_size_test.dart`). Nothing holding text has a fixed height; use a minimum.
 - **Actions never squeeze text.** A button sits beside its text only while the text fits on one
   line at the current size; otherwise, and always for "Needs you" rows on phones, it moves under
   the text. Button labels never wrap or truncate.
@@ -278,6 +280,12 @@ Physics, not tweens (`app/lib/design/motion.dart`). Nothing else invents a curve
 - **Sheets**: `showDenSheet` / `DenSheetRoute` follow a drag 1:1 and hand the release velocity
   to the spring; flung down faster than 700 pt/s or dragged past 35 % of its height, it closes,
   otherwise it settles back. A tap outside or the back gesture closes it on the same spring.
+- **Small state changes** (a check filling, a switch's knob, a caret turning, a goal bar, a
+  chip being chosen): `SpringValue` moves a number on a spring from wherever it is, so a second
+  tap mid-way turns it around, and crossfades the old look to the new under Reduce Motion.
+  Checks use `DenMotion.check`, the rest `DenMotion.ui`. No `AnimatedContainer`, implicit
+  curves or Material defaults; pickers and menus are Den sheets (`showChoiceSheet`,
+  `showDayPicker`, `showTimeWheel`, `showPeoplePicker`), never Material dialogs or popup menus.
 - **Inline changes**: `DenReveal` grows and fades a piece in place; `DenCrossfade` swaps one
   state for another ("Nobody is driving Leo" for "You're driving Leo, Undo") with the height
   following on the UI spring.
@@ -394,7 +402,7 @@ take plain values and den_core model types, never the app's state, so any featur
 | `CheckRow`, `CheckRing` | The same as a full-width row (PadToday's chores); the ring alone (a step) | 32 pt ring in a 48 target, whose it is at the end; 60 tall. `CheckRing(progress:)` draws steps as an arc of the person's color: never a digit in a ring (the slashed zero reads as a glitch at that size). |
 | `ChipRow` | Chips that may not fit (the lists, people to filter by) | Scrolls sideways edge to edge; the first chip lines up with the page. |
 | `ProgressBar` | Progress toward a goal | 8 pt, round ends, the person's color on a quiet track; say the words beside it and in `label`. |
-| `MoreOptions` | An editor's rarely used fields | A quiet "More options" row that reveals them; `initiallyOpen` when one is already set. |
+| `MoreOptions` | An editor's rarely used fields | A quiet "More options" row that reveals them; `initiallyOpen` when one is already set. Its words line up with the labels above. |
 | `DayStepper` | Moving a page by days (Chores, a calendar day) | Back, Today (only when it isn't today), forward; the page's heading names the day. |
 | `TagChip` | One of a few choices (a category, a kind) | Ink when chosen. |
 | `PersonPill` | A person to filter by or pick | 32 pt face; ink edge when chosen. |
@@ -410,12 +418,16 @@ take plain values and den_core model types, never the app's state, so any featur
 | `DenPage`, `Ungapped`, `PageBackButton` | A page pushed over the app (Family, Settings, a setup step) | Round back button and the 30/800 title, sections `sectionGap` apart at a readable width, `bottom` for the one primary button within reach of the thumb. Wrap a child that may draw nothing in `Ungapped` and give it its own bottom gap. |
 | `SheetHeader` | A sheet's title and the pill that closes it | "Close" on the card color; `primary` ("Done" on a picture) in ink. |
 | `SwitchLine` | A setting said as a sentence ("Can add to lists") | Detail line under it, the switch at the end, the whole row flips it, 64 tall. `onChanged: null` with a `reason` keeps it visible and says why it can't change. |
+| `DenSwitch` | The switch itself | 52 by 32 with nothing around it, so it lines up with the gutter; 44 tall to tap; the knob springs. Never Material's `Switch`. |
+| `BarAction` | An editor's one top-bar action ("Add chore", "Save list", "Edit") | Ends on the 16 pt gutter like the cards below (`quiet` for a text button, whose words line up). |
+| `showChoiceSheet`, `showDayPicker`, `showTimeWheel` | Picking one of a few, a day, a time of day | Den sheets: a checked list, a month calendar with Done, the iPhone time wheel with Done. |
 | `ChoiceRows`, `Choice` | A setting with a few answers (Day, Night, Auto) | Rows in a section's card, an ink check before the chosen one. Not for views (`DenSegmented`), not for on and off (`SwitchLine`). |
 | `LabeledField` | A text field with its label | The label above in meta ink2, never floating inside; an error under it in red text with its icon. |
 | `NumberedSteps` | Steps to follow in another app (a connector, a Shortcut) | Bold numbers in their own column, reading text beside them; a step may be a widget (an address to copy). |
 | `DenTabBar`, `DenSidebar`, `NavPlace` | The app's navigation | The shell owns them; screens never draw their own. |
 | `showPeoplePicker` | Choosing a person (Give to…, Who?, Who's driving?) | A sheet of faces; `anyoneLabel` adds "Anyone". |
 | `showDenSheet` | Every sheet | Springs, drag to close, centered form sheet on iPad. |
+| `SpringValue` | A small state change that moves | See Motion, "Small state changes". |
 
 Writes from these pieces go through the feature's actions (ARCHITECTURE.md, "The app"); an
 action's `ActionResult.receipt` is what Undo takes back. A screen keeps what a tap did as a

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -24,33 +26,37 @@ class _MoreOptionsState extends State<MoreOptions> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    // The pressed fill needs a little room around the words; the words still line up with the
+    // labels above them, on the page gutter.
+    final outdent = Directionality.of(context) == TextDirection.rtl ? Sp.xs : -Sp.xs;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Align(
-          alignment: AlignmentDirectional.centerStart,
-          child: DenPressable(
-            onTap: () => setState(() => _open = !_open),
-            scale: false,
-            toggled: null,
-            selected: _open,
-            semanticLabel: widget.label,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: Targets.adult),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: Sp.xs),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ExcludeSemantics(child: Text(widget.label, style: context.text.label(c.ink))),
-                    const SizedBox(width: Sp.xs),
-                    AnimatedRotation(
-                      turns: _open ? 0.5 : 0,
-                      duration: DenMotion.reduced(context) ? Duration.zero : DenMotion.uiSettle,
-                      curve: DenMotion.uiCurve,
-                      child: Icon(PhosphorIconsBold.caretDown, size: 16, color: c.ink),
-                    ),
-                  ],
+        Transform.translate(
+          offset: Offset(outdent, 0),
+          child: Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: DenPressable(
+              onTap: () => setState(() => _open = !_open),
+              scale: false,
+              selected: _open,
+              semanticLabel: widget.label,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: Targets.adult),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: Sp.xs),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ExcludeSemantics(child: Text(widget.label, style: context.text.label(c.ink))),
+                      const SizedBox(width: Sp.xs),
+                      SpringValue(
+                        value: _open ? 1 : 0,
+                        child: Icon(PhosphorIconsBold.caretDown, size: 16, color: c.ink),
+                        builder: (context, turn, caret) => Transform.rotate(angle: turn * math.pi, child: caret),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

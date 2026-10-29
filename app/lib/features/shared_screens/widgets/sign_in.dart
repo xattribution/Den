@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
+import '../../../design/layout.dart';
+import '../../../design/sheet.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../design/pickers/pattern_pad.dart';
@@ -20,14 +22,11 @@ Future<Member?> showWhoSheet(
   String? likely,
   Member? start,
 }) {
-  return showModalBottomSheet<Member>(
-    context: context,
-    isScrollControlled: true,
-    builder: (sheetContext) => SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(Sp.l, 0, Sp.l, Sp.xl),
-        child: _WhoSheet(title: title, window: window, likely: likely, start: start),
-      ),
+  return showDenSheet<Member>(
+    context,
+    builder: (sheetContext) => Padding(
+      padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l),
+      child: _WhoSheet(title: title, window: window, likely: likely, start: start),
     ),
   );
 }

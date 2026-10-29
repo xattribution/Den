@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../pictograms.dart';
+import '../motion.dart';
 import '../tokens.dart';
 
 /// The picture-pattern sign-in: the nine animals in a 3×3 grid, four taps, Undo. Animals are
@@ -111,22 +112,30 @@ class _Slot extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final filled = animal != null;
-    return AnimatedContainer(
-      duration: Motion.of(context, Motion.state),
-      curve: Motion.curve,
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: filled ? c.ink : Colors.transparent,
-        border: Border.all(color: filled ? c.ink : c.ink2, width: 2),
-      ),
-      alignment: Alignment.center,
-      child: !filled
-          ? null
-          : hidden
-              ? Container(width: size * 0.28, height: size * 0.28, decoration: BoxDecoration(color: c.onInk, shape: BoxShape.circle))
-              : Icon(Pictograms.animal(animal!), size: size * 0.6, color: c.onInk),
+    // Fills on the UI spring as its picture is chosen.
+    return SpringValue(
+      value: filled ? 1 : 0,
+      builder: (context, t, _) {
+        final on = t.clamp(0.0, 1.0);
+        return Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: c.ink.withValues(alpha: on),
+            border: Border.all(color: Color.lerp(c.ink2, c.ink, on)!, width: 2),
+          ),
+          alignment: Alignment.center,
+          child: !filled
+              ? null
+              : Opacity(
+                  opacity: on,
+                  child: hidden
+                      ? Container(width: size * 0.28, height: size * 0.28, decoration: BoxDecoration(color: c.onInk, shape: BoxShape.circle))
+                      : Icon(Pictograms.animal(animal!), size: size * 0.6, color: c.onInk),
+                ),
+        );
+      },
     );
   }
 }

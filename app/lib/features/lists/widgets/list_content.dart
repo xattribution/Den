@@ -392,17 +392,9 @@ class _ItemRow extends StatelessWidget {
           constraints: const BoxConstraints(minHeight: 56),
           child: Row(
             children: [
-              // Lists are nobody's color: a quiet ink ring, filled when done (Lists.dc.html).
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: checked ? c.ink2 : null,
-                  border: checked ? null : Border.all(color: c.ink2, width: 2),
-                ),
-                child: checked ? Icon(PhosphorIconsBold.check, size: 17, color: c.card) : null,
-              ),
+              // Lists are nobody's color: a quiet ink ring, filled when done (Lists.dc.html), on
+              // the check spring like every check.
+              CheckRing(color: c.ink2, done: checked, size: 28, checkColor: c.card),
               const SizedBox(width: 14),
               Expanded(
                 child: Padding(

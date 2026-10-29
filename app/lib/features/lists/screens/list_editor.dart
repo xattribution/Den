@@ -112,11 +112,12 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
     final app = context.watch(listReads);
     final f = app.formats;
     final d = f.dateTime(_needBy ?? app.today);
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime(d.year, d.month, d.day),
-      firstDate: DateTime(d.year - 1),
-      lastDate: DateTime(d.year + 3),
+    final picked = await showDayPicker(
+      context,
+      title: 'Needed by',
+      initial: DateTime(d.year, d.month, d.day),
+      first: DateTime(d.year - 1),
+      last: DateTime(d.year + 3),
     );
     if (picked != null) {
       setState(() {
@@ -135,51 +136,14 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
       for (final o in app.den.occurrences(start, start + const Duration(days: 120).inMilliseconds))
         if (seen.add(o.event.id)) o,
     ];
-    final picked = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        final c = sheetContext.colors;
-        return SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(Sp.l, 0, Sp.l, Sp.s),
-                  child: Text('Which event is it for?', style: sheetContext.type.title(c.ink)),
-                ),
-                if (upcoming.isEmpty)
-                  const EmptyLine(message: 'Nothing on the calendar in the next four months.')
-                else
-                  Flexible(
-                    child: ListView(
-                      shrinkWrap: true,
-                      children: [
-                        for (final o in upcoming)
-                          ListTile(
-                            selected: o.event.id == _event,
-                            selectedColor: c.onInk,
-                            selectedTileColor: c.ink,
-                            leading: Icon(
-                              Pictograms.category(
-                                o.event.category == null ? null : app.den.category(o.event.category!)?.icon,
-                              ),
-                            ),
-                            title: Text(o.title),
-                            subtitle: Text(f.relative(f.localDate(o.start), app.today)),
-                            onTap: () => Navigator.of(sheetContext).pop(o.event.id),
-                          ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
+    final picked = await showChoiceSheet<String?>(
+      context,
+      title: 'Which event is it for?',
+      value: _event,
+      empty: 'Nothing on the calendar in the next four months.',
+      choices: [
+        for (final o in upcoming) Choice(o.event.id, o.title, detail: f.relative(f.localDate(o.start), app.today)),
+      ],
     );
     if (picked != null) {
       setState(() {
@@ -227,8 +191,7 @@ class _ListEditorScreenState extends State<ListEditorScreen> {
       appBar: AppBar(
         title: Text(_isNew ? 'New list' : 'Edit list'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: Sp.s),
+          BarAction(
             child: FilledButton(onPressed: _saving ? null : _save, child: Text(_isNew ? 'Add list' : 'Save list')),
           ),
         ],

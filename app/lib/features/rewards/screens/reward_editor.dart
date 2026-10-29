@@ -112,8 +112,7 @@ class _RewardEditorScreenState extends State<RewardEditorScreen> {
       appBar: AppBar(
         title: Text(_isNew ? 'New reward' : 'Edit reward'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: Sp.s),
+          BarAction(
             child: FilledButton(onPressed: _saving ? null : _save, child: Text(_isNew ? 'Add reward' : 'Save reward')),
           ),
         ],

@@ -1,4 +1,5 @@
 import 'package:den_app/app/app_state.dart';
+import 'package:den_app/design/widgets.dart' show DenSwitch;
 import 'package:den_app/features/advanced/screens/advanced_screen.dart';
 import 'package:den_app/features/advanced/screens/connect_guide_screen.dart';
 import 'package:den_app/features/advanced/screens/connections_screen.dart';
@@ -193,7 +194,7 @@ void main() {
     testWidgets('turning it on says what it shares, then saves on the yes', (tester) async {
       final state = await connected(tester);
       await pumpScreen(tester, AssistantScreen(source: FakeAssistant(const AssistantSetup(budgetCents: 500))), state: state, size: _tall);
-      await tester.tap(find.byType(Switch).first);
+      await tester.tap(find.byType(DenSwitch).first);
       await tester.pumpAndSettle();
       expect(state.den.family!.assistant.enabled, isFalse);
       await _tapAndWait(tester, find.text('Turn on'));

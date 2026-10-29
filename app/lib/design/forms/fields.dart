@@ -312,7 +312,7 @@ class SwitchRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: Sp.s),
-              Switch(value: value, onChanged: onChanged),
+              DenSwitch(value: value, onChanged: onChanged),
             ],
           ),
         ),
