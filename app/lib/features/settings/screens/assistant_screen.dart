@@ -25,7 +25,7 @@ String assistantPrivacy(String? company) => company == null
 /// Settings → AI helper, for parents on their own device: on or off for the family (off until a
 /// parent turns it on), who besides parents may use it, a kid's daily limit, the month's budget
 /// and what's been spent, and who runs it, with its key kept on the hub. What it shares says
-/// itself in plain words. The "Add or ask" helper itself comes later.
+/// itself in plain words. The helper itself is "Add or ask" in Add (`features/assistant`).
 class AssistantScreen extends StatefulWidget {
   const AssistantScreen({super.key, this.source});
 
