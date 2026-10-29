@@ -38,6 +38,7 @@ final Map<String, Object?> familyShape = S.object({
   'timezone': _str('IANA time zone.'),
   'week_start': _int('First day of the week, 0 Sunday to 6 Saturday.'),
   'points_enabled': _bool('Whether stars are on.'),
+  'colors': _str('The shades of people\'s colors the family sees: bright, deep, soft or bold.'),
 });
 
 /// A person.
