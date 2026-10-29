@@ -15,7 +15,7 @@ import 'package:den_assistant/testing.dart';
 import 'package:den_capture/den_capture.dart' show RulesReader;
 import 'package:den_core/demo.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart' show SemanticsFlag, SemanticsNode;
+import 'package:flutter/semantics.dart' show SemanticsNode;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -438,15 +438,28 @@ void main() {
       Assistant.links = (_) => FakeLink(today());
       await pumpAt(tester, state: state, location: '/today');
       await openFromToday(tester);
-      // The sheet slid up from below the screen; what was off it mid-slide is reachable now, not
-      // left hidden (the web leaves hidden nodes out altogether).
-      bool shown(SemanticsNode n) => !n.hasFlag(SemanticsFlag.isHidden) && !n.isInvisible;
-      final field = find.semantics.byPredicate((n) => n.hasFlag(SemanticsFlag.isTextField));
-      final ask = find.semantics.byPredicate((n) => n.label == 'Ask' && n.hasFlag(SemanticsFlag.isButton));
+      // The sheet slid up from below the screen. The tree has the field and Ask where they are
+      // drawn, not where they were mid-slide (a browser leaves what's off the screen out).
+      Rect onScreen(SemanticsNode node) {
+        var rect = node.rect;
+        for (SemanticsNode? n = node; n != null; n = n.parent) {
+          if (n.transform != null) rect = MatrixUtils.transformRect(n.transform!, rect);
+        }
+        return rect;
+      }
+
+      final field = find.semantics.byPredicate((n) => n.flagsCollection.isTextField);
+      final ask = find.semantics.byPredicate((n) => n.label == 'Ask' && n.flagsCollection.isButton);
       expect(field, findsOne);
       expect(ask, findsOne);
-      expect(shown(field.evaluate().single), isTrue, reason: 'the field');
-      expect(shown(ask.evaluate().single), isTrue, reason: 'the Ask button');
+      for (final (node, drawn) in [
+        (field.evaluate().single, tester.getRect(askField)),
+        (ask.evaluate().single, tester.getRect(find.widgetWithText(FilledButton, 'Ask'))),
+      ]) {
+        expect(node.flagsCollection.isHidden, isFalse);
+        expect(onScreen(node).center.dy, closeTo(drawn.center.dy, 2));
+        expect(onScreen(node).bottom, lessThanOrEqualTo(844));
+      }
       semantics.dispose();
     });
   });
