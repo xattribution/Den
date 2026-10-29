@@ -227,6 +227,21 @@ class RetiredRecoveryKeys {
 
   void addAll(RetiredRecoveryKeys other) => _retired.addAll(other._retired);
 
+  /// As a snapshot keeps them: `[[scope, key, clock, [kept...]], ...]`.
+  List<Object?> toJson() => [
+        for (final r in _retired) [r.scope, r.key, r.at.toString(), r.kept.toList()..sort()],
+      ];
+
+  /// Reads [toJson]'s output.
+  static RetiredRecoveryKeys fromJson(List<Object?> json) {
+    final out = RetiredRecoveryKeys();
+    for (final row in json) {
+      final r = row! as List;
+      out._retired.add(_Retired(r[0]! as String, r[1]! as String, Hlc.parse(r[2]! as String), (r[3]! as List).cast<String>().toSet()));
+    }
+    return out;
+  }
+
   /// The keys valid changes in [applied] replaced.
   static RetiredRecoveryKeys of(Iterable<Applied> applied) {
     final out = RetiredRecoveryKeys();
