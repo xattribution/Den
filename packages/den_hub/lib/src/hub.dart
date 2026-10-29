@@ -385,7 +385,9 @@ class DenHub {
         }
 
         unawaited(socket.sink.done.then((_) => closed(), onError: (Object _) => closed()));
-        unawaited(node.serve(socket));
+        // Devices that aren't approved yet get places per client, so no one address can keep
+        // everyone else from joining or recovering.
+        unawaited(node.serve(socket, client: key));
       },
       maxMessageBytes: maxSyncSocketMessageBytes,
       pingInterval: const Duration(seconds: 30),

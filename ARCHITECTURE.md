@@ -515,9 +515,13 @@ handshake inside the WebSocket:
 
 Fresh ephemeral keys per session give forward secrecy. A device the other side doesn't know as
 approved gets only the pairing messages below. A device serving sessions (the hub, a phone during
-pairing) gives devices it doesn't know as approved a few places of their own (8 by default,
+pairing) gives devices it doesn't know as approved places of their own (64 by default,
 counting handshakes in progress), apart from the approved devices' places, and 30 seconds to
 prove an invite or code; a device that proved one may wait 15 minutes for a parent's approval.
+Each client has its own share of those places (4): an IPv4 address or an IPv6 /64, as the relay
+counts them, from the hub's `/ws`; sessions that arrive without one (a relay tunnel, a
+rendezvous) share one client's places. So one address can't keep the family from joining or
+getting back in.
 
 A session frame carries at most 1 MiB of plaintext; a larger frame closes the session before it
 is decrypted. Servers built on den_net's WebSocket helpers (the hub's `/ws`) and the relay read
@@ -557,7 +561,9 @@ receive; the session's limit then applies.
   with the words through the share sheet. Whoever has the words gets the invite back
   (`POST /api/v1/invites/redeem`), joins over the hub's `/ws` pinning the hub's key, and asks
   to be that person's device; a parent approves with one tap on their own device. Wrong words count against every
-  invite: 10 in 10 minutes and the hub stops answering for a while. The hub drops an invite
+  invite, per client: 10 in 10 minutes and the hub stops answering that client for a while, and
+  200 in 10 minutes from everyone together (twenty clients' worth, so no one client can use
+  them up) and it stops answering everyone. Recovery codes count the same way. The hub drops an invite
   whose parent device has since been revoked or no longer belongs to a parent.
 - **Recovery words** ("I lost my phone"): the joiner connects to a device that serves sessions
   (the hub) with no family, and sends `pair {kind: recovery, key, proof}`: `key` is hex SHA-256

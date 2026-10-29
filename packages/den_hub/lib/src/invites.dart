@@ -18,7 +18,8 @@ import 'setup.dart' show restrictToOwner;
 /// words from Den's word list until the invite expires (a week at most), in its data directory,
 /// so a restart doesn't lose it. Whoever has the words gets the invite back and joins over
 /// `/ws`, pinning the hub's key; a parent still approves the device that asks. Every wrong
-/// guess counts: after [maxWrong] in [wrongWindow] the hub stops answering for a while.
+/// guess counts: after [maxWrong] in [wrongWindow] from one client that client waits, and after
+/// [wrongCeiling] from everyone together everyone does.
 class HubInvites {
   /// Creates the invite endpoints for [hub].
   HubInvites(this.hub);
@@ -32,8 +33,12 @@ class HubInvites {
   /// Most invites waiting at once.
   static const int maxLive = 50;
 
-  /// Wrong codes allowed in [wrongWindow].
+  /// Wrong codes one client may try in [wrongWindow].
   static const int maxWrong = 10;
+
+  /// Wrong codes all clients together may try in [wrongWindow]: twenty clients' worth, so one
+  /// can't use them up, and still under 30,000 a day against 50 invites of 44 bits each.
+  static const int wrongCeiling = 200;
 
   /// How long wrong codes count.
   static const Duration wrongWindow = Duration(minutes: 10);
@@ -41,7 +46,7 @@ class HubInvites {
   static const String _doc = 'invites';
 
   final Random _random = Random.secure();
-  final List<int> _wrong = [];
+  final WrongGuesses _wrong = WrongGuesses(perClient: maxWrong, ceiling: wrongCeiling, window: wrongWindow);
 
   /// Adds the invite routes.
   void register(Routes routes) {
@@ -121,10 +126,14 @@ class HubInvites {
     hub.checkFailures(request);
     hub.limit(request, 'pairing', Limits.pairing);
     final now = hub.now();
-    _wrong.removeWhere((at) => at <= now - wrongWindow.inMilliseconds);
-    if (_wrong.length >= maxWrong) {
-      final wait = ((_wrong.first + wrongWindow.inMilliseconds - now) / 1000).ceil();
-      throw ApiError.rateLimited(wait < 1 ? 1 : wait, 'Too many wrong codes were tried. Wait ten minutes, then try again.');
+    final client = hub.clientOf(request);
+    final wait = _wrong.wait(client, now);
+    if (wait != null) {
+      throw ApiError.rateLimited(
+          wait.seconds,
+          wait.all
+              ? 'Too many wrong codes were tried. Wait a few minutes, then try again.'
+              : 'Too many wrong codes from here. Wait ten minutes, then try again.');
     }
     final b = Body(await readJsonObject(request, required: true));
     final code = normalizeCode(b.string('code', required: true, min: 1, max: 200)!);
@@ -142,7 +151,7 @@ class HubInvites {
       }
     }
     if (grant == null) {
-      _wrong.add(now);
+      _wrong.add(client, now);
       hub.failed(request);
       hub.log.warn('Someone tried words that match no invite');
       throw ApiError.notFound(type: 'invite', message: "That code isn't right, or the invite has expired. Ask for a new invite.");

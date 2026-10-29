@@ -176,6 +176,8 @@ The hub counts what each client does, by IP address (an IPv6 address by its /64)
 | Tokens or device signatures that don't work, link codes that don't match | 30 in 5 minutes; then every authenticated request from that client gets `429` until the budget refills |
 | Browser link slots and link grants, invite and recovery redemptions | 20 in 10 minutes |
 | Wrong setup codes | 5, then that client waits a minute, doubling to an hour with each further wrong code |
+| Wrong invite words, wrong recovery codes | 10 in 10 minutes for each (and 200 in 10 minutes from all clients together) |
+| Devices on `/ws` that aren't approved yet (proving an invite or code, or waiting for a parent) | 4 at once, of 64 for everyone |
 | OAuth: registrations, sign-in requests, token requests | 10 an hour, 10 in 15 minutes, 60 in 5 minutes |
 | WebSocket connections (`/ws`, `/api/v1/hub/setup/ws`) | 120 new a minute, 64 open at once. A message may be 2 MiB (a session frame, base64 encoded); a frame announcing more closes the socket as its header arrives, before any of it is buffered |
 
@@ -1701,9 +1703,10 @@ The hub starts accepting the invite on `/ws` (see ARCHITECTURE.md, "Pairing"); t
 with it there, pinning the hub's key from the invite. An invite works for every device that uses
 it until it expires; each one still needs a parent's approval. Errors: `400 invalid_input` (not
 four words from the list), `404 not_found` (no such invite, expired, or its parent's device was
-revoked since), `429 rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from anywhere, against every
-invite; and per client, redeeming counts against the browser link budget and a wrong code
-against the failed-tries budget, see [Limits per client](#limits-per-client)), `503 not_ready`.
+revoked since), `429 rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from one client, against every
+invite, or 200 from all clients together; and per client, redeeming counts against the browser
+link budget and a wrong code against the failed-tries budget, see
+[Limits per client](#limits-per-client)), `503 not_ready`.
 Redeeming needs no open "Add a device" window in the public posture: the invite is a parent's
 consent already.
 
@@ -1784,7 +1787,8 @@ key. The first redemption binds the code to that device key: the same device ask
 dropped connection) gets the same proof, any other gets `404`. Errors: `400 invalid_input` (not
 four words, not a key), `403 permission_denied` (the family turned server help off since; the
 code is dropped), `404 not_found` (wrong, used, expired, or no longer for a parent), `429
-rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from anywhere; and per client,
+rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from one client, or 200 from all
+clients together; and per client,
 the same budget as invites and browser links, see [Limits per client](#limits-per-client)),
 `503 not_ready`.
 
