@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'model.dart';
 import 'rrule.dart';
 import 'time.dart';
@@ -233,6 +235,103 @@ String? _picture(String label, Object? v) {
   return Picture.valid(v) ? null : '$label is not a picture Den knows';
 }
 
+/// One entry of `family.oversight`: a person's privacy (`<memberId>`: `{parentsSeePrivate}`),
+/// or one of their other settings (`<memberId>.<setting>`: a bool, null for the default).
+String? _oversightEntry(String key, Object? v) {
+  final dot = key.indexOf('.');
+  if (dot < 0) return shape({'parentsSeePrivate': flag()})('Oversight', v);
+  final setting = key.substring(dot + 1);
+  if (dot == 0 || !OversightSetting.all.contains(setting)) return 'Oversight has an unknown setting "$setting"';
+  return v == null || v is bool ? null : 'Oversight $setting must be true or false';
+}
+
+String? _oversight(String label, Object? v) {
+  if (v is! Map) return '$label must be a map';
+  if (v.length > 200) return '$label has too many entries';
+  for (final e in v.entries) {
+    if (e.key is! String || !_idRe.hasMatch(e.key as String)) return '$label has a bad key';
+    final err = _oversightEntry(e.key as String, e.value);
+    if (err != null) return err;
+  }
+  return null;
+}
+
+/// What a photo's bytes are: their format and size in pixels, read from the headers; null when
+/// they are neither a JPEG nor a WebP Den can read.
+({String mime, int width, int height})? photoFormat(List<int> b) {
+  int u16be(int i) => (b[i] << 8) | b[i + 1];
+  int u16le(int i) => b[i] | (b[i + 1] << 8);
+  int u24le(int i) => b[i] | (b[i + 1] << 8) | (b[i + 2] << 16);
+  bool ascii(int at, String text) {
+    if (at + text.length > b.length) return false;
+    for (var i = 0; i < text.length; i++) {
+      if (b[at + i] != text.codeUnitAt(i)) return false;
+    }
+    return true;
+  }
+
+  if (b.length > 4 && b[0] == 0xFF && b[1] == 0xD8) {
+    var i = 2;
+    while (i + 3 < b.length) {
+      if (b[i] != 0xFF) return null;
+      final marker = b[i + 1];
+      if (marker == 0xFF) {
+        i++;
+        continue;
+      }
+      if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+        i += 2;
+        continue;
+      }
+      if (marker == 0xD9 || marker == 0xDA) return null;
+      final length = u16be(i + 2);
+      if (length < 2) return null;
+      final sof = marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC;
+      if (sof) {
+        if (i + 9 > b.length) return null;
+        return (mime: Photo.jpeg, height: u16be(i + 5), width: u16be(i + 7));
+      }
+      i += 2 + length;
+    }
+    return null;
+  }
+  if (b.length >= 30 && ascii(0, 'RIFF') && ascii(8, 'WEBP')) {
+    if (ascii(12, 'VP8 ') && b[23] == 0x9D && b[24] == 0x01 && b[25] == 0x2A) {
+      return (mime: Photo.webp, width: u16le(26) & 0x3FFF, height: u16le(28) & 0x3FFF);
+    }
+    if (ascii(12, 'VP8L') && b[20] == 0x2F) {
+      final bits = b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24);
+      return (mime: Photo.webp, width: (bits & 0x3FFF) + 1, height: ((bits >> 14) & 0x3FFF) + 1);
+    }
+    if (ascii(12, 'VP8X')) return (mime: Photo.webp, width: u24le(24) + 1, height: u24le(27) + 1);
+  }
+  return null;
+}
+
+/// The bytes of a photo's `data`, or null when it isn't base64.
+List<int>? photoBytes(Object? data) {
+  if (data is! String) return null;
+  try {
+    return base64.decode(data);
+  } on FormatException {
+    return null;
+  }
+}
+
+String? _photoData(String label, Object? v) {
+  if (v is! String) return '$label must be text';
+  if (v.length > (Photo.maxBytes + 2) ~/ 3 * 4) return 'The photo is too big (${Photo.maxBytes ~/ 1024} KB at most)';
+  final bytes = photoBytes(v);
+  if (bytes == null) return '$label isn\'t a photo';
+  if (bytes.length > Photo.maxBytes) return 'The photo is too big (${Photo.maxBytes ~/ 1024} KB at most)';
+  final format = photoFormat(bytes);
+  if (format == null) return 'A photo must be a JPEG or WebP';
+  if (format.width != Photo.side || format.height != Photo.side) {
+    return 'A photo must be ${Photo.side} by ${Photo.side} pixels';
+  }
+  return null;
+}
+
 final FieldCheck _signIn = shape({
   'kind': oneOf(['pin', 'pattern', 'none']),
   'salt': text(max: 100, nullable: true),
@@ -254,7 +353,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'founderDevice': id(),
     'capture': oneOf(['direct', 'review']),
     'pointsEnabled': flag(),
-    'oversight': dict(shape({'parentsSeePrivate': flag()})),
+    'oversight': _oversight,
     'assistant': shape({
       'enabled': flag(),
       'members': listOf(id(), max: 50, unique: true),
@@ -262,7 +361,7 @@ final Map<String, TypeSpec> typeSpecs = {
       'budgetCents': number(min: 0, max: 100000),
     }, required: {'enabled'}),
   }, required: {'name', 'timezone', 'founderDevice'}, space: Space.family, entries: {
-    'oversight': (key, v) => shape({'parentsSeePrivate': flag()})('Oversight', v),
+    'oversight': _oversightEntry,
   }),
   RecordType.member: TypeSpec({
     'name': text(min: 1, max: maxName),
@@ -272,6 +371,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'animal': names(Animal.values),
     'picture': _picture,
     'birthday': localDate(nullable: true),
+    'until': localDate(nullable: true),
     'grants': listOf(names(Grant.values), max: 4, unique: true),
     'signIn': _signIn,
     'order': number(),
@@ -403,6 +503,11 @@ final Map<String, TypeSpec> typeSpecs = {
     'status': names(ConnectionStatus.values),
     'expires': number(min: 0, nullable: true),
   }, required: {'label', 'kind', 'scopes', 'status'}, space: Space.parents),
+  RecordType.photo: TypeSpec({
+    'member': id(),
+    'mime': oneOf(const [Photo.jpeg, Photo.webp]),
+    'data': _photoData,
+  }, required: {'member', 'mime', 'data'}, space: Space.family),
 };
 
 /// `_from` on a change: what a capture read, and who read it.

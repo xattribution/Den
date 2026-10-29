@@ -21,10 +21,11 @@ abstract final class RecordType {
   static const item = 'item';
   static const subscription = 'subscription';
   static const connection = 'connection';
+  static const photo = 'photo';
 
   static const all = {
     family, member, device, category, event, eventException, chore, completion, adjustment,
-    goal, reward, redemption, list, item, subscription, connection,
+    goal, reward, redemption, list, item, subscription, connection, photo,
   };
 }
 
@@ -136,11 +137,21 @@ enum Marker {
 /// older member's animal is read as the matching picture.
 enum Animal { cat, dog, rabbit, bird, butterfly, fish, horse, cow, bug }
 
-/// What stands for a person: the id of a picture from the app's pack (`fox`, `dinosaur`), or
-/// [initial] for the first letter of their name. Other forms (a small photo, `photo:<id>`) can
-/// come later without a schema change.
+/// What stands for a person: the id of a picture from the app's pack (`fox`, `dinosaur`),
+/// [initial] for the first letter of their name, or `photo:<id>` for a small photo kept as a
+/// [Photo] record in the family space.
 abstract final class Picture {
   static const initial = 'initial';
+
+  /// What a member's picture starts with when it is a photo: `photo:<photo record id>`.
+  static const photoPrefix = 'photo:';
+
+  /// The picture that shows the photo record [photoId].
+  static String photo(String photoId) => '$photoPrefix$photoId';
+
+  /// The photo record [picture] shows, or null when it isn't a photo.
+  static String? photoIdOf(String picture) =>
+      picture.startsWith(photoPrefix) && picture.length > photoPrefix.length ? picture.substring(photoPrefix.length) : null;
 
   /// The pack's pictures by id, in the order the app shows them (its test checks they match), so
   /// surfaces without the artwork (MCP, the assistant) can offer them by name.
@@ -295,8 +306,40 @@ class Family extends RecordView {
   bool parentsSeePrivate(String memberId) =>
       (rec.map('oversight')[memberId] as Map?)?['parentsSeePrivate'] as bool? ?? true;
 
+  /// One of a person's own settings ([OversightSetting]), or null when no parent has set it.
+  /// Each is an entry of its own, `oversight.<memberId>.<setting>`, so two parents changing
+  /// different settings merge, and the privacy entry keeps the shape older versions read.
+  bool? setting(String memberId, String setting) {
+    final v = rec.map('oversight')['$memberId.$setting'];
+    return v is bool ? v : null;
+  }
+
+  /// Whether [memberId]'s reward requests wait for a parent's OK. Defaults to true; a parent
+  /// can turn it off for one kid, and then a reward they can afford is theirs at once.
+  bool rewardsNeedOk(String memberId) => setting(memberId, OversightSetting.rewardsNeedOk) ?? true;
+
+  /// Whether [member] may change their own picture, a photo too. Parents, grown-ups and
+  /// sitters always may; a kid when a parent allows it, which a teen starts out with and a
+  /// younger kid doesn't.
+  bool ownsPicture(Member member) {
+    if (!member.isKid) return true;
+    return setting(member.id, OversightSetting.ownPicture) ?? member.tier == Tier.teen;
+  }
+
   /// Who may use the in-app assistant; off until a parent turns it on.
   AssistantPolicy get assistant => AssistantPolicy.parse(rec.map('assistant'));
+}
+
+/// The per-person settings a parent keeps in `family.oversight` besides privacy, each written
+/// as its own entry `oversight.<memberId>.<setting>` holding a bool.
+abstract final class OversightSetting {
+  /// Whether a kid's reward requests wait for a parent (default true).
+  static const rewardsNeedOk = 'rewardsNeedOk';
+
+  /// Whether a kid may change their own picture (default: teens yes, younger kids no).
+  static const ownPicture = 'ownPicture';
+
+  static const all = {rewardsNeedOk, ownPicture};
 }
 
 /// The family's rules for the in-app assistant (`family.assistant`), set by a parent on their
@@ -396,6 +439,20 @@ class Member extends RecordView {
   }
 
   String? get birthday => rec.strOrNull('birthday');
+
+  /// For a sitter ([Role.guest]): the last local date (in the family's time zone) they have
+  /// access, or null for no end.
+  String? get until => rec.strOrNull('until');
+
+  /// Whether a sitter's access is over on [today] (a local date): today is past [until].
+  bool accessEndedOn(String today) {
+    final last = until;
+    return role == Role.guest && last != null && today.compareTo(last) > 0;
+  }
+
+  /// The photo record their picture shows, or null.
+  String? get photo => Picture.photoIdOf(picture);
+
   Set<Grant> get grants =>
       rec.strings('grants').map((g) => _enum(Grant.values, g)).whereType<Grant>().toSet();
   SignIn get signIn {
@@ -699,4 +756,29 @@ class Subscription extends RecordView {
   List<String> get exclude => rec.strings('exclude');
   bool get skipAllDay => rec.flag('skipAllDay');
   String get status => rec.str('status');
+}
+
+/// A person's small photo (`photo` records, space `f`): a 256 px square JPEG or WebP of at most
+/// [maxBytes], made small on the device that took it. A photo never changes; a new picture is a
+/// new record, and the member's `picture` names the one in use (`photo:<id>`).
+class Photo extends RecordView {
+  const Photo(super.rec);
+
+  /// The photo's side, in pixels.
+  static const int side = 256;
+
+  /// The most a photo may weigh, encoded.
+  static const int maxBytes = 40 * 1024;
+
+  static const String jpeg = 'image/jpeg';
+  static const String webp = 'image/webp';
+
+  /// Whose photo it is.
+  String get member => rec.str('member');
+
+  /// `image/jpeg` or `image/webp`.
+  String get mime => rec.str('mime', jpeg);
+
+  /// The encoded image, base64 (standard alphabet, padded).
+  String get data => rec.str('data');
 }

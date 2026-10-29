@@ -59,6 +59,14 @@ bool can(Member? member, DenAction action, {bool openCheckoff = false}) {
   }
 }
 
+/// Whether [actor] may change [target]'s picture (a photo included): a parent anyone's, and
+/// anyone their own, except a kid whose parents haven't allowed it ([Family.ownsPicture]).
+bool canChangePicture(Member? actor, Member target, Family? family) {
+  if (actor == null) return false;
+  if (can(actor, DenAction.manageFamily)) return true;
+  return actor.id == target.id && (family?.ownsPicture(actor) ?? !actor.isKid);
+}
+
 /// Whether [member] may read records in [space], given the family's oversight policy.
 /// Shared displays read only the family space; hubs read everything (callers check device mode).
 bool canRead(Member member, String space, Family? family) {
