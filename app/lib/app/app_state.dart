@@ -47,12 +47,14 @@ class AppState extends ChangeNotifier with FamilyReads {
     this.reminders,
     this.phoneCalendars,
     Set<String> seen = const {},
+    Map<String, int> snoozed = const {},
     String? signInTries,
   })
       : _den = den,
         _wall = wall,
         _theme = theme,
-        _seen = {...seen} {
+        _seen = {...seen},
+        _snoozed = {...snoozed} {
     signInGuard = SignInGuard.fromJson(
       signInTries,
       now: () => _den.now(),
@@ -75,6 +77,7 @@ class AppState extends ChangeNotifier with FamilyReads {
       wall: prefs.getBool(_wallKey) ?? false,
       theme: ThemeChoice.values.asNameMap()[prefs.getString(_themeKey)] ?? ThemeChoice.auto,
       seen: {...?prefs.getStringList(_seenKey)},
+      snoozed: _readSnoozed(prefs.getStringList(_snoozedKey)),
       signInTries: prefs.getString(_signInTriesKey),
       network: network,
       reminders: reminders,
@@ -95,6 +98,7 @@ class AppState extends ChangeNotifier with FamilyReads {
   static const _wallKey = 'den.wall';
   static const _themeKey = 'den.theme';
   static const _seenKey = 'den.seen';
+  static const _snoozedKey = 'den.snoozed';
   static const _signInTriesKey = 'den.signInTries';
 
   Den _den;
@@ -127,6 +131,25 @@ class AppState extends ChangeNotifier with FamilyReads {
     final keep = [..._seen];
     _save((p) => p.setStringList(_seenKey, keep.length > 200 ? keep.sublist(keep.length - 200) : keep));
   }
+
+  /// Until when (UTC milliseconds) a reminder this device's person put off ("Remind me later") stays
+  /// away, by key, or null. Kept on this device only.
+  int? snoozedUntil(String key) => _snoozed[key];
+  final Map<String, int> _snoozed;
+
+  /// Puts a reminder off until [until] (UTC milliseconds) on this device.
+  void snooze(String key, int until) {
+    _snoozed[key] = until;
+    _changed(const {Changes.notices});
+    final keep = [for (final e in _snoozed.entries) '${e.value} ${e.key}'];
+    _save((p) => p.setStringList(_snoozedKey, keep));
+  }
+
+  static Map<String, int> _readSnoozed(List<String>? kept) => {
+        for (final line in kept ?? const <String>[])
+          if (line.indexOf(' ') case final space when space > 0 && int.tryParse(line.substring(0, space)) != null)
+            line.substring(space + 1): int.parse(line.substring(0, space)),
+      };
 
   /// Wrong PINs and patterns on this device, per person, and how long the next try waits; kept
   /// on this device, so restarting Den doesn't reset it.

@@ -2,7 +2,7 @@ import 'package:den_core/den_core.dart';
 
 import '../../../app/app_state.dart';
 import '../../calendar/calendar_words.dart';
-import '../../family/family.dart' show Recovery;
+import '../../family/family.dart' show Recovery, RecoveryReminder;
 
 /// Something on Today that waits for the person using the device, with one action that settles
 /// it. Each has a [key] that stays the same while it waits, so a settled one keeps its place.
@@ -117,6 +117,16 @@ final class SignInTriesNeed extends Need {
   String get key => 'tries:${told.id}';
 }
 
+/// This parent hasn't saved their recovery words and no other parent has a device of their own
+/// (`RecoveryReminder`): "Save them", or "Remind me later".
+final class RecoveryWordsNeed extends Need {
+  const RecoveryWordsNeed(this.member);
+  final String member;
+
+  @override
+  String get key => RecoveryReminder.snoozeKey(member);
+}
+
 /// How long a privacy change or a sitter's ended access stays in Needs you unless put away.
 const int noticeDays = 14;
 
@@ -183,6 +193,7 @@ List<Need> needsYou(AppState app, {required int now}) {
     out.addAll([for (final c in den.connections) if (c.status == ConnectionStatus.pending) ConnectionNeed(c)]);
     out.addAll(Recovery.unseen(den, app.seen).map(RecoveredNeed.new));
     out.addAll(_triesToTell(app, now).map(SignInTriesNeed.new));
+    if (RecoveryReminder.due(app, now: now)) out.add(RecoveryWordsNeed(me.id));
   }
 
   final today = app.today;

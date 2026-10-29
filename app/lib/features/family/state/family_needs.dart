@@ -3,6 +3,7 @@ import 'package:den_core/den_core.dart';
 import '../../../app/app_state.dart';
 import '../../../platform/sync/pairing.dart';
 import 'recovery.dart';
+import 'recovery_reminder.dart';
 
 /// Something at the top of Family that waits for a parent on their own device, with its one
 /// answer. Each keeps its [key] while it waits, so a settled one keeps its place.
@@ -57,6 +58,14 @@ final class PinAsk extends FamilyNeed {
   String get key => 'pin:${parent.id}';
 }
 
+/// This parent hasn't saved their recovery words and no other parent has a device of their own.
+final class RecoveryWordsAsk extends FamilyNeed {
+  const RecoveryWordsAsk();
+
+  @override
+  String get key => 'recovery-words';
+}
+
 /// What waits on Family for whoever uses this device: devices asking to join, connections
 /// asking, and their own PIN once the family has a shared screen. Empty off a parent's own
 /// device: those are trust decisions.
@@ -77,6 +86,7 @@ List<FamilyNeed> familyNeeds(AppState app, List<PendingJoin> joins) {
   final me = app.me;
   final display = sharedDisplays(den).firstOrNull;
   if (me != null && me.isParent && me.signIn.kind == 'none' && display != null) out.add(PinAsk(me, display));
+  if (RecoveryReminder.due(app, now: den.now())) out.add(const RecoveryWordsAsk());
   return out;
 }
 
