@@ -234,9 +234,10 @@ revoked device the revoker never held.
 
 Every device sees it: History renders such a change as "Alex's new iPhone was let in with Alex's
 recovery words" (or "by the hub's recovery"), and every other parent's own device shows it in
-Needs you, with OK or "That wasn't us" (an ordinary revocation), until someone there says OK. The
-parent's new phone offers "Remove your old phone" on their page. Recovery is never an action: no
-MCP client, API token or assistant can set up, turn on or use it (`not_exposed.dart`).
+Needs you, with "Got it" or "That wasn't us" (an ordinary revocation), until someone there puts
+it away. The parent's new phone offers "Remove your old phone" on their page. Recovery is never
+an action: no MCP client, API token or assistant can set up, turn on or use it
+(`not_exposed.dart`).
 
 What whoever runs the hub can do: with server help **off**, read what the hub holds (every space,
 as always) and stop it serving, but make no trust decision and let in no device, and a key the
