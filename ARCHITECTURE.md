@@ -667,7 +667,7 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `POST /api/v1/invites` | an `InviteGrant` from a parent's own device | Keeps the invite under four words; returns them and a link |
 | `POST /api/v1/invites/redeem` | the four words | The invite, who it is for, the family's name |
 | `GET`/`PUT`/`DELETE /api/v1/push`, `POST /api/v1/push/test` | signed by a personal device | The hub's VAPID key; this device's Web Push subscription; a test notification |
-| `GET /ics/<token>/family.ics` | read token in path | Read-only ICS feed for other calendar apps |
+| `GET /ics/<secret>/family.ics`, `GET /ics/<secret>/<memberId>.ics` | a calendar link's secret in the path (never an API token) | Read-only ICS feed for other calendar apps, read as the parent who made the link; it ends when they turn it off, leave the family, or the device they made it on is removed |
 | `GET /ws` | session handshake | Device sync |
 | `POST /mcp` | bearer or OAuth | MCP Streamable HTTP: 2026-07-28 (stateless, headers checked against the body) and the session-based versions before it |
 | OAuth: `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/mcp]`, `/oauth/register`, `/oauth/authorize`, `/oauth/token` | | OAuth 2.1 with PKCE for remote MCP clients such as claude.ai: client ID metadata documents, registration, or clients a parent sets up; `resource` checked; `iss` on every redirect |

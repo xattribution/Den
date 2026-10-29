@@ -1733,14 +1733,17 @@ consent already.
 "Show Den in iPhone Calendar": a parent's own device makes a read-only address for the
 family's calendar, or for one person's, and the phone's calendar app subscribes to it
 (`webcal://`). The address opens one ICS feed and nothing else. It is not an API token: it can't
-reach `/api/v1`, MCP or any other feed.
+reach `/api/v1`, MCP or any other feed. Nor does an API token open a feed (`401`): pasted into a
+calendar app or service, it would be a key to the whole API in someone else's settings.
 
 The feed reads with the permissions of the parent who made the link, exactly as the ICS feed
 does for a token acting as that parent: their own "Just me" events are in it, a kid's or a
 teen's private events only while the family's oversight lets parents see them (and they drop
 out when it stops), and `parents` events for parents. A person's link holds the events they're
-in and the events for everyone, like `GET /ics/<token>/<memberId>.ics`. A link stops working
-when a parent turns it off or when the parent who made it leaves the family.
+in and the events for everyone (`?everyone=0`: only theirs). A link stops working when a parent
+turns it off, when the parent who made it leaves the family, or when the device it was made on
+is removed (a lost phone's links end with it; links made before the hub kept the device end only
+with their maker).
 
 The hub keeps only a SHA-256 hash of each link's secret, with who made it and for what, in
 `<data>/hub/feed_links.json` (its user only); the address itself is shown once, when it is made.

@@ -230,5 +230,7 @@ the whole feed). Which UID became which event is saved as a sync goes, and a syn
 over finds the feed's events by `source.ref`, so a hub stopped mid-sync never adds an event
 twice (and removes copies an older hub left).
 
-Out: `GET /ics/<token>/family.ics` and `GET /ics/<token>/<memberId>.ics` (that member's events
+Out: `GET /ics/<secret>/family.ics` and `GET /ics/<secret>/<memberId>.ics` (that member's events
 and everyone's; `?everyone=0` for only theirs), with RRULE, EXDATE, RECURRENCE-ID and VTIMEZONE.
+The secret is a calendar link's (`/api/v1/feeds`), never an API token: a token pasted into a
+calendar would be a key to the whole API in someone else's settings.

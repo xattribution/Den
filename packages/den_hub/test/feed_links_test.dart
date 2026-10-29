@@ -155,6 +155,21 @@ void main() {
     expect((await signed(alex, 'POST', '/api/v1/feeds', body: {'feed': 'family', 'label': ''})).status, 400);
   });
 
+  test('a link stops working when the device it was made on is removed', () async {
+    final alex = await device('Alex');
+    final made = await signed(alex, 'POST', '/api/v1/feeds', body: {'feed': 'family', 'label': "Alex's old iPhone"});
+    final path = pathOf(made.body['url']! as String);
+    final other = await signed(f.phone, 'POST', '/api/v1/feeds', body: {'feed': 'family', 'label': "Alex's iPad"});
+    final kept = pathOf(other.body['url']! as String);
+    expect((await f.call('GET', path)).status, 200);
+    await f.phone.revokeDevice(alex.deviceId);
+    await f.toHub();
+    expect((await f.call('GET', path)).status, 401, reason: 'a lost phone\'s links end with it');
+    expect((await f.call('GET', kept)).status, 200, reason: 'links Alex made on another device go on');
+    final listed = await signed(f.phone, 'GET', '/api/v1/feeds');
+    expect([for (final l in listed.body['feeds']! as List) (l as Map)['label']], ["Alex's iPad"]);
+  });
+
   test('a link stops working when the parent who made it leaves the family', () async {
     final priya = await device('Priya');
     final made = await signed(priya, 'POST', '/api/v1/feeds', body: {'feed': 'family', 'label': "Priya's iPhone"});
