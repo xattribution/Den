@@ -41,19 +41,45 @@ abstract class ReminderOutlet {
 /// [window] with [planReminders] at start, after every change the engine applies, and every
 /// [refresh] while the app runs, then schedules what's new, replaces what changed and withdraws
 /// what's gone. A reminder that already fired is left in the notification tray.
+///
+/// A device in several families has one, over every family's engine ([ReminderScheduler.logs]):
+/// one budget of [maxScheduledReminders], nearest first ([planHouseholdReminders]).
 class ReminderScheduler {
   ReminderScheduler(
-    this._den,
+    Den den,
+    ReminderOutlet outlet, {
+    required bool enabled,
+    int Function()? now,
+    Duration window = reminderWindow,
+    Duration refresh = const Duration(minutes: 30),
+    Duration settle = const Duration(milliseconds: 400),
+  }) : this.logs(
+          () => [ReminderLog(den: den, id: den.familyId ?? '')],
+          outlet,
+          enabled: enabled,
+          now: now,
+          window: window,
+          refresh: refresh,
+          settle: settle,
+        );
+
+  /// Reminders across the families [logs] names, read again whenever [logsChanged] fires (a
+  /// family joined or left).
+  ReminderScheduler.logs(
+    this._logs,
     this._outlet, {
     required bool enabled,
+    Listenable? logsChanged,
     int Function()? now,
     this.window = reminderWindow,
     this.refresh = const Duration(minutes: 30),
     this.settle = const Duration(milliseconds: 400),
   })  : _enabled = enabled,
+        _logsChanged = logsChanged,
         _now = now ?? (() => DateTime.now().millisecondsSinceEpoch);
 
-  final Den _den;
+  List<ReminderLog> Function() _logs;
+  Listenable? _logsChanged;
   final ReminderOutlet _outlet;
   final int Function() _now;
 
@@ -75,7 +101,8 @@ class ReminderScheduler {
   Set<int> _leftover = const {};
   bool _started = false;
   bool _asked = false;
-  StreamSubscription<Set<String>>? _changes;
+  final List<StreamSubscription<Set<String>>> _changes = [];
+  final Set<Den> _following = {};
   Timer? _roll;
   Timer? _soon;
   Future<void>? _running;
@@ -103,9 +130,40 @@ class ReminderScheduler {
       debugPrint('Reminders are off on this device: $e');
       return;
     }
-    _changes = _den.onChange.listen((_) => _later());
+    _follow();
+    _logsChanged?.addListener(_logsMoved);
     _roll = Timer.periodic(refresh, (_) => _later());
     await reschedule();
+  }
+
+  /// Follows the families [logs] names from now on, in place of the ones it followed, whenever
+  /// [changed] fires: the app's household, once it is open.
+  void followLogs(List<ReminderLog> Function() logs, {Listenable? changed}) {
+    _logsChanged?.removeListener(_logsMoved);
+    _logs = logs;
+    _logsChanged = changed;
+    if (!_started) return;
+    _logsChanged?.addListener(_logsMoved);
+    _logsMoved();
+  }
+
+  void _logsMoved() {
+    final now = {for (final l in _logs()) l.den};
+    if (now.length != _following.length || !now.every(_following.contains)) _follow();
+    _later();
+  }
+
+  /// Listens to the changes of every family's engine.
+  void _follow() {
+    for (final s in _changes) {
+      unawaited(s.cancel());
+    }
+    _changes.clear();
+    _following.clear();
+    for (final log in _logs()) {
+      if (!_following.add(log.den)) continue;
+      _changes.add(log.den.onChange.listen((_) => _later()));
+    }
   }
 
   /// One plan for a background refresh: no listeners, no timers, and no permission prompt, since
@@ -156,7 +214,7 @@ class ReminderScheduler {
     final now = _now();
     final want = <int, PlannedReminder>{
       if (_enabled)
-        for (final r in planReminders(_den, now: now, window: window)) r.id: r,
+        for (final r in planHouseholdReminders(_logs(), now: now, window: window)) r.id: r,
     };
     for (final id in _leftover) {
       if (!want.containsKey(id)) await _quietly(() => _outlet.cancel(id));
@@ -195,7 +253,11 @@ class ReminderScheduler {
   Future<void> dispose() async {
     _soon?.cancel();
     _roll?.cancel();
-    await _changes?.cancel();
+    _logsChanged?.removeListener(_logsMoved);
+    for (final s in _changes) {
+      await s.cancel();
+    }
+    _changes.clear();
     // Not awaited: with no listener a single-subscription stream never delivers its close.
     unawaited(_taps.close());
   }
