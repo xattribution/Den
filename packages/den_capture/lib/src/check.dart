@@ -110,7 +110,14 @@ List<DraftIssue> _issues(Den den, DraftEntry e, CaptureOrigin origin, String zon
   final out = <DraftIssue>[];
   final actor = den.actor;
   if (actor == null) {
-    out.add(const DraftIssue(IssueKind.notAllowed, 'Sign in on this screen to add things'));
+    // Nobody acting: a shared screen nobody signed in on, or a hub with no person to act for
+    // (an API or MCP connection acts as its person, so this is one that acts for nobody).
+    out.add(DraftIssue(
+      IssueKind.notAllowed,
+      den.thisDevice?.mode == DeviceMode.hub
+          ? 'Nobody is acting through the hub, so nothing can be added; a parent chooses who a connection acts as'
+          : 'Sign in on this screen to add things',
+    ));
   } else if (!can(actor, e.needs)) {
     final what = switch (e) {
       DraftEvent() => 'events',
