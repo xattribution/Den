@@ -1,6 +1,9 @@
 import 'package:den_app/app/app_state.dart';
 import 'package:den_app/design/widgets.dart';
 import 'package:den_app/features/calendar/widgets/family_week.dart';
+import 'package:den_app/features/lists/lists.dart';
+import 'package:den_app/features/lists/widgets/item_adder.dart' show StoreChip;
+import 'package:den_app/features/today/widgets/today_groceries.dart';
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/shots.dart';
 import 'calendar_shots.dart' show shootAt, tallPhone;
+import 'family_fakes.dart' show pumpScreen;
 
 /// An iPad held upright: the sidebar and one column.
 const Size portrait = Size(834, 1194);
@@ -156,5 +160,34 @@ void main() {
       state: state,
       size: wall,
     );
+  });
+
+  testWidgets('Groceries on Today read "2 lemons @Costco", and the store stays for the next one', (tester) async {
+    final state = await demoIn(tester);
+    await pumpScreen(
+      tester,
+      const SingleChildScrollView(padding: EdgeInsets.all(16), child: TodayGroceries()),
+      state: state,
+    );
+    final id = groceriesList(state.den)!.list.id;
+    Item item(String text) => state.den.list(id)!.items.firstWhere((i) => i.text == text);
+    Future<void> type(String text) async {
+      await tester.enterText(find.byType(TextField).first, text);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      for (var i = 0; i < 3; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+        await tester.pumpAndSettle();
+      }
+    }
+
+    expect(tester.widget<StoreChip>(find.byType(StoreChip)).store, isNull);
+    await type('2 lemons @costco');
+    expect(item('Lemons').qty, '2');
+    expect(item('Lemons').store, 'Costco');
+    expect(findWords('Added Lemons to Groceries at Costco'), findsOneWidget);
+    expect(tester.widget<StoreChip>(find.byType(StoreChip)).store, 'Costco');
+    await type('limes');
+    expect(item('Limes').store, 'Costco');
   });
 }

@@ -3,4 +3,5 @@
 library;
 
 export 'state/list_actions.dart';
+export 'widgets/item_adder.dart' show AddItemRow;
 export 'words/list_words.dart';

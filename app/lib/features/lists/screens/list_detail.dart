@@ -8,6 +8,7 @@ import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../state/lists_model.dart';
+import '../widgets/clear_checked.dart';
 import '../widgets/list_content.dart';
 import '../widgets/list_menu.dart';
 
@@ -58,9 +59,12 @@ class ListDetailScreen extends StatelessWidget {
           const SizedBox(width: Sp.xs),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(DenLayout.gutter, Sp.s, DenLayout.gutter, Sp.xxl),
-        children: [FormWidth(max: 760, child: ListContent(list: lv, focusAdd: focusAdd))],
+      body: ClearCheckedOver(
+        listId: lv.list.id,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(DenLayout.gutter, Sp.s, DenLayout.gutter, Sp.xxl + ClearChecked.room),
+          children: [FormWidth(max: 760, child: ListContent(list: lv, focusAdd: focusAdd))],
+        ),
       ),
     );
   }
