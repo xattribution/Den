@@ -413,19 +413,36 @@ class DenHub {
       };
 
   /// What every request passes before it is routed: a per-client budget for requests without
-  /// a token or a device signature (this machine itself excepted), and a body no larger than
-  /// the endpoint takes, refused by its declared length before a byte is read.
-  Handler _admission(Handler inner) => (Request request) {
+  /// a working token or device signature (this machine itself excepted), and a body no larger
+  /// than the endpoint takes, refused by its declared length before a byte is read.
+  ///
+  /// A request counts as signed only once what it carries checks out: a bearer token the hub
+  /// knows, or a device signature over the body hash it claims. Any other header (a made-up
+  /// token, a signature that doesn't verify, or one that can't be checked before the body) is a
+  /// request like any stranger's.
+  Handler _admission(Handler inner) => (Request request) async {
         final forwarded = request.headers.containsKey('x-forwarded-for');
         if (forwarded && !viaTrustedProxy(request, config.trustedProxies)) _warnUntrustedProxy(request);
         final peer = peerAddress(request);
         final local = peer != null && peer.isLoopback && !forwarded;
-        final signed = request.headers.containsKey('authorization') || request.headers.containsKey(DeviceRequest.signature);
-        if (!signed && !local) _ctx.limit(request, 'anonymous', Limits.anonymous);
+        var admitted = request;
+        if (!local) {
+          if (await _auth.headersVerify(request)) {
+            admitted = request.change(context: {DeviceAuth.verifiedHeaders: true});
+          } else if (!_tokenWorks(request)) {
+            _ctx.limit(request, 'anonymous', Limits.anonymous);
+          }
+        }
         final declared = request.contentLength;
         if (declared != null && declared > _bodyLimit(request)) throw ApiError.tooLarge();
-        return inner(request);
+        return inner(admitted);
       };
+
+  /// Whether [request] carries a bearer token that resolves to a working connection.
+  bool _tokenWorks(Request request) {
+    final token = bearerToken(request.headers['authorization']);
+    return token != null && _ctx.ready && accessForToken(den, token) != null;
+  }
 
   int _bodyLimit(Request request) => switch (request.url.path) {
         'api/v1/capture/read' => HubCapture.maxBody,

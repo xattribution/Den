@@ -9,10 +9,12 @@ import 'package:cryptography/dart.dart';
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
+import 'package:den_hub/src/device_auth.dart' show DeviceAuth;
 import 'package:den_hub/src/edge.dart';
 import 'package:den_hub/src/http_util.dart' show requestBase;
 import 'package:den_hub/src/web.dart';
 import 'package:den_net/den_net.dart';
+import 'package:http/http.dart' as http;
 import 'package:shelf/shelf.dart';
 import 'support/test.dart';
 
@@ -176,6 +178,53 @@ void main() {
       expect(int.parse(limited.headers['retry-after']!), greaterThan(0));
       final other = await f.call('POST', '/api/v1/link', headers: {...proxied, 'x-forwarded-for': '198.51.100.8'});
       expect(other.status, 201, reason: 'another client behind the same proxy has its own budget');
+    });
+
+    test('a token or signature counts only once it checks out', () async {
+      final client = http.Client();
+      addTearDown(client.close);
+      const from = {'x-forwarded-for': '198.51.100.9'};
+      Future<int> health(Map<String, String> headers) async =>
+          (await client.get(f.base.resolve('/health'), headers: {...from, ...headers})).statusCode;
+      // Made-up credentials no longer step around the budget for strangers.
+      final junk = [
+        {'authorization': 'Bearer den_made-up'},
+        {
+          DeviceRequest.device: f.hubDen.deviceId,
+          DeviceRequest.time: '${DateTime.now().millisecondsSinceEpoch}',
+          DeviceRequest.nonce: 'n',
+          DeviceRequest.signature: 'not-a-signature',
+          DeviceAuth.bodyHash: '0' * 64,
+        },
+      ];
+      // The budget refills as it goes (600 a minute), so count until the first refusal.
+      var answered = 0;
+      while (answered < 3 * Limits.anonymous.burst && await health(junk[answered % 2]) == 200) {
+        answered++;
+      }
+      expect(answered, inInclusiveRange(Limits.anonymous.burst, 2 * Limits.anonymous.burst), reason: 'refused once spent');
+      // A working token, or a device's signature over its body's hash, still goes through.
+      final token = await f.token();
+      for (var i = 0; i < 20; i++) {
+        expect(await health({'authorization': 'Bearer $token'}), 200);
+      }
+      final url = f.base.resolve('/api/v1/capture/reader');
+      // The hex SHA-256 of an empty body.
+      const hash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+      for (var i = 0; i < 20; i++) {
+        final signed = await DeviceRequest.sign(
+            keys: f.phone.keys, method: 'GET', url: url, body: const [], hub: f.hubDen.deviceId, actorId: f.phone.actor?.id);
+        final reader = await client.get(url, headers: {...from, ...signed, DeviceAuth.bodyHash: hash});
+        expect(reader.statusCode, 200, reason: reader.body);
+      }
+      // Without the body's hash a signature can't be checked on the way in: a stranger's budget.
+      var refused = false;
+      for (var i = 0; i < 200 && !refused; i++) {
+        final unhashed = await DeviceRequest.sign(
+            keys: f.phone.keys, method: 'GET', url: url, body: const [], hub: f.hubDen.deviceId, actorId: f.phone.actor?.id);
+        refused = (await client.get(url, headers: {...from, ...unhashed})).statusCode == 429;
+      }
+      expect(refused, isTrue);
     });
   });
 

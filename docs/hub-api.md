@@ -172,7 +172,7 @@ The hub counts what each client does, by IP address (an IPv6 address by its /64)
 
 | What | Budget |
 | --- | --- |
-| Requests with neither a token nor a device signature (health, status, the web app's files, OAuth metadata and polling) | 600 a minute. Requests from this machine itself (loopback, not through a proxy) aren't counted |
+| Requests without a working token or device signature (health, status, the web app's files, OAuth metadata and polling, and any request whose token the hub doesn't know or whose signature doesn't verify; a device signature counts as working only with `X-Den-Body-SHA256`, which lets the hub check it before the body) | 600 a minute. Requests from this machine itself (loopback, not through a proxy) aren't counted |
 | Tokens or device signatures that don't work, link codes that don't match | 30 in 5 minutes; then every authenticated request from that client gets `429` until the budget refills |
 | Browser link slots and link grants, invite and recovery redemptions | 20 in 10 minutes |
 | Wrong setup codes | 5, then that client waits a minute, doubling to an hour with each further wrong code |
