@@ -5,6 +5,7 @@ import 'chores.dart';
 import 'hlc.dart';
 import 'model.dart';
 import 'permissions.dart';
+import 'recovery.dart';
 import 'schema.dart';
 import 'store.dart';
 import 'views.dart';
@@ -90,6 +91,9 @@ class Validator {
   /// earlier clock.
   final Map<String, List<Cutoff>> cutoffs = {};
 
+  /// Recovery keys replaced later in the log; the materializer fills this like [cutoffs].
+  final RetiredRecoveryKeys retiredRecoveryKeys = RetiredRecoveryKeys();
+
   Rejection? check(Change c) {
     final colon = c.id.lastIndexOf(':');
     final counter = colon > 0 ? int.tryParse(c.id.substring(colon + 1)) : null;
@@ -120,6 +124,10 @@ class Validator {
     if (crossError != null) return _schema(crossError);
 
     final authorEntry = store.at(Space.family, RecordType.device, c.device);
+    // The one way a device approves itself: as an existing parent's, with a recovery proof.
+    if (c.type == RecordType.device && c.fields.containsKey('recovery')) {
+      return checkRecovery(c, store, trust, retiredRecoveryKeys);
+    }
     if (c.device == trust.founderDevice && authorEntry == null) {
       return _genesis(c, existing, trust);
     }
@@ -300,6 +308,8 @@ class Validator {
         if (c.fields.keys.any((k) => k == 'oversight' || k.startsWith('oversight.') || k == 'assistant') && !x.ownDevice) {
           return _deny(_ownDeviceOnly);
         }
+        // So is whether the hub may let a parent's new phone in (recovery.dart).
+        if (c.fields.containsKey('recovery') && !x.ownDevice) return _deny(_ownDeviceOnly);
         return null;
       case RecordType.member:
         // A person's role, permissions and sign-in, and whether they are in the family at all,
@@ -309,6 +319,10 @@ class Validator {
         final trusted = c.fields.containsKey('_deleted') ||
             (!x.creating && c.fields.keys.any(const {'role', 'grants', 'signIn'}.contains));
         if (trusted && !x.ownDevice) return _deny(_ownDeviceOnly);
+        if (c.fields.containsKey('recovery')) {
+          final r = checkRecoveryKey(c, ownDevice: x.ownDevice, actor: x.actor, creating: x.creating);
+          if (r != null) return r;
+        }
         if (!x.creating && x.only({'signIn'}) && c.actor == c.rid) return null;
         if (!x.has(DenAction.manageFamily)) return _deny('Only parents can add or change people');
         if (_leavesNoParent(c, x.existing)) return _deny('The family needs at least one parent');

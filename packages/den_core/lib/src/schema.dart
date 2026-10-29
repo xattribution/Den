@@ -233,6 +233,19 @@ String? _picture(String label, Object? v) {
   return Picture.valid(v) ? null : '$label is not a picture Den knows';
 }
 
+/// A parent's recovery key (`member.recovery`) or the hub's the family lets help
+/// (`family.recovery`), with the devices the key it replaces had let in; and the proof a device
+/// let in by recovery carries (`device.recovery`). See recovery.dart.
+FieldCheck _recoveryKey(String name) => shape({name: keyText(nullable: true), 'kept': listOf(id(), unique: true)});
+final FieldCheck _recoveryProof = shape({
+  'kind': oneOf(['words', 'hub']),
+  'member': id(),
+  'key': keyText(),
+  'nonce': keyText(),
+  'expires': number(min: 0),
+  'sig': keyText(),
+}, required: {'kind', 'member', 'key', 'nonce', 'expires', 'sig'});
+
 final FieldCheck _signIn = shape({
   'kind': oneOf(['pin', 'pattern', 'none']),
   'salt': text(max: 100, nullable: true),
@@ -261,6 +274,7 @@ final Map<String, TypeSpec> typeSpecs = {
       'kidDailyLimit': number(min: 0, max: 1000),
       'budgetCents': number(min: 0, max: 100000),
     }, required: {'enabled'}),
+    'recovery': _recoveryKey('serverKey'),
   }, required: {'name', 'timezone', 'founderDevice'}, space: Space.family, entries: {
     'oversight': (key, v) => shape({'parentsSeePrivate': flag()})('Oversight', v),
   }),
@@ -275,6 +289,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'grants': listOf(names(Grant.values), max: 4, unique: true),
     'signIn': _signIn,
     'order': number(),
+    'recovery': _recoveryKey('key'),
   }, required: {'name', 'role'}, space: Space.family),
   RecordType.device: TypeSpec({
     'name': text(min: 1, max: maxName),
@@ -288,6 +303,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'revoked': flag(),
     'revokedAfter': number(min: 0),
     'display': shape({'layout': names(DisplayLayout.values), 'openCheckoff': flag()}),
+    'recovery': _recoveryProof,
   }, required: {'name', 'kind', 'pubkey', 'mode'}, space: Space.family),
   RecordType.category: TypeSpec({
     'name': text(min: 1, max: maxName),

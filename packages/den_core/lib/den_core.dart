@@ -8,6 +8,15 @@ export 'src/hlc.dart';
 export 'src/ids.dart' show newId, base32, randomBytes;
 export 'src/model.dart';
 export 'src/permissions.dart';
+export 'src/recovery.dart'
+    show
+        RecoveryKey,
+        RecoveryKind,
+        RecoveryProof,
+        recoveryKeyOf,
+        recoveryOf,
+        recoveryProofMaxLife,
+        serverRecoveryKeyOf;
 export 'src/rrule.dart' show RecurrenceRule, Frequency, WeekdayNum, UntilKind;
 export 'src/schema.dart' show checkFields;
 export 'src/secrets.dart' show hashToken;
