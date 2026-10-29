@@ -224,10 +224,10 @@ class DenHost implements HostLink {
 
   /// Starts serving a family over [den] (already open) as [config] says: its own engine, state,
   /// services and address. [id] is its log's directory name in `logs/` (null for the first
-  /// family's, in the data directory itself). Throws [StateError] when another family on the
-  /// host already has its hub device, its family or its address: two families can never share
-  /// one.
-  Future<DenHub> add(Den den, HubConfig config, {String? id}) async {
+  /// family's, in the data directory itself). [onClosed] runs once the family has stopped (the
+  /// caller closing its engine). Throws [StateError] when another family on the host already
+  /// has its hub device, its family or its address: two families can never share one.
+  Future<DenHub> add(Den den, HubConfig config, {String? id, Future<void> Function()? onClosed}) async {
     if (_stopped) throw StateError('The host has stopped');
     final name = normalizeHostname(config.publicUrl?.host);
     for (final t in _tenants) {
@@ -239,6 +239,7 @@ class DenHost implements HostLink {
     _tenants.add(tenant);
     if (id != null) _ids[tenant] = id;
     if (id == null) state.notePrimary(config.publicUrl);
+    if (onClosed != null) _opened[tenant] = (den: den, config: config, close: onClosed);
     return tenant;
   }
 
@@ -661,9 +662,7 @@ class DenHost implements HostLink {
     if (opener == null) throw ApiError(501, 'unavailable', 'This host can\'t take on families while it runs. Stop it first.');
     final opened = await opener(log);
     try {
-      final tenant = await add(opened.den, opened.config, id: log.id);
-      _opened[tenant] = opened;
-      return tenant;
+      return await add(opened.den, opened.config, id: log.id, onClosed: opened.close);
     } on StateError catch (e) {
       await opened.close();
       throw ApiError(409, 'conflict', e.message);

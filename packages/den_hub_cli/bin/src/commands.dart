@@ -13,6 +13,7 @@ import 'package:qr/qr.dart';
 
 import 'cli.dart';
 import 'data_dir.dart';
+import 'host_commands.dart';
 
 /// A command was called wrongly.
 class CliUsage implements Exception {
@@ -169,9 +170,10 @@ Future<int> importSett(ArgResults a, DataDir data, CliIo io) async {
   });
 }
 
-/// `den_hub setup-code`.
-Future<int> setupCode(DataDir data, int port, CliIo io) async {
-  final status = await _getJson(Uri.parse('http://127.0.0.1:$port/api/v1/hub/status'));
+/// `den_hub setup-code [--family ADDRESS]`.
+Future<int> setupCode(FamilyTarget target, int port, CliIo io) async {
+  final data = target.data;
+  final status = await getJsonAt(Uri.parse('http://127.0.0.1:$port/api/v1/hub/status'), target.hostname);
   if (status != null && status['paired'] == true) {
     io.out.writeln('This hub is already part of a family.');
     return 0;
@@ -190,9 +192,11 @@ Future<int> setupCode(DataDir data, int port, CliIo io) async {
 /// code to scan with the phone's camera, with the setup code to type when the link can't be
 /// used. The link carries the setup code (the hub knows the phone by it) and the hub's device
 /// id (the phone knows the hub by it), in the fragment, which browsers never send. Its address
-/// is `--url` or `DEN_PUBLIC_URL`, which the compose files set.
-Future<int> setupLinkCommand(ArgResults a, DataDir data, int port, CliIo io) async {
-  final status = await _getJson(Uri.parse('http://127.0.0.1:$port/api/v1/hub/status'));
+/// is `--url` or `DEN_PUBLIC_URL`, which the compose files set; on a Den host, `--family` names
+/// another family by its address.
+Future<int> setupLinkCommand(ArgResults a, FamilyTarget target, int port, CliIo io) async {
+  final data = target.data;
+  final status = await getJsonAt(Uri.parse('http://127.0.0.1:$port/api/v1/hub/status'), target.hostname);
   if (status != null && status['paired'] == true) {
     io.out.writeln('This hub is already part of a family. Invite people from the Den app.');
     return 0;
@@ -204,22 +208,14 @@ Future<int> setupLinkCommand(ArgResults a, DataDir data, int port, CliIo io) asy
     return 1;
   }
   final code = file.readAsStringSync().trim();
-  final url = a['url'] as String? ?? io.environment['DEN_PUBLIC_URL'];
+  final url = a['url'] as String? ?? (target.first ? io.environment['DEN_PUBLIC_URL'] : target.publicUrl?.toString());
   final base = url == null || url.isEmpty ? null : Uri.tryParse(url);
   if (base == null || !base.hasScheme || base.host.isEmpty) {
     io.out.writeln('Setup code: $code');
     io.out.writeln("Add --url https://den.example.com (the hub's address) for a link to open on the phone.");
     return 0;
   }
-  final link = setupLink(base, code, device).toString();
-  io.out
-    ..writeln("On the first parent's iPhone, scan this with the Camera, or open the link in Safari:")
-    ..writeln()
-    ..writeln(terminalQr(link))
-    ..writeln('  $link')
-    ..writeln()
-    ..writeln('Then add Den to the Home Screen as it shows, and open it from there.')
-    ..writeln('If Den asks for the setup code, it is: $code');
+  printSetupLink(io, base, code, device);
   return 0;
 }
 
@@ -246,7 +242,8 @@ String terminalQr(String text) {
 /// link code only while a parent has "Add a device" open; this opens it from the server itself
 /// (`docker compose exec hub /app/bin/den_hub open-linking`), for N minutes (default 10, at
 /// most 60). The running hub reads `hub/link-open`; nothing else changes.
-Future<int> openLinking(ArgResults a, DataDir data, CliIo io) async {
+Future<int> openLinking(ArgResults a, FamilyTarget target, CliIo io) async {
+  final data = target.data;
   if (!data.exists) throw StateError('There\'s no hub in ${data.path} yet. Run den_hub serve first.');
   final minutes = int.tryParse(a['minutes'] as String? ?? '10');
   if (minutes == null || minutes < 1 || minutes > 60) throw CliUsage('--minutes must be from 1 to 60');
@@ -264,13 +261,14 @@ Future<int> openLinking(ArgResults a, DataDir data, CliIo io) async {
 const String catchingUpStatus = 'Catching up after a restore: the hub writes nothing of its own until a phone or '
     'tablet in the family has synced with it. Open Den on one.';
 
-/// `den_hub status`.
-Future<int> status(DataDir data, int port, CliIo io) async {
+/// `den_hub status [--family ADDRESS]`.
+Future<int> status(FamilyTarget target, int port, CliIo io) async {
+  final data = target.data;
   final base = Uri.parse('http://127.0.0.1:$port');
-  final health = await _getJson(base.resolve('/health'));
+  final health = await getJsonAt(base.resolve('/health'), target.hostname);
   final catchingUp = data.file('hub/$restoreMarkerDoc.json').existsSync();
   if (health != null) {
-    final setup = await _getJson(base.resolve('/api/v1/hub/status'));
+    final setup = await getJsonAt(base.resolve('/api/v1/hub/status'), target.hostname);
     // In the public posture /health leaves out the name, device and version, and a hub in a
     // family says even less in its status: print what it does say.
     final name = health['name'] ?? setup?['name'];
@@ -315,7 +313,8 @@ Future<int> status(DataDir data, int port, CliIo io) async {
 /// `docker compose exec hub /app/bin/den_hub recover --person "Alex"`. A running hub makes the
 /// code (the command shows it the secret the hub left in `hub/recovery-cli`); with none running
 /// the command makes it in the data directory, for the hub to honor when it starts.
-Future<int> recover(ArgResults a, DataDir data, int port, CliIo io) async {
+Future<int> recover(ArgResults a, FamilyTarget target, int port, CliIo io) async {
+  final data = target.data;
   final person = _required(a, 'person');
   if (!data.exists) throw StateError('There\'s no hub in ${data.path} yet. Run den_hub serve first.');
   final base = Uri.parse('http://127.0.0.1:$port');
@@ -347,7 +346,7 @@ Future<int> recover(ArgResults a, DataDir data, int port, CliIo io) async {
     ticket = json!;
   } else {
     ticket = await _withDen(data, (den) async {
-      final public = io.environment['DEN_PUBLIC_URL'];
+      final public = target.first ? io.environment['DEN_PUBLIC_URL'] : target.publicUrl?.toString();
       final ctx = HubContext(
         den: den,
         gate: DenGate(den),
@@ -413,8 +412,10 @@ String _passphrase(ArgResults a, CliIo io) {
 /// and `notify.json`, sealed. Works while the hub runs (`docker compose exec hub
 /// /app/bin/den_hub backup ...`): [DataDir.readBackup] reads in an order that is consistent
 /// while the hub writes, so it doesn't need the hub's lock. With no hub running it holds the
-/// lock, so none starts halfway through.
-Future<int> backup(ArgResults a, DataDir data, CliIo io) async {
+/// lock, so none starts halfway through. On a Den host, `--family ADDRESS` backs up that family
+/// alone, from its own directory; without it, the first family.
+Future<int> backup(ArgResults a, FamilyTarget target, CliIo io) async {
+  final data = target.data;
   final out = _required(a, 'out');
   final passphrase = _passphrase(a, io);
   if (!data.exists) throw StateError('There\'s no hub in ${data.path} to back up.');
@@ -452,11 +453,18 @@ const String restoreAdvice = 'Start the hub, then open Den on a phone or tablet 
 
 /// `den_hub restore --in FILE --passphrase-env VAR [--force]`. Refuses while a hub runs on the
 /// directory (stop it, then `docker compose run --rm hub restore ...`); with `--force` it first
-/// removes the hub that is there, so nothing of it mixes with the one restored.
-Future<int> restore(ArgResults a, DataDir data, CliIo io) async {
+/// removes the hub that is there, so nothing of it mixes with the one restored. On a Den host,
+/// `--family ADDRESS` restores that family alone, into its own directory (a family the host
+/// doesn't know yet, as on a new server, is added at that address); the host must be stopped,
+/// since it holds every family's data.
+Future<int> restore(ArgResults a, DataDir root, CliIo io) async {
   final input = _required(a, 'in');
   final passphrase = _passphrase(a, io);
-  if (data.exists && a['force'] != true) throw StateError('${data.path} already holds a hub. Use --force to replace it.');
+  final family = a['family'] as String?;
+  final known = family == null ? familyTarget(root, null, io.environment) : null;
+  if (known != null && known.data.exists && a['force'] != true) {
+    throw StateError('${known.data.path} already holds a hub. Use --force to replace it.');
+  }
   final Map<String, Object?> json;
   try {
     json = (jsonDecode(utf8.decode(await decryptBackup(await File(input).readAsBytes(), passphrase))) as Map).cast<String, Object?>();
@@ -465,23 +473,25 @@ Future<int> restore(ArgResults a, DataDir data, CliIo io) async {
   }
   if (json['kind'] != 'den_hub') throw StateError('That isn\'t a den_hub backup.');
   try {
-    await data.lock();
+    await root.lock();
   } on StateError {
-    throw StateError('A hub is running on ${data.path}. Stop it first (docker compose stop hub), then restore '
+    throw StateError('A hub is running on ${root.path}. Stop it first (docker compose stop hub), then restore '
         '(docker compose run --rm hub restore ...).');
+  }
+  final DataDir data;
+  try {
+    data = (known ?? familyTarget(root, family, io.environment, register: true)).data;
+    if (known == null && data.exists && a['force'] != true) {
+      throw StateError('${data.path} already holds a hub. Use --force to replace it.');
+    }
+  } catch (_) {
+    await root.unlock();
+    rethrow;
   }
   try {
     final files = (json['files'] as Map).cast<String, String>();
     if (data.exists) await data.clearForRestore();
-    var written = 0;
-    for (final e in files.entries) {
-      if (!DataDir.backupPath(e.key)) continue;
-      final f = data.file(e.key);
-      await f.parent.create(recursive: true);
-      await f.writeAsBytes(base64.decode(e.value), flush: true);
-      if (e.key == 'keys.json' || e.key.startsWith('hub/')) restrictToOwner(f.path);
-      written++;
-    }
+    final written = await data.writeFiles({for (final e in files.entries) e.key: base64.decode(e.value)});
     // The hub writes nothing of its own until a device of the family has synced with it.
     final marker = data.file('hub/$restoreMarkerDoc.json');
     await marker.parent.create(recursive: true);
@@ -494,6 +504,6 @@ Future<int> restore(ArgResults a, DataDir data, CliIo io) async {
     io.out.writeln(restoreAdvice);
     return 0;
   } finally {
-    await data.unlock();
+    await root.unlock();
   }
 }
