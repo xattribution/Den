@@ -7,7 +7,8 @@ The family's calendar, chores, lists and points, on the family's own devices.
 Every phone keeps the whole family, encrypted, and works without a connection. A **hub**, one
 small always-on server you run, keeps everyone in sync while phones sleep, serves Den as a web
 app the family adds to their iPhone Home Screens, and runs the extras: reminders, calendar feeds,
-Home Assistant, and AI assistants over MCP. Nothing goes through anyone else's servers.
+Home Assistant, and AI assistants over MCP. The family's data lives on its own devices and its
+own hub.
 
 ## Run it for your family
 

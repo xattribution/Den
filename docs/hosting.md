@@ -41,7 +41,8 @@ paste, run as root (or with `sudo`) on the server.
   ([Building on a small server](#building-on-a-small-server)). On a 1 GB server, add swap or
   build the image elsewhere.
 - **A domain name** whose DNS points at the server: an `A` record for `den.example.com` with the
-  server's IPv4 address, and `AAAA` for IPv6 if it has one.
+  server's IPv4 address, and `AAAA` for IPv6 if it has one. (Setup B needs the domain on
+  Cloudflare instead; setup C needs none.)
 - **Ports** 22 (SSH), 80 and 443 open to the internet. Setups B and C need only 22.
 - **Docker** with Compose. On Ubuntu or Debian:
 
@@ -512,6 +513,7 @@ It says what it brought over and what it left behind; the phones get it as they 
 
 ```sh
 docker compose --profile '*' down -v --rmi all
+docker image rm den-hub:previous     # if you kept one when updating
 docker builder prune -af
 cd && rm -rf den
 ```
