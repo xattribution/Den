@@ -365,7 +365,7 @@ commit too (`Den.restoreAll`).
 | `item` | same as list | `list`, `text`, `qty`, `store`, `checked`, `checkedBy`, `order` (fractional index string), `toGroceries` (meal items) |
 | `subscription` | `p` | ICS feed: `url`, `label`, `category`, `assignee`, `space` for imported events, `include`, `exclude`, `skipAllDay`, `status` |
 | `photo` | `f` | A person's photo: `member`, `mime` (`image/jpeg`\|`image/webp`), `data` (base64). The schema reads the format and size from the headers: a 256 px square of at most 40 KB, its `mime` matching its bytes. Never changed: a new picture is a new record |
-| `connection` | `p` | AI or automation access: `label`, `kind` (`token`\|`oauth`), `scopes`, `member` (whose permissions it uses; null = parent-level), `tokenHash` (SHA-256 hex of a token a parent made; null for OAuth, whose hourly access tokens the hub keeps in its own state), `client` (OAuth client id), `status` (`pending`\|`active`\|`revoked`), `expires`. A hub may create `pending` OAuth connections and set or clear `tokenHash` on approved ones; only a parent's device may set `active` or change scopes. The hub writes a `pending` one only after a parent's own device admits the sign-in request (a request needs no credentials, so the hub holds it until then), and turns down pending ones nobody approved within 15 minutes |
+| `connection` | `p` | AI or automation access: `label`, `kind` (`token`\|`oauth`), `scopes`, `member` (who it acts as: the parent making or approving it unless they chose someone; null only on connections from before, which act as the parent whose own device made them active, `Den.connectionActsAs`, or as nobody when that parent is gone), `tz` (where that person lives, when not the family's zone, or null), `tokenHash` (SHA-256 hex of a token a parent made; null for OAuth, whose hourly access tokens the hub keeps in its own state), `client` (OAuth client id), `status` (`pending`\|`active`\|`revoked`), `expires`. A hub may create `pending` OAuth connections and set or clear `tokenHash` on approved ones; only a parent's device may set `active` or change scopes. The hub writes a `pending` one only after a parent's own device admits the sign-in request (a request needs no credentials, so the hub holds it until then), and turns down pending ones nobody approved within 15 minutes |
 | `signInTries` | `f` | Append-only, from a shared display about itself, with no actor: `device` (the display), `member` (whose PIN or pattern), `tries` (wrong in a row there). The display writes one at every tenth wrong try; a parent's own device says so in Needs you, and History shows it ("Kitchen display counted 10 wrong tries at Alex's PIN"). Nothing else may write one, and it is never changed |
 
 **Points are derived, not stored.** A done completion awards the chore's points to the day's owner
@@ -388,6 +388,18 @@ A goal counts chore, step and adjustment lines whose time falls, in the family's
 window: `start` to `end` inclusive, or the current week (by `weekStart`) or month for repeating
 goals. A member reaches a goal when their running total crosses the target and stays there;
 deductions can un-cross it, and a race goes to the earliest such crossing.
+
+**Whose day it is.** Days are the family's: "today", when a chore is due or late, which day a
+completion is for, and which day and week stars count toward all follow `family.timezone`,
+whoever is looking and wherever they are. Someone who lives elsewhere (a grandparent, a parent
+traveling, an owner who runs the family's hub from Hawaii) sees the family's day, said as such,
+rather than a day of their own: two people looking at "today" from two zones must see the same
+chores, the same goals and the same totals, and a day boundary that moved with the viewer would
+let the same completion count for different days, or a chore be late for one parent and not for
+the other. What changes for them is only how answers are worded: a connection keeps where its
+person lives (`connection.tz`), and a read can ask for a zone; answers then say which zone their
+times are in ("Today in New York: Thursday, October 29"; "Times are New York time.") and show
+History's times (when things happened) in theirs.
 
 Recurrence is expanded in the event's own `tz` (the family's when unset) as wall-clock time, then
 each occurrence is converted to UTC, so a 7:00 AM series stays at 7:00 AM across DST. All-day
@@ -438,11 +450,18 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
 
 - A personal device acts only for its owner. A shared display acts for any member who verified on
   it, or for nobody (then only open check-off, when its `display.openCheckoff` is on), and never
-  administers the family. A hub acts for a token's member, or for nobody: then it has parent-level
-  permissions except family administration and activating or re-scoping connections, and it
-  records the caller's label in `_via` (only hubs may write `_via`). Whoever it acts for, a change
-  with `_via` never makes a trust decision (see "Genesis and trust"); the hub must record `_via` on
-  every write it makes for an API or MCP caller.
+  administers the family. A hub acts for a connection's person and records the caller's label in
+  `_via` (only hubs may write `_via`). Every connection acts as someone: the parent who makes or
+  approves it picks who, by default themselves, so "me" means a person, History says who, and a
+  request it makes isn't one it can approve. A connection approved before that names nobody; the
+  hub acts for it as the parent whose own device made it active (`Den.connectionActsAs`), and
+  when that parent is gone it only reads: no write action is offered or run for it, and its
+  scopes count as `read`. Validity still accepts a hub's change for nobody (older hubs wrote
+  them, for such connections, at a parent's level except family administration and activating
+  or re-scoping connections), so the log replays as it did; the hub just no longer writes one
+  for a caller. Whoever it acts for, a change with `_via` never makes a trust decision (see
+  "Genesis and trust"); the hub must record `_via` on every write it makes for an API or MCP
+  caller.
 - Setting what a chore or step is worth (a new chore or step with points, or a new price) needs
   the points permission as well as the chores one; recording a completion's worth above the
   price at the time does too. The copy that moving a chore out of everyone's space writes, at
@@ -466,7 +485,16 @@ validating, and in the hub for API and MCP calls. Validation adds the context `c
   Balances can't be checked here, since
   they derive from completions in spaces a replica may not hold, so `Den` checks them: a request
   is refused when the balance less the requester's requests still waiting is short, and approving
-  one is refused when the balance no longer covers it.
+  one is refused when the balance no longer covers it. `Den` also refuses an approval by whoever
+  made the request (`createdBy`), so a parent asking on a kid's behalf waits for the other parent:
+  a connection acting as a parent can't ask and approve in two calls. That one stays out of
+  validity on purpose, since older devices already accepted such approvals and a new rule would
+  replay the log differently on them. Retiring a reward, or undo removing one, declines the
+  requests waiting on it in the same commit.
+- Only a parent or an adult drives (`canDrive`): `Den.claimRide` refuses anyone else, and the app
+  offers rides only to them. A kid checks off a chore on its day, not a day still to come
+  (`Den.setChoreDone`, `setStep`), since its stars would count now; someone who may complete
+  anyone's chore can, when it really was done early.
 - A shared display may add a `signInTries` record about itself, for nobody; no other device may,
   and nobody changes one.
 - Members may change their own `signIn`. The family always keeps at least one parent. On a shared
@@ -768,21 +796,42 @@ family.
 and reshapes the input against the schema, then:
 
 - `RunMode.preview` (or `preview: true`) runs it on `Den.fork()` and answers with the history
-  entries it would make and warnings (new overlaps or missing drivers, duplicates);
+  entries it would make and warnings (new overlaps or missing drivers, duplicates); nothing it
+  does outlasts the call, an undo's receipt included (`ActionContext.previewing`);
 - `RunMode.run` asks first when the spec says so: `Confirm.server` actions (removals, a whole
-  series, more than 5 items) answer with a preview and a token, and only a second call with
-  `confirm: <token>` from the same caller and the same input runs; `Confirm.client` actions are
-  the client's to ask about (MCP clients from the hints; the assistant asks for a tap when the
-  call touches someone else's things or a whole series);
-- `RunMode.confirmed` runs it (the person tapped yes; the older REST routes).
+  series, more than 5 items, a list, chore, reward or category of a name the family already has,
+  stars below zero or `bigAdjustment` at once, a parent checking off a day still to come) answer
+  with a preview and a token, and only a second call with `confirm: <token>` from the same
+  caller and the same input runs; `Confirm.client` actions are the client's to ask about (MCP
+  clients from the hints; the assistant asks for a tap when the call touches someone else's
+  things or a whole series);
+- `RunMode.confirmed` runs it (the person tapped yes; the app, whose `perform` shows the warnings
+  as a note; the older REST routes).
 
 Every write runs inside `Den.recording(undoOnError: true)`, so a write that fails half way leaves
-nothing behind, and answers with a `Receipt {id, summary, undoable, tool, changes}`. `undo` takes
+nothing behind, and answers with a `Receipt {id, summary, undoable, tool, changes}`; a write that
+changed nothing (a chore already done, "already done by Elsie at 4:10 PM") has none. What a write
+leaves to know goes in its `warnings` and its text as "Note:" lines: what a calendar change newly
+leaves uncovered (a ride nobody drives, a driver in two places, someone double-booked), a time the
+clocks skip or repeat, a date already past, a name the family already has. `undo` takes
 a receipt back with `Den.undo`, which writes the field-level inverse of each change from what it
 replaced: what it made is removed, what it removed comes back, map entries one at a time,
 adjustments get one the other way; fields someone changed since are left and reported, and
 adding or removing people, device and AI-access changes and reward requests can't be undone.
 Receipts belong to their caller and last while the runner does.
+
+Inputs are read the way people give them. Dates and times take words ("tomorrow", "Friday",
+"next Friday" for the one in next week, as den_capture reads it, "next Friday 3pm"). Names
+resolve to ids (`pick`), and several things of one name are told apart before a name is called
+ambiguous: an event by the date or time given, then, for a repeat that "this and following"
+split into two events of one name (one ending where the next begins), by the one still to come;
+a chore by whose it is ("Elsie's make bed", "make bed for Elsie", the `person` given, then the
+person the call acts for). The choices an ambiguous name lists say whose each is. Answers say
+which day an occurrence change touched, who can see what they list ("parents only"), the year
+of a date in another year, and, for a caller who lives in another zone than the family's (a
+connection's `tz`) or asks for one (a read's `timezone`), which zone their times are in (see
+"Whose day it is"). Outputs stay open (no `additionalProperties: false`), so a field such as an
+item's source calendar can be added without breaking a client.
 
 Coverage is enforced by tests: `den_actions/test/coverage_test.dart` reads every public write
 method of `Den` from its source and fails unless each is called by some action or listed in
@@ -802,7 +851,8 @@ The hub serves MCP over Streamable HTTP at `/mcp` and over stdio with `den_hub m
 over den_actions: `tools/list` is the specs a token may use (its scopes, and `can()` for its
 member, so a kid's assistant sees about a dozen tools), each with `inputSchema`, `outputSchema` and
 annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint: false`);
-`tools/call` runs them with the token's member acting, answering with one speakable text and
+`tools/call` runs them with the connection's person acting, answering with one speakable text
+(ending with the receipt's id when a change can be undone, for clients that read only text) and
 `structuredContent`. Names resolve to ids, listing valid choices on a miss. Tool set:
 `get_overview`, `get_family`, `list_events`, `list_chores`, `get_lists`, `get_points`, `search`,
 `get_history`, `create_event`, `update_event`, `delete_event`, `set_ride`, `create_chore`,

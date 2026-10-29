@@ -86,11 +86,15 @@ the hub as SHA-256 hashes (the `connection` record). The hub resolves the bearer
 `GET /api/v1/actions` takes any valid token, and each `POST /api/v1/actions/{name}` needs one of
 that action's scopes ([Actions](#actions-everything-mcp-and-the-app-can-do)).
 
-Scopes gate what a token may *attempt*. Every write is then checked with den_core's `can()` for the
-token's member (`connection.member`); a token with no member acts with parent-level permissions
-and its changes are signed with `actor: null` and the token's label in `fields._via`. Reads are
-filtered to the spaces the token's member may read (`canRead`); a token with no member reads what
-a parent reads, which honors the family's oversight policy: a member whose
+Scopes gate what a token may *attempt*. Every token acts as someone: the person a parent chose when
+making or approving it, by default that parent (`connection.member`). Every write is then checked
+with den_core's `can()` for that person, and its changes are signed with them as `actor` and the
+token's label in `fields._via`. A connection made before every connection acted as someone has no
+`member`: it acts as the parent who approved it (the owner of the device that made it active,
+`Den.connectionActsAs`), and when that parent is no longer a parent in the family it only reads
+(its scopes count as `read`). Reads are filtered to the spaces the token's person may read
+(`canRead`); one that acts for nobody reads what a parent reads, which honors the family's
+oversight policy: a member whose
 `oversight.parentsSeePrivate` is `false` keeps their "Just me" space from it, including the titles
 den_core puts in derived views (points lines, Today's gaps, store names). A record in a space the
 token can't read does not exist as far as the API is concerned (`404`, never `403`).
@@ -115,7 +119,12 @@ The API takes ids, never names; clients resolve names themselves from `/api/v1/m
   `<name>_ms` as integer UTC milliseconds (`1792535400000`). Both are always present together (or
   both `null`).
 - A *local date* is `YYYY-MM-DD` in the family's time zone (`family.timezone`). "Today" means today
-  in that zone.
+  in that zone, wherever the caller is: chores fall due and stars count on the family's days. A
+  connection may say where its person lives (`connection.tz`, set when a parent approves it or
+  later); then, and when a read action is given `timezone`, the action's `text` says which zone
+  its times are in ("Today in Chicago: ...", "Times are Chicago time."), and history's times are
+  in that zone. Actions also read dates and times in words: "today", "tomorrow", "Friday", "next
+  Friday" (the one in next week), "in 3 days", "next Friday 3pm", "tomorrow at 9:30".
 - An instant in a request (query or body) may be given as an integer of UTC milliseconds, as ISO
   8601 with an offset or `Z`, or as ISO 8601 without an offset, which is read in the family's time
   zone (for event bodies: in the event's `tz`). Where a request field also accepts a local date it
@@ -162,6 +171,7 @@ Every error, at every status, has this body:
 | 404 | `unknown_action` | `POST /api/v1/actions/{name}` names no action | |
 | 405 | `method_not_allowed` | Known path, wrong method. Also sends `Allow` | |
 | 409 | `read_only` | Editing or deleting an event imported from a subscribed calendar (`source.kind` is not `manual`) | |
+| 400 | `not_added` | `add_from_text` added nothing; the message says why for each thing it found | `added`, `left` (`{title, reason, unsure, denied}`), `unclear`, `reader` |
 | 409 | `idempotency_conflict` | An `Idempotency-Key` used again for a different action or input | |
 | 408 | `timeout` | The body took more than 60 seconds to arrive | |
 | 413 | `too_large` | Body over 256 KiB (refused by its `Content-Length` before it is read) | |
@@ -548,7 +558,7 @@ names to ids.
 | `hub` | object | `device`, `name`, `version` as in `/health` |
 | `family` | Family | |
 | `token.label` | string | The connection's label |
-| `token.member` | string? | Whose permissions the token uses; `null` is parent-level |
+| `token.member` | string? | Who the token acts as (for an older connection that names nobody, the parent who approved it); `null` for one that acts for nobody and only reads |
 | `token.scopes` | string[] | Scopes as granted (`admin` is listed as `admin`, not expanded) |
 | `token.expires` | instant? | |
 | `members` | Member[] | Removed members excluded, sorted by `order` |
@@ -591,7 +601,8 @@ Query: `date` (local date, optional, default today).
 
 (Arrays shortened; a real response for that date would hold the soccer occurrence in `events`.)
 
-`gaps[].kind` is `no_driver` \| `overlap` \| `unowned`; `gaps[].message` is written for people;
+`gaps[].kind` is `no_driver` \| `driver_busy` (one driver with two rides less than half an hour apart,
+from different places) \| `overlap` \| `unowned`; `gaps[].message` is written for people;
 `gaps[].occurrences` are `uid`s of entries in `events` (an `unowned` gap has none and names the
 chore in its message); `gaps[].members` are the member ids involved.
 
@@ -1101,9 +1112,12 @@ Query: `q` (text search over titles, names and values), `member` (actor id), `ty
 
 ### `GET /api/v1/search`
 
-Scope: `read`. Search across events, chores, lists, items and members (den_core `search`).
+Scope: `read`. Search across events, chores, lists, items and members (den_core `search`): the
+whole query in a title (best), place or notes, or every word somewhere in a record, the people it
+is for included; words of four letters or more forgive a letter or two.
 
-Query: `q` (required, 1–200 chars), `limit` (1–100, default 50).
+Query: `q` (required, 1–200 chars), `limit` (1–100, default 50), `include_removed` (`true` adds
+removed things History still has, with `detail` `"History"`; default `false`).
 
 ```json
 {
@@ -1195,8 +1209,8 @@ They take people, events, chores, lists, items and rewards by name or by id. The
 above are older adapters over a few of them and answer as they always have.
 
 Who may run what: a token needs one of the action's scopes, and its member must be allowed what
-the action needs (`can()`); a token with no member acts at a parent's level except for the
-family's people and settings. den_core still decides every change. What only a parent decides on
+the action needs (`can()`); a token that acts for nobody runs only reads. den_core still decides
+every change. What only a parent decides on
 their own device (roles, permissions and sign-in, removing people, devices, AI access, who sees
 whose private things) is never an action; `packages/den_actions/lib/src/not_exposed.dart` lists
 each engine operation no action offers, with the reason.
@@ -1299,7 +1313,7 @@ Runs an action. The body is its input as a JSON object; keys it doesn't name are
 
 | `status` | |
 | --- | --- |
-| `done` | It ran. `text` is one or two sentences to show or say; `result` matches the action's `output_schema`; writes carry a `receipt` (also in `result.receipt`) |
+| `done` | It ran. `text` is one or two sentences to show or say, then a "Note:" line for each of `result.warnings` (a time the clocks skip, a driver now in two places, a name the family already has, a date already past); `result` matches the action's `output_schema`; writes carry a `receipt` (also in `result.receipt`). A write that changed nothing (a chore already done, an item already on the list) has none |
 | `preview` | Nothing changed; `result.preview` is `{summary, question, changes: [{type, id, title, verb, fields}], warnings}` |
 | `needs_confirmation` | Nothing changed: the action needs a yes first. `result.confirm` is `{token, question, expires_ms}` and `result.preview` what would change. Ask the person `question`, then send the same input again with `"confirm": "<token>"` within 10 minutes |
 
@@ -1313,13 +1327,29 @@ and points given get an adjustment the other way. Fields someone changed since s
 and are listed in `result.skipped`. `{}` takes back the token's last change. A token can undo only
 its own receipts, which last while the hub runs (the latest 500); `{"type": "chore", "id":
 "<id>"}` puts back any removed record the token may edit (`"occurrence"` with an event puts back
-one removed occurrence). Undo answers with a receipt too, which takes the undo back.
+one removed occurrence). Undo answers with a receipt too, which takes the undo back. `?preview=1`
+(or `"preview": true`) shows what undo would do and leaves the receipt usable.
+
+**Asking first.** Besides removals and changes to a whole series, these answer
+`needs_confirmation` before anything changes: a list, a chore (for the same owner), a reward or a
+category with a name the family already has, in any case; giving or taking 100 stars or more at
+once (`bigAdjustment` in den_actions), or taking someone below zero; and a parent marking a chore
+done for a day still to come (a kid can't). An item already on a list and not checked off isn't
+added again (`result.already`); its quantity says how many.
+
+**Names that repeat.** Where several things share a name, actions tell them apart before saying
+the name is ambiguous: events by the date or time given (`occurrence`), then, for one repeat split
+by "this and following", by the part still to come; chores by whose they are ("Elsie's make bed",
+"make bed for Elsie", `person`, then the person the token acts as). The choices an ambiguous name
+lists say whose each is.
 
 **From Siri and other voice assistants.** `add_from_text` reads what someone said or wrote, the
 way the app's Add does (`{"text": "soccer every Wednesday at 5 for Leo"}`), with the reader a
 parent chose for the hub (Claude or a model at home), else Den's own rules. It adds what it's
 sure of and lists the rest in `result.left` (`"include_unsure": true` adds that too); `"list"`
-puts the items on one list. See `packages/den_hub/README.md`, "Siri Shortcuts".
+puts the items on one list. "Me" is the person the token acts as. When it adds nothing it fails
+with `400 not_added` (over MCP, `isError: true`), saying why. See `packages/den_hub/README.md`,
+"Siri Shortcuts".
 
 ## Hub setup and browser linking
 
