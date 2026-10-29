@@ -275,6 +275,11 @@ class Validator {
         if (start is String && end is String && end.compareTo(start) < 0) {
           return 'The goal ends before it starts';
         }
+      case RecordType.photo:
+        final bytes = photoBytes(merged('data'));
+        if (!c.isDelete && bytes != null && photoFormat(bytes)?.mime != merged('mime')) {
+          return 'The photo isn\'t the kind it says it is';
+        }
     }
     return null;
   }
@@ -287,6 +292,7 @@ class Validator {
     RecordType.item: {'list'},
     RecordType.redemption: {'reward', 'member', 'cost'},
     RecordType.connection: {'kind'},
+    RecordType.photo: {'member', 'mime', 'data'},
   };
 
   Rejection? _permit(_Ctx x, TrustRoot trust) {
@@ -306,10 +312,19 @@ class Validator {
         // are trust decisions: never made by the hub (whoever it acts for) or on a shared screen.
         // Adding someone isn't: nothing can act for them until a parent approves a device or an
         // assistant for them, on their own device.
+        // A sitter's last day decides when their devices are removed, so it is one too.
         final trusted = c.fields.containsKey('_deleted') ||
-            (!x.creating && c.fields.keys.any(const {'role', 'grants', 'signIn'}.contains));
+            (!x.creating && c.fields.keys.any(const {'role', 'grants', 'signIn', 'until'}.contains));
         if (trusted && !x.ownDevice) return _deny(_ownDeviceOnly);
+        final photo = c.fields['picture'] is String ? Picture.photoIdOf(c.fields['picture']! as String) : null;
+        if (photo != null && store.liveAt(Space.family, RecordType.photo, photo)?.fields['member'] != c.rid) {
+          return _schema('That photo isn\'t of this person');
+        }
         if (!x.creating && x.only({'signIn'}) && c.actor == c.rid) return null;
+        // People choose their own picture, a kid when a parent allows it.
+        if (!x.creating && x.only({'picture'}) && c.actor == c.rid && !x.has(DenAction.manageFamily)) {
+          return x.mayChangePicture(c.rid) ? null : _deny('${x.who} can\'t change their own picture');
+        }
         if (!x.has(DenAction.manageFamily)) return _deny('Only parents can add or change people');
         if (_leavesNoParent(c, x.existing)) return _deny('The family needs at least one parent');
         return null;
@@ -364,6 +379,12 @@ class Validator {
         return x.has(DenAction.manageFamily) ? null : _deny('Only parents can manage calendar feeds');
       case RecordType.connection:
         return _connection(x);
+      case RecordType.photo:
+        final member = c.fields['member'] ?? x.existing?.fields['member'];
+        if (member is! String || store.liveAt(Space.family, RecordType.member, member) == null) {
+          return _schema('That person isn\'t in the family');
+        }
+        return x.mayChangePicture(member) ? null : _deny('${x.who} can\'t change that picture');
     }
     return _schema('Den doesn\'t know records of type "${c.type}"');
   }
@@ -533,13 +554,16 @@ class Validator {
         return _deny('${x.who} can ask for rewards only for themselves');
       }
       final status = c.fields['status'];
+      // A request waits for a parent unless the reward says no asking or a parent let this
+      // person trade their stars without asking: either one is enough.
+      final needsOk = reward.needsApproval && (x.family?.rewardsNeedOk(c.fields['member']! as String) ?? true);
       if (status == RedemptionStatus.declined.name && !manager) {
         return _deny('${x.who} can\'t decline rewards');
       }
-      if (status == RedemptionStatus.approved.name && reward.needsApproval && !manager) {
+      if (status == RedemptionStatus.approved.name && needsOk && !manager) {
         return _deny('A parent needs to approve that reward');
       }
-      if (forSelf && reward.needsApproval && status != RedemptionStatus.requested.name) {
+      if (forSelf && needsOk && status != RedemptionStatus.requested.name) {
         return _deny('Someone else needs to approve ${x.who}\'s reward');
       }
       if (c.fields['decidedBy'] != null && c.fields['decidedBy'] != c.actor) {
@@ -638,6 +662,13 @@ class _Ctx {
     if (c.fields.containsKey('_via')) return false;
     if (device.mode == DeviceMode.personal) return true;
     return device.mode == DeviceMode.hub && actor != null && actor!.id == device.member;
+  }
+
+  /// Whether the actor may change [memberId]'s picture ([canChangePicture]).
+  bool mayChangePicture(String memberId) {
+    if (has(DenAction.manageFamily)) return true;
+    final a = actor;
+    return a != null && a.id == memberId && (family?.ownsPicture(a) ?? !a.isKid);
   }
 
   bool only(Set<String> names) => c.fields.keys.every((k) => k == '_via' || k == '_from' || names.contains(k));
