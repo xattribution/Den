@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
 import '../design/sheet.dart' show SheetScope, SheetWrap;
+import '../features/add/state/capture_service.dart' show Capture, CaptureScope;
 import '../platform/sync/pairing.dart';
 import 'app_state.dart';
 import 'family_colors.dart';
@@ -32,17 +35,38 @@ String inLog(String log, String location) {
   return '/l/${Uri.encodeComponent(log)}$location';
 }
 
-/// The family a location is under (`/l/<log>/...`) and the rest of it, or null.
+/// The family a location is under (`/l/<log>/...`) and the rest of it, or null. A family part
+/// that doesn't decode (a stray `%`) is kept as it is, which names no family.
 ({String log, String rest})? splitLog(String location) {
   if (!location.startsWith('/l/')) return null;
   final after = location.substring(3);
   final slash = after.indexOf('/');
   final query = after.indexOf('?');
   final end = slash < 0 ? (query < 0 ? after.length : query) : slash;
-  final log = Uri.decodeComponent(after.substring(0, end));
+  final raw = after.substring(0, end);
+  String log;
+  try {
+    log = Uri.decodeComponent(raw);
+  } on Object {
+    log = raw;
+  }
   var rest = after.substring(end);
   if (rest.isEmpty || rest.startsWith('?')) rest = '/today$rest';
   return (log: log, rest: rest);
+}
+
+/// [location] when the app can open it; for one whose escapes don't decode (which the router
+/// can't match), "That family isn't on this device" for a family's link, Today otherwise. For
+/// routes from outside the app's own navigation: a tapped reminder or push.
+String openable(String location) {
+  try {
+    for (final segment in location.split('?').first.split('/')) {
+      Uri.decodeComponent(segment);
+    }
+    return location;
+  } on Object {
+    return location.startsWith('/l/') ? '/families/missing' : '/today';
+  }
 }
 
 /// [child] in the family [log]'s scope: its state ([DenScope]), its color pack, its pairing,
@@ -51,7 +75,9 @@ String inLog(String log, String location) {
 /// sit in one. The screens below it are the app's own, unchanged.
 ///
 /// Sheets and dialogs opened below it carry it too ([SheetScope], [capture]): a sheet is a route
-/// of its own over the app, and without this would act for the family the device shows.
+/// of its own over the app, and without this would act for the family the device shows. So does
+/// everything below it that reaches a hub: its pairing (or none, never the family shown's) and
+/// Add's reader ([CaptureScope], through this family's own hub).
 class LogScope extends StatelessWidget {
   const LogScope({super.key, required this.log, required this.child});
 
@@ -65,25 +91,44 @@ class LogScope extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final home = Household.maybeOf(context);
     Widget scoped = DenScope(
       state: log.state,
       child: FamilyColors(child: SheetScope(wrap: (inner) => LogScope(log: log, child: inner), child: child)),
     );
+    scoped = CaptureScope(service: Capture.forFamily(Capture.of(context), den: log.den, network: log.network), child: scoped);
     final pairing = log.pairing;
-    if (pairing != null) scoped = PairingScope(service: pairing, child: scoped);
+    if (pairing != null) {
+      scoped = PairingScope(service: pairing, child: scoped);
+    } else if (home != null && !identical(home.active, log)) {
+      // Without a connection of its own, nothing: never the pairing of the family shown.
+      scoped = PairingScope(service: const LocalOnlyPairing(), child: scoped);
+    }
     final router = GoRouter.maybeOf(context);
     if (router != null) {
-      scoped = InheritedGoRouter(goRouter: ScopedRouter(router is ScopedRouter ? router.inner : router, log.id), child: scoped);
+      scoped = InheritedGoRouter(
+        goRouter: ScopedRouter(
+          router is ScopedRouter ? router.inner : router,
+          log.id,
+          show: home == null
+              ? null
+              : () async {
+                  if (!identical(home.active, log)) await home.choose(log);
+                },
+        ),
+        child: scoped,
+      );
     }
     return scoped;
   }
 }
 
-/// The app's router as seen from inside one family's scope ([LogScope]): a page it pushes or
-/// goes to opens in that family (`/l/<log>/...`); the app's places (the tabs) and everything
-/// else are the app's router's own.
+/// The app's router as seen from inside one family's scope ([LogScope]): a page of a family's
+/// own it pushes or goes to opens in that family (`/l/<log>/...`); the app's places (the tabs)
+/// are the app's own; and a page that is always the family the device shows (Ask, the kids'
+/// app, the wall) opens once [show] has made this family the one shown.
 class ScopedRouter implements GoRouter {
-  ScopedRouter(this.inner, this.log);
+  ScopedRouter(this.inner, this.log, {this.show});
 
   /// The app's router.
   final GoRouter inner;
@@ -91,20 +136,47 @@ class ScopedRouter implements GoRouter {
   /// The family pages open in.
   final String log;
 
-  String _in(String location) => inLog(log, location);
+  /// Shows this family, for a page that is always the family the device shows.
+  final Future<void> Function()? show;
+
+  /// Where [location] opens from this family, and whether this family is shown first.
+  ({String to, bool showFirst}) _where(String location) {
+    if (!location.startsWith('/') || isPlaceRoute(location)) return (to: location, showFirst: false);
+    final scoped = inLog(log, location);
+    if (_matches(scoped)) return (to: scoped, showFirst: false);
+    return (to: location, showFirst: show != null);
+  }
+
+  bool _matches(String location) {
+    try {
+      return inner.configuration.findMatch(Uri.parse(location)).isNotEmpty;
+    } on Object {
+      return false;
+    }
+  }
+
+  Future<T> _then<T>(({String to, bool showFirst}) where, Future<T> Function(String to) open) async {
+    if (where.showFirst) await show!();
+    return open(where.to);
+  }
 
   @override
-  void go(String location, {Object? extra}) => inner.go(_in(location), extra: extra);
+  void go(String location, {Object? extra}) {
+    final where = _where(location);
+    if (!where.showFirst) return inner.go(where.to, extra: extra);
+    unawaited(_then(where, (to) async => inner.go(to, extra: extra)));
+  }
 
   @override
-  Future<T?> push<T extends Object?>(String location, {Object? extra}) => inner.push<T>(_in(location), extra: extra);
+  Future<T?> push<T extends Object?>(String location, {Object? extra}) =>
+      _then(_where(location), (to) => inner.push<T>(to, extra: extra));
 
   @override
   Future<T?> pushReplacement<T extends Object?>(String location, {Object? extra}) =>
-      inner.pushReplacement<T>(_in(location), extra: extra);
+      _then(_where(location), (to) => inner.pushReplacement<T>(to, extra: extra));
 
   @override
-  Future<T?> replace<T>(String location, {Object? extra}) => inner.replace<T>(_in(location), extra: extra);
+  Future<T?> replace<T>(String location, {Object? extra}) => _then(_where(location), (to) => inner.replace<T>(to, extra: extra));
 
   @override
   bool canPop() => inner.canPop();

@@ -15,7 +15,9 @@ import 'package:den_app/design/sheet.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
 import 'package:den_app/design/widgets.dart' show DenTabBar, PersonPill;
-import 'package:den_app/features/add/add.dart' show showAddSheet;
+import 'package:den_app/features/add/add.dart' show Capture, CaptureScope, CaptureService, CaptureSettings, MemoryCaptureSecrets, showAddSheet;
+import 'package:den_app/features/add/screens/capture_screen.dart' show CaptureRoute;
+import 'package:den_capture/den_capture.dart' show CaptureInput, HubCaptureClient;
 import 'package:den_app/features/add/screens/add_sheet.dart' show AddSheet;
 import 'package:den_app/features/family/family.dart' show FamilySwitch, MissingFamilyScreen, askParentForSignIn, showInviteSheet;
 import 'package:den_app/features/onboarding/screens/join_screen.dart';
@@ -45,7 +47,12 @@ class _NotingPairing extends LocalOnlyPairing {
 
 /// The Carters' scope at the app's root (what the device shows), and a page in the Smiths' scope
 /// below it, as `/l/<smiths>/...` builds one. Returns the page's context and the root's.
-Future<(BuildContext page, BuildContext root)> _scoped(WidgetTester tester, Household home, {PairingService? carters}) async {
+Future<(BuildContext page, BuildContext root)> _scoped(
+  WidgetTester tester,
+  Household home, {
+  PairingService? carters,
+  CaptureService? capture,
+}) async {
   late BuildContext page;
   late BuildContext root;
   final carter = home.logs[0];
@@ -53,7 +60,9 @@ Future<(BuildContext page, BuildContext root)> _scoped(WidgetTester tester, Hous
   await tester.pumpWidget(
     HouseholdScope(
       household: home,
-      child: DenScope(
+      child: CaptureScope(
+        service: capture ?? Capture.service,
+        child: DenScope(
         state: carter.state,
         child: PairingScope(
           service: carters ?? _NotingPairing('the Carters'),
@@ -71,6 +80,7 @@ Future<(BuildContext page, BuildContext root)> _scoped(WidgetTester tester, Hous
             }),
           ),
         ),
+      ),
       ),
     ),
   );
@@ -192,6 +202,128 @@ void main() {
       final signIn = find.byWidgetPredicate((w) => w.runtimeType.toString() == '_SignInSheet');
       expect(signIn, findsOneWidget);
       expect(identical(_denOf(tester, signIn), smith.den), isTrue, reason: "the Smiths' PIN, set in the Smiths' family");
+    });
+  });
+
+  group("what reaches a hub from another family's page is that family's", () {
+    testWidgets("Add's reader: the page's family's hub, never the hub of the family shown", (tester) async {
+      final home = await twoFamilies(tester);
+      final smith = home.logs[1];
+      // The family shown has a hub reader; the Smiths, on this device without a connection, none.
+      final shown = CaptureService(
+        settings: CaptureSettings(secrets: MemoryCaptureSecrets()),
+        hubClient: HubCaptureClient(bases: () => [Uri.parse('https://den.carter.example')], sign: (_, _, _) async => const {}),
+      );
+      final (page, root) = await _scoped(tester, home, capture: shown);
+      expect(Capture.of(root).hub, isNotNull);
+      final theirs = Capture.of(page);
+      expect(identical(theirs, shown), isFalse);
+      expect(theirs.hub, isNull, reason: "the Smiths' page never reads through the Carters' hub");
+      expect(identical(theirs.settings, shown.settings), isTrue, reason: "the device's own reader settings, the same");
+      expect(identical(Capture.forFamily(shown, den: smith.den, network: smith.network), theirs), isTrue, reason: 'kept per family');
+    });
+
+    testWidgets('Add\'s review page under /l/<smiths>/capture reads in the Smiths\' scope', (tester) async {
+      final home = await twoFamilies(tester);
+      final smith = home.logs[1];
+      final router = await pumpHome(tester, home);
+      router.push('/l/${smith.id}/capture', extra: CaptureInput.typed('Swim Saturday at 9'));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+      final page = tester.element(find.byType(CaptureRoute));
+      expect(identical(DenScope.read(page).den, smith.den), isTrue);
+      expect(identical(Capture.of(page), Capture.forFamily(Capture.service, den: smith.den, network: smith.network)), isTrue);
+      expect(identical(Capture.of(page), Capture.service), isFalse);
+    });
+
+    testWidgets("something shared while All my families shows asks which family first, and reads nothing before", (tester) async {
+      final home = await twoFamilies(tester, all: true);
+      final smith = home.logs[1];
+      final router = await pumpHome(tester, home);
+      router.push('/capture', extra: CaptureInput.typed('Swim Saturday at 9'));
+      await tester.pumpAndSettle();
+      expect(findWords('Which family is this for?'), findsOneWidget);
+      expect(find.text('Add to Carter family'), findsOneWidget);
+      await shot(tester, 'all_share_phone');
+      await tester.tap(find.text('Add to Smith family'));
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+      expect(router.state.uri.path, '/l/${smith.id}/capture');
+      final page = tester.element(find.byType(CaptureRoute).last);
+      expect(identical(DenScope.read(page).den, smith.den), isTrue);
+      expect(find.descendant(of: find.byType(FamilyLabel), matching: find.textContaining('Smith family')), findsOneWidget);
+    });
+  });
+
+  group("the app's own pages, opened from a page of the Smiths", () {
+    testWidgets('every page opens: the family pages under /l/, Ask, the kids\' app and the wall once the Smiths show', (tester) async {
+      final home = await twoFamilies(tester);
+      final carter = home.logs[0], smith = home.logs[1];
+      final ruby = smith.den.members.firstWhere((m) => m.name == 'Ruby');
+      final router = await pumpHome(tester, home, size: tablet);
+      final paths = <String>{};
+      void collect(RouteBase r, String parent) {
+        if (r is GoRoute) {
+          final full = r.path.startsWith('/') ? r.path : (parent.endsWith('/') ? '$parent${r.path}' : '$parent/${r.path}');
+          if (full.startsWith('/l/')) return;
+          paths.add(full);
+          for (final c in r.routes) {
+            collect(c, full);
+          }
+        } else if (r is ShellRouteBase) {
+          for (final c in r.routes) {
+            collect(c, parent);
+          }
+        }
+      }
+      for (final r in router.configuration.routes) {
+        collect(r, '');
+      }
+      expect(paths, containsAll(['/ask', '/kid', '/kid/:member', '/wall', '/capture', '/today', '/family']));
+      String concrete(String path) => path
+          .replaceAll(':member', ruby.id)
+          .replaceAll(':code', 'maple-river-canoe-tiger')
+          .replaceAll(':view', 'week')
+          .replaceAll(':date', '2026-10-16')
+          .replaceAll(RegExp(r':\w+'), 'X1');
+      final places = <String, String>{};
+      for (final path in paths.where((p) => p != '/')) {
+        await home.choose(carter);
+        router.go('/l/${smith.id}/family');
+        for (var i = 0; i < 3; i++) {
+          await tester.pump(const Duration(milliseconds: 200));
+        }
+        final page = find.descendant(
+          of: find.byWidgetPredicate((w) => w is LogScope && identical(w.log, smith)),
+          matching: find.byType(Text),
+        );
+        final scoped = GoRouter.of(tester.element(page.first));
+        expect(scoped, isA<ScopedRouter>());
+        scoped.go(concrete(path));
+        for (var i = 0; i < 4; i++) {
+          await tester.pump(const Duration(milliseconds: 200));
+        }
+        expect(router.routerDelegate.currentConfiguration.isError, isFalse, reason: '$path from the Smiths opened nothing');
+        places[path] = '${router.state.uri.path} ${identical(home.active, smith) ? 'smith' : 'carter'}';
+      }
+      expect(places['/family'], '/l/${smith.id}/family carter', reason: 'a family page, in the family');
+      expect(places['/kid/:member'], '/kid/${ruby.id} smith', reason: "Ruby's screen, with the Smiths shown first");
+      expect(places['/ask']!.endsWith('smith'), isTrue, reason: 'Ask, with the Smiths shown first');
+      expect(places['/today'], '/today carter', reason: "the app's places stay the app's");
+      // Leave things settled for the test's end.
+      router.go('/today');
+      await tester.pump(const Duration(milliseconds: 400));
+    });
+
+    test("a family link that doesn't decode names no family", () {
+      expect(splitLog('/l/%C3%28/event/E1'), (log: '%C3%28', rest: '/event/E1'));
+      // What a tapped reminder or push opens is checked first: the router can't match a path
+      // whose escapes don't decode, so such a link opens "That family isn't on this device".
+      expect(openable('/l/%C3%28/event/E1'), '/families/missing');
+      expect(openable('/event/%C3%28'), '/today');
+      expect(openable('/l/abcdefghijklmnop/event/E1?at=9'), '/l/abcdefghijklmnop/event/E1?at=9');
+      expect(openable('/l/Smith%20family/today'), '/l/Smith%20family/today');
     });
   });
 

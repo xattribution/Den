@@ -10,7 +10,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:den_app/app/household.dart';
+import 'package:den_app/features/add/add.dart' show Capture, hubCaptureClient;
 import 'package:den_app/features/family/family.dart' show AnotherFamilyPairing, MembershipActions, PastedInvite, JoinRoute, PasteProblem;
+import 'package:den_capture/den_capture.dart' show HubReaderKind, HubReaderSetup;
 import 'package:den_app/platform/sync/den_network.dart';
 import 'package:den_app/platform/sync/hub_push.dart';
 import 'package:den_app/platform/sync/local_hub.dart';
@@ -147,6 +149,16 @@ void main() {
     expect(second.network!.status.device, smith.hub.deviceId);
     final lake = await smith.phone.addEvent(title: 'Lake day', start: 1800000000000, end: 1800003600000);
     await until(() => second.den.event(lake) != null, what: "the Smiths' event to reach Grandma");
+
+    // Add's reader on a page of the Smiths goes through the Smiths' hub, signed as this device in
+    // their family; on the Kotvases', through theirs. Dana tells only the Smiths' hub to read on
+    // devices last, so the answers say which hub each reached.
+    final dana = await hubCaptureClient(smith.network).configure(const HubReaderSetup(kind: HubReaderKind.none, deviceFirst: false));
+    expect(dana.deviceFirst, isFalse);
+    final smithsReader = Capture.forFamily(Capture.service, den: second.den, network: second.network).hub!;
+    final kotvasReader = Capture.forFamily(Capture.service, den: first.den, network: first.network).hub!;
+    expect((await smithsReader.client.status())?.deviceFirst, isFalse, reason: "the Smiths' hub answered");
+    expect((await kotvasReader.client.status())?.deviceFirst, isTrue, reason: "the Kotvases' hub answered");
     expect(first.den.event(lake), isNull, reason: "the Kotvases' engine never sees the Smiths' changes");
     expect(kotvas.phone.event(lake), isNull);
     expect(smith.phone.device(second.den.deviceId)?.approved, isTrue);

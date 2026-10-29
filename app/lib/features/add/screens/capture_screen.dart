@@ -12,6 +12,11 @@ import '../state/capture_settings.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
+import '../../../app/family_label.dart';
+import '../../../app/household.dart';
+import '../../../app/log_scope.dart';
+import '../../../app/redirect.dart' show mergedFamilies;
+import '../../../design/sheet.dart' show SheetScope;
 import 'capture_edit.dart';
 import '../words/capture_words.dart';
 import '../../../design/forms/forms.dart';
@@ -35,14 +40,40 @@ class CaptureRoute extends StatefulWidget {
 class _CaptureRouteState extends State<CaptureRoute> {
   CaptureController? _controller;
 
+  /// In "All my families", the families to choose from before anything is read; null once the
+  /// page is one family's.
+  List<FamilyLog>? _choose;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final input = widget.input;
     if (_controller != null || input == null) return;
+    // Shared from another app while "All my families" shows: nothing is read (and no family's
+    // hub asked) before the person says which family it is for.
+    final home = Household.maybeOf(context);
+    if (home != null && home.showingAll && SheetScope.of(context) == null) {
+      final families = mergedFamilies(home);
+      if (families.length > 1) {
+        _choose = families;
+        return;
+      }
+      final only = families.firstOrNull;
+      if (only != null && !identical(only, home.active)) {
+        _choose = [only];
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _readIn(only);
+        });
+        return;
+      }
+    }
+    _choose = null;
     _controller = CaptureController(service: Capture.of(context), den: context.den, input: input, actions: context.actions);
     unawaited(_controller!.start());
   }
+
+  /// Reads what was shared in [log]'s family, on its own page there.
+  void _readIn(FamilyLog log) => GoRouter.of(context).pushReplacement(inLog(log.id, '/capture'), extra: widget.input);
 
   @override
   void dispose() {
@@ -53,6 +84,34 @@ class _CaptureRouteState extends State<CaptureRoute> {
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
+    final choose = _choose;
+    if (controller == null && choose != null) {
+      final c = context.colors;
+      return FormFrame(
+        title: 'Add',
+        children: [
+          FormBlock(
+            top: Sp.l,
+            child: Text('Which family is this for?', style: context.type.body(c.ink)),
+          ),
+          FormBlock(
+            top: Sp.m,
+            child: GroupCard(
+              child: Column(
+                children: ruled([
+                  for (final log in choose)
+                    NavRow(
+                      leading: SourceTag(label: log.name, color: log.color, size: 28, semantics: false),
+                      label: 'Add to ${log.name}',
+                      onTap: () => _readIn(log),
+                    ),
+                ], indent: 40),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
     if (controller == null) {
       final problem = widget.problem;
       return FormFrame(
@@ -119,11 +178,15 @@ class CaptureScreen extends StatelessWidget {
                       OutlinedButton(onPressed: () => closePage(context), child: const Text('Done')),
                   ],
                 ),
-          children: switch (controller.stage) {
-            CaptureStage.reading => [_Reading(kind: kind)],
-            CaptureStage.failed => [_Failed(controller: controller)],
-            CaptureStage.ready => _found(context),
-          },
+          children: [
+            // Whose family this goes to, wherever the switcher doesn't say.
+            const FamilyLabel(top: Sp.m),
+            ...switch (controller.stage) {
+              CaptureStage.reading => [_Reading(kind: kind)],
+              CaptureStage.failed => [_Failed(controller: controller)],
+              CaptureStage.ready => _found(context),
+            },
+          ],
         );
       },
     );

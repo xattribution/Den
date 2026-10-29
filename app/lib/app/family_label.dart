@@ -12,10 +12,13 @@ import 'household.dart';
 /// tag and name, and [note] after them. Nothing on a device in one family, or on a page of the
 /// family the switcher shows.
 class FamilyLabel extends StatelessWidget {
-  const FamilyLabel({super.key, this.note});
+  const FamilyLabel({super.key, this.note, this.top = 0});
 
   /// What to add, after a middle dot: "Chores stay with each family".
   final String? note;
+
+  /// Room above it, when it shows.
+  final double top;
 
   @override
   Widget build(BuildContext context) {
@@ -30,7 +33,7 @@ class FamilyLabel extends StatelessWidget {
       label: 'In ${log.name}${note == null ? '' : '. $note'}',
       excludeSemantics: true,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, 0, DenLayout.headingInset, Sp.s),
+        padding: EdgeInsets.fromLTRB(DenLayout.headingInset, top, DenLayout.headingInset, Sp.s),
         child: Row(
           children: [
             SourceTag(label: log.name, color: log.color, size: 20, semantics: false),

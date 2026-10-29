@@ -49,7 +49,8 @@ class _DenAppState extends State<DenApp> {
 
   /// Opens [route] from a tapped reminder or notification: a page over whatever is showing, in
   /// its own family (`/l/<log>/...`); one of the app's places (Today) by going there.
-  void _open(String route) {
+  void _open(String tapped) {
+    final route = openable(tapped);
     final place = isPlaceRoute(splitLog(route)?.rest ?? route);
     if (place) {
       _router.go(route);

@@ -1210,10 +1210,13 @@ already; nothing is ever deleted that another listed family is kept under. The a
 in-app hub at a time ("Keep the family online"), each family's in its own directory. `DenApp`
 gives the family shown to the root `DenScope` (which tells every reader when its state swaps),
 so every screen is the one it always was. `/l/<family>/<page>` is any of a family's pages in
-that family's scope (`LogScope`: its state, color pack, pairing, and `ScopedRouter`, which keeps
-the pages it opens in the family), behind that family's own gates (waiting, access ended, the
-kids' app, the wall); a page without the prefix is the family shown, `/l/<family>` with a tab
-shows that family, and a family this device doesn't hold is `/families/missing`. Everything
+that family's scope (`LogScope`: its state, color pack, pairing (never the family shown's),
+Add's reader through its own hub (`CaptureScope`, `Capture.forFamily`), and `ScopedRouter`,
+which opens the family's own pages in the family, leaves the app's places alone, and shows the
+family first for a page that is always the family shown: Ask, the kids' app, the wall), behind
+that family's own gates (waiting, access ended, the kids' app, the wall); a page without the
+prefix is the family shown, `/l/<family>` with a tab shows that family, and a family this device
+doesn't hold, or a link that doesn't decode, is `/families/missing`. Everything
 shown over a page (a sheet, a dialog, a picker) carries the page's family: `LogScope` puts a
 `SheetScope` over its page, and `showDenSheet`, `carryScope` and `carryTransition` wrap what they
 show in it, so a sheet opened on another family's page writes there, not to the family shown (a
@@ -1224,7 +1227,8 @@ switcher (`features/family/screens/families_sheet.dart`) appears only with two f
 device (`mergedFamilies`: not one waiting, one whose access ended, a little kid's or a wall's),
 each thing with its family's tag (`SourceTag`) and written through its own family's actions, so
 receipts and Undo stay there; Chores, Family and Settings stay per family and say which
-(`FamilyLabel`), and Add says where it adds ("Adding to Kotvas", with the others to choose).
+(`FamilyLabel`), and Add says where it adds ("Adding to Kotvas", with the others to choose);
+something shared from another app asks which family it is for before anything is read.
 Joining another family (Paste an invite, or an invite's link on a device in a family) is the
 join screen with `AnotherFamilyPairing`: it asks the server which family the invite is for and
 shows "Join the Smiths on den.example.com" (with a warning when a family of that name is on the

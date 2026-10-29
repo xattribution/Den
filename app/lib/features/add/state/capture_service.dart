@@ -6,7 +6,9 @@ import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 
 import 'capture_settings.dart';
+import 'hub_link.dart';
 import '../../../platform/capture/capture_sources.dart';
+import '../../../platform/sync/den_network.dart';
 import '../../../platform/capture/platform_capture.dart';
 import '../../../platform/capabilities.dart';
 
@@ -26,6 +28,20 @@ class CaptureService {
         hub = hubClient == null ? null : HubReader(hubClient),
         _fixed = readers,
         _http = client ?? http.Client();
+
+  CaptureService._through(CaptureService base, HubCaptureClient? hubClient)
+      : settings = base.settings,
+        platform = base.platform,
+        sources = base.sources,
+        hub = hubClient == null ? null : HubReader(hubClient),
+        _fixed = base._fixed,
+        _http = base._http,
+        _abilities = base._abilities;
+
+  /// The same readers and settings, with the hub reader of the family [hubClient] reaches (or
+  /// none): for that family's pages, so what they read goes through its own hub, signed by
+  /// this device in that family for whoever acts there, and spends that family's helper budget.
+  CaptureService throughHub(HubCaptureClient? hubClient) => CaptureService._through(this, hubClient);
 
   final CaptureSettings settings;
   final PlatformCapture platform;
@@ -151,6 +167,20 @@ abstract final class Capture {
 
   static CaptureService of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<CaptureScope>()?.service ?? service;
+
+  static final Expando<(CaptureService, CaptureService)> _families = Expando('Capture.forFamily');
+
+  /// [base] for the family whose connection is [network] ([den] when it has none): its hub
+  /// reader goes through that family's hub only, never the hub of the family the device shows.
+  /// Kept per family while [base] stays the same, so a page's service stays the same.
+  static CaptureService forFamily(CaptureService base, {required Object den, DenNetwork? network}) {
+    final key = network ?? den;
+    final kept = _families[key];
+    if (kept != null && identical(kept.$1, base)) return kept.$2;
+    final made = base.throughHub(network == null ? null : hubCaptureClient(network));
+    _families[key] = (base, made);
+    return made;
+  }
 
   /// Hands everything the platform has waiting to [inbox]; called at start, on resume and when
   /// the platform says a share arrived.

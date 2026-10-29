@@ -85,16 +85,10 @@ class _AddToFamilyState extends State<_AddToFamily> {
   /// Opens [route] in [log]'s family. Ask stays with the family the device shows, so asking in
   /// another one shows that family first.
   void _open(FamilyLog log, String route, {Object? extra}) {
-    final home = widget.home;
-    if (identical(log, home.active)) {
-      widget.router.push(route, extra: extra);
-      return;
-    }
-    if (route == '/ask' || route.startsWith('/ask?')) {
-      unawaited(home.choose(log).then((_) => widget.router.push(route, extra: extra)));
-      return;
-    }
-    widget.router.push(inLog(log.id, route), extra: extra);
+    // A family page opens in that family; Ask, which is always the family shown, shows it first.
+    ScopedRouter(widget.router, log.id, show: () async {
+      if (!identical(widget.home.active, log)) await widget.home.choose(log);
+    }).push<void>(route, extra: extra);
   }
 
   @override
