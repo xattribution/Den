@@ -898,6 +898,10 @@ class SyncPeer {
   Timer? _pairingTimer;
   JoinAttempt? _join;
 
+  /// Client side: waiting for a server this device doesn't know yet to show its record.
+  bool _vouching = false;
+  final List<Map<String, Object?>> _deferred = [];
+
   Den get _den => _node.den;
 
   /// The other device's id, verified in the handshake.
@@ -946,7 +950,18 @@ class SyncPeer {
       if (join == null) {
         _trusted = _serverTrusted();
         if (!_trusted) {
-          unawaited(_violation('unknown-peer'));
+          if (_serverRemoved()) {
+            // A server this family removed hears so, with the signed record that says it, so it
+            // can stop and tell its owner instead of waiting for devices that never sync again.
+            unawaited(_tellRemoved());
+          } else if (_den.device(deviceId) == null && session.peerFamily == _den.familyId && _isApproved()) {
+            // A device of this family this one hasn't heard of yet: the hub that replaced the old
+            // one, say, approved on a parent's phone since this one last synced. It may show its
+            // record (`vouch`); nothing it sends counts until that holds up.
+            _askToVouch();
+          } else {
+            unawaited(_violation('unknown-peer'));
+          }
           return;
         }
         if (_isApproved()) _beginSync();
@@ -1007,6 +1022,109 @@ class SyncPeer {
     return d != null && d.approved && !d.revoked && d.pubkey == pubkey;
   }
 
+  /// Client side: the server is a device this family removed, with the key it had.
+  bool _serverRemoved() {
+    final d = _den.device(deviceId);
+    return d != null && d.revoked && d.pubkey == pubkey;
+  }
+
+  void _askToVouch() {
+    _vouching = true;
+    _pairingTimer = Timer(_node.unpairedTimeout, () => unawaited(_violation('unknown-peer')));
+    unawaited(_send({'t': 'vouch'}).catchError((Object _) {}));
+  }
+
+  /// Server side: a family device that doesn't know this one yet asks who it is. The answer is
+  /// this device's own record: its request, the approval a parent signed, and what changed since.
+  Future<void> _onVouch() async {
+    if (isClient || !_den.hasFamily) return;
+    await _send({
+      't': 'vouched',
+      'list': [
+        for (final c in _den.changesSince(const {}, spaces: const {Space.family}))
+          if (c.type == RecordType.device && c.rid == _den.deviceId) c.toJson(),
+      ],
+    });
+  }
+
+  /// Client side: keeps the server's record only when it holds up (its request signed with the
+  /// key it proved in the handshake, and an approval signed by a parent's device this one already
+  /// trusts), then syncs as with any approved device. Anything less, and it's a stranger.
+  Future<void> _onVouched(Map<String, Object?> m) async {
+    _pairingTimer?.cancel();
+    final record = _deviceRecord(m['list'], deviceId);
+    if (await _vouches(record)) await _den.ingest(record);
+    _vouching = false;
+    _trusted = _serverTrusted();
+    if (!_trusted) {
+      await (_serverRemoved() ? _tellRemoved() : _violation('unknown-peer'));
+      return;
+    }
+    _beginSync();
+    final waiting = [..._deferred];
+    _deferred.clear();
+    for (final d in waiting) {
+      await _dispatch(d);
+    }
+  }
+
+  Future<bool> _vouches(List<Change> record) async {
+    var asked = false;
+    var approved = false;
+    for (final c in record) {
+      if (!asked && c.device == deviceId && c.fields['pubkey'] == pubkey) {
+        asked = await verifySignature(c.signedBytes, c.sig, pubkey);
+      }
+      final by = _den.device(c.device);
+      final parent = by?.member == null ? null : _den.member(by!.member!);
+      if (!approved && c.fields['approved'] == true && by != null && by.approved && !by.revoked && (parent?.isParent ?? false)) {
+        approved = await verifySignature(c.signedBytes, c.sig, by.pubkey);
+      }
+    }
+    return asked && approved;
+  }
+
+  /// The changes in [raw] to [device]'s own record in the family space; anything else is dropped.
+  static List<Change> _deviceRecord(Object? raw, String device) {
+    if (raw is! List) return const [];
+    final out = <Change>[];
+    for (final item in raw.take(256)) {
+      final json = asJsonObject(item);
+      if (json == null) continue;
+      try {
+        final c = Change.fromJson(json);
+        if (c.type == RecordType.device && c.rid == device && c.space == Space.family) out.add(c);
+      } on Object {
+        // Not a change.
+      }
+    }
+    return out;
+  }
+
+  /// Client side: tells a removed server so (`join_rejected`, reason `removed`), handing it the
+  /// signed changes to its own device record, the revocation among them, and closes.
+  Future<void> _tellRemoved() async {
+    _closeReason ??= 'removed';
+    final record = [
+      for (final c in _den.changesSince(const {}, spaces: const {Space.family}))
+        if (c.type == RecordType.device && c.rid == deviceId) c.toJson(),
+    ];
+    try {
+      await _send({'t': 'join_rejected', 'reason': 'removed', 'list': record});
+    } on Object {
+      // Closing anyway.
+    }
+    await session.close();
+  }
+
+  /// Server side: a family device says this one was removed. Only changes to this device's own
+  /// record are taken, and the engine keeps them only when their signatures and their author's
+  /// permissions hold, so nobody can talk a hub out of the family who couldn't remove it.
+  Future<void> _onRemoved(Map<String, Object?> m) async {
+    final own = _deviceRecord(m['list'], _den.deviceId);
+    if (own.isNotEmpty) await _den.ingest(own);
+  }
+
   /// Client side: the server is known as approved, or the caller pinned its identity.
   bool _serverTrusted() {
     final d = _den.device(deviceId);
@@ -1040,6 +1158,12 @@ class SyncPeer {
 
   Future<void> _dispatch(Map<String, Object?> m) async {
     try {
+      if (_vouching && !const {'vouched', 'error', 'join_rejected'}.contains(m['t'])) {
+        // What the server sends before showing its record waits until it has.
+        if (_deferred.length >= 64) throw _Violation('unknown-peer');
+        _deferred.add(m);
+        return;
+      }
       switch (m['t']) {
         case 'have':
           await _onHave(m);
@@ -1062,8 +1186,13 @@ class SyncPeer {
         case 'pair_fail':
         case 'join_rejected':
           _closeReason ??= m['reason'] as String? ?? 'rejected';
+          if (!isClient && m['reason'] == 'removed') await _onRemoved(m);
           _join?._fail(JoinStage.rejected, _closeReason!);
           await session.close();
+        case 'vouch':
+          await _onVouch();
+        case 'vouched':
+          if (isClient && _vouching) await _onVouched(m);
         case 'join_pending':
           if (isClient && _trusted) _join?._set(JoinStage.waitingForApproval);
         case 'unapproved':
@@ -1346,7 +1475,8 @@ class SyncPeer {
     }
     final d = _den.device(deviceId);
     if (d != null && (d.revoked || !d.approved || d.pubkey != pubkey)) {
-      await _violation('revoked');
+      // A hub removed while this device is connected to it hears why on the way out.
+      await (isClient && _serverRemoved() ? _tellRemoved() : _violation('revoked'));
       return;
     }
     if (!isClient && _node._accessEnded(deviceId)) {

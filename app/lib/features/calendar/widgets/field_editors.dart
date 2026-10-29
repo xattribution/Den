@@ -6,13 +6,14 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
 import '../../../app/format.dart';
+import '../../../app/words.dart';
 import '../../../design/avatar.dart';
 import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
+import '../../../design/widgets/switch_line.dart' show DenSwitch;
 import '../../../design/words.dart';
 import '../state/calendar_models.dart';
 import '../words/calendar_time.dart';
-import '../words/event_words.dart';
 import '../words/recurrence.dart';
 
 /// A choice among a few, as a 40 pill in a 44 target: ink when chosen, the page gray on a card
@@ -222,7 +223,7 @@ class WhenEditor extends StatelessWidget {
           child: Row(
             children: [
               Expanded(child: Text('All day', style: context.text.body(c.ink))),
-              Switch(value: allDay, onChanged: setAllDay),
+              DenSwitch(value: allDay, onChanged: setAllDay),
             ],
           ),
         ),

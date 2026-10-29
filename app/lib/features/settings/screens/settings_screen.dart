@@ -12,11 +12,12 @@ import '../../../platform/capabilities.dart';
 import '../../../platform/notifications/reminder_scheduler.dart';
 import '../../advanced/advanced.dart';
 import '../../onboarding/onboarding.dart';
+import '../widgets/text_size_choice.dart';
 import 'web_reminders.dart';
 
 /// Settings: how this device syncs in one line; for parents the family's settings, calendars
-/// and the AI helper; Day, Night or Auto; reminders on this device; Advanced for parents; and
-/// About.
+/// and the AI helper; Day, Night or Auto and the text size; reminders on this device; Advanced
+/// for parents; and About.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, this.version, this.web});
 
@@ -119,14 +120,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         DenSection(
           title: 'Appearance',
-          child: ChoiceRows<ThemeChoice>(
-            choices: const [
-              Choice(ThemeChoice.day, 'Day'),
-              Choice(ThemeChoice.night, 'Night', detail: 'True black, easy on the eyes after dark'),
-              Choice(ThemeChoice.auto, 'Auto', detail: 'Follows this device'),
+          carded: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              GroupCard(
+                child: ChoiceRows<ThemeChoice>(
+                  choices: const [
+                    Choice(ThemeChoice.day, 'Day'),
+                    Choice(ThemeChoice.night, 'Night', detail: 'True black, easy on the eyes after dark'),
+                    Choice(ThemeChoice.auto, 'Auto', detail: 'Follows this device'),
+                  ],
+                  value: app.theme,
+                  onChanged: (t) => app.theme = t,
+                ),
+              ),
+              const SizedBox(height: Sp.l),
+              const TextSizeChoice(),
             ],
-            value: app.theme,
-            onChanged: (t) => app.theme = t,
           ),
         ),
         DenSection(

@@ -1,7 +1,10 @@
 import 'package:den_core/den_core.dart';
+import 'package:den_net/den_net.dart' show normalizeCode, spokenCodeWords;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
@@ -12,7 +15,8 @@ import '../state/this_device.dart';
 import 'home_screen_steps.dart';
 
 /// Joining a family from a parent's invite: the four words from an invite message (filled in
-/// when the invite's link opened Den), or a QR code on a phone or tablet with a camera. This
+/// when the invite's link opened Den, or by Paste from the message itself), or a QR code on a
+/// phone or tablet with a camera. This
 /// device's name comes from whom the invite is for ("Zoe's iPhone"). The waiting screen takes
 /// over once the request is sent.
 ///
@@ -96,6 +100,32 @@ class _JoinScreenState extends State<JoinScreen> {
       return;
     }
     _join((p) => p.joinWithQr(raw, deviceName: _name(null), kind: _kind!));
+  }
+
+  /// Fills the words from what's on the clipboard: the words alone, the link, or the whole
+  /// invite message. Called straight from the tap, so a browser lets it read the clipboard.
+  Future<void> _paste() async {
+    final pasted = await WebApp.paste();
+    String? text = pasted.text;
+    if (text == null) {
+      try {
+        text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+      } on Object {
+        text = null;
+      }
+    }
+    if (!mounted) return;
+    final invite = inviteFrom(text ?? '');
+    if (invite.words.length != spokenCodeWords) {
+      setState(() => _error = "There's no invite on the clipboard. Copy the whole invite message, then tap Paste again.");
+      return;
+    }
+    final words = normalizeCode(invite.words.join(' ')) ?? invite.words.join(' ');
+    setState(() {
+      _error = null;
+      _words.value = TextEditingValue(text: words, selection: TextSelection.collapsed(offset: words.length));
+      if (invite.hub != null && !_browser) _hub.text = invite.hub!;
+    });
   }
 
   void _sendWords() {
@@ -189,17 +219,31 @@ class _JoinScreenState extends State<JoinScreen> {
             ),
           ),
         ] else ...[
-          LabeledField(
-            label: 'The four words from your invite',
-            error: _error,
-            child: TextField(
-              controller: _words,
-              autocorrect: false,
-              enableSuggestions: false,
-              style: t.body(c.ink),
-              decoration: const InputDecoration(hintText: 'maple river canoe tiger'),
-              onSubmitted: (_) => _sendWords(),
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              LabeledField(
+                label: 'The four words from your invite',
+                error: _error,
+                child: TextField(
+                  controller: _words,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  style: t.body(c.ink),
+                  decoration: const InputDecoration(hintText: 'maple river canoe tiger'),
+                  onSubmitted: (_) => _sendWords(),
+                ),
+              ),
+              const SizedBox(height: Sp.m),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _busy ? null : _paste,
+                  icon: const Icon(PhosphorIconsRegular.clipboardText, size: 20),
+                  label: const Text('Paste the invite'),
+                ),
+              ),
+            ],
           ),
           if (!_browser)
             LabeledField(
@@ -233,19 +277,43 @@ class _JoinScreenState extends State<JoinScreen> {
   }
 }
 
-/// An invite as someone typed or pasted it: the four words, and the hub's address when they
-/// pasted the whole link (`https://den.example.com/#/join/maple-river-canoe-tiger`).
+/// An invite as someone typed or pasted it: the four words, and the hub's address when it came
+/// with the link (`https://den.example.com/#/join/maple-river-canoe-tiger`). Takes the words
+/// typed with spaces, dashes or commas, the link alone, or the whole invite message: the words
+/// in its link, or else the one part of it that is four words ("type: maple river canoe
+/// tiger"), preferring words from Den's word list.
 ({List<String> words, String? hub}) inviteFrom(String text) {
-  var rest = text.trim();
-  String? hub;
-  final at = rest.indexOf('#/join/');
-  if (at >= 0) {
-    final base = Uri.tryParse(rest.substring(0, at));
-    if (base != null && base.host.isNotEmpty) hub = Uri(scheme: base.scheme, host: base.host, port: base.port).toString();
-    rest = Uri.decodeComponent(rest.substring(at + '#/join/'.length));
+  final whole = text.trim();
+  List<String> split(String s) => s.toLowerCase().split(RegExp(r'[\s,.\-_]+')).where((w) => w.isNotEmpty).toList();
+
+  final link = RegExp(r'(\S*)#/join/([^\s#?&]+)').firstMatch(whole);
+  if (link != null) {
+    final base = Uri.tryParse(link.group(1)!);
+    final hub = base != null && base.host.isNotEmpty && (base.scheme == 'https' || base.scheme == 'http')
+        ? Uri(scheme: base.scheme, host: base.host, port: base.port).toString()
+        : null;
+    String path;
+    try {
+      path = Uri.decodeComponent(link.group(2)!);
+    } on ArgumentError {
+      path = link.group(2)!;
+    }
+    final words = split(path.replaceAll(RegExp(r'[^A-Za-z\-_ ]+$'), ''));
+    if (words.length == spokenCodeWords) return (words: words, hub: hub);
   }
-  final words = rest.toLowerCase().split(RegExp(r'[\s,.\-_]+')).where((w) => w.isNotEmpty).toList();
-  return (words: words, hub: hub);
+
+  final typed = split(whole);
+  if (typed.length <= spokenCodeWords) return (words: typed, hub: null);
+
+  // The whole message without a working link: the part between punctuation that is four words.
+  final parts = [
+    for (final part in whole.split(RegExp(r'[:;!?\n]|\.(?=\s|$)')))
+      if (split(part).length == spokenCodeWords) split(part),
+  ];
+  final known = parts.where((p) => normalizeCode(p.join(' ')) != null);
+  if (known.isNotEmpty) return (words: known.last, hub: null);
+  if (parts.isNotEmpty) return (words: parts.last, hub: null);
+  return (words: typed, hub: null);
 }
 
 extension on String {

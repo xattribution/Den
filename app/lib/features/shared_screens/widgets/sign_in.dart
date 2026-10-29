@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
+import '../../../design/layout.dart';
+import '../../../design/sheet.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../design/pickers/pattern_pad.dart';
@@ -24,14 +26,11 @@ Future<Member?> showWhoSheet(
   String? likely,
   Member? start,
 }) {
-  return showModalBottomSheet<Member>(
-    context: context,
-    isScrollControlled: true,
-    builder: (sheetContext) => SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(Sp.l, 0, Sp.l, Sp.xl),
-        child: _WhoSheet(title: title, window: window, likely: likely, start: start),
-      ),
+  return showDenSheet<Member>(
+    context,
+    builder: (sheetContext) => Padding(
+      padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l),
+      child: _WhoSheet(title: title, window: window, likely: likely, start: start),
     ),
   );
 }
@@ -74,6 +73,7 @@ class _WhoSheetState extends State<_WhoSheet> {
     setState(() {
       _chosen = m;
       _error = null;
+      _wrong = null;
     });
     if (m.signIn.kind != 'pin' && m.signIn.kind != 'pattern') await _verify('');
   }
@@ -134,8 +134,7 @@ class _WhoSheetState extends State<_WhoSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(widget.title, style: context.type.title(c.ink)),
-          const SizedBox(height: Sp.l),
+          SheetHeader(title: widget.title),
           Wrap(
             spacing: Sp.s,
             runSpacing: Sp.s,
@@ -152,15 +151,14 @@ class _WhoSheetState extends State<_WhoSheet> {
       children: [
         Row(
           children: [
-            IconButton(
-              tooltip: 'Back',
-              onPressed: () => setState(() {
+            PageBackButton(
+              onTap: () => setState(() {
                 _chosen = null;
                 _error = null;
+                _wrong = null;
               }),
-              icon: const Icon(PhosphorIconsRegular.arrowLeft),
             ),
-            const SizedBox(width: Sp.xs),
+            const SizedBox(width: Sp.m),
             DenAvatar(chosen, size: 40),
             const SizedBox(width: Sp.m),
             Expanded(
@@ -170,7 +168,7 @@ class _WhoSheetState extends State<_WhoSheet> {
                   'pattern' => '${FamilyWords.possessive(chosen.name)} pattern',
                   _ => chosen.name,
                 },
-                style: context.type.title(c.ink),
+                style: context.text.sheetTitle(c.ink),
               ),
             ),
           ],

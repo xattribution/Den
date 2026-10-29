@@ -80,7 +80,7 @@ class DenPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (overline != null) Text(overline!, style: context.text.meta(c.ink2)),
+                if (overline != null) Text(keepUnits(overline!), style: context.text.meta(c.ink2)),
                 Semantics(header: true, child: Text(noOrphan(title), style: context.text.screenTitle(c.ink, large: large))),
               ],
             ),
@@ -122,6 +122,22 @@ class DenPage extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The one action at the end of a top bar ("Add chore", "Save list", "Edit"), ending on the page
+/// gutter like the cards below it: a pill's edge 16 from the screen's edge, or, for a [quiet]
+/// text button, its words (the button's own 12 of padding sits outside them).
+class BarAction extends StatelessWidget {
+  const BarAction({super.key, required this.child, this.quiet = false});
+
+  final Widget child;
+  final bool quiet;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: EdgeInsetsDirectional.only(end: quiet ? DenLayout.gutter - Sp.m : DenLayout.gutter),
+        child: Center(widthFactor: 1, child: child),
+      );
 }
 
 /// A child of [DenPage] that may draw nothing: it gets no gap after it, and keeps its own.

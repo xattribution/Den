@@ -383,6 +383,84 @@ class _Unit extends Animatable<double> {
   double transform(double t) => t.clamp(0.0, 1.0);
 }
 
+/// A number that moves to [value] on a spring whenever it changes, for the small state changes a
+/// tap causes: a check filling, a switch's knob, a caret turning, a goal bar growing. It starts
+/// from where it is and as fast as it is going, so a second tap mid-flight turns it around
+/// without a jump. [builder] draws it each frame; the value can pass its target a little on a
+/// bouncy spring ([DenMotion.check]), so clamp what can't. Under Reduce Motion nothing moves:
+/// the old look crossfades to the new one in 100 ms.
+class SpringValue extends StatefulWidget {
+  const SpringValue({super.key, required this.value, required this.builder, this.spring, this.child});
+
+  final double value;
+
+  /// [DenMotion.ui] unless given.
+  final SpringDescription? spring;
+  final ValueWidgetBuilder<double> builder;
+
+  /// Handed to [builder] unchanged, for the part that doesn't move.
+  final Widget? child;
+
+  @override
+  State<SpringValue> createState() => _SpringValueState();
+}
+
+class _SpringValueState extends State<SpringValue> with TickerProviderStateMixin {
+  late final AnimationController _value = AnimationController.unbounded(vsync: this, value: widget.value);
+  AnimationController? _fadeController;
+
+  /// The value fading out under Reduce Motion, until the fade ends.
+  double? _from;
+
+  AnimationController get _fade => _fadeController ??= AnimationController(vsync: this, duration: DenMotion.fade)
+    ..addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) setState(() => _from = null);
+    });
+
+  @override
+  void didUpdateWidget(SpringValue old) {
+    super.didUpdateWidget(old);
+    if (old.value == widget.value) return;
+    if (DenMotion.reduced(context)) {
+      _from = _value.value;
+      _value.value = widget.value;
+      _fade.forward(from: 0);
+    } else {
+      _from = null;
+      _fadeController?.value = 1;
+      _value.springTo(widget.value, spring: widget.spring ?? DenMotion.ui);
+    }
+  }
+
+  @override
+  void dispose() {
+    _value.dispose();
+    _fadeController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final from = _from;
+    if (from != null) {
+      return Stack(
+        alignment: Alignment.center,
+        children: [
+          ExcludeSemantics(
+            child: FadeTransition(opacity: ReverseAnimation(_fade), child: widget.builder(context, from, widget.child)),
+          ),
+          FadeTransition(opacity: _fade, child: widget.builder(context, widget.value, widget.child)),
+        ],
+      );
+    }
+    return AnimatedBuilder(
+      animation: _value,
+      builder: (context, child) => widget.builder(context, _value.value, child),
+      child: widget.child,
+    );
+  }
+}
+
 /// Swaps one state of a piece for another in place ("Nobody is driving Leo" for "You're driving
 /// Leo, Undo"): the old one fades out as the new one fades in, and the height follows on the UI
 /// spring. Give each state's widget its own key. Under Reduce Motion it is a 100 ms crossfade

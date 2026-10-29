@@ -8,6 +8,7 @@ import 'package:den_app/features/calendar/state/day_groups.dart';
 import 'package:den_app/features/calendar/widgets/event_block.dart';
 import 'package:den_app/features/calendar/words/block_words.dart';
 import 'package:den_app/features/calendar/words/event_kinds.dart';
+import 'package:den_app/features/calendar/words/event_words.dart' show possibleDrivers;
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -33,17 +34,18 @@ void main() {
       await tester.tap(find.text('Priya').last);
       await tester.pumpAndSettle();
       expect(find.textContaining('driving Leo'), findsOneWidget);
-      await tapAndWait(tester, find.text('Maya').last);
+      expect(possibleDrivers(state).map((m) => m.name), ['Alex', 'Priya', 'Grandma Rosa'], reason: 'parents and other adults drive; Maya, 14, is driven');
+      await tapAndWait(tester, find.text('Alex').last);
 
       Occurrence again() =>
           state.den.occurrences(soccer.start - 1, soccer.start + 1).firstWhere((o) => o.event.id == soccer.event.id);
-      expect(again().rides.firstWhere((r) => r.leg == 'to').driver, id(state, 'Maya'));
+      expect(again().rides.firstWhere((r) => r.leg == 'to').driver, id(state, 'Alex'));
       expect(
         state.den.event(soccer.event.id)!.rides.firstWhere((r) => r.leg == 'to').driver,
         id(state, 'Priya'),
         reason: 'one tap changes this day, not the series',
       );
-      expect(find.textContaining('Maya is driving Leo'), findsOneWidget);
+      expect(find.textContaining('You’re driving Leo'), findsOneWidget);
 
       await tapAndWait(tester, find.text('Undo'));
       expect(again().rides.firstWhere((r) => r.leg == 'to').driver, id(state, 'Priya'));

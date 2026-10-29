@@ -4,6 +4,7 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../design/layout.dart' show TextSize;
 import '../platform/calendars/phone_calendars.dart';
 import '../platform/sync/den_network.dart';
 import '../platform/notifications/reminder_scheduler.dart';
@@ -16,12 +17,13 @@ import 'format.dart';
 
 export 'actions.dart';
 export 'den_scope.dart';
+export '../design/layout.dart' show TextSize;
 
 enum ThemeChoice { auto, day, night }
 
 /// What a change can touch besides record types ([RecordType]).
 abstract final class Changes {
-  /// The theme or the wall setting of this device.
+  /// The theme, the text size or the wall setting of this device.
   static const prefs = 'prefs';
 
   /// Everything: the engine itself was swapped (the demo family).
@@ -43,6 +45,7 @@ class AppState extends ChangeNotifier with FamilyReads {
     Den den, {
     bool wall = false,
     ThemeChoice theme = ThemeChoice.auto,
+    TextSize textSize = TextSize.standard,
     this.network,
     this.reminders,
     this.phoneCalendars,
@@ -53,6 +56,7 @@ class AppState extends ChangeNotifier with FamilyReads {
       : _den = den,
         _wall = wall,
         _theme = theme,
+        _textSize = textSize,
         _seen = {...seen},
         _snoozed = {...snoozed} {
     signInGuard = SignInGuard.fromJson(
@@ -64,7 +68,7 @@ class AppState extends ChangeNotifier with FamilyReads {
     _keepPhotos();
   }
 
-  /// Restores the saved theme and wall preferences for this device.
+  /// Restores the saved theme, text size and wall preferences for this device.
   static Future<AppState> load(
     Den den, {
     DenNetwork? network,
@@ -76,6 +80,7 @@ class AppState extends ChangeNotifier with FamilyReads {
       den,
       wall: prefs.getBool(_wallKey) ?? false,
       theme: ThemeChoice.values.asNameMap()[prefs.getString(_themeKey)] ?? ThemeChoice.auto,
+      textSize: TextSize.values.asNameMap()[prefs.getString(_textSizeKey)] ?? TextSize.standard,
       seen: {...?prefs.getStringList(_seenKey)},
       snoozed: _readSnoozed(prefs.getStringList(_snoozedKey)),
       signInTries: prefs.getString(_signInTriesKey),
@@ -97,6 +102,7 @@ class AppState extends ChangeNotifier with FamilyReads {
 
   static const _wallKey = 'den.wall';
   static const _themeKey = 'den.theme';
+  static const _textSizeKey = 'den.textSize';
   static const _seenKey = 'den.seen';
   static const _snoozedKey = 'den.snoozed';
   static const _signInTriesKey = 'den.signInTries';
@@ -222,6 +228,18 @@ class AppState extends ChangeNotifier with FamilyReads {
     _theme = value;
     _changed(const {Changes.prefs});
     _save((p) => p.setString(_themeKey, value.name));
+  }
+
+  TextSize _textSize;
+
+  /// How much larger than the system's this device draws text (Settings, Appearance). A Home
+  /// Screen web app never hears the iPhone's own Text Size, so this is how it gets larger there.
+  TextSize get textSize => _textSize;
+  set textSize(TextSize value) {
+    if (value == _textSize) return;
+    _textSize = value;
+    _changed(const {Changes.prefs});
+    _save((p) => p.setString(_textSizeKey, value.name));
   }
 
   StreamSubscription<Set<String>>? _sub;

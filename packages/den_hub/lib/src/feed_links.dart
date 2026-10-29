@@ -1,0 +1,195 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
+
+import 'package:den_core/den_core.dart';
+import 'package:shelf/shelf.dart';
+
+import 'context.dart';
+import 'device_auth.dart';
+import 'http_util.dart';
+import 'setup.dart' show restrictToOwner;
+
+/// One calendar link: a secret address that opens one of the family's calendar feeds and
+/// nothing else, read with the permissions of the parent who made it.
+class FeedLink {
+  /// Creates a link record.
+  const FeedLink({
+    required this.id,
+    required this.hash,
+    required this.member,
+    required this.feed,
+    required this.label,
+    required this.made,
+  });
+
+  /// Reads a stored link; null when it isn't one.
+  static FeedLink? fromJson(String id, Object? json) {
+    if (json is! Map) return null;
+    final hash = json['hash'], member = json['member'], feed = json['feed'], label = json['label'], made = json['made'];
+    if (hash is! String || member is! String || feed is! String || label is! String || made is! int) return null;
+    return FeedLink(id: id, hash: hash, member: member, feed: feed, label: label, made: made);
+  }
+
+  /// The link's id, which never reveals its secret.
+  final String id;
+
+  /// SHA-256 of the secret in its address; the secret itself is never kept.
+  final String hash;
+
+  /// The parent who made it: the feed holds what they may read.
+  final String member;
+
+  /// `family`, or the member whose events it holds.
+  final String feed;
+
+  /// What it's for: "Alex's iPhone".
+  final String label;
+
+  /// When it was made (UTC ms).
+  final int made;
+
+  /// The file its address ends with.
+  String get file => '$feed.ics';
+
+  /// As stored.
+  Map<String, Object?> toJson() => {'hash': hash, 'member': member, 'feed': feed, 'label': label, 'made': made};
+}
+
+/// Calendar links (`/api/v1/feeds`): "Show Den in iPhone Calendar". A parent's own device makes
+/// a read-only address for the family's calendar or one person's; a phone's calendar app
+/// subscribes to it (`webcal://`). Unlike an API token, the address opens only that one feed,
+/// `GET /ics/<secret>/<family|memberId>.ics`, never the API; it reads with its maker's
+/// permissions, so it holds exactly what the feed code gives that parent (their "Just me"
+/// events included, a teen's private ones only while parents may see them). Parents list the
+/// family's links and turn any of them off. The hub keeps a hash of each secret, in its data
+/// directory; the address is shown once.
+class HubFeedLinks {
+  /// Creates the endpoints for [hub], checking signatures with [auth].
+  HubFeedLinks(this.hub, this.auth);
+
+  /// Shared hub context.
+  final HubContext hub;
+
+  /// Device signatures.
+  final DeviceAuth auth;
+
+  /// Most links a family keeps at once.
+  static const int maxLinks = 50;
+
+  /// What every secret starts with, so a stray one is easy to recognize.
+  static const String prefix = 'denfeed_';
+
+  static const String _doc = 'feed_links';
+
+  final Random _random = Random.secure();
+
+  /// Adds the routes.
+  void register(Routes routes) {
+    routes
+      ..add('GET', '/api/v1/feeds', (r, _) => list(r))
+      ..add('POST', '/api/v1/feeds', (r, _) => create(r))
+      ..add('DELETE', '/api/v1/feeds/<id>', (r, p) => revoke(r, p['id']!));
+  }
+
+  Map<String, Object?> get _links => hub.state.read(_doc);
+
+  Iterable<FeedLink> get _all => [for (final e in _links.entries) ?FeedLink.fromJson(e.key, e.value)];
+
+  Future<void> _save() async {
+    await hub.state.save(_doc);
+    final dir = hub.config.dataDir;
+    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json');
+  }
+
+  /// The link whose secret is [secret], while its maker is still in the family; null otherwise.
+  FeedLink? resolve(String secret) {
+    if (!secret.startsWith(prefix) || secret.length > 200) return null;
+    final hash = hashToken(secret);
+    for (final link in _all) {
+      if (link.hash == hash) return hub.den.member(link.member) == null ? null : link;
+    }
+    return null;
+  }
+
+  String _secret() => prefix + base64Url.encode(List.generate(32, (_) => _random.nextInt(256))).replaceAll('=', '');
+
+  String _id() => base64Url.encode(List.generate(12, (_) => _random.nextInt(256)));
+
+  Map<String, Object?> _json(FeedLink link) {
+    final made = DateTime.fromMillisecondsSinceEpoch(link.made, isUtc: true);
+    return {
+      'id': link.id,
+      'label': link.label,
+      'feed': link.feed,
+      'feed_name': link.feed == 'family' ? hub.den.family?.name : hub.den.member(link.feed)?.name,
+      'made_by': link.member,
+      'made_by_name': hub.den.member(link.member)?.name,
+      'made': made.toIso8601String(),
+      'made_ms': link.made,
+    };
+  }
+
+  /// `GET /api/v1/feeds`, signed by a parent's own device: the family's calendar links, newest
+  /// first, never their addresses.
+  Future<Response> list(Request request) async {
+    await auth.parent(request, message: 'Only a parent\'s own phone can see calendar links.');
+    final links = _all.where((l) => hub.den.member(l.member) != null).toList()..sort((a, b) => b.made.compareTo(a.made));
+    return jsonResponse({'feeds': [for (final l in links) _json(l)]});
+  }
+
+  /// `POST /api/v1/feeds` `{"feed": "family" | "<memberId>", "label": "Alex's iPhone"}`, signed
+  /// by a parent's own device: makes a link and answers its address, this once, as `url` and as
+  /// `webcal`.
+  Future<Response> create(Request request) async {
+    final signed = await auth.withBody(request, limit: 4096);
+    final check = DeviceAuth.parentOf(signed.check, message: 'Only a parent\'s own phone can make a calendar link.');
+    final Object? json;
+    try {
+      json = jsonDecode(utf8.decode(signed.body));
+    } on FormatException {
+      throw ApiError.invalid('The body must be a JSON object.');
+    }
+    if (json is! Map) throw ApiError.invalid('The body must be a JSON object.');
+    final feed = json['feed'] ?? 'family';
+    if (feed is! String || (feed != 'family' && hub.den.member(feed) == null)) {
+      throw ApiError.invalid('"feed" must be family or someone in the family.', field: 'feed');
+    }
+    final label = json['label'];
+    if (label is! String || label.trim().isEmpty || label.trim().length > 60) {
+      throw ApiError.invalid('"label" must say where the calendar goes, up to 60 characters.', field: 'label');
+    }
+    final live = _all.where((l) => hub.den.member(l.member) != null).length;
+    if (live >= maxLinks) {
+      throw ApiError(409, 'too_many', 'This family already has $maxLinks calendar links. Turn one off first.');
+    }
+    final secret = _secret();
+    final link = FeedLink(
+      id: _id(),
+      hash: hashToken(secret),
+      member: check.actor!.id,
+      feed: feed,
+      label: label.trim(),
+      made: hub.now(),
+    );
+    _links[link.id] = link.toJson();
+    await _save();
+    hub.log.info('${check.actor!.name} made a calendar link');
+    final url = urlOf(hub.base(request), '/ics/$secret/${link.file}');
+    return jsonResponse({
+      ..._json(link),
+      'url': url,
+      'webcal': url.replaceFirst(RegExp('^https?://'), 'webcal://'),
+    }, status: 201);
+  }
+
+  /// `DELETE /api/v1/feeds/{id}`, signed by a parent's own device: turns a link off. Calendars
+  /// subscribed to it stop updating at their next refresh.
+  Future<Response> revoke(Request request, String id) async {
+    final check = await auth.parent(request, message: 'Only a parent\'s own phone can turn off a calendar link.');
+    if (_links.remove(id) == null) throw ApiError.notFound(type: 'feed', message: 'There\'s no calendar link with that id.');
+    await _save();
+    hub.log.info('${check.actor!.name} turned off a calendar link');
+    return jsonResponse({'ok': true});
+  }
+}
