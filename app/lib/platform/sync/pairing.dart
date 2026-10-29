@@ -24,7 +24,7 @@ class JoinStatus {
 /// screens show (derived from the session transcript; empty for QR joins, where the code itself
 /// carries the inviter's key).
 class JoinTicket {
-  const JoinTicket({required this.familyId, this.familyName, this.inviterName, this.words = const []});
+  const JoinTicket({required this.familyId, this.familyName, this.inviterName, this.words = const [], this.admitted = false});
 
   final String familyId;
   final String? familyName;
@@ -32,6 +32,10 @@ class JoinTicket {
   /// The inviting device's name, such as "Mia's phone", when the session reveals it.
   final String? inviterName;
   final List<String> words;
+
+  /// The invite let this device in by itself (its key), so nobody needs to approve it: it is
+  /// only catching up.
+  final bool admitted;
 }
 
 /// A 4-word code a parent reads out to a device that can't scan, valid until [expires].
@@ -55,6 +59,8 @@ class InviteMessage {
     required this.familyName,
     this.qr,
     this.forName,
+    this.letsIn = false,
+    this.inviteKey,
   });
 
   final List<String> words;
@@ -70,18 +76,41 @@ class InviteMessage {
   /// Who it's for, when it names someone.
   final String? forName;
 
+  /// Whoever opens it is let in at once, with no tap from a parent (it carries an invite key).
+  final bool letsIn;
+
+  /// The family's `inviteKey` record for it, when [letsIn]: what taking it back withdraws.
+  final String? inviteKey;
+
   String get code => words.join(' ');
 
   /// The message to send, in plain words, ending with when it stops working (in this
   /// device's time zone).
   String get text {
-    final until = DateFormat('EEEE, MMMM d').format(DateTime.fromMillisecondsSinceEpoch(expires));
+    final until = DateFormat(letsIn ? "EEEE 'at' h:mm a" : 'EEEE, MMMM d').format(DateTime.fromMillisecondsSinceEpoch(expires));
     final greeting = forName == null ? 'Join' : '$forName, join';
     return '$greeting $familyName on Den: $link\n\n'
-        'On an iPhone or iPad, open the link in Safari, add Den to your Home Screen, then open Den '
-        'from there. If it asks for a code, type: $code\n\n'
-        'This invite works until $until.';
+        'Open the link on your iPhone or iPad and follow what it shows. '
+        'If Den asks for words, they are: $code\n\n'
+        'This invite works until $until, for one phone or tablet.';
   }
+}
+
+/// What an invite's words open, before anything is written: the family, whose device this
+/// becomes, and whether that happens at once ([letsIn]) or after a parent's tap.
+class InvitePeek {
+  const InvitePeek({this.familyName, this.memberName, this.marker, this.picture, this.letsIn = false});
+
+  final String? familyName;
+
+  /// Whose device this becomes; null for an invite that names nobody.
+  final String? memberName;
+
+  /// Their color and picture, to show their face.
+  final Marker? marker;
+  final String? picture;
+
+  final bool letsIn;
 }
 
 /// A device asking to join, as the inviting device sees it, with the matching words to compare.
@@ -147,8 +176,12 @@ abstract class PairingService {
   Future<HubInfo> hubStatus(String address) async => throw const PairingException(LocalOnlyPairing.message);
 
   /// Adds a fresh hub to the family with the 8-character setup code it printed: sends an invite
-  /// and the code, serves the hub's join, and waits for a parent to approve it as the hub.
-  HubSetupSession setUpHub(HubInfo hub, String code) => throw const PairingException(LocalOnlyPairing.message);
+  /// and the code, serves the hub's join, and waits for a parent to approve it as the hub. With
+  /// [expectDevice] (the hub's device id, from its setup link) it takes in only that hub, and at
+  /// once: the session proved the hub holds the key that id is the hash of, so there are no
+  /// words to compare.
+  HubSetupSession setUpHub(HubInfo hub, String code, {String? expectDevice}) =>
+      throw const PairingException(LocalOnlyPairing.message);
 
   /// Saves a hub already in this family as the place to sync.
   Future<void> useHub(HubInfo hub) async {}
@@ -177,8 +210,10 @@ abstract class PairingService {
   /// In a browser the hub served: starts the family's hub with the setup code it printed,
   /// right after this browser started the family. Approves the hub on its own once both ends
   /// show the same words; the page came from that hub over its own address, so there is
-  /// nobody in between to compare against.
-  HubSetupSession adoptServingHub(HubInfo hub, String code) => throw const PairingException(LocalOnlyPairing.message);
+  /// nobody in between to compare against. With [expectDevice] (from the setup link) it checks
+  /// the hub's device id instead, as [setUpHub] does.
+  HubSetupSession adoptServingHub(HubInfo hub, String code, {String? expectDevice}) =>
+      throw const PairingException(LocalOnlyPairing.message);
 
   // ------------------------------------------------------------------ recovery
 
@@ -200,9 +235,16 @@ abstract class PairingService {
 
   // ------------------------------------------------------------------ invites by message
 
-  /// An invite the family's hub keeps for three days, for [memberId] when given. Needs a
-  /// parent's own device and a hub.
-  Future<InviteMessage> createInvite({String? memberId}) async => throw const PairingException(LocalOnlyPairing.message);
+  /// An invite the family's hub keeps, for [memberId] when given. Needs a parent's own device
+  /// and a hub. With [letIn] (and someone named), it carries an invite key this device writes
+  /// into the family's log, so the device that opens it is let in at once, and it works for a
+  /// day; otherwise a parent approves the device, and it works for three.
+  Future<InviteMessage> createInvite({String? memberId, bool letIn = true}) async =>
+      throw const PairingException(LocalOnlyPairing.message);
+
+  /// What [words] open at the hub at [hubUrl] (or the one that served this page), before
+  /// anything is written: for "Join the Riveras as Leo?".
+  Future<InvitePeek> peekInvite(String words, {String? hubUrl}) async => throw const PairingException(LocalOnlyPairing.message);
 
   /// Joins with an invite's four [words] through the hub at [hubUrl], or the hub that served
   /// this page. [deviceName] names this device from the name of the person the invite is for

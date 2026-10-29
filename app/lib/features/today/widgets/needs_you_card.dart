@@ -224,6 +224,19 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
           null,
           () => context.push('/family/member/${recoveryOf(device)?.member ?? ''}'),
         ),
+      InvitedNeed(:final device) => (
+          _face(app, inviteOf(device)?.member, PhosphorIconsRegular.deviceMobile),
+          InviteLines.sentence(app, device),
+          InviteLines.detail(app, device),
+          TwoButtons(
+            primary: 'Got it',
+            onPrimary: _busy.contains(key) ? null : () => _seenInvited(app, device),
+            secondary: InviteLines.notThem(app, device),
+            onSecondary: _busy.contains(key) ? null : () => _removeInvited(app, device),
+          ),
+          null,
+          () => context.push('/family'),
+        ),
       PrivacyNeed(:final change) => (
           _face(app, change.by, PhosphorIconsRegular.lockKey),
           privacyNotice(app.memberById(change.by)?.name ?? 'A parent', parentsSee: change.parentsSee),
@@ -321,6 +334,39 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
       () => context.choreActions.setDone(need.day, true),
       owner == null ? '${need.day.chore.title} marked done' : '${need.day.chore.title} marked done for $owner',
     );
+  }
+
+  /// Someone here saw a device an invite let in: it stays, and this device stops saying so.
+  void _seenInvited(AppState app, Device device) {
+    setState(() => _settled[Invites.noticeKey(device)] = _Settled('${device.name} stays in the family', null));
+    app.markSeen(Invites.noticeKey(device));
+  }
+
+  /// "That wasn't Dad": the device is removed and the invite's key taken away. Devices it let in
+  /// since are listed on Family, where they can be removed too.
+  Future<void> _removeInvited(AppState app, Device device) async {
+    final key = Invites.noticeKey(device);
+    final trust = context.trustActions;
+    setState(() {
+      _busy.add(key);
+      _failed.remove(key);
+    });
+    DisownedInvite? done;
+    final problem = await tryWrite(() async => done = await trust.thatWasntThem(device.id));
+    if (problem == null) app.markSeen(key);
+    if (!mounted) return;
+    setState(() {
+      _busy.remove(key);
+      if (problem != null || done == null) {
+        _failed[key] = problem ?? "That didn't work";
+      } else {
+        final more = done!.letIn;
+        _settled[key] = _Settled(
+          more.isEmpty ? InviteLines.disowned(app, device, done!) : '${InviteLines.disowned(app, device, done!)} ${RecoveryLines.letIn(more)}: see Family.',
+          null,
+        );
+      }
+    });
   }
 
   /// A device whose invite named someone joins as theirs in one tap; one that names nobody

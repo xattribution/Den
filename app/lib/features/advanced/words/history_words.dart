@@ -3,7 +3,7 @@ import 'package:den_core/den_core.dart';
 import '../../../app/family_reads.dart';
 import '../../../app/words.dart';
 import '../../calendar/calendar_words.dart';
-import '../../family/family.dart' show accessEndedWords, privacyNow;
+import '../../family/family.dart' show InviteLines, accessEndedWords, privacyNow;
 
 /// Kinds of record people filter History by.
 enum HistoryKind {
@@ -19,6 +19,7 @@ enum HistoryKind {
     RecordType.subscription,
     RecordType.connection,
     RecordType.photo,
+    RecordType.inviteKey,
   });
 
   const HistoryKind(this.label, this.types);
@@ -259,6 +260,8 @@ HistoryLine historyLine(FamilyReads app, HistoryEntry e) {
   final f = app.formats;
   final recovered = _recoveryLine(app, e);
   if (recovered != null) return recovered;
+  final invited = _inviteLine(app, e);
+  if (invited != null) return invited;
   final controls = _controlsLine(app, e);
   if (controls != null) return controls;
   if (e.type == RecordType.eventException) {
@@ -359,6 +362,23 @@ HistoryLine? _recoveryLine(FamilyReads app, HistoryEntry e) {
           : const HistoryLine('stopped', 'the hub helping a parent get back in', []);
   }
   return null;
+}
+
+/// Invites that let someone in at once (den_core's invite_keys.dart), said so nobody gets in
+/// unseen: a parent "invited Leo" (with a key) or "took back the invite for Leo"; the device
+/// "joined with Alex's invite" (the row's name is the new device's, since nobody acted for it).
+HistoryLine? _inviteLine(FamilyReads app, HistoryEntry e) {
+  if (e.type == RecordType.device) {
+    final value = _after(e, 'invite');
+    if (value is! Map) return null;
+    return HistoryLine('joined with', InviteLines.howJoined(app, value), const []);
+  }
+  if (e.type != RecordType.inviteKey) return null;
+  final made = app.den.inviteKey(e.rid);
+  final member = made?.member == null ? null : app.memberById(made!.member)?.name;
+  final whom = member ?? (made?.modes.contains(DeviceMode.hub) ?? false ? 'a hub' : 'a shared screen');
+  if (e.verb == 'added') return HistoryLine('invited', whom, const []);
+  return HistoryLine('took back', 'the invite for $whom', const []);
 }
 
 /// Parental controls, said the way their switches say them: "changed this: parents can now see

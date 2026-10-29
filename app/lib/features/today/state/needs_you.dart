@@ -2,7 +2,7 @@ import 'package:den_core/den_core.dart';
 
 import '../../../app/app_state.dart';
 import '../../calendar/calendar_words.dart';
-import '../../family/family.dart' show Recovery, RecoveryReminder;
+import '../../family/family.dart' show Invites, Recovery, RecoveryReminder;
 
 /// Something on Today that waits for the person using the device, with one action that settles
 /// it. Each has a [key] that stays the same while it waits, so a settled one keeps its place.
@@ -77,6 +77,16 @@ final class RecoveredNeed extends Need {
 
   @override
   String get key => Recovery.noticeKey(device);
+}
+
+/// A device an invite let in by itself, on a parent's own device: "Got it", or "That wasn't
+/// Dad", which removes it.
+final class InvitedNeed extends Need {
+  const InvitedNeed(this.device);
+  final Device device;
+
+  @override
+  String get key => Invites.noticeKey(device);
 }
 
 /// A dated list due today or tomorrow with things left on it: "Open".
@@ -192,6 +202,7 @@ List<Need> needsYou(AppState app, {required int now}) {
     out.addAll(den.pendingDevices.map(DeviceNeed.new));
     out.addAll([for (final c in den.connections) if (c.status == ConnectionStatus.pending) ConnectionNeed(c)]);
     out.addAll(Recovery.unseen(den, app.seen).map(RecoveredNeed.new));
+    out.addAll(Invites.unseen(den, app.seen, now: now, me: me.id).map(InvitedNeed.new));
     out.addAll(_triesToTell(app, now).map(SignInTriesNeed.new));
     if (RecoveryReminder.due(app, now: now)) out.add(RecoveryWordsNeed(me.id));
   }
@@ -241,6 +252,7 @@ class NeedsModel extends DenView<List<Need>> {
         RecordType.item,
         RecordType.connection,
         RecordType.signInTries,
+        RecordType.inviteKey,
         Changes.notices,
       };
 

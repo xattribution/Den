@@ -108,7 +108,7 @@ class _LinkThisBrowserScreenState extends State<LinkThisBrowserScreen> {
       title: 'Link this browser',
       children: [
         Text(
-          "On a parent's phone: Settings, Advanced, Hub and sync, then A browser on a computer. Scan this code with it.",
+          "On a parent's phone: Settings, Advanced, Hub and sync, Open Den on your computer, then Show a code on the computer instead. Scan this code with it.",
           style: t.body(c.ink),
         ),
         if (_loading)

@@ -134,7 +134,7 @@ sign in as yourself, so the server joins as `tag:den-server` (or run it as
    say it works, it keeps the address you're connected from allowed (`DEN_SSH_ALLOW` in `.env`).
    The session you're in stays up either way: the firewall keeps open connections;
 7. builds and starts the hub, Caddy and dnsmasq (about 10 minutes the first time);
-8. prints what's left, below.
+8. prints what's left, below, ending with the first parent's setup link and its QR code.
 
 Run it again any time, after `git pull` or a change to `.env`: it changes only what isn't right
 yet. `sudo ./install.sh --check` says what it would do and changes nothing.
@@ -154,8 +154,16 @@ yet. `sudo ./install.sh --check` says what it would do and changes nothing.
    (`sudo passwd root`, or your user): SSH won't take it, but the VPS provider's web console asks
    for it, and that console is the way in if the network ever isn't.
 5. **The first parent**, at home (with Private Relay off for the home Wi-Fi) or anywhere with
-   Tailscale on: the steps after the setup code in [Install (setup A)](#install-setup-a). Then send
-   the family [their message](#for-the-family-private).
+   Tailscale on, once 1 and 2 are done: scan the QR code install.sh printed with the iPhone's
+   Camera (or open the link under it in Safari), add Den to the Home Screen as the page shows,
+   open Den from there, type the family's name and your own, and tap **Create family**. Nothing
+   else to type or compare: the link carries the setup code, and the hub it names is the only one
+   the phone takes in. To print it again:
+   `docker compose exec hub /app/bin/den_hub setup-link`.
+6. **Everyone else:** on your phone, Family, their name, **Invite** (or **Add someone**), and send
+   the link. They open it on their iPhone and are in as soon as they tap **Join**: no approving.
+   Send them [the family's message](#for-the-family-private) too, for Tailscale and Private
+   Relay.
 
 ### Home addresses
 
@@ -204,7 +212,7 @@ unless someone picks an exit node. Don't (the policy allows none anyway).
 
 ### For the family (private)
 
-Send this, with your family's address in it:
+Send this once, with your family's address in it; each person's own invite link comes from Den:
 
 1. **At home**, turn off iCloud Private Relay for the home Wi-Fi: Settings, Wi-Fi, tap the (i)
    next to the home network, and turn off **iCloud Private Relay** (on older iPhones, **Limit IP
@@ -213,8 +221,9 @@ Send this, with your family's address in it:
 2. **For everywhere else**, install Tailscale from the App Store, sign in with the invitation you
    got, and turn on VPN On Demand (the profile picture, VPN On Demand, Wi-Fi and Cellular:
    Always).
-3. Open **https://den.example.com** in Safari, at home or with Tailscale on. Tap **Share**, then
-   **Add to Home Screen**, then **Add**, and open Den from the Home Screen.
+3. **Your invite:** at home or with Tailscale on, tap the link I send you. Safari shows how to add
+   Den to the Home Screen (Share, **Add to Home Screen**, **Add**). Open Den from the Home Screen
+   and tap **Join**: you're in. If Den asks for words, they're in the invite message.
 4. **Calendar:** when you turn on **Show Den in iPhone Calendar**, and the iPhone shows where it
    adds the calendar, choose **On My iPhone**, not iCloud: iCloud would fetch it from Apple's
    servers, which can't reach your hub. (Added to iCloud already? Delete it in the Calendar app
@@ -426,23 +435,27 @@ and Caddy, which gets the certificate for your domain by itself. Copy the backup
 Every command in this guide runs from `den/deploy/hosted`. `.env` picks what runs there
 (`COMPOSE_PROFILES=caddy`), so they're all plain `docker compose ...`.
 
-Get the setup code:
+Get the setup link:
 
 ```sh
-docker compose exec hub /app/bin/den_hub setup-code
+docker compose exec hub /app/bin/den_hub setup-link
 ```
 
-Then, on a parent's iPhone:
+It prints a link and a QR code. Then, on the first parent's iPhone:
 
-1. Open `https://den.example.com` in Safari.
-2. Tap Share, then **Add to Home Screen**, then **Add**, and open Den from the Home Screen.
-3. Tap **Start a family**, and type the setup code under **Your hub**.
-4. The phone shows three words. Approve only if the hub logged the same three:
-   `docker compose logs hub | grep "Matching words"`.
-5. Invite the others from **Add people** (**Send invite**): a link and four words. They open the
-   link, add Den to their Home Screen the same way, and a parent taps **Approve** on Today.
+1. Scan the QR code with the Camera, or open the link in Safari.
+2. Add Den to the Home Screen as the page shows (Share, **Add to Home Screen**, **Add**), and open
+   Den from the Home Screen. It picks up the link by itself.
+3. Type the family's name and yours, and tap **Create family**. The hub joins on its own: the
+   link names it, so there are no words to compare.
+4. Invite the others from **Add people** (**Invite**, then **Send invite**): a link and four words.
+   They open the link, add Den to their Home Screen the same way, tap **Join**, and they're in.
+   Today tells you when they are, with **That wasn't them** in case it wasn't.
 
-[For the family](#for-the-family) has a message to send them.
+Without the link (an older iPhone, say), open `https://den.example.com` in Safari, add Den to
+the Home Screen, choose **Start a family** and type the setup code
+(`docker compose exec hub /app/bin/den_hub setup-code`). Save your recovery words when Den asks,
+on Today. [For the family](#for-the-family) has a message to send them.
 
 ### Setup B: Cloudflare Tunnel
 
@@ -801,9 +814,13 @@ echo | openssl s_client -connect den.example.com:443 -servername den.example.com
 Only a hub that isn't in a family yet has one. It prints a new one each time it starts:
 
 ```sh
-docker compose exec hub /app/bin/den_hub setup-code
+docker compose exec hub /app/bin/den_hub setup-link   # the link and QR code, with the code
+docker compose exec hub /app/bin/den_hub setup-code   # the code alone
 docker compose restart hub     # a fresh code, if the old one may have been seen
 ```
+
+The link carries the setup code and the hub's device id. Treat it like the code: whoever opens
+it first, from where the hub can be reached, starts the family on it.
 
 ### Reset the hub, keep the family
 
@@ -846,13 +863,13 @@ docker compose up -d
 
 ### If a parent loses their phone
 
-If another parent still has their phone, nothing special is needed: invite the new phone as
-usual and that parent lets it in from Needs you. When no parent's phone is left, there are two
-ways back in.
+If another parent still has their phone, nothing special is needed: they invite the new phone
+as usual (Family, the parent's name, **Invite**), and it's in as soon as it's opened. When no
+parent's phone is left, there are two ways back in.
 
 **With their recovery words** (nothing to do on the server). Each parent saves 12 words when
-they start the family, or later on their own page in Family, **Recovery words**. On the new
-phone:
+Den asks on Today (**Save your recovery words**), or later on their own page in Family,
+**Recovery words**. On the new phone:
 
 1. Open `https://den.example.com` in Safari, add Den to the Home Screen and open it from there.
 2. Choose **Join your family**, then **I lost my phone**.
@@ -955,9 +972,10 @@ https://den.example.com/health` from the phone's network, and the hub's log. Den
 problem in Settings, Advanced, Hub and sync.
 
 **"Link closed"** ("A parent needs to open Add a device in Den first"). A hub on the internet
-lets a new browser ask to link only while a parent has **A browser on a computer** open on their
-phone (Settings, Advanced, Hub and sync), or for 10 minutes after
-`docker compose exec hub /app/bin/den_hub open-linking`. Invites by message need neither.
+lets a new browser show a code to scan only while a parent has that open on their phone
+(Settings, Advanced, Hub and sync, **Open Den on your computer**, **Show a code on the computer
+instead**), or for 10 minutes after `docker compose exec hub /app/bin/den_hub open-linking`.
+The link **Open Den on your computer** shows, and invites by message, need neither.
 
 **Rate limited** ("Too many tries from here", `429`). The hub limits what each address may do;
 wait the time it says. If the whole family is limited at once, the hub sees one address for
@@ -967,8 +985,13 @@ everyone: a proxy it doesn't trust is in front of it, and `docker compose logs h
 **Out of memory while building** (`Target dart2js failed: ... exit code -9`). Add swap, or build
 elsewhere: [Building on a small server](#building-on-a-small-server).
 
-**The setup code is lost.** `docker compose exec hub /app/bin/den_hub setup-code` prints it
-again; it says so if the hub is already in a family.
+**The setup code is lost.** `docker compose exec hub /app/bin/den_hub setup-link` prints it
+again, with the link; it says so if the hub is already in a family.
+
+**The invite opened, but Den on the Home Screen asks for words.** The iPhone didn't hand the link
+to the Home Screen app (before iOS 17.2, or Den was on the Home Screen already). Type the four
+words from the invite message, or, in Safari, tap **Copy invite**, then in Den **Paste an
+invite**.
 
 **The hub was removed from the family.** A parent removed it (Hub and sync, **Remove**). The first
 phone that reaches it refuses it and tells it so, and from then on `den_hub status` and the hub's
@@ -1064,11 +1087,12 @@ automations, Reading photos and messages, **A model at home**, on the hub, addre
 
 ## For the family
 
-Send this, with your family's address in it:
+Each person gets their own invite from Den (Family, their name, **Invite**). Send this with it:
 
-1. Open **https://den.example.com** in Safari on your iPhone.
-2. Tap the **Share** button, then **Add to Home Screen**, then **Add**.
-3. Open **Den** from your Home Screen and follow what it says.
+1. Open the invite's link on your iPhone. Safari shows how to add Den to your Home Screen: tap
+   **Share** (behind the three dots on newer iPhones), then **Add to Home Screen**, then **Add**.
+2. Open **Den** from your Home Screen and tap **Join**. You're in.
+3. If Den asks for words, type the four words from the invite.
 
 To see Den's events in the iPhone Calendar app, turn on **Show Den in iPhone Calendar** in Den's
 Settings.

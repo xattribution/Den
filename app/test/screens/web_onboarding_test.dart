@@ -230,9 +230,18 @@ void main() {
       forName: 'Grandma',
     );
     expect(message.text, startsWith('Grandma, join The Riveras on Den: https://den.example.com/#/join/maple-river-candle-tiger'));
-    expect(message.text, contains('add Den to your Home Screen'));
-    expect(message.text, contains('type: maple river candle tiger'));
-    expect(message.text, endsWith('This invite works until Friday, October 30.'));
+    expect(message.text, contains('Open the link on your iPhone or iPad'));
+    expect(message.text, contains('If Den asks for words, they are: maple river candle tiger'));
+    expect(message.text, endsWith('This invite works until Friday, October 30, for one phone or tablet.'));
     expect(message.text, isNot(contains('!')));
+    // An invite that lets them in at once lasts a day: it says the time.
+    final soon = InviteMessage(
+      words: const ['maple', 'river', 'candle', 'tiger'],
+      link: Uri.parse('https://den.example.com/#/join/maple-river-candle-tiger'),
+      expires: DateTime(2026, 10, 30, 18).millisecondsSinceEpoch,
+      familyName: 'The Riveras',
+      letsIn: true,
+    );
+    expect(soon.text, endsWith('This invite works until Friday at 6:00 PM, for one phone or tablet.'));
   });
 }

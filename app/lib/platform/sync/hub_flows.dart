@@ -19,6 +19,7 @@ class NetHubSetup extends HubSetupSession {
     required this.code,
     this.waitFor = const Duration(minutes: 2),
     this.autoApprove = false,
+    this.expectDevice,
   });
 
   final DenNetwork network;
@@ -30,6 +31,10 @@ class NetHubSetup extends HubSetupSession {
   /// Approves the hub without a tap once it reports the same words this device shows: for a
   /// browser the hub itself served, where nothing sits between the two to compare against.
   final bool autoApprove;
+
+  /// The hub's device id from its setup link: only that hub is taken in, and at once, since the
+  /// session proved it holds the key the id is the hash of. No words to compare.
+  final String? expectDevice;
 
   /// How long to wait for the hub to ask to join, and then to catch up after approval.
   final Duration waitFor;
@@ -64,6 +69,14 @@ class NetHubSetup extends HubSetupSession {
 
   /// Runs the flow up to the point a parent approves.
   Future<void> run() async {
+    final expected = expectDevice;
+    if (expected != null && hub.device != expected) {
+      _set(
+        HubSetupStage.failed,
+        error: "The hub at ${hub.address} isn't the one that printed this link. Check the link, or type the setup code from the hub's log.",
+      );
+      return;
+    }
     try {
       final invite = await _node.createInvite(validFor: const Duration(minutes: 15));
       await client.sendSetup(hub.base, code: code, invite: invite.toUrl(), direct: true);
@@ -83,6 +96,12 @@ class NetHubSetup extends HubSetupSession {
       check(_node.pendingJoins);
       _join = await joined.future.timeout(waitFor);
       await _pendingSub?.cancel();
+      if (expected != null && _join!.deviceId == expected) {
+        // The link named this hub's key: nothing to compare.
+        _set(HubSetupStage.confirm);
+        await approve();
+        return;
+      }
       _hubWords = await _wordsFromHub();
       _set(HubSetupStage.confirm);
       if (autoApprove && wordsMatch == true) {

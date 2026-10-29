@@ -3101,6 +3101,10 @@ class Den {
           ? {'kind': value['kind'], 'member': value['member']}
           : {'on': (value['key'] ?? value['serverKey']) != null};
     }
+    // A device's invite proof says which invite and for whom; an invite's key says only that it
+    // is there (it lets someone in) or was taken away.
+    if (field == 'invite' && value is Map) return {'invite': value['invite'], 'member': value['member'], 'mode': value['mode']};
+    if (field == 'key' && value is String) return '•••';
     return value;
   }
 

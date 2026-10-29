@@ -290,6 +290,9 @@ class HubInvites {
       'preapproved': _preapproved(key),
       'member': member,
       'member_name': member == null ? null : hub.den.member(member)?.name,
+      // Their color and picture, to show whose device this becomes before it holds the family.
+      'member_marker': member == null ? null : hub.den.member(member)?.marker.name,
+      'member_picture': member == null ? null : hub.den.member(member)?.picture,
       'family': hub.den.family?.name,
       'expires': invite.expires.toUtc().toIso8601String(),
       'expires_ms': invite.expires.millisecondsSinceEpoch,

@@ -13,7 +13,8 @@ import '../../family/family.dart';
 
 /// After a join request: the matching words to compare with the parent's screen, and where the
 /// request stands. Approval arrives by sync, also after Den was closed and opened again; the
-/// router then moves on to Today. Start over withdraws the request, for a new invite.
+/// router then moves on to Today. Start over withdraws the request, for a new invite. A device
+/// an invite let in by itself ([JoinTicket.admitted]) only catches up here, for a moment.
 class WaitingScreen extends StatefulWidget {
   const WaitingScreen({super.key, this.ticket});
 
@@ -43,9 +44,10 @@ class _WaitingScreenState extends State<WaitingScreen> {
     final app = context.watch(const {});
     final device = app.den.thisDevice?.name;
     final other = ticket?.inviterName ?? "the parent's screen";
+    final admitted = ticket?.admitted ?? false;
 
     return DenPage(
-      title: 'Waiting for approval',
+      title: admitted ? 'Joining your family' : 'Waiting for approval',
       back: false,
       children: [
         if (words.isNotEmpty)
@@ -88,6 +90,10 @@ class _WaitingScreenState extends State<WaitingScreen> {
                 ),
               JoinState.failed => NoticeLine(
                   message: status?.message ?? "Lost touch with the family's devices. Keep Den open; it will try again.",
+                ),
+              _ when admitted => NoticeLine(
+                  icon: PhosphorIconsRegular.hourglass,
+                  message: device == null ? 'Letting this device in' : 'Letting $device in',
                 ),
               _ => NoticeLine(
                   icon: PhosphorIconsRegular.hourglass,

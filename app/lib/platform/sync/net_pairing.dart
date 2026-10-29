@@ -230,8 +230,8 @@ class NetPairing extends PairingService {
   }
 
   @override
-  HubSetupSession setUpHub(HubInfo hub, String code) =>
-      NetHubSetup(network: network, client: _client, hub: hub, code: code)..run();
+  HubSetupSession setUpHub(HubInfo hub, String code, {String? expectDevice}) =>
+      NetHubSetup(network: network, client: _client, hub: hub, code: code, expectDevice: expectDevice)..run();
 
   @override
   Future<void> useHub(HubInfo hub) => network.addHub(hub.base.toString());
@@ -323,14 +323,14 @@ class NetPairing extends PairingService {
   }
 
   @override
-  HubSetupSession adoptServingHub(HubInfo hub, String code) =>
-      NetHubSetup(network: network, client: _client, hub: hub, code: code, autoApprove: true)..run();
+  HubSetupSession adoptServingHub(HubInfo hub, String code, {String? expectDevice}) =>
+      NetHubSetup(network: network, client: _client, hub: hub, code: code, autoApprove: true, expectDevice: expectDevice)..run();
 
-  /// How long an invite sent as a message works.
+  /// How long an invite sent as a message works when a parent approves whoever opens it.
   static const inviteLife = Duration(days: 3);
 
   @override
-  Future<InviteMessage> createInvite({String? memberId}) async {
+  Future<InviteMessage> createInvite({String? memberId, bool letIn = true}) async {
     final den = network.den;
     final hub = network.hubDevice;
     if (network.isHub) {
@@ -341,13 +341,28 @@ class NetPairing extends PairingService {
     }
     final bases = await network.hubBases();
     if (bases.isEmpty) throw const PairingException("Den doesn't know the hub's address yet. Open Den at home once, then try again.");
+    // The words are this phone's own; the hub gets only the slot they stretch to.
+    final words = net.InviteWords.generate();
+    final slot = await net.InviteWords.slot(words);
+    final keyed = letIn && memberId != null;
+    final key = keyed ? await net.InviteWords.key(words) : null;
+    String? keyId;
     HubException? last;
     for (final base in bases) {
       final net.Invite invite;
       try {
-        invite = _node.createHubInvite(hub.id, hubs: [HubClient.syncUri(base)], validFor: inviteLife);
+        invite = _node.createHubInvite(hub.id, hubs: [HubClient.syncUri(base)], validFor: keyed ? inviteKeyDefaultLife : inviteLife);
       } on StateError {
         throw const PairingException("This device doesn't know the family's hub well enough yet. Wait a moment, then try again.");
+      }
+      if (key != null && keyId == null) {
+        try {
+          keyId = await den.createInviteKey(member: memberId, publicKey: key.publicKey, expires: invite.expires.millisecondsSinceEpoch);
+        } on PermissionDenied catch (e) {
+          throw PairingException(e.message);
+        } on InvalidInput catch (e) {
+          throw PairingException(e.message);
+        }
       }
       final grant = await net.InviteGrant.sign(
         invite,
@@ -355,14 +370,30 @@ class NetPairing extends PairingService {
         context: memberId == null ? 'invite' : 'invite:$memberId',
       );
       try {
-        final made = await _client.createInvite(base, grant.toJson());
+        final made = await _createWhenSynced(base, {...grant.toJson(), 'slot': slot, if (key != null) 'key': key.publicKey});
+        final family = den.family?.name ?? 'the family';
+        final forName = memberId == null ? null : den.member(memberId)?.name;
+        if (!made.bySlot) {
+          // An older hub picked words of its own; the key would go unused, so take it back.
+          if (keyId != null) unawaited(den.withdrawInviteKey(keyId).catchError((Object _) {}));
+          return InviteMessage(
+            words: made.words,
+            link: made.link,
+            expires: made.expires,
+            familyName: family,
+            qr: invite.toUrl(),
+            forName: forName,
+          );
+        }
         return InviteMessage(
-          words: made.words,
-          link: made.link,
+          words: words.split(' '),
+          link: net.DenLink(kind: net.DenLinkKind.family, words: words).link(made.link),
           expires: made.expires,
-          familyName: den.family?.name ?? 'the family',
+          familyName: family,
           qr: invite.toUrl(),
-          forName: memberId == null ? null : den.member(memberId)?.name,
+          forName: forName,
+          letsIn: made.preapproved,
+          inviteKey: made.preapproved ? keyId : null,
         );
       } on HubException catch (e) {
         if (e.code != null) {
@@ -376,6 +407,71 @@ class NetPairing extends PairingService {
     throw PairingException(last?.message ?? "Couldn't reach the family's hub. Try again.");
   }
 
+  /// Sends the invite, waiting a moment while its key travels to the hub (`409 not_synced`).
+  Future<HubInvite> _createWhenSynced(Uri base, Map<String, Object?> body) async {
+    for (var i = 0;; i++) {
+      try {
+        return await _client.createInvite(base, body);
+      } on HubException catch (e) {
+        if (e.code != 'not_synced' || i >= 30) rethrow;
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+    }
+  }
+
+  /// Invites redeemed already, by hub and words, so "Join" after "Join the Riveras as Leo?"
+  /// doesn't ask again.
+  final Map<String, RedeemedInvite> _redeemed = {};
+
+  /// What [code] opens at [base]: first by the slot the words stretch to (the app's own
+  /// invites), then by the words themselves (an invite whose words the hub chose).
+  Future<RedeemedInvite> _redeem(Uri base, String code) async {
+    final at = '$base $code';
+    final known = _redeemed[at];
+    if (known != null) return known;
+    RedeemedInvite redeemed;
+    try {
+      redeemed = await _client.redeemInvite(base, slot: await net.InviteWords.slot(code));
+    } on HubException catch (e) {
+      // Not kept by a slot, or an older hub that only knows words.
+      if (e.code != 'not_found' && e.code != 'invalid_input') rethrow;
+      try {
+        redeemed = await _client.redeemInvite(base, code: code);
+      } on HubException catch (again) {
+        if (again.code == 'not_found') {
+          throw const PairingException(
+            "That code isn't right, or the invite has expired. Ask for a new invite.",
+            reason: PairingException.unknownCode,
+          );
+        }
+        throw PairingException(again.code == 'not_ready' ? "This hub isn't in a family yet. Start your family first." : again.message);
+      }
+    }
+    return _redeemed[at] = redeemed;
+  }
+
+  Uri _inviteBase(String? hubUrl) {
+    final base = hubUrl == null || hubUrl.trim().isEmpty ? _servedBase : HubClient.baseFor(hubUrl);
+    if (base == null) throw const PairingException("Type the hub's address too. It's the start of the invite's link.");
+    return base;
+  }
+
+  @override
+  Future<InvitePeek> peekInvite(String words, {String? hubUrl}) async {
+    final code = net.normalizeCode(words);
+    if (code == null) {
+      throw const PairingException("Those aren't the four words from an invite. Check them against the message.");
+    }
+    final redeemed = await _redeem(_inviteBase(hubUrl), code);
+    return InvitePeek(
+      familyName: redeemed.familyName,
+      memberName: redeemed.memberName,
+      marker: Marker.parse(redeemed.memberMarker),
+      picture: redeemed.memberPicture,
+      letsIn: redeemed.preapproved,
+    );
+  }
+
   @override
   Future<JoinTicket> joinWithInvite(
     String words, {
@@ -387,20 +483,8 @@ class NetPairing extends PairingService {
     if (code == null) {
       throw const PairingException("Those aren't the four words from an invite. Check them against the message.");
     }
-    final base = hubUrl == null || hubUrl.trim().isEmpty ? _servedBase : HubClient.baseFor(hubUrl);
-    if (base == null) throw const PairingException("Type the hub's address too. It's the start of the invite's link.");
-    final RedeemedInvite redeemed;
-    try {
-      redeemed = await _client.redeemInvite(base, code);
-    } on HubException catch (e) {
-      if (e.code == 'not_found') {
-        throw const PairingException(
-          "That code isn't right, or the invite has expired. Ask for a new invite.",
-          reason: PairingException.unknownCode,
-        );
-      }
-      throw PairingException(e.code == 'not_ready' ? "This hub isn't in a family yet. Start your family first." : e.message);
-    }
+    final base = _inviteBase(hubUrl);
+    final redeemed = await _redeem(base, code);
     final net.Invite invite;
     try {
       invite = await net.Invite.parse(redeemed.invite);
@@ -409,6 +493,21 @@ class NetPairing extends PairingService {
     }
     final sync = HubClient.syncUri(base);
     final channel = await _open(() => net.connectWebSocket(sync));
+    if (redeemed.preapproved) {
+      // The words carry the invite's key: this device lets itself in with it.
+      final attempt = await _node.joinWithInviteKey(
+        channel,
+        await net.InviteWords.key(code),
+        deviceName: (name) => deviceName(name ?? redeemed.memberName),
+        kind: kind,
+        expectFamily: invite.familyId,
+        expectDevice: invite.inviterDevice,
+        expectPubkey: invite.inviterPubkey,
+      );
+      await network.rememberJoin(invite.inviterDevice, sync);
+      _follow(attempt, hubs: [sync]);
+      return JoinTicket(familyId: invite.familyId, familyName: redeemed.familyName, admitted: true);
+    }
     final attempt = await _node.joinWithInvite(
       channel,
       invite,
@@ -540,6 +639,12 @@ class NetPairing extends PairingService {
         return;
       }
       _status.add(switch (attempt.stage) {
+        net.JoinStage.rejected when attempt.via == 'key' => JoinStatus(
+            JoinState.declined,
+            message: reason == 'rate-limited'
+                ? 'Too many tries from here. Wait ten minutes, then try again.'
+                : 'This invite was used already, or a parent took it back. Ask for a new one.',
+          ),
         net.JoinStage.rejected => JoinStatus(
             JoinState.declined,
             message: reason == 'declined'

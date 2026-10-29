@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,11 +17,14 @@ import '../../../design/words.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../platform/web/web_app.dart';
+import '../state/trust_actions.dart';
 import 'person_sheets.dart' show sheetPadding;
 
 /// Invites someone (Invite.dc.html): a one-time link and four words for one person, sent
-/// through the share sheet. They open it, join as themselves, and a parent lets them in with one
-/// tap on Today. [memberId] chooses who it's for; without it the sheet asks.
+/// through the share sheet. They open it and are in as themselves at once (the invite carries a
+/// key this phone made, good for a day; Today says when they're in, with That wasn't them), or,
+/// with Let them in right away off, a parent lets them in with one tap on Today. [memberId]
+/// chooses who it's for; without it the sheet asks.
 Future<void> showInviteSheet(BuildContext context, {String? memberId, bool shared = false}) =>
     showDenSheet<void>(context, builder: (_) => InviteSheet(memberId: memberId, shared: shared));
 
@@ -49,6 +54,9 @@ class _InviteSheetState extends State<InviteSheet> {
   String? _shareError;
   PairingService? _pairing;
 
+  /// Whoever opens it is let in at once ("Let them in right away"), or a parent approves them.
+  bool _letIn = true;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -59,6 +67,8 @@ class _InviteSheetState extends State<InviteSheet> {
   }
 
   Future<void> _load() async {
+    final before = _message;
+    final trust = context.trustActions;
     setState(() {
       _loading = true;
       _error = null;
@@ -66,8 +76,11 @@ class _InviteSheetState extends State<InviteSheet> {
       _sent = _Sent.not;
       _shareError = null;
     });
+    // An invite made for this sheet and never sent lets nobody in once it's replaced.
+    final unsent = before?.inviteKey;
+    if (unsent != null) unawaited(trust.withdrawInvite(unsent).catchError((Object _) {}));
     try {
-      final message = await _pairing!.createInvite(memberId: widget.shared ? null : _for);
+      final message = await _pairing!.createInvite(memberId: widget.shared ? null : _for, letIn: _letIn);
       if (mounted) {
         setState(() {
           _message = message;
@@ -87,6 +100,12 @@ class _InviteSheetState extends State<InviteSheet> {
   void _choose(String member) {
     if (member == _for) return;
     setState(() => _for = member);
+    _load();
+  }
+
+  void _setLetIn(bool on) {
+    if (on == _letIn) return;
+    setState(() => _letIn = on);
     _load();
   }
 
@@ -152,6 +171,23 @@ class _InviteSheetState extends State<InviteSheet> {
       ]);
     }
 
+    if (!widget.shared && _for != null) {
+      children.addAll([
+        GroupCard(
+          child: SwitchLine(
+            label: 'Let them in right away',
+            detail: _letIn
+                ? "No approving: they're in when they open it. Good for a day, on one phone or tablet."
+                : 'You approve them on Today once they open it.',
+            value: _letIn,
+            onChanged: _loading ? null : _setLetIn,
+            reason: 'Making the invite',
+          ),
+        ),
+        const SizedBox(height: Sp.l),
+      ]);
+    }
+
     final message = _message;
     if (_loading) {
       children.add(Padding(
@@ -174,7 +210,7 @@ class _InviteSheetState extends State<InviteSheet> {
     final t = context.text;
     final now = (widget.now ?? DateTime.now)();
     final expired = message.expires <= now.millisecondsSinceEpoch;
-    final until = DateFormat('EEEE').format(DateTime.fromMillisecondsSinceEpoch(message.expires));
+    final until = DateFormat(message.letsIn ? "EEEE 'at' h:mm a" : 'EEEE').format(DateTime.fromMillisecondsSinceEpoch(message.expires));
     final who = member?.name ?? (widget.shared ? 'the display' : 'them');
     return [
       GroupCard(
@@ -250,7 +286,12 @@ class _InviteSheetState extends State<InviteSheet> {
                         style: t.rowTitle(c.ink),
                       ),
                       const SizedBox(height: 2),
-                      Text(tidy("You'll get one tap on Today to let them in."), style: t.meta(c.ink2)),
+                      Text(
+                        tidy(message.letsIn
+                            ? "They're in as soon as they open it. Today says so, in case it wasn't them."
+                            : "You'll get one tap on Today to let them in."),
+                        style: t.meta(c.ink2),
+                      ),
                     ],
                   ),
                 ),

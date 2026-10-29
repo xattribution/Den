@@ -8,7 +8,7 @@ the same change.
 | Path | Language | What |
 | --- | --- | --- |
 | `packages/den_core` | Dart (pure, no `dart:io` in `lib/den_core.dart`) | Data model, hybrid logical clock, signed change log, materializer, permissions, recurrence, chores, points, history, queries, the `Den` engine facade, storage interface |
-| `packages/den_net` | Dart | Device handshake and encrypted sessions, sync protocol, pairing (QR invites, spoken codes, matching words), relay client, encrypted backups |
+| `packages/den_net` | Dart | Device handshake and encrypted sessions, sync protocol, pairing (QR invites, spoken codes, matching words, invite keys), invite links and words, relay client, encrypted backups |
 | `packages/den_capture` | Dart (pure) | Capture: reads a photo, a shared email, link or PDF, or a sentence into proposed events, chores, list items and reminders (see "Capture" below) |
 | `packages/den_actions` | Dart (pure) | Actions: every verb the app, the hub's REST API, MCP and the assistant offer, defined once (`ActionSpec`: names, portable schemas, scopes, permissions, effect, confirmation, the engine methods it calls) and run by one `ActionRunner` (checks, previews on a fork, confirmations, undo receipts); the API's JSON (`Wire`), time parsing and name resolution (see "Actions" below) |
 | `packages/den_hub` | Dart (server, `dart:io`) | The hub: HTTP API, WebSocket sync endpoint, MCP server, OAuth for MCP, scoped tokens, ICS import and export, reminders and notifiers, Home Assistant bridge, mDNS advertising, static web app. `bin/den_hub.dart` compiles to one binary |
@@ -150,9 +150,10 @@ signed by an already approved, non-shared device whose actor is a parent; the ap
 the device's `mode` and `member`. An approved device's `member` never changes while it stays
 approved: what it holds follows its owner, so a device handed to someone else is removed (revoked,
 which rotates the keys of what it held) and added again. **A device can never approve itself**: a change approving device
-X signed by device X is invalid (Sett's self-approval bug, closed by construction), with one narrow
-exception, recovery with a proof from a parent's recovery key or the key the family lets its hub
-use (see "Recovery" below), and no device
+X signed by device X is invalid (Sett's self-approval bug, closed by construction), with two narrow
+exceptions, each a parent's approval given ahead of time: recovery with a proof from a parent's
+recovery key or the key the family lets its hub use (see "Recovery" below), and an invite key a
+parent's own device made (see "Invite keys"), and no device
 may change its own `approved`, `approvedBy` or `member`, or un-revoke itself. A device may revoke
 itself. A parent acting on their own approved device (its owner, or a parent who verified on it)
 may change that device's `mode`, `name` and `display`: this is how "Keep the family online" turns
@@ -199,7 +200,8 @@ parent's device, or a phone let in by recovery.
 another device; removing or restoring a member, or changing an existing member's `role`,
 `grants`, `signIn` (their own included) or `until` (a sitter's last day); a parent's recovery
 key (`member.recovery`, set only by that parent, removable by any) and whether the hub may help
-a parent back in (`family.recovery`); the family's `oversight` (every entry) and `assistant`
+a parent back in (`family.recovery`); invite keys (`inviteKey`, made by a parent as
+themselves, withdrawn by any parent); the family's `oversight` (every entry) and `assistant`
 (which AI reads the family's day, for whom, and what it may spend); and creating, activating,
 re-scoping or deleting an AI connection are valid only from a personal device, or from a
 hub-mode device whose actor is that device's own owner (a parent's phone running "Keep the
@@ -328,6 +330,57 @@ run an image built from a repository the family trusts, and, for parents who nee
 guarantee, make trust decisions (approving devices, roles, AI access, recovery) in the Den app
 installed on their phone, tablet or computer, whose code doesn't come from the hub.
 
+### Invite keys
+
+An invite that lets someone in with no tap is a parent's approval given ahead of time, so it is
+modeled like recovery (den_core's `invite_keys.dart`, one hook in validity.dart). A parent's own
+device writes an `inviteKey` record: "the key K may let in `uses` devices (one by default) as
+member M's own, until T" (the app: a day; at most a week), or, bound to nobody, "as a shared
+screen or the hub" (`modes`). Its id is the hash of K's public half, like a device's. K is a plain
+Ed25519 seed. The app derives it from the invite's four words (den_net's `InviteWords`: Argon2id,
+4 MiB, 3 passes, salt `den/invite-words/v1`, then HMAC-SHA256 of `den/invite/v1/key`), so the
+link, `https://<hub>/#/join/<w>-<w>-<w>-<w>`, and the words typed by hand are the same invite;
+it could as well be sealed to a device's `xpub` and handed over through a log.
+
+The new device lets itself in with one change to its own device record: `approved: true`, the
+`mode` and `member` the key allows, no actor, and an `invite` field holding
+`{invite, member, mode, key, nonce, expires, sig}`, where `sig` is K's Ed25519 signature over
+`"den/invite/v1" 0x00 | canonical JSON [family, invite, member, mode, device pubkey, nonce,
+expires]`. Like a recovery proof it is checked when the change arrives, before it is stored, and
+validity accepts it, at its place in the log, only when:
+
+- it writes nothing but the device's own `name`, `kind`, `pubkey` (hashing to its id, matching any
+  earlier request), `xpub`, `member`, `mode`, `approved`, `revoked: false`, `display` and
+  `invite`, and the device isn't approved, revoked or removed already;
+- the record exists with that key (not withdrawn), names that member, allows that mode, and the
+  member is still in the family;
+- the parent who made it is still a live parent, and the device it was made on is still approved
+  and not revoked: removing a parent, making them anything else, or removing their phone ends
+  their invites;
+- the proof and the record haven't expired at the change's clock, and the proof doesn't outlast
+  the record;
+- its nonce is on no other device record, and fewer than `uses` other devices carry the key.
+
+A device sets its own clock, so whoever kept the words could sign a join dated before the invite
+was withdrawn. So the change that takes an invite's key away (`key: null`, withdrawing it, or in
+the same commit as removing its parent, changing their role or removing the device it was made
+on, or "That wasn't Dad") lists in `kept` the devices the key let in that its author holds, and a
+join with that key clocked before it counts only for those: the materializer keeps these with the
+replaced recovery keys (`RetiredRecoveryKeys`), settled from the log alone. Two devices using one
+single-use key are settled by the earlier clock; the hub, which every word invite goes through,
+refuses a key already used by its own view, so a second device can't claim an earlier clock and
+push out the first.
+
+Every parent's own device shows such a device in Needs you for two weeks, "Dad joined on an
+iPhone" with **Got it** and **That wasn't Dad** (`Den.disownInvite`: removes it, rotating keys,
+and takes the key away, keeping the device on record so History keeps what it did), and the hub
+sends the parents a push. History renders the join as "Dad's iPhone joined with Alex's invite".
+Like recovery, invite keys are never an action (`not_exposed.dart`). What whoever runs the hub
+can do with them: nothing it couldn't before. The hub keeps a word invite under its slot (an
+Argon2id stretch it can't run back in the invite's day), sees the key's public half and the
+proof, and never the words; a web app it serves sees whatever the page holds, as always (see
+"The web app").
+
 ### Record types and fields
 
 Times are UTC milliseconds unless noted. Local dates are `YYYY-MM-DD` strings in the family's
@@ -351,7 +404,8 @@ commit too (`Den.restoreAll`).
 | --- | --- | --- |
 | `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map: memberId -> `{parentsSeePrivate: bool}`, and `<memberId>.rewardsNeedOk` and `<memberId>.ownPicture` -> bool or null; see "Parental controls"), `assistant` (`{enabled, members, kidDailyLimit, budgetCents}`: the in-app assistant, off until a parent turns it on; parents and the members listed may use it, never a little kid or a pre-reader; default 20 questions a day for a kid and $5 a month, which the captures the hub's reader reads count against too), `recovery` (`{serverKey, kept}`: the hub key the family lets help a parent back in, null while off; see "Recovery") |
 | `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, `initial`, or `photo:<id>` naming one of their `photo` records), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `until` (a sitter's last day with access, a local date, or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order`, `recovery` (a parent's `{key, kept}`: their recovery key, base64url Ed25519, or null; see "Recovery") |
-| `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held, never below its own request to join), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`), `recovery` (written once, by a device letting itself in: `{kind: words\|hub, member, key, nonce, expires, sig}`; see "Recovery") |
+| `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held, never below its own request to join), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`), `recovery` (written once, by a device letting itself in: `{kind: words\|hub, member, key, nonce, expires, sig}`; see "Recovery"), `invite` (written once, by a device an invite key let in: `{invite, member, mode, key, nonce, expires, sig}`; see "Invite keys") |
+| `inviteKey` | `f` | Id: the hash of `key`, like a device's. `member` (whose own devices it lets in, or null), `modes` (absent: `personal`; for nobody, `shared` and/or `hub`), `uses` (default 1), `key` (base64url Ed25519, null once taken away), `by` (the parent who made it), `device` (where), `expires`, `kept` (written with `key: null`), `home` (for groups of families later; a family refuses it). Made by a parent on their own device, then only taken away |
 | `category` | `f` | `name`, `icon` |
 | `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `rides` (list of `{leg: to\|from, driver: memberId\|null}`), `countdown` (bool) |
 | `eventException` | same as event | id `"<eventId>@<occurrence>"`: `event`, `occurrence` (original start), `cancelled`, `patch` (map of event fields: `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `assignees`, `reminders`, `rides`) |
@@ -620,17 +674,35 @@ receive; the session's limit then applies.
   parent approves only if they match. A relay that swapped keys would produce different words.
 - **Invite by message** (no camera, no simultaneous screens; the default where the family has a
   hub): a parent's own device makes an invite naming the hub (`createHubInvite`) and signs it
-  as an `InviteGrant` with context `invite`, or `invite:<memberId>` for one person. The hub
-  keeps it, until it expires (3 days from the app, a week at most), under 4 random words from
-  the same list, and the parent sends a link (`https://<hub>/#/join/<word>-<word>-<word>-<word>`)
-  with the words through the share sheet. Whoever has the words gets the invite back
-  (`POST /api/v1/invites/redeem`), joins over the hub's `/ws` pinning the hub's key, and asks
-  to be that person's device; a parent approves with one tap on their own device. Wrong words count against every
+  as an `InviteGrant` with context `invite`, or `invite:<memberId>` for one person. The app
+  picks the invite's four words itself and gives the hub only their slot (den_net's
+  `InviteWords.slot`: the words stretched with Argon2id, then HMAC-SHA256), which it keeps the
+  invite under until it expires; an invite for someone also carries an invite key (see "Invite
+  keys"), good for a day, and the hub checks the key reached it first (`409 not_synced` until
+  it has). The parent sends a link (`https://<hub>/#/join/<word>-<word>-<word>-<word>`) with the
+  words through the share sheet; the words are in the fragment, which browsers never send.
+  Whoever has the words gets the invite back (`POST /api/v1/invites/redeem` with the slot, or
+  the words, which the hub then stretches: an older app, or an invite whose words the hub chose
+  as before, for 3 days), and then, when the invite carries a key (`preapproved`), joins with
+  the key (below) and is in at once; otherwise joins over the hub's `/ws` pinning the hub's key
+  and asks to be that person's device, and a parent approves with one tap on their own device.
+  Wrong words count against every
   invite, per client: 10 in 10 minutes and the hub stops answering that client for a while, and
   200 in 10 minutes from everyone together (twenty clients' worth, so no one client can use
   them up) and it stops answering everyone. Recovery codes count the same way. An invite is used once: the hub drops it when a parent
   approves a device that joined with it, or after three devices joined with it unapproved. The hub drops an invite
   whose parent device has since been revoked or no longer belongs to a parent.
+- **Invite keys**: one pairing message any device serving the family accepts, with nothing kept
+  for it beforehand but the `inviteKey` record. The joiner sends `pair {kind: key, invite, proof}`:
+  `invite` the record's id (the hash of the key's public half), `proof` the key's signature over
+  `den/pair/v1/admit` 0x00 | transcript hash | its own key. The serving side checks that the key
+  can still let a device in (by its own clock and view) and the signature, and answers `pair_ok`
+  with the family, its founder key, what the key admits (`admit {mode, member, expires}`) and its
+  own proof, HMAC-SHA256 keyed by the key's public half over `den/pair/v1/admit-host` 0x00 |
+  transcript hash | its key, which only the family's devices can make. The joiner then writes its
+  self-admitting change (`Den.requestInviteJoin`) and sends it as its `join`; validity decides.
+  Proofs naming no live key count against the client, 10 in 10 minutes each and 200 from all
+  together, since a key from four words could otherwise be guessed at the door.
 - **Recovery words** ("I lost my phone"): the joiner connects to a device that serves sessions
   (the hub) with no family, and sends `pair {kind: recovery, key, proof}`: `key` is hex SHA-256
   of its recovery key's public half, `proof` that key's signature over `den/pair/v1/recovery` 0x00
@@ -730,8 +802,8 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `GET /api/v1/actions`, `POST /api/v1/actions/{name}` | any token; each action's scopes | Every action MCP offers, by the same name and schema (see "Actions"); `?preview=1`, `Idempotency-Key`, two-step `confirm`, receipts and `undo`. The write routes above are adapters over these |
 | `GET`/`PUT /api/v1/capture/reader` | signed by a device (`PUT`: a parent's own device) | The family's capture reader, never with its key |
 | `POST /api/v1/capture/read` | signed by a device whose member may add things | Reads what was shared with the family's reader; returns den_capture's JSON |
-| `POST /api/v1/invites` | an `InviteGrant` from a parent's own device | Keeps the invite under four words; returns them and a link |
-| `POST /api/v1/invites/redeem` | the four words | The invite, who it is for, the family's name |
+| `POST /api/v1/invites` | an `InviteGrant` from a parent's own device | Keeps the invite under the slot of the app's own words (with the invite key's public half, once it synced), or under four words it picks; returns the slot or the words, and a link |
+| `POST /api/v1/invites/redeem` | the slot, or the four words | The invite, who it is for, the family's name, and whether its key lets the device in at once |
 | `GET`/`PUT`/`DELETE /api/v1/push`, `POST /api/v1/push/test` | signed by a personal device | The hub's VAPID key; this device's Web Push subscription; a test notification |
 | `GET /ics/<secret>/family.ics`, `GET /ics/<secret>/<memberId>.ics` | a calendar link's secret in the path (never an API token) | Read-only ICS feed for other calendar apps, read as the parent who made the link; it ends when they turn it off, leave the family, or the device they made it on is removed |
 | `GET /ws` | session handshake | Device sync |
@@ -790,7 +862,8 @@ method of `Den` from its source and fails unless each is called by some action o
 records its calls and checks they stay within the spec's `engine` and that the answer fits its
 output schema; `den_hub/test/mcp_parity_test.dart` checks MCP against the specs.
 Not exposed, by design: trust decisions (devices, AI access, roles, permissions, sign-in,
-removing people, oversight, a sitter's last day and ending it, recovery keys and the hub's help),
+removing people, oversight, a sitter's last day and ending it, recovery keys and the hub's help,
+invite keys),
 founding, joining, recovering or leaving a family, sync and keys, the hub's own bookkeeping, and
 adding a photo (made small on the device that takes it; MCP and the assistant see
 `picture: "photo:<id>"` and a sitter's `until`, and change pictures only to the pack or an
@@ -990,6 +1063,15 @@ proxy in front of the hub, where it has the hub as its own origin.
   isn't a secure context). The app asks for persistent storage. A Home Screen app on iOS has
   storage of its own, apart from Safari's, so Safari on an iPhone or iPad shows how to add Den to
   the Home Screen before starting or joining a family.
+- **Carrying a link to the Home Screen.** A Home Screen app opens at the manifest's `start_url`,
+  so the link someone tapped doesn't reach it, and a tapped link never opens it. What Safari
+  copies into a new Home Screen app, once (iOS and iPadOS 17.2 and later), is the site's
+  cookies. So Safari's page for an invite or setup link keeps the link's route in a first-party
+  cookie (`den_handoff`, `SameSite=Strict`, `Secure`, for a day), and the Home Screen app, on its
+  first start with no family, takes it, clears it and opens that step (`platform/web/handoff.dart`,
+  read by the router's redirect). The page also offers Copy invite above the steps, and the
+  welcome screen Paste an invite, for someone whose Den is already on the Home Screen; the words
+  stay on the page for typing. docs/design/onboarding.md has the reasoning and the sources.
 - **One engine per browser.** Tabs share the log; a Web Lock (`den.engine`) lets one tab write
   it, and another tab waits until it closes.
 - **Opening and updating.** `web/sw.js`, registered by `web/den_web.js` as
@@ -1010,7 +1092,11 @@ proxy in front of the hub, where it has the hub as its own origin.
 - **Founding from a browser.** A browser served by a fresh hub starts the family itself and
   takes the hub in with the setup code it printed (the same flow as from a phone,
   `/api/v1/hub/setup`), approving it on its own when the hub reports the same matching words:
-  the page came from that hub, so there's nobody in between to compare against.
+  the page came from that hub, so there's nobody in between to compare against. The hub's setup
+  link (`den_hub setup-link`, `https://<hub>/#/setup/<code>/<hub device id>`, printed with a QR
+  code) brings the code, so nothing is typed, and the hub's device id: the phone takes in only a
+  hub whose session proves the key that id is the hash of, with no words at all. After founding
+  the app goes to Add people; the recovery words wait in Needs you.
 - **What the browser can't do** is left out rather than offered: scanning, phone calendars, the
   share extension and on-device speech. Photos and PDFs come through the browser's file picker
   (which offers the camera), the share sheet goes through the Web Share API, reminders through

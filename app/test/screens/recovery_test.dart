@@ -198,7 +198,7 @@ void main() {
   test('the screenshots\' words are a real phrase', () => expect(RecoveryWords.valid(_words), isTrue));
 
   group('Setting up the words', () {
-    testWidgets('right after starting a family, phone', (tester) async {
+    testWidgets('when Needs you asks for them, phone', (tester) async {
       final state = await demo(tester);
       await shootWith(tester, 'recovery_words_setup_phone', const RecoveryWordsScreen(words: _words), state: state);
       expect(find.text('Save to Passwords'), findsOneWidget);
@@ -228,7 +228,7 @@ void main() {
       expect(findWords('Add people'), findsOneWidget);
     });
 
-    testWidgets('a new family goes from Create family to the words, and Not now moves on', (tester) async {
+    testWidgets('a new family goes from Create family straight to Add people; the words wait for later', (tester) async {
       final state = await empty(tester);
       final router = await _routed(tester, state, '/welcome/start');
       await tester.enterText(find.widgetWithText(TextField, 'The Riveras'), 'The Riveras');
@@ -236,9 +236,7 @@ void main() {
       await tester.tap(find.text('Create family'));
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
       await tester.pumpAndSettle();
-      expect(findWords('Save these 12 words'), findsOneWidget);
-      await tester.tap(find.text('Not now'));
-      await tester.pumpAndSettle();
+      expect(findWords('Save these 12 words'), findsNothing, reason: 'Needs you on Today asks for them instead');
       expect(router.routerDelegate.currentConfiguration.uri.path, '/welcome/people');
     });
   });

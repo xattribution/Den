@@ -35,7 +35,8 @@ beside it.
 | `mcp --token T` | MCP over stdio. Bridges to a running hub's `/mcp`, else serves from the data directory |
 | `import-sett coord.db --as NAME` | Imports Sett as that parent through the hub device (changes say "via Sett import") |
 | `setup-code` | A fresh hub's setup code |
-| `open-linking [--minutes N]` | In the public posture, lets browsers ask for a link code for N minutes (default 10), as if a parent had opened "A browser on a computer" in the app |
+| `setup-link [--url U]` | A fresh hub's setup link (`https://<hub>/#/setup/<code>/<hub device id>`, on `--url` or `DEN_PUBLIC_URL`) and a QR code for the first parent's phone, which then needs nothing typed or compared. See docs/hub-api.md, "The setup link" |
+| `open-linking [--minutes N]` | In the public posture, lets browsers ask for a link code for N minutes (default 10), as if a parent had opened "Show a code on the computer instead" in the app |
 | `status` | What the hub is doing |
 | `recover --person NAME` | A parent lost their phone and no other parent's is left: prints a one-time link and four words that let in one phone as that parent for 30 minutes, only if the family turned on "Let the hub help us get back in" (otherwise it says how). `docker compose exec hub /app/bin/den_hub recover --person "Alex"`. See docs/hub-api.md, "Getting back in" |
 | `backup --out FILE --passphrase-env VAR` | Keys, the change log, the hub's own state and `notify.json`, sealed with den_net's backup format. Works while the hub runs (`docker compose exec hub /app/bin/den_hub backup ...`): it reads the log's metadata before the log and cuts the log after its last complete line, so the copy is consistent without the hub's lock |
@@ -51,7 +52,9 @@ reminder targets), `hub.lock` (one process at a time).
 ## Invites and reminders for browsers
 
 A parent's device leaves the hub an invite to send as a message (`/api/v1/invites`): the hub
-keeps it under four words and admits whoever redeems them, for a parent to approve. Browsers get
+keeps it under the slot of the words the phone picked (or four words of its own) and admits
+whoever redeems them; an invite that carries an invite key lets the device in at once (den_net's
+`pair` kind `key`), any other waits for a parent to approve. Browsers get
 reminders and nudges by Web Push (`/api/v1/push`, RFC 8291 and 8292, P-256 through
 pointycastle). Both are specified in [docs/hub-api.md](../../docs/hub-api.md#invites-by-message).
 

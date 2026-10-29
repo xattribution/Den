@@ -2,6 +2,9 @@ import 'package:go_router/go_router.dart';
 
 import '../features/family/family.dart' show accessEndedHere;
 import '../features/shared_screens/shared_screens.dart';
+import '../platform/capabilities.dart';
+import '../platform/web/handoff.dart';
+import '../platform/web/web_app.dart';
 import 'app_state.dart';
 
 /// The adult shell's four tabs.
@@ -11,13 +14,15 @@ bool _isShellTab(String loc) =>
 /// Where the app sends someone before the main shell. Null means stay.
 ///
 /// 0. An invite's link (`/join/<words>`): joining with its words, or Today for a device that is
-///    already in a family. A recovery link from whoever runs the hub (`/recover/<words>`):
-///    "I lost my phone" with its words, unless this device is already in.
+///    already in a family. A fresh hub's setup link (`/setup/<code>/<hub>`): starting the family
+///    with that hub. A recovery link from whoever runs the hub (`/recover/<words>`): "I lost my
+///    phone" with its words, unless this device is already in. A Home Screen app with no
+///    family yet first takes the link Safari kept for it ([Handoff]).
 /// 1. No family on this device: onboarding (`/welcome`). A sitter's device past their last day:
 ///    that their access ended (`/ended`).
 /// 2. A join request sent but not approved yet: the waiting screen, whatever was asked for.
-/// 3. Right after creating a family: the founder's recovery words, then the short "Add people"
-///    step; any other onboarding route once the device is in the family goes to Today.
+/// 3. Right after creating a family: the short "Add people" step (recovery words wait in Needs
+///    you); any other onboarding route once the device is in the family goes to Today.
 /// 4. A pre-reader or little kid acting on this device (its owner, or verified on a shared
 ///    screen): the kids' app instead of the shell's tabs.
 /// 5. A shared display, a hub with no owner, or this device set to "Use as wall display": the
@@ -29,11 +34,22 @@ String? familyRedirect(AppState state, GoRouterState route) {
   final loc = route.matchedLocation;
   final inWelcome = loc == '/welcome' || loc.startsWith('/welcome/');
 
-  final path = route.uri.path;
+  var path = route.uri.path;
+  // The invite or setup link Safari kept for the Home Screen app, on its first start.
+  if (!den.hasFamily && Capabilities.web) {
+    final kept = Handoff.take(standalone: WebApp.info.standalone);
+    if (kept != null) path = kept;
+  }
   if (path.startsWith('/join/')) {
     if (den.hasFamily) return '/today';
     final words = path.substring('/join/'.length);
     return Uri(path: '/welcome/join', queryParameters: {'code': words}).toString();
+  }
+
+  if (path.startsWith('/setup/')) {
+    if (den.hasFamily) return '/today';
+    final parts = path.substring('/setup/'.length).split('/');
+    return Uri(path: '/welcome/start', queryParameters: {'setup': parts.first, if (parts.length > 1) 'hub': parts[1]}).toString();
   }
 
   if (path.startsWith('/recover/')) {
@@ -48,8 +64,8 @@ String? familyRedirect(AppState state, GoRouterState route) {
   if (loc == '/ended') return '/today';
   // A device still waiting may get back in with recovery words instead.
   if (!den.isApproved) return loc == '/welcome/waiting' || loc == '/welcome/recover' ? null : '/welcome/waiting';
-  // Right after starting a family: the founder's recovery words, then Add people.
-  if (loc == '/welcome/start') return '/welcome/words';
+  // Right after starting a family: Add people. The recovery words wait in Needs you.
+  if (loc == '/welcome/start') return '/welcome/people';
   if (inWelcome && loc != '/welcome/people' && loc != '/welcome/words') return '/today';
 
   final me = state.me;

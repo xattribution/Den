@@ -100,6 +100,14 @@ class TrustActions {
   /// since, for [removeDevices] ([Den.disownRecovery]).
   Future<DisownedRecovery> thatWasntUs(String device) => _den.disownRecovery(device);
 
+  /// "That wasn't Dad" for a device an invite let in by itself: removes it and takes the
+  /// invite's key away in the same commit, and says which devices it let in since, for
+  /// [removeDevices] ([Den.disownInvite]).
+  Future<DisownedInvite> thatWasntThem(String device) => _den.disownInvite(device);
+
+  /// Takes back an invite that lets someone in at once before it is used ([Den.withdrawInviteKey]).
+  Future<void> withdrawInvite(String inviteKey) => _den.withdrawInviteKey(inviteKey);
+
   /// Removes [devices], one after another.
   Future<void> removeDevices(Iterable<String> devices) async {
     for (final d in devices) {

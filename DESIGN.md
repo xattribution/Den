@@ -554,6 +554,9 @@ why.
 - Safe areas: the title starts below the top inset; the tab bar is its height plus the bottom
   inset; nothing tappable in the inset; sheets pad their bottom by the inset.
 - Every editable field is 17 or larger at every text size (iOS zooms into smaller ones).
+- Getting in: [onboarding](docs/design/onboarding.md). A link opens the step it is for; Safari
+  shows the Home Screen steps with a picture of where Share is, and Copy invite above them; the
+  welcome screen has Paste an invite.
 - `MediaQuery.disableAnimations` must follow Reduce Motion (read `prefers-reduced-motion` if it
   doesn't). Dynamic Type doesn't reach web apps, so the Text size setting lives in Settings.
 

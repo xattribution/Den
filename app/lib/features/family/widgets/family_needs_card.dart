@@ -10,10 +10,12 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/sync/pairing.dart';
 import '../state/family_needs.dart';
+import '../state/invites.dart';
 import '../state/recovery.dart';
 import '../state/recovery_reminder.dart';
 import '../state/trust_actions.dart';
 import '../words/family_words.dart';
+import '../words/invite_lines.dart';
 import '../words/recovery_lines.dart';
 import 'family_parts.dart';
 import 'person_sheets.dart';
@@ -147,6 +149,17 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
             onPrimary: busy ? null : () => _acknowledge(app, device),
             secondary: "That wasn't us",
             onSecondary: busy ? null : () => _removeRecovered(app, device),
+          ),
+        ),
+      InvitedNotice(:final device) => (
+          faceOr(app.memberById(inviteOf(device)?.member), Pictograms.device(device.kind), context, size: 44),
+          InviteLines.sentence(app, device),
+          InviteLines.detail(app, device),
+          TwoButtons(
+            primary: 'Got it',
+            onPrimary: busy ? null : () => _acknowledgeInvited(app, device),
+            secondary: InviteLines.notThem(app, device),
+            onSecondary: busy ? null : () => _removeInvited(app, device),
           ),
         ),
       PinAsk(:final display, :final parent) => (
@@ -286,6 +299,36 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
         _failed[key] = problem ?? 'That didn\'t work';
       } else {
         _settled[key] = _Settled(RecoveryLines.disowned(app, device, done!), null, letIn: done!.letIn);
+      }
+    });
+  }
+
+  /// Someone here saw a device an invite let in: it stays, and this device stops saying so.
+  void _acknowledgeInvited(AppState app, Device device) {
+    setState(() => _settled[Invites.noticeKey(device)] = _Settled('${device.name} stays in the family', null));
+    app.markSeen(Invites.noticeKey(device));
+  }
+
+  /// A device an invite let in that nobody here recognizes: removed, and the invite's key taken
+  /// away, so whoever used it can't use it again. The row then says so, and names any device it
+  /// let in meanwhile, with Remove them too.
+  Future<void> _removeInvited(AppState app, Device device) async {
+    final key = Invites.noticeKey(device);
+    final trust = context.trustActions;
+    setState(() {
+      _busy.add(key);
+      _failed.remove(key);
+    });
+    DisownedInvite? done;
+    final problem = await tryWrite(() async => done = await trust.thatWasntThem(device.id));
+    if (problem == null) app.markSeen(key);
+    if (!mounted) return;
+    setState(() {
+      _busy.remove(key);
+      if (problem != null || done == null) {
+        _failed[key] = problem ?? 'That didn\'t work';
+      } else {
+        _settled[key] = _Settled(InviteLines.disowned(app, device, done!), null, letIn: done!.letIn);
       }
     });
   }
