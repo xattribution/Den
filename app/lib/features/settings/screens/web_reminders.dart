@@ -97,7 +97,7 @@ class _WebRemindersState extends State<WebReminders> {
   List<PushFamily>? _householdFamilies(BuildContext context) {
     final home = Household.maybeOf(context);
     if (home == null || !home.several) return null;
-    final shown = home.active;
+    final shown = home.of(DenScope.read(context).den) ?? home.active;
     return [
       for (final log in [shown, ...home.families.where((l) => !identical(l, shown))])
         if (log.den.isApproved && log.network != null) PushFamily(log.name, HubPushClient(log.network!)),

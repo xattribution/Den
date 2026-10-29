@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
+import '../design/sheet.dart' show SheetScope, SheetWrap;
 import '../platform/sync/pairing.dart';
 import 'app_state.dart';
 import 'family_colors.dart';
@@ -48,15 +49,26 @@ String inLog(String log, String location) {
 /// and a router that keeps pages it opens in the same family (`/event/E1` from here opens
 /// `/l/<log>/event/E1`). Pages under `/l/<log>`, and each family's part of "All my families",
 /// sit in one. The screens below it are the app's own, unchanged.
+///
+/// Sheets and dialogs opened below it carry it too ([SheetScope], [capture]): a sheet is a route
+/// of its own over the app, and without this would act for the family the device shows.
 class LogScope extends StatelessWidget {
   const LogScope({super.key, required this.log, required this.child});
 
   final FamilyLog log;
   final Widget child;
 
+  /// The family scope [context] is in, to carry into something shown over the app from there
+  /// (a sheet, a dialog, a page opened from a context that outlived it); null in the family the
+  /// device shows, whose scope is the app's own.
+  static SheetWrap? capture(BuildContext context) => SheetScope.of(context);
+
   @override
   Widget build(BuildContext context) {
-    Widget scoped = DenScope(state: log.state, child: FamilyColors(child: child));
+    Widget scoped = DenScope(
+      state: log.state,
+      child: FamilyColors(child: SheetScope(wrap: (inner) => LogScope(log: log, child: inner), child: child)),
+    );
     final pairing = log.pairing;
     if (pairing != null) scoped = PairingScope(service: pairing, child: scoped);
     final router = GoRouter.maybeOf(context);

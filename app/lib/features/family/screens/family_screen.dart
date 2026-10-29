@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
+import '../../../app/family_label.dart';
 import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
@@ -66,6 +67,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
       return DenPage(
         title: 'Family',
         children: [
+          const FamilyLabel(),
           if (trust) const Ungapped(FamilyNeedsCard()),
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -89,6 +91,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
       title: 'Family',
       maxWidth: 1100,
       children: [
+        const FamilyLabel(),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

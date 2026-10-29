@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/app_state.dart';
 import '../../../app/household.dart';
+import '../../../app/redirect.dart' show mergedFamilies;
 import '../../../app/log_scope.dart';
 import '../../../design/layout.dart';
 import '../../../design/motion.dart';
@@ -34,7 +35,7 @@ class AllListsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final home = Household.maybeOf(context)!;
-    final families = [for (final l in home.families) if (l.den.isApproved) l];
+    final families = mergedFamilies(home);
     final query = GoRouterState.of(context).uri.queryParameters;
     return ListenableBuilder(
       listenable: Listenable.merge([for (final l in families) l.state]),

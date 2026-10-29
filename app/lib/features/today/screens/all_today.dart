@@ -7,6 +7,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
 import '../../../app/household.dart';
+import '../../../app/redirect.dart' show mergedFamilies;
 import '../../../app/log_scope.dart';
 import '../../../app/shell.dart' show PersonButton, SearchButton;
 import '../../../design/layout.dart';
@@ -63,7 +64,7 @@ class _AllTodayScreenState extends State<AllTodayScreen> {
   @override
   Widget build(BuildContext context) {
     final home = Household.maybeOf(context)!;
-    final families = [for (final l in home.families) if (l.den.isApproved) l];
+    final families = mergedFamilies(home);
     return ListenableBuilder(
       listenable: Listenable.merge([for (final l in families) l.state]),
       builder: (context, _) => _build(context, home, families),

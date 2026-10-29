@@ -6,6 +6,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../app/app_state.dart';
+import '../../../app/family_label.dart';
 import '../../../app/household.dart';
 import '../../../design/layout.dart';
 import '../../../design/motion.dart';
@@ -127,6 +128,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return DenPage(
       title: 'Settings',
       children: [
+        // Which family's settings, where the switcher doesn't say.
+        const FamilyLabel(),
         const SyncLine(),
         GroupCard(
           child: Column(
@@ -252,8 +255,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget? _leaveFamily(BuildContext context, String thing) {
     final home = Household.maybeOf(context);
     if (home == null) return null;
-    final log = home.active;
-    if (!MembershipActions.canLeave(home, log)) return null;
+    // The family this page is for (`/l/<id>/settings` is another family's), never simply the
+    // one the device shows.
+    final log = home.of(DenScope.read(context).den);
+    if (log == null || !MembershipActions.canLeave(home, log)) return null;
     final name = log.name;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

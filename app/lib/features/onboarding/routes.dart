@@ -2,7 +2,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/household.dart';
 import '../../platform/sync/pairing.dart';
-import '../family/family.dart' show AnotherFamilyPairing;
+import '../family/family.dart' show AnotherFamilyPairing, MissingFamilyScreen;
 
 import 'screens/add_people_screen.dart';
 import 'screens/join_screen.dart';
@@ -61,5 +61,10 @@ final List<RouteBase> familiesRoutes = [
       );
       return home == null ? screen : PairingScope(service: AnotherFamilyPairing.of(home), child: screen);
     },
+  ),
+  // A link or reminder for a family this device doesn't hold, or that didn't open.
+  GoRoute(
+    path: '/families/missing',
+    builder: (_, s) => MissingFamilyScreen(closed: s.uri.queryParameters['closed'] == '1'),
   ),
 ];

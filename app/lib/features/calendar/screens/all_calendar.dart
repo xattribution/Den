@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../app/app_state.dart';
 import '../../../app/household.dart';
+import '../../../app/redirect.dart' show mergedFamilies;
 import '../../../app/log_scope.dart';
 import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
@@ -90,7 +91,7 @@ class _AllCalendarScreenState extends State<AllCalendarScreen> {
   @override
   Widget build(BuildContext context) {
     final home = Household.maybeOf(context)!;
-    final families = [for (final l in home.families) if (l.den.isApproved) l];
+    final families = mergedFamilies(home);
     return CalendarSurface(
       child: SafeArea(
         bottom: false,

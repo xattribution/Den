@@ -54,6 +54,7 @@ class _UntilSheetState extends State<_UntilSheet> {
     final today = f.dateTime(_app.today);
     final picked = await showDatePicker(
       context: context,
+      builder: carryTransition(context),
       initialDate: _day == null ? f.dateTime(f.addDays(_app.today, 7)) : f.dateTime(_day!),
       firstDate: today,
       lastDate: DateTime(today.year + 2, today.month, today.day),

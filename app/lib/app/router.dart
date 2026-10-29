@@ -38,6 +38,8 @@ GoRouter buildRouter(AppState state, {Household? household}) {
     ...rewardRoutes,
     familyRoute(addDevice: advancedAddDeviceRoutes),
     settingsRoute(more: advancedSettingsRoutes),
+    // Add's review page, for Add in "All my families" adding to a family it doesn't show.
+    ...addRoutes,
   ];
   return GoRouter(
     initialLocation: '/today',
@@ -50,8 +52,7 @@ GoRouter buildRouter(AppState state, {Household? household}) {
         branches: [todayBranch(), calendarBranch(), choresBranch(), listsBranch()],
       ),
       ...pages,
-      // Ask, Add's capture, the wall and the kids' app are the family the device shows.
-      ...addRoutes,
+      // Ask, the wall and the kids' app are the family the device shows.
       ...assistantRoutes,
       ...onboardingRoutes,
       accessEndedRoute(),

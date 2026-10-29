@@ -58,6 +58,13 @@ class _AskScreenState extends State<AskScreen> {
   bool _showAsking = false;
   bool _listening = false;
   CaptureSources? _listeningTo;
+
+  /// The family Ask acts in, to name on a device in several: the one whose page this is.
+  FamilyLog? _family(BuildContext context) {
+    final home = Household.maybeOf(context);
+    if (home == null || !home.several) return null;
+    return home.of(DenScope.read(context).den) ?? home.active;
+  }
   int _seen = 0;
 
   AskSession get session => _session!;
@@ -312,9 +319,9 @@ class _AskScreenState extends State<AskScreen> {
           padding: EdgeInsets.fromLTRB(DenLayout.gutter, widget.panel ? Sp.l : 0, DenLayout.gutter, 0),
           child: _AskHeader(
             onNewChat: entry == AskEntry.open && exchanges.isNotEmpty ? _newChat : null,
-            // On a device in several families, Ask acts in the family the device shows (in "All
-            // my families", the one last chosen) and says which.
-            family: (Household.maybeOf(context)?.several ?? false) ? Household.maybeOf(context)!.active : null,
+            // On a device in several families, Ask acts in the family of the page it is on (the
+            // one the device shows; in "All my families", the one last chosen) and says which.
+            family: _family(context),
           ),
         ),
         if (widget.panel) Expanded(child: scroller) else Flexible(child: scroller),

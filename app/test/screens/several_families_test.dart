@@ -190,10 +190,10 @@ void main() {
       expect(inner, isA<ScopedRouter>());
       expect(inLog(smith.id, '/lists/L1'), '/l/${smith.id}/lists/L1');
       expect(inLog(smith.id, '/today'), '/today', reason: "the app's places stay the app's");
-      // A family this device doesn't hold: the page in the family showing.
+      // A family this device doesn't hold: a page that says so, never another family's page.
       router.go('/l/nobody/settings');
       await tester.pumpAndSettle();
-      expect(router.state.uri.path, '/settings');
+      expect(router.state.uri.path, '/families/missing');
       // `/l/<family>/today` shows that family.
       router.go('/l/${smith.id}/today');
       await tester.pumpAndSettle();

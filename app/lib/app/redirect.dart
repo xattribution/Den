@@ -18,19 +18,33 @@ bool _isShellTab(String loc) =>
 /// Where the app sends someone, on a device that may hold several families ([home]):
 ///
 /// - `/l/<log>/<page>` is that family's page, in its scope; `/l/<log>` alone, or with one of the
-///   app's places (`/l/<log>/today`), shows that family and goes to the place. A family this
-///   device doesn't hold (any more), or one still waiting for a parent, gets the page in the
-///   family the device shows.
+///   app's places (`/l/<log>/today`), shows that family and goes to the place. That family's own
+///   gates come first, as [familyRedirect] applies them to the family the device shows: still
+///   waiting for a parent, or a sitter's access ended, shows that family on its own screen; a
+///   little kid's family or a wall display goes to the kids' app or the wall instead of a tab.
+/// - A family this device doesn't hold, or whose engine didn't open, gets a page that says so
+///   (`/families/missing`), never another family's page.
 /// - `/families/...` (joining another family) is for a device already in one.
 /// - Everything else is [familyRedirect] for the family the device shows.
 String? householdRedirect(Household home, GoRouterState route) {
   final split = splitLog(route.uri.toString());
   if (split != null) {
     final log = home.byId(split.log);
-    if (log == null || !log.den.isApproved) return split.rest;
-    if (isPlaceRoute(split.rest)) {
+    if (log == null) {
+      final closed = home.unopened.any((m) => m.id == split.log.toLowerCase());
+      return closed ? '/families/missing?closed=1' : '/families/missing';
+    }
+    final place = isPlaceRoute(split.rest);
+    final gate = !log.den.isApproved
+        ? '/welcome/waiting'
+        : accessEndedHere(log.state)
+            ? '/ended'
+            : place
+                ? _shellGate(log.state, split.rest.split('?').first)
+                : null;
+    if (gate != null || place) {
       if (!identical(log, home.active) || home.showingAll) scheduleMicrotask(() => home.choose(log));
-      return split.rest;
+      return gate ?? split.rest;
     }
     return null;
   }
@@ -99,14 +113,34 @@ String? familyRedirect(AppState state, GoRouterState route) {
   if (loc == '/welcome/start') return '/welcome/people';
   if (inWelcome && loc != '/welcome/people' && loc != '/welcome/words') return '/today';
 
-  final me = state.me;
-  final device = den.thisDevice;
-  final display = state.wall || (device?.isShared ?? false);
-
-  if (isLittleKid(me) && _isShellTab(loc)) return '/kid';
-  // A personal device set to "Use as wall display" always shows the wall for Today; a shared
-  // display does too, unless someone signed in to use the full app.
-  if (display && loc == '/today' && (den.actor == null || !(device?.isShared ?? false))) return '/wall';
-  if (loc == '/kid' && !isLittleKid(me) && !display) return '/today';
+  final gate = _shellGate(state, loc);
+  if (gate != null) return gate;
+  if (loc == '/kid' && !isLittleKid(state.me) && !_display(state)) return '/today';
   return null;
 }
+
+/// Whether this device is a display in [state]'s family: set to "Use as wall display", or a
+/// shared one.
+bool _display(AppState state) => state.wall || (state.den.thisDevice?.isShared ?? false);
+
+/// Where a tab at [loc] goes instead in [state]'s family: the kids' app for a pre-reader or
+/// little kid acting on this device; the wall for Today on a display, unless someone signed in
+/// on a shared one to use the full app. Null: the tab itself.
+String? _shellGate(AppState state, String loc) {
+  final den = state.den;
+  final device = den.thisDevice;
+  if (isLittleKid(state.me) && _isShellTab(loc)) return '/kid';
+  // A personal device set to "Use as wall display" always shows the wall for Today; a shared
+  // display does too, unless someone signed in to use the full app.
+  if (_display(state) && loc == '/today' && (den.actor == null || !(device?.isShared ?? false))) return '/wall';
+  return null;
+}
+
+/// Whether [state]'s family shows the app's tabs on this device now, by the same rules as
+/// [familyRedirect]: in it and let in, the person's access not ended, not a little kid's, and
+/// not a wall display. "All my families" merges only these ([mergedFamilies]).
+bool showsTabs(AppState state) =>
+    state.den.isApproved && !accessEndedHere(state) && _shellGate(state, '/today') == null && _shellGate(state, '/lists') == null;
+
+/// The families "All my families" merges: each one [showsTabs] for on this device now.
+List<FamilyLog> mergedFamilies(Household home) => [for (final l in home.families) if (showsTabs(l.state)) l];

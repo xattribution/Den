@@ -332,8 +332,8 @@ String signInWords(Member m) => m.signIn.kind == 'pin' || m.signIn.kind == 'patt
 
 /// Sets [member]'s PIN or picture pattern for shared screens, entered twice. [canClear] offers
 /// "No PIN" (never to a parent once the family has a shared screen).
-Future<void> showSignInSheet(BuildContext context, Member member, {bool canClear = false}) =>
-    showDenSheet<void>(context, builder: (_) => _SignInSheet(member: member, canClear: canClear));
+Future<void> showSignInSheet(BuildContext context, Member member, {bool canClear = false, SheetWrap? scope}) =>
+    showDenSheet<void>(context, scope: scope, builder: (_) => _SignInSheet(member: member, canClear: canClear));
 
 class _SignInSheet extends StatefulWidget {
   const _SignInSheet({required this.member, required this.canClear});
@@ -433,11 +433,15 @@ class _SignInSheetState extends State<_SignInSheet> {
 
 /// After a parent makes a device a shared display: a parent with no PIN can't act on one, and
 /// nobody there can act as them either. Asks for one now.
-Future<void> askParentForSignIn(BuildContext context, String displayName) async {
-  final me = DenScope.read(context).me;
+///
+/// [me] and [scope] are the family's where the display was approved, for a [context] that
+/// outlived that page (the app's root): the PIN is that family's, never the one the device shows.
+Future<void> askParentForSignIn(BuildContext context, String displayName, {Member? me, SheetWrap? scope}) async {
+  me ??= DenScope.read(context).me;
   if (me == null || !me.isParent || me.signIn.kind != 'none') return;
   final yes = await showDenSheet<bool>(
     context,
+    scope: scope,
     builder: (sheet) {
       final c = sheet.colors;
       return Padding(
@@ -463,7 +467,7 @@ Future<void> askParentForSignIn(BuildContext context, String displayName) async 
     },
   );
   if (yes != true || !context.mounted) return;
-  await showSignInSheet(context, me);
+  await showSignInSheet(context, me, scope: scope);
 }
 
 /// Whose a device is: a person (personal), or nobody's (a shared display or the hub).
@@ -524,11 +528,14 @@ Future<void> approveDevice(BuildContext context, String deviceId, String name) a
   final owner = await showWhoseDeviceSheet(context, name);
   if (owner == null || !context.mounted) return;
   final trust = context.trustActions;
-  // The request leaves the list once approved, so ask from somewhere that stays.
+  // The request leaves the list once approved, so ask from somewhere that stays, carrying this
+  // family (its parent, its PIN) rather than the root's, which is the family the device shows.
   final keep = Navigator.of(context, rootNavigator: true).context;
+  final me = DenScope.read(context).me;
+  final scope = SheetScope.of(context);
   final ok = await attempt(context, () => trust.approveDevice(deviceId, member: owner.member, mode: owner.mode));
   if (!ok || owner.mode != DeviceMode.shared || !keep.mounted) return;
-  await askParentForSignIn(keep, name);
+  await askParentForSignIn(keep, name, me: me, scope: scope);
 }
 
 /// The glyph for a device: a phone, a tablet, a computer.

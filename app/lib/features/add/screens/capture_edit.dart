@@ -3,6 +3,7 @@ import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 
 import '../state/capture_controller.dart';
+import '../../../design/sheet.dart' show carryScope, carryTransition;
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../app/app_state.dart';
@@ -18,7 +19,7 @@ Future<void> editEntry(BuildContext context, CaptureController controller, Draft
   final result = await showModalBottomSheet<_Edit>(
     context: context,
     isScrollControlled: true,
-    builder: (_) => _EntryEditor(entry: entry),
+    builder: carryScope(context, (_) => _EntryEditor(entry: entry)),
   );
   switch (result) {
     case null:
@@ -89,6 +90,7 @@ class _EntryEditorState extends State<_EntryEditor> {
     final initial = f.dateTime(date);
     final picked = await showDatePicker(
       context: context,
+      builder: carryTransition(context),
       initialDate: DateTime(initial.year, initial.month, initial.day),
       firstDate: DateTime(initial.year - 1),
       lastDate: DateTime(initial.year + 3),
@@ -100,7 +102,11 @@ class _EntryEditorState extends State<_EntryEditor> {
   Future<String?> _pickTime(String? hhmm) async {
     final f = context.app.formats;
     final minutes = f.parseHhmm(hhmm) ?? 17 * 60;
-    final picked = await showTimePicker(context: context, initialTime: TimeOfDay(hour: minutes ~/ 60, minute: minutes % 60));
+    final picked = await showTimePicker(
+      context: context,
+      builder: carryTransition(context),
+      initialTime: TimeOfDay(hour: minutes ~/ 60, minute: minutes % 60),
+    );
     if (picked == null) return null;
     return f.hhmm(picked.hour * 60 + picked.minute);
   }
