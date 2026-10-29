@@ -34,6 +34,7 @@ import 'relay_watch.dart';
 import 'reminders.dart';
 import 'setup.dart';
 import 'state.dart';
+import 'usage.dart';
 import 'web.dart';
 
 /// The Den hub: the family's always-on device. Serves device sync at `/ws`, the HTTP API and
@@ -170,7 +171,8 @@ class DenHub {
     _setup = HubSetup(_ctx, onReady: _onReady);
     _links = LinkSlots(_ctx, _auth);
     _stream = EventStream(_ctx, _feed);
-    _capture = HubCapture(_ctx, _auth);
+    final usage = AiUsage(_ctx);
+    _capture = HubCapture(_ctx, _auth, usage);
     // One runner for REST and MCP: a connection's receipts and confirmations work on either.
     final actions = standardRunner();
     _api = RestApi(_ctx, runner: actions, reader: _capture.reader);
@@ -228,7 +230,7 @@ class DenHub {
       ..add('GET', '/ics/<token>/<file>', (r, p) => _ics.feed(r, p['token']!, p['file']!));
     _api.register(_routes);
     _capture.register(_routes);
-    _assistant = HubAssistant(_ctx, _auth)..register(_routes);
+    _assistant = HubAssistant(_ctx, _auth, usage)..register(_routes);
     HubInvites(_ctx).register(_routes);
     _recovery = HubRecovery(_ctx, _auth)..register(_routes);
     _push.register(_routes);

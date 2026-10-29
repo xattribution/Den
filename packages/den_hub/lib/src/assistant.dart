@@ -10,6 +10,7 @@ import 'context.dart';
 import 'device_auth.dart';
 import 'http_util.dart';
 import 'setup.dart' show restrictToOwner;
+import 'usage.dart';
 
 /// The in-app assistant's side on the hub (`/api/v1/assistant`).
 ///
@@ -20,21 +21,25 @@ import 'setup.dart' show restrictToOwner;
 /// checks each against the family's rules (`family.assistant`: who may use it, a kid's daily
 /// limit, no photos for kids, the month's budget) and den_assistant's `ModelProxy` (the
 /// provider, the models offered, an output cap), forwards it with the key, and counts what it
-/// cost. Phones and the web app never hold the key.
+/// cost ([AiUsage], which captures the hub reads count against too). Phones and the web app
+/// never hold the key.
 ///
 /// The key lives in `<data>/hub/assistant.json`, readable by its owner only, never in the
 /// family's log or in an answer. The hub keeps no conversation and logs no content: only that
 /// the setup changed, and when the month's budget runs low. It is off until a parent turns it
 /// on in the family's settings and sets a provider here.
 class HubAssistant {
-  /// The endpoints for [hub], checking signatures with [auth].
-  HubAssistant(this.hub, this.auth);
+  /// The endpoints for [hub], checking signatures with [auth] and counting in [usage].
+  HubAssistant(this.hub, this.auth, this.usage);
 
   /// Shared hub context.
   final HubContext hub;
 
   /// Checks the signed requests.
   final DeviceAuth auth;
+
+  /// The family's AI budget and kids' days, shared with captures.
+  final AiUsage usage;
 
   /// Largest model request: a conversation and a few photos.
   static const int maxBody = 12 * 1024 * 1024;
@@ -45,11 +50,7 @@ class HubAssistant {
   /// Model requests forwarded at once.
   static const int maxForwarding = 6;
 
-  /// The share of the month's budget at which parents are warned.
-  static const double warnAt = 0.8;
-
   static const String _doc = 'assistant';
-  static const String _usageDoc = 'assistant_usage';
 
   int _forwarding = 0;
 
@@ -62,8 +63,6 @@ class HubAssistant {
   }
 
   Map<String, Object?> get _saved => hub.state.read(_doc);
-
-  Map<String, Object?> get _usage => hub.state.read(_usageDoc);
 
   /// The provider the hub runs the assistant with, or null.
   ModelProvider? get provider => ModelProvider.byId(_saved['provider'] as String?);
@@ -94,40 +93,20 @@ class HubAssistant {
     return raw is String ? Uri.tryParse(raw) : null;
   }
 
-  AssistantPolicy get _policy => hub.den.family?.assistant ?? const AssistantPolicy();
+  AssistantPolicy get _policy => usage.policy;
 
-  String get _today => hub.den.todayDate();
-
-  String get _month => _today.substring(0, 7);
-
-  /// Micro-dollars spent this month.
-  int get _spent => _usage['month'] == _month ? (_usage['spent_micros'] as int? ?? 0) : 0;
-
-  /// What a kid ([member]) asked today.
-  int _turns(String member) {
-    final u = _usage;
-    if (u['day'] != _today) return 0;
-    return ((u['turns'] as Map?)?[member] as int?) ?? 0;
-  }
-
-  Map<String, Object?> _monthJson() {
-    final budget = _policy.budgetCents;
-    final spent = _spent;
-    final free = provider == ModelProvider.ollama;
-    return {
-      'month': _month,
-      'spent_cents': (spent / 10000).ceil(),
-      'budget_cents': budget,
-      'warn': !free && budget > 0 && spent >= budget * 10000 * warnAt,
-      'stopped': !free && spent >= budget * 10000,
-    };
-  }
+  /// The month's spending, the assistant's and the captures' the hub's reader read.
+  Map<String, Object?> _monthJson() => usage.monthJson(
+        free: provider == ModelProvider.ollama,
+        captureFree: hub.state.read('capture')['kind'] != 'claude',
+      );
 
   Map<String, Object?> _modelJson(ModelInfo m) =>
       {'model': m.model, 'label': m.label, 'size': m.size.name, 'images': m.images, 'context_tokens': m.contextTokens};
 
   /// What a device sees: the provider and models, whether a key is saved (never the key), the
-  /// family's rules, what [actor] has left today, and the month's spending.
+  /// family's rules, what [actor] has used today (a kid's questions and the captures the hub
+  /// read for them count together), and the month's spending, captures included.
   Map<String, Object?> describe(Member? actor) {
     final p = provider;
     final policy = _policy;
@@ -143,7 +122,8 @@ class HubAssistant {
       if (actor != null)
         'you': {
           'allowed': p != null && policy.allows(actor),
-          if (actor.isKid) 'used_today': _turns(actor.id),
+          if (actor.isKid) 'used_today': usage.usedToday(actor.id),
+          if (actor.isKid) 'captures_today': usage.capturesToday(actor.id),
           if (actor.isKid) 'daily_limit': policy.kidDailyLimit,
         },
       'this_month': _monthJson(),
@@ -284,11 +264,11 @@ class HubAssistant {
     }
     if (kid && facts.images > 0) throw ApiError(403, 'no_photos', 'Photos aren\'t part of the assistant for kids.');
     final turn = kid && newTurn(p, _decode(bytes));
-    if (turn && _turns(actor.id) >= policy.kidDailyLimit) {
+    if (turn && usage.dayUsedUp(actor.id)) {
       throw ApiError(429, 'daily_limit', 'That\'s all the assistant for today, ${actor.name}. Ask a parent if you need more.');
     }
     final free = p == ModelProvider.ollama;
-    if (!free && _spent >= policy.budgetCents * 10000) {
+    if (!free && usage.budgetSpent) {
       throw ApiError(402, 'budget_spent',
           'The assistant has used this month\'s budget. A parent can raise it in Settings, or it starts again next month.');
     }
@@ -297,10 +277,10 @@ class HubAssistant {
     }
     _forwarding++;
     try {
-      if (turn) await _count(actor.id);
+      if (turn) await usage.countFor(actor.id);
       final reply = await proxy.forward(model: model!, body: bytes);
       final cost = reply.costUsd;
-      if (cost != null && cost > 0) await _spend((cost * 1000000).round());
+      if (cost != null && cost > 0) await usage.spend((cost * 1000000).round());
       final month = _monthJson();
       return Response(reply.status, body: reply.body, headers: {
         'content-type': 'application/json',
@@ -342,37 +322,6 @@ class HubAssistant {
   }
 
   final Map<String, int> _unverified = {};
-
-  Future<void> _count(String member) async {
-    final u = _usage;
-    final today = _today;
-    if (u['day'] != today) {
-      u['day'] = today;
-      u['turns'] = <String, Object?>{};
-    }
-    final turns = (u['turns'] as Map).cast<String, Object?>();
-    turns[member] = ((turns[member] as int?) ?? 0) + 1;
-    u['turns'] = turns;
-    await hub.state.save(_usageDoc, u);
-  }
-
-  Future<void> _spend(int micros) async {
-    final u = _usage;
-    final month = _month;
-    if (u['month'] != month) {
-      u['month'] = month;
-      u['spent_micros'] = 0;
-      u['warned'] = false;
-    }
-    final spent = (u['spent_micros'] as int? ?? 0) + micros;
-    u['spent_micros'] = spent;
-    final budget = _policy.budgetCents * 10000;
-    if (budget > 0 && spent >= budget * warnAt && u['warned'] != true) {
-      u['warned'] = true;
-      hub.log.warn('The assistant has used ${(spent * 100 / budget).floor()}% of this month\'s budget');
-    }
-    await hub.state.save(_usageDoc, u);
-  }
 
   static Map<String, Object?> _decode(List<int> bytes) {
     try {

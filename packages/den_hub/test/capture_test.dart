@@ -181,6 +181,46 @@ void main() {
     expect(receipt.keys, contains('i0'));
   });
 
+  test('reads count against the family\'s AI budget and a kid\'s day, as GET /api/v1/assistant shows', () async {
+    await alex.client.configure(claude);
+    // A cent a month: the recorded answer costs about 0.87 of one with Sonnet's prices.
+    await f.phone.updateFamily({'assistant': const AssistantPolicy(kidDailyLimit: 2, budgetCents: 1).toJson()});
+    await f.toHub();
+    await maya.client.read(CaptureInput.typed('milk'));
+    Future<Map<String, Object?>> status(Phone p) async {
+      final url = f.base.replace(path: '/api/v1/assistant');
+      final r = await apiCall(f.base, 'GET', '/api/v1/assistant', headers: await p.sign('GET', url, const []));
+      expect(r.status, 200, reason: r.text);
+      return r.body;
+    }
+
+    var seen = await status(maya);
+    expect(seen['you'], containsPair('used_today', 1));
+    expect(seen['you'], containsPair('captures_today', 1));
+    final month = (seen['this_month'] as Map).cast<String, Object?>();
+    expect(month['spent_cents'], 1);
+    expect(month['captures'], {'reads': 1, 'spent_cents': 1, 'stopped': false});
+
+    await maya.client.read(CaptureInput.typed('eggs'));
+    await expectLater(
+      maya.client.read(CaptureInput.typed('bread')),
+      throwsA(isA<ReaderException>().having((e) => e.message, 'message', startsWith('That\'s all Den can read for Maya today'))),
+    );
+    await expectLater(
+      alex.client.read(CaptureInput.typed('bread')),
+      throwsA(isA<ReaderException>().having((e) => e.message, 'message', startsWith('Reading with Claude has used this month\'s AI budget'))),
+    );
+    expect(anthropic.sent, hasLength(2), reason: 'nothing past the limits reaches Claude');
+    seen = await status(alex);
+    expect((seen['this_month'] as Map)['captures'], {'reads': 2, 'spent_cents': 2, 'stopped': true});
+    // An assistant reading through the API's add_from_text is held to the same budget: Den's
+    // own reader reads it instead of Claude.
+    final token = await f.token(scopes: {Scope.read, Scope.lists});
+    final api = await f.call('POST', '/api/v1/actions/add_from_text', token: token, body: {'text': 'milk'});
+    expect((api.body['result'] as Map)['reader'], 'Den', reason: api.text);
+    expect(anthropic.sent, hasLength(2));
+  });
+
   test('someone who can\'t add anything, or a display nobody signed in to, can\'t spend the family\'s reader', () async {
     await alex.client.configure(claude);
     await expectLater(

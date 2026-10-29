@@ -1562,9 +1562,17 @@ parent's private ones). Answer:
  "reader": {"id": "claude", "name": "Claude", "place": "provider", "inputs": ["text", "image", "pdf"], "history_name": "Claude"}}
 ```
 
+Every read the hub's reader makes counts against the family's AI limits in `family.assistant`,
+the same ones as the assistant's (see `GET /api/v1/assistant`): what Claude's reads cost adds to
+the month, and a kid's reads count toward their `kidDailyLimit`. Reads by apps and assistants
+(`add_from_text` over the API or MCP) go through the same reader and budget; once it is spent,
+Den's own reader reads for them instead.
+
 Errors: `403 permission_denied` ("Sign in on this screen to add things", "Leo can't add anything
-Den reads"), `409 no_reader` when nothing is set up, `429 busy` (`details.retry`: true) when four
-reads are already running, `502 reader_failed` with the reader's own reason and `details.retry`.
+Den reads"), `409 no_reader` when nothing is set up, `429 daily_limit` when a kid has used up
+their day, `402 budget_spent` once Claude's reads and the assistant have spent the month's
+budget, `429 busy` (`details.retry`: true) when four reads are already running, `502
+reader_failed` with the reader's own reason and `details.retry`.
 
 ## The assistant: the key stays on the hub
 
@@ -1589,16 +1597,20 @@ Any device in the family. The key is never in it.
   "key_saved": true,
   "key_from": "own",
   "policy": {"enabled": true, "members": ["<member id>"], "kidDailyLimit": 20, "budgetCents": 500},
-  "you": {"allowed": true, "used_today": 3, "daily_limit": 20},
-  "this_month": {"month": "2026-10", "spent_cents": 120, "budget_cents": 500, "warn": false, "stopped": false}
+  "you": {"allowed": true, "used_today": 3, "captures_today": 1, "daily_limit": 20},
+  "this_month": {"month": "2026-10", "spent_cents": 120, "budget_cents": 500, "warn": false, "stopped": false,
+                 "captures": {"reads": 14, "spent_cents": 35, "stopped": false}}
 }
 ```
 
 `provider` is `anthropic`, `openai`, `gemini`, `xai`, `ollama` (a model at home, with
 `base_url`), or null. `key_from` is `own` or `capture` (the Claude key saved for the capture
 reader). `you` is for the person signing the request: whether they may use it and, for a kid,
-how many questions they asked today. `this_month.warn` is true from 80% of the budget and
-`stopped` at 100%; a model at home costs nothing.
+what they used of today's limit (`used_today`: questions and the captures the hub read for them,
+which count together; `captures_today` of those). `this_month.spent_cents` is the assistant's and
+the capture reader's together, `captures` the reader's share and how many reads it made.
+`this_month.warn` is true from 80% of the budget and `stopped` at 100% (for the assistant;
+`captures.stopped` for Claude reading captures); a model at home costs nothing.
 
 ### `PUT /api/v1/assistant`
 
@@ -1634,7 +1646,7 @@ den_assistant's `ModelProxy` (the provider and models it runs), then:
 | `403 too_long` | No output cap, or more than 8,192 tokens (2,048 for a kid) |
 | `403 no_photos` | A kid's request with a photo |
 | `429 daily_limit` | A kid asked `kidDailyLimit` new questions today (a request carrying a tool's answer doesn't count) |
-| `402 budget_spent` | This month's estimated cost reached `budgetCents` |
+| `402 budget_spent` | This month's estimated cost, the capture reader's included, reached `budgetCents` |
 | `429 busy` | Six requests are already going to the provider |
 | `502 provider_unreachable` | The provider couldn't be reached (`details.retry`) |
 

@@ -10,6 +10,7 @@ import 'context.dart';
 import 'device_auth.dart';
 import 'http_util.dart';
 import 'setup.dart' show restrictToOwner;
+import 'usage.dart';
 
 /// Reading what the family shares, once for every device (`/api/v1/capture`). A parent picks
 /// the hub's reader (Claude with a key, or a model at home); any approved device then asks the
@@ -17,15 +18,23 @@ import 'setup.dart' show restrictToOwner;
 /// device resolves, checks and writes as its own acting member. Requests are signed with the
 /// device's key ([DeviceRequest]); there are no tokens. The key lives in the hub's own data
 /// directory, readable by its owner only, and never in the family's log or an answer.
+///
+/// Every read counts against the family's AI budget ([AiUsage], with the assistant): Claude's
+/// reads add what they cost and stop once the month's budget is spent, and a kid's reads count
+/// toward their daily limit. API and MCP reads (`add_from_text`) go through the same [reader].
 class HubCapture {
-  /// Creates the capture endpoints for [hub], checking signatures with [auth].
-  HubCapture(this.hub, this.auth);
+  /// Creates the capture endpoints for [hub], checking signatures with [auth] and counting in
+  /// [usage].
+  HubCapture(this.hub, this.auth, this.usage);
 
   /// Shared hub context.
   final HubContext hub;
 
   /// Checks the signed requests.
   final DeviceAuth auth;
+
+  /// The family's AI budget and kids' days, shared with the assistant.
+  final AiUsage usage;
 
   /// Most reads running at once; more wait for a free one with `429`.
   static const int maxReading = 4;
@@ -57,18 +66,27 @@ class HubCapture {
 
   HubReaderKind get _kind => HubReaderKind.values.asNameMap()[_saved['kind']] ?? HubReaderKind.none;
 
-  /// The reader the family set up, or null.
+  /// The reader the family set up, within the family's AI budget, or null.
   CaptureReader? reader() {
     final s = _saved;
     switch (_kind) {
       case HubReaderKind.claude:
         final key = s['key'];
         if (key is! String || key.isEmpty) return null;
-        return ClaudeReader(apiKey: key, model: s['model'] as String? ?? ClaudeReader.defaultModel, client: hub.http);
+        final model = s['model'] as String? ?? ClaudeReader.defaultModel;
+        return BudgetedReader(
+          ClaudeReader(apiKey: key, model: model, client: MeteredClient(hub.http, usage, model)),
+          usage,
+          paid: true,
+        );
       case HubReaderKind.home:
         final base = HomeModelReader.baseFor(s['address'] as String? ?? '');
         if (base == null) return null;
-        return HomeModelReader(base: base, model: s['model'] as String? ?? HomeModelReader.defaultModel, client: hub.http);
+        return BudgetedReader(
+          HomeModelReader(base: base, model: s['model'] as String? ?? HomeModelReader.defaultModel, client: hub.http),
+          usage,
+          paid: false,
+        );
       case HubReaderKind.none:
         return null;
     }
@@ -181,6 +199,12 @@ class HubCapture {
       throw ApiError(409, 'no_reader',
           'The hub has nothing to read with yet. A parent can set it up under Settings, AI and automations.');
     }
+    if (actor.isKid && usage.dayUsedUp(actor.id)) {
+      throw ApiError(429, 'daily_limit', 'That\'s all Den can read for ${actor.name} today. Ask a parent if you need more.');
+    }
+    if (_kind == HubReaderKind.claude && usage.budgetSpent) {
+      throw ApiError(402, 'budget_spent', BudgetedReader.spentMessage);
+    }
     CaptureInput input;
     try {
       input = CaptureInput.fromJson(_json(bytes));
@@ -200,6 +224,7 @@ class HubCapture {
     }
     _reading++;
     try {
+      if (actor.isKid) await usage.countFor(actor.id, capture: true);
       // The family as the person sharing sees it: their lists, not a parent's private ones.
       final context = await hub.gate.run(actor.id, null, () => CaptureContext.of(hub.den));
       final wire = await reader.read(ReadRequest(input, context));

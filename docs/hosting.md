@@ -621,7 +621,8 @@ with the same keys, so [reset the hub](#reset-the-hub-keep-the-family) and add i
 Den's own helper (Ask, in Add) is off until a parent turns it on from their phone: Settings,
 **AI helper**, where they also enter the provider's key. The key lives on the hub (in its data,
 so in its backups), never on the phones: every device asks through the hub, which needs to reach
-the provider over HTTPS. Nothing to set on the server.
+the provider over HTTPS. Nothing to set on the server. Its monthly budget and a kid's daily limit
+cover what the hub reads with Claude for photos and messages too.
 
 ## Connecting AI assistants
 
