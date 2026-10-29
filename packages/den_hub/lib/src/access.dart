@@ -1,6 +1,8 @@
 import 'package:den_actions/den_actions.dart' show readableSpacesFor;
 import 'package:den_core/den_core.dart';
 
+import 'oauth_store.dart';
+
 /// A caller authenticated by a bearer token: the connection it belongs to, and what it may do.
 class Access {
   /// Creates the access a [connection] grants.
@@ -27,10 +29,17 @@ class Access {
 }
 
 /// Resolves a bearer token on [den]: an active, unexpired connection whose member (if any) is
-/// still in the family. Null otherwise.
-Access? accessForToken(Den den, String? token) {
+/// still in the family. Null otherwise. A token a parent made is found by its hash in the log;
+/// an OAuth access token by its hash in the hub's [oauth] state, for a connection the log still
+/// has active.
+Access? accessForToken(Den den, String? token, {OAuthStore? oauth, int? now}) {
   if (token == null || token.isEmpty || token.length > 512) return null;
-  final connection = den.connectionForToken(token);
+  var connection = den.connectionForToken(token);
+  if (connection == null && oauth != null) {
+    final id = oauth.accessConnection(token, now ?? DateTime.now().toUtc().millisecondsSinceEpoch);
+    final c = id == null ? null : den.connectionWithId(id);
+    if (c != null && c.kind == ConnectionKind.oauth && c.status == ConnectionStatus.active) connection = c;
+  }
   if (connection == null) return null;
   final member = connection.member;
   if (member != null && den.member(member) == null) return null;

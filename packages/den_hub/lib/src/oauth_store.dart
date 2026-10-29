@@ -95,7 +95,10 @@ class RefreshGrant {
   Map<String, Object?> toJson() => {'connection': connection, 'client': client, 'expires': expires};
 }
 
-/// OAuth clients and refresh-token hashes, kept in the hub's state (`oauth.json`).
+/// OAuth clients and the hashes of access and refresh tokens, kept in the hub's state
+/// (`oauth.json`, in `<data>/hub/`, its owner's alone and in backups). An access token lasts an
+/// hour; its hash stays here, never in the family's log, which keeps only what lasts about a
+/// connection (who it is for, its scopes, whether it is on).
 class OAuthStore {
   /// Opens the store in [state].
   OAuthStore(this.state);
@@ -161,19 +164,46 @@ class OAuthStore {
     return state.save('oauth');
   }
 
-  /// Drops every refresh token of [connection].
+  /// Drops every access and refresh token of [connection].
   Future<void> revokeConnection(String connection) {
     _section('refresh').removeWhere((_, v) => v is Map && v['connection'] == connection);
+    _section('access').removeWhere((_, v) => v is Map && v['connection'] == connection);
     return state.save('oauth');
   }
 
-  /// Drops expired refresh tokens.
-  void prune(int now) => _section('refresh').removeWhere((_, v) => v is! Map || (v['expires'] as int? ?? 0) <= now);
+  /// Keeps access token [token] for [connection] and [client] until [expires] (UTC ms), in place
+  /// of the connection's earlier one: a connection has one access token at a time.
+  Future<void> issueAccess(String token, {required String connection, required String client, required int expires}) {
+    _section('access').removeWhere((_, v) => v is Map && v['connection'] == connection);
+    return keepAccess(hashToken(token), connection: connection, client: client, expires: expires);
+  }
 
-  /// Clients that hold a refresh token.
+  /// Keeps the access token whose hash is [hash] (one an older hub wrote into the log).
+  Future<void> keepAccess(String hash, {required String connection, required String? client, required int expires}) {
+    _section('access')[hash] = {'connection': connection, 'client': ?client, 'expires': expires};
+    return state.save('oauth');
+  }
+
+  /// The connection access token [token] was issued for, while it is good at [now]; else null.
+  String? accessConnection(String token, int now) {
+    final raw = _section('access')[hashToken(token)];
+    if (raw is! Map || (raw['expires'] as int? ?? 0) <= now) return null;
+    final connection = raw['connection'];
+    return connection is String ? connection : null;
+  }
+
+  /// Drops expired access and refresh tokens.
+  void prune(int now) {
+    bool gone(String _, Object? v) => v is! Map || (v['expires'] as int? ?? 0) <= now;
+    _section('refresh').removeWhere(gone);
+    _section('access').removeWhere(gone);
+  }
+
+  /// Clients that hold a refresh or access token.
   Set<String> get clientsWithTokens => {
-        for (final v in _section('refresh').values)
-          if (v is Map && v['client'] is String) v['client'] as String,
+        for (final section in ['refresh', 'access'])
+          for (final v in _section(section).values)
+            if (v is Map && v['client'] is String) v['client'] as String,
       };
 
   /// Forgets clients registered before [before] (seconds) that aren't in [keep]: registrations
@@ -198,6 +228,7 @@ class OAuthStore {
   Future<bool> removeClient(String id) async {
     final removed = _section('clients').remove(id) != null;
     _section('refresh').removeWhere((_, v) => v is Map && v['client'] == id);
+    _section('access').removeWhere((_, v) => v is Map && v['client'] == id);
     await state.save('oauth');
     return removed;
   }

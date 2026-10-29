@@ -151,8 +151,10 @@ class RestApi {
   }
 
   /// Authenticates [request], checks [scope], then runs [body] with the token's member acting.
+  /// Every scope but `read` writes, which waits while the hub catches up after a restore.
   Future<Response> _call(Request request, Scope scope, FutureOr<Response> Function(Call call) body) async {
     final access = authenticate(request, scope);
+    if (scope != Scope.read) hub.requireCaughtUp();
     try {
       return await hub.gate.run(access.member, access.label, () async {
         final call = Call(hub, request, access, access.readable(hub.den), Wire(hub.den));
@@ -172,7 +174,7 @@ class RestApi {
   Access authenticate(Request request, Scope? scope) {
     if (!hub.ready) throw ApiError.notReady();
     hub.checkFailures(request);
-    final access = accessForToken(hub.den, bearerToken(request.headers['authorization']));
+    final access = hub.access(bearerToken(request.headers['authorization']));
     if (access == null) {
       hub.failed(request);
       throw ApiError.unauthorized();
@@ -191,12 +193,15 @@ class RestApi {
   }
 
   /// `POST /api/v1/actions/{name}`: runs an action. `?preview=1` only shows what would change;
-  /// an `Idempotency-Key` header makes a retry answer as the first try did.
+  /// an `Idempotency-Key` header makes a retry answer as the first try did. A write waits while
+  /// the hub catches up after a restore (`503 catching_up`).
   Future<Response> _runAction(Request request, String name) async {
     final access = authenticate(request, null);
-    if (runner.spec(name) == null) {
+    final spec = runner.spec(name);
+    if (spec == null) {
       throw ApiError.notFound(type: 'action', id: name, message: 'Den has no action called "$name".');
     }
+    if (!spec.readOnly && !queryBool(request, 'preview', false)) hub.requireCaughtUp();
     final bytes = await readBodyBytes(request);
     final Map<String, Object?> body;
     try {

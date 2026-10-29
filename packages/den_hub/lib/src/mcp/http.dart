@@ -156,7 +156,7 @@ class McpHttp {
     if (!hub.ready) throw ApiError.notReady();
     hub.checkFailures(request);
     final token = bearerToken(request.headers['authorization']);
-    final access = accessForToken(hub.den, token);
+    final access = hub.access(token);
     if (access == null && token != null) hub.failed(request);
     return access;
   }
@@ -204,6 +204,12 @@ class McpHttp {
       body = jsonDecode(utf8.decode(await readBodyBytes(request)));
     } on FormatException {
       return _rpcError(400, RpcError.parse, 'Parse error', request);
+    }
+    // After a restore the hub writes nothing until a device of the family has synced with it.
+    if (hub.catchingUp && (body is List ? body.any(server.writes) : server.writes(body))) {
+      final error = ApiError.catchingUp();
+      return _rpcError(503, RpcError.internal, error.message, request,
+          id: body is Map ? body['id'] : null, headers: error.headers);
     }
     if (body is Map && body['method'] != 'initialize' && _modern(body, request)) {
       return _modernPost(request, access, body.cast<String, Object?>());

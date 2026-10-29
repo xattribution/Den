@@ -674,6 +674,41 @@ void main() {
       expect(await stranger(), isA<Session>());
     });
 
+    test('each client has its own share of those places, so one address can\'t keep everyone out', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final phoneNode = SyncNode(fam.founder, maxPairingPeers: 5, maxPairingPerClient: 2);
+      addTearDown(phoneNode.close);
+      final open = <Session>[];
+      addTearDown(() async {
+        for (final s in open) {
+          await s.close();
+        }
+      });
+      Future<Session> stranger(String? client) async {
+        final p = pipe<dynamic>();
+        unawaited(phoneNode.serve(p.b, client: client));
+        final s = await Session.connect(p.a, keys: await DeviceKeys.generate(), timeout: const Duration(seconds: 5));
+        open.add(s);
+        return s;
+      }
+
+      await stranger('203.0.113.7');
+      await stranger('203.0.113.7');
+      await expectLater(stranger('203.0.113.7'), throwsA(isA<SessionException>()), reason: 'that address used its share');
+      await stranger('2001:db8:1:2::/64');
+      await stranger('2001:db8:1:2::/64');
+      // Sessions that don't say where they came from (a relay tunnel) count as one client.
+      await stranger(null);
+      await expectLater(stranger(null), throwsA(isA<SessionException>()), reason: 'five places in all');
+      await expectLater(stranger('198.51.100.1'), throwsA(isA<SessionException>()), reason: 'five places in all');
+      // Approved devices never wait for a place.
+      final laptop = await fam.approvedDevice(member: fam.parent, name: 'Pat laptop');
+      final laptopNode = SyncNode(laptop);
+      addTearDown(laptopNode.close);
+      await (await link(phoneNode, laptopNode)).live;
+    });
+
     test('a joiner cannot approve itself, end to end', () async {
       if (await skipUnlessDenCore()) return;
       final fam = await TestFamily.create();

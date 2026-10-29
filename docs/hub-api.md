@@ -168,6 +168,7 @@ Every error, at every status, has this body:
 | 429 | `rate_limited` | Too many requests from this client (below). Also sends `Retry-After` | `retry_after` (seconds) |
 | 500 | `internal` | Anything unexpected. The message carries no stack trace | |
 | 503 | `not_ready` | The hub hasn't joined or created a family yet, isn't approved yet, or is still loading its log | |
+| 503 | `catching_up` | A write (any scope but `read`, an action that changes something, an MCP tool call that does, an OAuth token) while the hub catches up after `den_hub restore`: it writes nothing of its own until a phone or tablet of the family has synced with it. Reads and previews still work. Also sends `Retry-After` | `retry_after` (seconds) |
 
 ### Limits per client
 
@@ -176,10 +177,12 @@ The hub counts what each client does, by IP address (an IPv6 address by its /64)
 
 | What | Budget |
 | --- | --- |
-| Requests with neither a token nor a device signature (health, status, the web app's files, OAuth metadata and polling) | 600 a minute. Requests from this machine itself (loopback, not through a proxy) aren't counted |
+| Requests without a working token or device signature (health, status, the web app's files, OAuth metadata and polling, and any request whose token the hub doesn't know or whose signature doesn't verify; a device signature counts as working only with `X-Den-Body-SHA256`, which lets the hub check it before the body) | 600 a minute. Requests from this machine itself (loopback, not through a proxy) aren't counted |
 | Tokens or device signatures that don't work, link codes that don't match | 30 in 5 minutes; then every authenticated request from that client gets `429` until the budget refills |
 | Browser link slots and link grants, invite and recovery redemptions | 20 in 10 minutes |
 | Wrong setup codes | 5, then that client waits a minute, doubling to an hour with each further wrong code |
+| Wrong invite words, wrong recovery codes | 10 in 10 minutes for each (and 200 in 10 minutes from all clients together) |
+| Devices on `/ws` that aren't approved yet (proving an invite or code, or waiting for a parent) | 4 at once, of 64 for everyone |
 | OAuth: registrations, sign-in requests, token requests | 10 an hour, 10 in 15 minutes, 60 in 5 minutes |
 | WebSocket connections (`/ws`, `/api/v1/hub/setup/ws`) | 120 new a minute, 64 open at once. A message may be 2 MiB (a session frame, base64 encoded); a frame announcing more closes the socket as its header arrives, before any of it is buffered |
 
@@ -1384,7 +1387,10 @@ requests with the same code and lets the right one in; the hub then writes a `pe
 `approveConnection`, choosing scopes and whose permissions it uses, exactly as before. Requests
 expire after 15 minutes (the sign-in page then returns `access_denied`), at most 20 wait at once,
 one address can start 10 in 15 minutes, and the hub turns down pending connections nobody
-approved within 15 minutes.
+approved within 15 minutes. The access tokens (an hour each) and refresh tokens the hub then
+issues are kept as hashes in its own state (`<data>/hub/oauth.json`, its user only, in backups),
+never in the family's log, which keeps only the connection itself: who it is for, its scopes,
+whether it is on. A parent turning it off ends its tokens at once.
 
 Both endpoints are signed by a parent's own device ([`DeviceRequest`](#capture-reading-for-every-device),
 not a shared display); anyone else gets `401` or `403 permission_denied`.
@@ -1503,6 +1509,13 @@ the signature once the body is in. Bodies are capped (64 KiB for `PUT`, 30 MB fo
 3 minutes. A personal device acts for its owner and no one else; a shared display for the member
 signed in on it, or nobody; a hub-mode device for its owner. Anything else is `401 unauthorized`.
 
+What this API calls **a parent's own device** (setting the reader or the assistant's key, apps
+waiting to connect and the apps parents set up, opening Add a device, the hub's recovery key) is
+a personal device whose owner is a parent, or a hub-mode device acting for its owner who is a
+parent (a parent's tablet or computer keeping the family online). A shared display never is, and
+neither is a hub that belongs to nobody or names someone other than its owner: `403
+permission_denied`.
+
 ### `GET /api/v1/capture/reader`
 
 Any device. What the hub reads with; the key is never in it.
@@ -1558,9 +1571,17 @@ parent's private ones). Answer:
  "reader": {"id": "claude", "name": "Claude", "place": "provider", "inputs": ["text", "image", "pdf"], "history_name": "Claude"}}
 ```
 
+Every read the hub's reader makes counts against the family's AI limits in `family.assistant`,
+the same ones as the assistant's (see `GET /api/v1/assistant`): what Claude's reads cost adds to
+the month, and a kid's reads count toward their `kidDailyLimit`. Reads by apps and assistants
+(`add_from_text` over the API or MCP) go through the same reader and budget; once it is spent,
+Den's own reader reads for them instead.
+
 Errors: `403 permission_denied` ("Sign in on this screen to add things", "Leo can't add anything
-Den reads"), `409 no_reader` when nothing is set up, `429 busy` (`details.retry`: true) when four
-reads are already running, `502 reader_failed` with the reader's own reason and `details.retry`.
+Den reads"), `409 no_reader` when nothing is set up, `429 daily_limit` when a kid has used up
+their day, `402 budget_spent` once Claude's reads and the assistant have spent the month's
+budget, `429 busy` (`details.retry`: true) when four reads are already running, `502
+reader_failed` with the reader's own reason and `details.retry`.
 
 ## The assistant: the key stays on the hub
 
@@ -1585,16 +1606,20 @@ Any device in the family. The key is never in it.
   "key_saved": true,
   "key_from": "own",
   "policy": {"enabled": true, "members": ["<member id>"], "kidDailyLimit": 20, "budgetCents": 500},
-  "you": {"allowed": true, "used_today": 3, "daily_limit": 20},
-  "this_month": {"month": "2026-10", "spent_cents": 120, "budget_cents": 500, "warn": false, "stopped": false}
+  "you": {"allowed": true, "used_today": 3, "captures_today": 1, "daily_limit": 20},
+  "this_month": {"month": "2026-10", "spent_cents": 120, "budget_cents": 500, "warn": false, "stopped": false,
+                 "captures": {"reads": 14, "spent_cents": 35, "stopped": false}}
 }
 ```
 
 `provider` is `anthropic`, `openai`, `gemini`, `xai`, `ollama` (a model at home, with
 `base_url`), or null. `key_from` is `own` or `capture` (the Claude key saved for the capture
 reader). `you` is for the person signing the request: whether they may use it and, for a kid,
-how many questions they asked today. `this_month.warn` is true from 80% of the budget and
-`stopped` at 100%; a model at home costs nothing.
+what they used of today's limit (`used_today`: questions and the captures the hub read for them,
+which count together; `captures_today` of those). `this_month.spent_cents` is the assistant's and
+the capture reader's together, `captures` the reader's share and how many reads it made.
+`this_month.warn` is true from 80% of the budget and `stopped` at 100% (for the assistant;
+`captures.stopped` for Claude reading captures); a model at home costs nothing.
 
 ### `PUT /api/v1/assistant`
 
@@ -1629,8 +1654,8 @@ den_assistant's `ModelProxy` (the provider and models it runs), then:
 | `403 refused` | Another provider or a model the hub doesn't offer ("update this device") |
 | `403 too_long` | No output cap, or more than 8,192 tokens (2,048 for a kid) |
 | `403 no_photos` | A kid's request with a photo |
-| `429 daily_limit` | A kid asked `kidDailyLimit` new questions today (a request carrying a tool's answer doesn't count) |
-| `402 budget_spent` | This month's estimated cost reached `budgetCents` |
+| `429 daily_limit` | A kid used `kidDailyLimit` today. Every request from a kid's device counts, and so does every capture the hub read for them, except a request answering tool calls the hub itself forwarded to that kid in a turn it already counted (at most eight such requests per turn, within ten minutes, each call answered once). A request whose provider names no call ids (a model at home, Gemini without ids) counts |
+| `402 budget_spent` | This month's estimated cost, the capture reader's included, reached `budgetCents` |
 | `429 busy` | Six requests are already going to the provider |
 | `502 provider_unreachable` | The provider couldn't be reached (`details.retry`) |
 
@@ -1696,12 +1721,16 @@ each word may be its first four letters). Answer `200`:
 ```
 
 The hub starts accepting the invite on `/ws` (see ARCHITECTURE.md, "Pairing"); the device joins
-with it there, pinning the hub's key from the invite. An invite works for every device that uses
-it until it expires; each one still needs a parent's approval. Errors: `400 invalid_input` (not
+with it there, pinning the hub's key from the invite. An invite is for one person, once: it stops
+working (`404`, "used already") when a parent approves a device that joined with it, or once
+three devices have joined with it without one being approved (a second device, or Den started
+over, before anyone approved; a code that leaked puts no more than three requests in front of a
+parent). Each device still needs a parent's approval. Errors: `400 invalid_input` (not
 four words from the list), `404 not_found` (no such invite, expired, or its parent's device was
-revoked since), `429 rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from anywhere, against every
-invite; and per client, redeeming counts against the browser link budget and a wrong code
-against the failed-tries budget, see [Limits per client](#limits-per-client)), `503 not_ready`.
+revoked since), `429 rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from one client, against every
+invite, or 200 from all clients together; and per client, redeeming counts against the browser
+link budget and a wrong code against the failed-tries budget, see
+[Limits per client](#limits-per-client)), `503 not_ready`.
 Redeeming needs no open "Add a device" window in the public posture: the invite is a parent's
 consent already.
 
@@ -1710,14 +1739,17 @@ consent already.
 "Show Den in iPhone Calendar": a parent's own device makes a read-only address for the
 family's calendar, or for one person's, and the phone's calendar app subscribes to it
 (`webcal://`). The address opens one ICS feed and nothing else. It is not an API token: it can't
-reach `/api/v1`, MCP or any other feed.
+reach `/api/v1`, MCP or any other feed. Nor does an API token open a feed (`401`): pasted into a
+calendar app or service, it would be a key to the whole API in someone else's settings.
 
 The feed reads with the permissions of the parent who made the link, exactly as the ICS feed
 does for a token acting as that parent: their own "Just me" events are in it, a kid's or a
 teen's private events only while the family's oversight lets parents see them (and they drop
 out when it stops), and `parents` events for parents. A person's link holds the events they're
-in and the events for everyone, like `GET /ics/<token>/<memberId>.ics`. A link stops working
-when a parent turns it off or when the parent who made it leaves the family.
+in and the events for everyone (`?everyone=0`: only theirs). A link stops working when a parent
+turns it off, when the parent who made it leaves the family, or when the device it was made on
+is removed (a lost phone's links end with it; links made before the hub kept the device end only
+with their maker).
 
 The hub keeps only a SHA-256 hash of each link's secret, with who made it and for what, in
 `<data>/hub/feed_links.json` (its user only); the address itself is shown once, when it is made.
@@ -1848,7 +1880,8 @@ key. The first redemption binds the code to that device key: the same device ask
 dropped connection) gets the same proof, any other gets `404`. Errors: `400 invalid_input` (not
 four words, not a key), `403 permission_denied` (the family turned server help off since; the
 code is dropped), `404 not_found` (wrong, used, expired, or no longer for a parent), `429
-rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from anywhere; and per client,
+rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from one client, or 200 from all
+clients together; and per client,
 the same budget as invites and browser links, see [Limits per client](#limits-per-client)),
 `503 not_ready`.
 

@@ -258,7 +258,8 @@ class SyncNode {
     this.pairingTimeout = const Duration(minutes: 15),
     this.unpairedTimeout = const Duration(seconds: 30),
     this.maxPeers = 256,
-    this.maxPairingPeers = 8,
+    this.maxPairingPeers = 64,
+    this.maxPairingPerClient = 4,
   })  : invites = invites ?? InviteBook(),
         codes = codes ?? CodeBook() {
     _changes = den.onChange.listen((_) {
@@ -296,6 +297,12 @@ class SyncNode {
   /// places.
   final int maxPairingPeers;
 
+  /// Most of [maxPairingPeers] one client may hold: the `client` [serve] names (an IPv4
+  /// address or an IPv6 /64, as den_relay's `clientKeyOf` and the hub's limits count them), so
+  /// no one address can keep everyone else from joining or recovering. Sessions served without
+  /// one (through a relay tunnel, a rendezvous) count as a single client.
+  final int maxPairingPerClient;
+
   final Set<SyncPeer> _peers = {};
   final List<PendingJoin> _pending = [];
   final StreamController<List<PendingJoin>> _pendingChanges = StreamController.broadcast();
@@ -311,6 +318,7 @@ class SyncNode {
   late final Timer _keyWatch;
   int _keyPushHolds = 0;
   int _pairingHandshakes = 0;
+  final Map<String, int> _handshakesBy = {};
 
   /// Devices turned away on this node: refused from then on, even with a new invite or code.
   final Set<String> _declined = {};
@@ -331,12 +339,14 @@ class SyncNode {
   // ------------------------------------------------------------------ roles
 
   /// Serves one incoming connection (a hub's `/ws` WebSocket, a relay tunnel stream, a
-  /// rendezvous pipe) until it closes.
-  Future<void> serve(StreamChannel<dynamic> channel, {FrameEncoding? encoding}) async {
+  /// rendezvous pipe) until it closes. [client] says where it came from (see
+  /// [maxPairingPerClient]).
+  Future<void> serve(StreamChannel<dynamic> channel, {FrameEncoding? encoding, String? client}) async {
     if (_closed) {
       unawaited(channel.sink.close());
       return;
     }
+    final from = client ?? '';
     final Session session;
     var pairing = false;
     try {
@@ -345,10 +355,11 @@ class SyncNode {
         keys: den.keys,
         familyId: den.familyId,
         admit: (hello) {
-          if (!_admit(hello)) return false;
+          if (!_admit(hello, from)) return false;
           if (!_approvedHello(hello)) {
             pairing = true;
             _pairingHandshakes++;
+            _handshakesBy[from] = (_handshakesBy[from] ?? 0) + 1;
           }
           return true;
         },
@@ -358,9 +369,17 @@ class SyncNode {
     } on SessionException {
       return;
     } finally {
-      if (pairing) _pairingHandshakes--;
+      if (pairing) {
+        _pairingHandshakes--;
+        final left = (_handshakesBy[from] ?? 1) - 1;
+        if (left <= 0) {
+          _handshakesBy.remove(from);
+        } else {
+          _handshakesBy[from] = left;
+        }
+      }
     }
-    final peer = _attach(session);
+    final peer = _attach(session).._client = from;
     peer._start();
     await peer.closed;
   }
@@ -715,13 +734,15 @@ class SyncNode {
 
   // ------------------------------------------------------------------ internals
 
-  bool _admit(ClientHello hello) {
+  bool _admit(ClientHello hello, String client) {
     if (_closed || !den.hasFamily) return false;
     if (hello.family != null && hello.family != den.familyId) return false;
     if (_peers.length >= maxPeers) return false;
     if (_approvedHello(hello)) return true;
-    final waiting = _peers.where((p) => !p.isClient && p._phase == PeerPhase.pairing).length;
-    return waiting + _pairingHandshakes < maxPairingPeers;
+    final waiting = [for (final p in _peers) if (!p.isClient && p._phase == PeerPhase.pairing) p];
+    if (waiting.length + _pairingHandshakes >= maxPairingPeers) return false;
+    final theirs = waiting.where((p) => p._client == client).length + (_handshakesBy[client] ?? 0);
+    return theirs < maxPairingPerClient;
   }
 
   /// Whether a client hello comes from an approved, unrevoked device of this family with its key.
@@ -915,6 +936,9 @@ class SyncPeer {
   String? _closeReason;
   Timer? _pairingTimer;
   JoinAttempt? _join;
+
+  /// Server side: the client [SyncNode.serve] said this session came from ('' for none).
+  String _client = '';
 
   /// Client side: waiting for a server this device doesn't know yet to show its record.
   bool _vouching = false;
