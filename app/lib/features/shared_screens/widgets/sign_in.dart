@@ -1,6 +1,5 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
 import '../../../design/layout.dart';
