@@ -256,7 +256,14 @@ enum ModelFailure {
 /// A model call that failed, with a message for people.
 class ModelException implements Exception {
   /// A failure people can read as [message].
-  const ModelException(this.message, {this.kind = ModelFailure.unknown, this.status, this.retry = false, this.detail});
+  const ModelException(
+    this.message, {
+    this.kind = ModelFailure.unknown,
+    this.status,
+    this.retry = false,
+    this.detail,
+    this.code,
+  });
 
   /// For people: "Claude is busy right now. Try again in a minute."
   final String message;
@@ -267,6 +274,11 @@ class ModelException implements Exception {
   /// The HTTP status, when there was one.
   final int? status;
 
+  /// The hub's error code when the hub answered (`daily_limit`, `busy`, `budget_spent`,
+  /// `assistant_off`, `provider_unreachable`), so an app can tell apart refusals that share a
+  /// status; null for a provider's own error.
+  final String? code;
+
   /// Whether trying again later may work.
   final bool retry;
 
@@ -274,7 +286,7 @@ class ModelException implements Exception {
   final String? detail;
 
   @override
-  String toString() => 'ModelException($kind${status == null ? '' : ' $status'}): $message'
+  String toString() => 'ModelException($kind${status == null ? '' : ' $status'}${code == null ? '' : ' $code'}): $message'
       '${detail == null ? '' : ' ($detail)'}';
 }
 
