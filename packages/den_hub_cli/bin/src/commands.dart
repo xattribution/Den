@@ -211,7 +211,11 @@ Future<int> status(DataDir data, int port, CliIo io) async {
     final device = health['device'] ?? setup?['device'];
     final who = [if (name != null) '$name', if (device != null) '($device)'].join(' ');
     io.out.writeln('Running: ${who.isEmpty ? '' : '$who, '}den_hub ${health['version'] ?? setup?['version'] ?? hubVersion}');
-    io.out.writeln(health['ready'] == true ? 'In a family and serving.' : 'Setup: ${setup?['stage'] ?? 'unknown'}');
+    io.out.writeln(switch (setup?['stage']) {
+      _ when health['ready'] == true => 'In a family and serving.',
+      'removed' => '${setup?['removed'] ?? 'This hub was removed from the family; reset it to add it again'}.',
+      final stage => 'Setup: ${stage ?? 'unknown'}',
+    });
     final words = setup?['matching_words'];
     if (words is List && words.isNotEmpty) {
       io.out.writeln('Matching words: ${words.join(' ')} (approve this hub in the Den app only if it shows the same three)');
@@ -224,11 +228,14 @@ Future<int> status(DataDir data, int port, CliIo io) async {
   }
   return _withDen(data, (den) async {
     io.out.writeln('Not running. Device ${den.deviceId}, den_hub $hubVersion.');
+    final removed = removedNotice(den);
     io.out.writeln(den.isApproved
         ? 'In a family: ${den.members.length} people, ${den.changesSince(const {}).length} changes.'
-        : den.hasFamily
-            ? 'Asked to join a family; not approved yet.'
-            : 'Not in a family yet.');
+        : removed != null
+            ? '$removed.'
+            : den.hasFamily
+                ? 'Asked to join a family; not approved yet.'
+                : 'Not in a family yet.');
     return 0;
   });
 }

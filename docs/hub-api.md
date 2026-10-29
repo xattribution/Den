@@ -1342,7 +1342,8 @@ No token. Where the hub is in joining a family, for the app's "Add a hub" screen
 | `name` | The hub's name |
 | `version` | `den_hub`'s version |
 | `setup_needed` | No family and no join under way: a parent's phone can send the setup code |
-| `stage` | `waiting_for_code`, `joining`, `waiting_for_approval`, `syncing` or `ready` |
+| `stage` | `waiting_for_code`, `joining`, `waiting_for_approval`, `syncing`, `ready`, or `removed`: a parent removed this hub from the family (Hub and sync, the hub's **Remove**), and a phone that refused it told it so when it connected. Only a reset brings it back, as a new device |
+| `removed` | With `stage` `removed`: what to tell its owner, also in the hub's log ("This hub was removed from the family on Oct 28; reset it to add it again"). The date is in the family's time zone |
 | `matching_words` | Present only while the pairing session with the inviting phone is up (`joining` through `syncing`): the three words both ends derive from that session's transcript (den_net's matching words). The phone shows its own three; a parent approves only if they're the same. The hub also logs them at info level and `den_hub status` prints them |
 | `last_error` | Why the last join didn't finish (`timed-out`, `unreachable`, or the phone's reason), until the hub is ready |
 
