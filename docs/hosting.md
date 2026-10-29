@@ -238,3 +238,35 @@ Send this, with your family's address in it:
 1. Open **https://den.example.com** in Safari on your iPhone.
 2. Tap the **Share** button, then **Add to Home Screen**, then **Add**.
 3. Open **Den** from your home screen and follow what it says on the screen.
+
+## If a parent loses their phone
+
+If another parent still has their phone, they let the new one in from Needs you, as usual.
+When no parent's phone is left, there are two ways back in.
+
+**Their recovery words.** Every parent saves 12 words when they start the family, or later on
+their own page in Family ("Recovery words"). On the new phone, open the family's address in
+Safari, add Den to the Home Screen and open it, choose **Join your family**, then **I lost my
+phone**, and paste the words. Den shows whose they are; "Yes, let this phone in" and the phone is
+theirs. The hub only carries the request: it can't make up words, and needs no setting for this.
+
+**The hub's help, only if the family turned it on.** A parent can turn on Settings, Family, **Let
+the hub help us get back in**. Then whoever runs the server can let a parent's new phone in:
+
+```sh
+docker compose exec hub /app/bin/den_hub recover --person "Alex"
+```
+
+(With the compose file above: `docker compose -f deploy/hosted/compose.yaml exec hub
+/app/bin/den_hub recover --person "Alex"`. Without Docker: `den_hub recover --person "Alex"
+--data <data directory>`.) The name is the parent's name in Den. It prints a link and four words
+that let in one phone, once, for 30 minutes; send them to the parent, who opens the link on the
+new phone (or chooses **I lost my phone** and types the four words). If the family hasn't turned
+server help on, the command says so and lets nobody in.
+
+What this means for whoever runs the server: with server help on, they could add a phone as any
+parent; every device in the family shows when that happens ("Alex's new iPhone was let in by the
+hub's recovery"), and any parent can remove it. With it off, they can't: turning it off makes the
+hub's key useless, even for a request dated earlier. The key lives in the hub's data directory
+(`hub/recovery.json`) and is in its backups. Either way, the parent's new phone then offers
+**Remove your old phone** on their page.
