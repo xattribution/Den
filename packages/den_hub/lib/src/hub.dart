@@ -154,12 +154,10 @@ class DenHub implements RoutableLog {
   /// Invites by message, for the host's lookups across families.
   HubInvites get invites => _invites;
 
-  /// Whether an approved, unrevoked device of this family has the id [device].
-  bool knowsDevice(String device) {
-    if (!_ctx.ready) return false;
-    final d = den.device(device);
-    return d != null && d.approved && !d.revoked;
-  }
+  /// Whether [request]'s signature checks out for this hub from its headers alone: signed for
+  /// this hub, with the body hash it covers, by an approved device of this family, fresh. No side
+  /// effects; the host hands the request here only then ([DenHost], `X-Den-Hub`).
+  Future<bool> verifiesHeaders(Request request) => _auth.headersVerify(request);
 
   /// Whether [token] is a working token of this family's.
   bool holdsToken(String token) => _ctx.ready && _ctx.access(token) != null;
@@ -426,7 +424,9 @@ class DenHub implements RoutableLog {
   /// body) is a request like any stranger's.
   Future<Request> _admit(Request request) async {
     var admitted = request;
-    if (request.context[DenHost.admittedKey] != true) {
+    // Counted already, or (the host checked its signature for this hub) signed.
+    final settled = request.context[DenHost.admittedKey] == true || request.context[DeviceAuth.verifiedHeaders] == true;
+    if (!settled) {
       final forwarded = request.headers.containsKey('x-forwarded-for');
       if (forwarded && !viaTrustedProxy(request, config.trustedProxies)) _host.warnUntrustedProxy(request);
       if (!DenHost.local(request)) {

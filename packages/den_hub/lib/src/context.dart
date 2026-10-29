@@ -109,8 +109,9 @@ class HubContext {
   /// The client [request] came from, through trusted proxies only.
   InternetAddress? client(Request request) => clientAddress(request, config.trustedProxies);
 
-  /// The key [request]'s client is limited under.
-  String clientOf(Request request) => clientKey(client(request));
+  /// The key [request]'s client is limited under (for a request the host answers in-process
+  /// for a family's hub, that hub's own).
+  String clientOf(Request request) => requestClientKey(request, config.trustedProxies);
 
   /// Takes one from [request]'s client's [name] budget, or throws `429 rate_limited`.
   void limit(Request request, String name, Rate rate, {String? message}) {

@@ -117,6 +117,19 @@ InternetAddress? _hopAddress(String hop) {
   return null;
 }
 
+/// The request context key a Den host sets on a request it answers in-process for one family's
+/// hub (reading another family's calendar link): that hub's id, whose own limits it counts
+/// against ([requestClientKey]).
+const String inProcessClient = 'den.in-process';
+
+/// The key [request]'s client is limited under: [clientKey] of its address through [trusted]
+/// proxies, or, for a request a Den host answers in-process for a family's hub, that hub's own.
+String requestClientKey(Request request, List<IpNetwork> trusted) {
+  final hub = request.context[inProcessClient];
+  if (hub is String) return 'hub:$hub';
+  return clientKey(clientAddress(request, trusted));
+}
+
 /// The key a client's limits are counted under: its IPv4 address, or its IPv6 /64 (one home or
 /// one phone network hands out a whole /64). `unknown` when there is no address.
 String clientKey(InternetAddress? a) {
@@ -177,8 +190,12 @@ abstract final class Limits {
 /// up the guesses and keep the family from joining or getting back in, while the codes' 44 bits
 /// stay out of reach of everyone at once.
 class WrongGuesses {
-  /// Counts wrong guesses.
-  WrongGuesses({required this.perClient, required this.ceiling, required this.window, this.maxClients = 10000});
+  /// Counts wrong guesses. With [scale], everyone's [ceiling] is that many times larger (a Den
+  /// host: one per family on it), while each client's [perClient] stays the same.
+  WrongGuesses({required this.perClient, required this.ceiling, required this.window, this.maxClients = 10000, int Function()? scale})
+      : _scale = scale;
+
+  final int Function()? _scale;
 
   /// Wrong guesses one client may make in [window].
   final int perClient;
@@ -217,7 +234,8 @@ class WrongGuesses {
     if (mine != null && mine.length >= perClient) {
       return (seconds: _seconds(mine.first + window.inMilliseconds, now), all: false);
     }
-    if (_all.length >= ceiling) return (seconds: _seconds(_all.first + window.inMilliseconds, now), all: true);
+    final all = ceiling * max<int>(1, _scale?.call() ?? 1);
+    if (_all.length >= all) return (seconds: _seconds(_all[_all.length - all] + window.inMilliseconds, now), all: true);
     return null;
   }
 

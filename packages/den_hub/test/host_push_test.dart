@@ -14,8 +14,8 @@ import 'push_test.dart' show FakePushService, auth, uaPublic;
 import 'support/fixture.dart';
 import 'support/host_fixture.dart';
 
-/// Web Push on a Den host: one origin hands browsers one key, every family signs with the key a
-/// browser subscribed with, and a family's own key and browsers come with it to the host.
+/// Web Push on a Den host: every family hands out and signs with its own key, whatever address it
+/// is asked at, and a family's own key and browsers come with it to the host.
 void main() {
   late Directory dir;
   late FakePushService apple;
@@ -72,39 +72,44 @@ void main() {
     expect(r.status, 200, reason: r.text);
   }
 
-  test("a browser subscribes with its address's key, whichever family's reminders it takes", () async {
+  test("every family hands out and signs with its own key only, at whatever address it is asked", () async {
     final ka = await keyAt(a, 'den-a.test');
     final kb = await keyAt(b, 'den-b.test');
     expect(ka, isNot(kb), reason: 'each family keeps its own key');
-    // One Home Screen app at a's address holding b too: one origin, one subscription, one key.
-    expect(await keyAt(b, 'den-a.test'), ka);
-
+    // b's device asking at a's address still gets b's own key: no family's subscription is ever
+    // bound to another family's key.
+    expect(await keyAt(b, 'den-a.test'), kb);
     await subscribeAt(b, 'den-a.test', 'b-at-a');
     await testPush(b, 'den-a.test');
-    expect(lastSigner(f.host.vapid), ka, reason: "b signs with the key the browser was given at a's address");
+    expect(lastSigner(f.host.vapid), kb);
     expect(apple.pushes.last.$2['title'], 'Reminders are on');
-
     await subscribeAt(a, 'den-a.test', 'a-at-a');
     await testPush(a, 'den-a.test');
     expect(lastSigner(f.host.vapid), ka);
   });
 
-  test("a family's own browsers keep its own key, older subscriptions included", () async {
+  test("a family's own browsers keep its own key, older subscriptions and any key a record names included", () async {
+    final ka = await keyAt(a, 'den-a.test');
     final kb = await keyAt(b, 'den-b.test');
     await subscribeAt(b, 'den-b.test', 'b-at-b');
     await testPush(b, 'den-b.test');
     expect(lastSigner(f.host.vapid), kb);
-    // A subscription from before the host names no key: it was made with the family's own.
     final devices = b.hub.context.state.read('push')['devices']! as Map;
-    (devices[b.phone.deviceId] as Map).remove('vapid');
+    final record = devices[b.phone.deviceId] as Map;
+    expect(record['vapid'], kb);
+    // A subscription from before the host names no key: it was made with the family's own.
+    record.remove('vapid');
+    await testPush(b, 'den-b.test');
+    expect(lastSigner(f.host.vapid), kb);
+    // One naming another family's key (edited by hand, say) is still signed with b's own.
+    record['vapid'] = ka;
     await testPush(b, 'den-b.test');
     expect(lastSigner(f.host.vapid), kb);
   });
 
-  test('the host keeps every key on disk, by its public half, and signs with it after its family leaves', () async {
+  test('the host keeps every key on disk, by its public half, readable by its user only', () async {
     final ka = await keyAt(a, 'den-a.test');
     final kb = await keyAt(b, 'den-b.test');
-    await subscribeAt(b, 'den-a.test', 'b-at-a');
     final kept = VapidKeyring(File('${dir.path}/$hostStateDir/vapid.json'));
     expect(kept[ka], isNotNull);
     expect(kept[kb], isNotNull);
@@ -112,9 +117,6 @@ void main() {
     if (!Platform.isWindows) {
       expect(File('${dir.path}/$hostStateDir/vapid.json').statSync().mode & 0x3f, 0, reason: "only the host's user reads it");
     }
-    await f.host.remove(a.hub);
-    await testPush(b, 'den-b.test');
-    expect(lastSigner(f.host.vapid), ka, reason: "the browser at a's address still takes b's reminders");
   });
 
   test('a hub moved onto a host keeps its key and every browser it had', () async {

@@ -236,11 +236,24 @@ class HostState {
   /// The log with [id], removed or not.
   HostedLog? log(String id) => _logs.where((l) => l.id == id).firstOrNull;
 
-  /// The log at [hostname] (or with that id), removed or not; a served one first.
+  /// The log with the id [hostnameOrId], or the one at that address: the one served there,
+  /// else the one taken off it; null when none is, or when more than one was taken off it and
+  /// none is served (say which by its id).
   HostedLog? find(String hostnameOrId) {
+    final byId = log(hostnameOrId);
+    if (byId != null) return byId;
     final want = normalizeHostname(hostnameOrId);
-    final matches = [for (final l in _logs) if (l.id == hostnameOrId || (want != null && l.hostname == want)) l];
-    return matches.where((l) => !l.removed).firstOrNull ?? matches.firstOrNull;
+    if (want == null) return null;
+    final served = [for (final l in _logs) if (!l.removed && l.hostname == want) l];
+    if (served.isNotEmpty) return served.length == 1 ? served.single : null;
+    final gone = removedAt(want);
+    return gone.length == 1 ? gone.single : null;
+  }
+
+  /// The logs taken off [hostname] (its data still there), oldest first.
+  List<HostedLog> removedAt(String hostname) {
+    final want = normalizeHostname(hostname);
+    return [for (final l in _logs) if (l.removed && want != null && l.hostname == want) l];
   }
 
   /// The first family's address, as the host last saw it (`DEN_PUBLIC_URL`).
@@ -255,6 +268,13 @@ class HostState {
       ..removeWhere((l) => l.id == log.id)
       ..add(log);
     save();
+  }
+
+  /// Drops the record of log [id] (its data deleted), and saves.
+  void forget(String id) {
+    final before = _logs.length;
+    _logs.removeWhere((l) => l.id == id);
+    if (_logs.length != before) save();
   }
 
   /// Notes the first family's address, saving when it changed.
@@ -331,10 +351,6 @@ abstract interface class HostLink {
 
   /// Every Web Push key the host has.
   VapidKeyring get vapid;
-
-  /// The Web Push key a browser at [request]'s address subscribes with: that address's family's
-  /// own key, whichever family the request is for. Null when the address names no family.
-  VapidKeys? vapidFor(Request request);
 
   /// Whether any family on the host keeps an invite under [key] (four words, or `slot:<hex>`).
   bool inviteTaken(String key);

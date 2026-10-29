@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
+import 'package:den_hub/src/edge.dart' show WrongGuesses;
 import 'package:den_net/den_net.dart';
 import 'package:http/http.dart' as http;
 import 'package:shelf/shelf.dart';
@@ -54,7 +55,8 @@ void main() {
     final b = _Log('b', familyId: 'FB', hostnames: {'den-b.test'}, holds: {'tb', 'both'});
     final c = _Log('c', hostnames: {'den-c.test'}, holds: {'both'});
     final two = TenantRouter(() => [a, b]);
-    final one = TenantRouter(() => [a]);
+    final one = TenantRouter(() => [a], single: () => true);
+    final left = TenantRouter(() => [a]);
 
     test('by address: its family; with one family, that one at any address; with several, none at a stranger\'s', () {
       expect(two.forHostname('den-a.test'), a);
@@ -63,6 +65,10 @@ void main() {
       expect(two.forHostname(null), isNull);
       expect(one.forHostname('127.0.0.1'), a, reason: 'a hub with one family answers as it always did');
       expect(one.forHostname(null), a);
+      expect(left.forHostname('den-b.test'), isNull,
+          reason: "a host for several families with only one attached now (the others opening): never that one's");
+      expect(left.forHostname(null), isNull);
+      expect(TenantRouter<_Log>(() => [], single: () => true).forHostname('x'), isNull, reason: 'none attached yet');
       final clash = TenantRouter(() => [a, _Log('a2', hostnames: {'den-a.test'})]);
       expect(clash.forHostname('den-a.test'), isNull, reason: 'two families at one address: neither');
     });
@@ -87,6 +93,8 @@ void main() {
       final three = TenantRouter(() => [a, b, c]);
       expect(three.forCredential('127.0.0.1', (l) => holds(l, 'both')), isNull, reason: 'held twice: neither');
       expect(one.forCredential('127.0.0.1', (l) => holds(l, 'nope')), a);
+      expect(left.forCredential('den-b.test', (l) => holds(l, 'nope')), isNull);
+      expect(left.forCredential('127.0.0.1', (l) => holds(l, 'ta')), a, reason: 'whose token it is');
     });
 
     test('a book: whoever keeps it, wherever asked; else the address\'s family', () {
@@ -192,14 +200,14 @@ void main() {
       await expectLater(hello(null, '127.0.0.1'), throwsA(isA<SessionException>()), reason: 'two families, a stranger\'s address');
     });
 
-    test('a signed request goes to the hub it names; without the name, to its address\'s family or the one that knows the device', () async {
+    test('a signed request goes to the hub it names once its signature checks out there; else to its address\'s family', () async {
       final a = f['den-a.test'];
       Future<ApiResult> feeds({String? hostname, bool sendHub = true}) =>
           f.signed(a.phone, 'GET', '/api/v1/feeds', hub: a.hubDen.deviceId, hostname: hostname, sendHub: sendHub);
       expect((await feeds(hostname: 'den-b.test')).status, 200, reason: 'X-Den-Hub decides');
       expect((await feeds()).status, 200);
       expect((await feeds(hostname: 'den-a.test', sendHub: false)).status, 200, reason: 'an older app at its own address');
-      expect((await feeds(sendHub: false)).status, 200, reason: 'an older app at an address that is no family\'s: the one family that knows it');
+      expect((await feeds(sendHub: false)).status, 401, reason: "an older app at an address that is no family's: nobody's, by address");
       expect((await feeds(hostname: 'den-b.test', sendHub: false)).status, 401, reason: "b's address is b's: a's device isn't one of b's");
     });
 
@@ -224,6 +232,45 @@ void main() {
       expect((await b.hub.context.fetch.get(Uri.parse('https://den-a.test/ics/denfeed_guess/shared.ics'))).statusCode, 401);
     });
 
+    test('made-up signature headers reach nothing an address doesn\'t, and say nothing about which hubs are here', () async {
+      final b = f['den-b.test'];
+      Map<String, String> fake(String hub) => {DeviceRequest.device: 'NOBODY', DeviceRequest.signature: 'x', DeviceRequest.hubHeader: hub};
+      final plain = await f.call('GET', '/api/v1/hub/status');
+      final known = await f.call('GET', '/api/v1/hub/status', headers: fake(b.hubDen.deviceId));
+      final unknown = await f.call('GET', '/api/v1/hub/status', headers: fake('NOSUCHHUB0000000'));
+      expect(plain.error['code'], 'no_family');
+      expect([known.status, known.text], [unknown.status, unknown.text], reason: 'a hub that is here and one that isn\'t look the same');
+      expect(known.status, isNot(200));
+      final atA = await f.call('GET', '/api/v1/push', hostname: 'den-a.test', headers: fake(b.hubDen.deviceId));
+      expect(atA.status, 401, reason: "by address: a's, which refuses it");
+    });
+
+    test("one family's bad calendar links never use up another's in-process reads, and nothing else is read in-process", () async {
+      final a = f['den-a.test'];
+      final b = f['den-b.test'];
+      final made = await f.signed(b.phone, 'POST', '/api/v1/feeds',
+          hub: b.hubDen.deviceId, body: {'feed': 'shared', 'label': 'For the other family'});
+      final url = made.body['url']! as String;
+      var limited = false;
+      for (var i = 0; i < 45 && !limited; i++) {
+        final r = await a.hub.context.fetch.get(Uri.parse('https://den-b.test/ics/denfeed_guess$i/shared.ics'));
+        limited = r.statusCode == 429;
+      }
+      expect(limited, isTrue, reason: "a's hub spent its own failed tries");
+      final c = await HostFixture.addFamily(f.host, 'den-c.test');
+      addTearDown(() async {
+        await f.host.remove(c.hub);
+        await c.hubDen.close();
+        await c.phone.close();
+      });
+      expect((await c.hub.context.fetch.get(Uri.parse(url))).statusCode, 200, reason: "c's reads are c's own");
+      // Anything but reading a calendar link goes out through NetGuard (which finds no DNS here).
+      for (final other in ['https://den-b.test/api/v1/hub/status', 'https://den-b.test/api/v1/host', 'https://den-b.test/.well-known/oauth-authorization-server']) {
+        await expectLater(a.hub.context.fetch.get(Uri.parse(other)), throwsA(isA<SocketException>()), reason: other);
+      }
+      await expectLater(a.hub.context.fetch.post(Uri.parse(url)), throwsA(isA<SocketException>()), reason: 'only GET');
+    });
+
     test('families come and go while the host runs; two can never share a hub, a family or an address', () async {
       final c = await HostFixture.addFamily(f.host, 'den-c.test');
       expect((await f.call('GET', '/api/v1/hub/status', hostname: 'den-c.test')).status, 200);
@@ -232,6 +279,8 @@ void main() {
       expect((await f.call('GET', '/api/v1/hub/status', hostname: 'den-c.test')).error['code'], 'no_family');
       await c.hubDen.close();
       await c.phone.close();
+      expect((await f.call('GET', '/api/v1/hub/status', hostname: 'den-c.test')).error['code'], 'no_family',
+          reason: "never another family's answer, with one family fewer");
 
       final a = f['den-a.test'];
       await expectLater(f.host.add(a.hubDen, HubConfig(mdns: false, publicUrl: Uri.parse('https://den-z.test'))), throwsStateError);
@@ -245,6 +294,113 @@ void main() {
       await otherHub.close();
       await sameFamily.close();
     });
+  });
+
+  group('a host whose families aren\'t all open', () {
+    late Directory dir;
+    setUp(() async => dir = await Directory.systemTemp.createTemp('den-host-open'));
+    tearDown(() => dir.delete(recursive: true));
+
+    HubLog quiet() => HubLog(level: LogLevel.error, sink: (_) {});
+
+    test("a configured address whose family isn't attached answers 503, never another family's, and /health fails", () async {
+      final host = await DenHost.start(
+          HostConfig(port: 0, host: InternetAddress.loopbackIPv4, log: quiet(), expected: const ['den-a.test', 'den-b.test']));
+      final a = await HostFixture.addFamily(host, 'den-a.test');
+      addTearDown(() async {
+        await host.stop();
+        await a.hubDen.close();
+        await a.phone.close();
+      });
+      Future<ApiResult> at(String method, String path, String? name) =>
+          apiCall(host.localUrl, method, path, headers: {'host': ?name});
+      for (final (method, path) in [
+        ('GET', '/api/v1/hub/status'),
+        ('GET', '/ics/denfeed_abcdef/shared.ics'),
+        ('GET', '/ics/denfeed_abcdef/watch'),
+        ('POST', '/api/v1/link'),
+        ('GET', '/health'),
+      ]) {
+        final r = await at(method, path, 'den-b.test');
+        expect(r.status, 503, reason: '$method $path: ${r.text}');
+        expect(r.headers['retry-after'], isNotNull);
+      }
+      final health = await at('GET', '/health', null);
+      expect(health.status, 503, reason: 'Docker waits for every family');
+      expect(health.body['waiting'], 1);
+      // A hello naming no family at b's address is closed, never a's.
+      final ws = await WebSocket.connect('${host.localUrl.replace(scheme: 'ws', path: '/ws')}', headers: {'host': 'den-b.test'});
+      await expectLater(
+          Session.connect(IOWebSocketChannel(ws), keys: await DeviceKeys.generate(), familyId: null, timeout: const Duration(seconds: 5)),
+          throwsA(isA<SessionException>()));
+      expect((await at('GET', '/api/v1/hub/status', 'den-a.test')).status, 200, reason: 'a is open');
+
+      final b = await HostFixture.addFamily(host, 'den-b.test');
+      addTearDown(() async {
+        await b.hubDen.close();
+        await b.phone.close();
+      });
+      expect((await at('GET', '/api/v1/hub/status', 'den-b.test')).status, 200);
+      expect((await at('GET', '/health', null)).status, 200);
+    });
+
+    test('a host for one family answers 503 everywhere until that family is attached', () async {
+      final host = await DenHost.start(HostConfig(port: 0, host: InternetAddress.loopbackIPv4, log: quiet(), single: true));
+      addTearDown(host.stop);
+      for (final name in ['den-a.test', null]) {
+        expect((await apiCall(host.localUrl, 'GET', '/health', headers: {'host': ?name})).status, 503);
+      }
+      final a = await HostFixture.addFamily(host, 'den-a.test');
+      addTearDown(() async {
+        await a.hubDen.close();
+        await a.phone.close();
+      });
+      expect((await apiCall(host.localUrl, 'GET', '/health')).status, 200);
+      expect((await apiCall(host.localUrl, 'GET', '/api/v1/hub/status', headers: {'host': 'elsewhere.test'})).status, 200);
+    });
+
+    test("a family in host.json that doesn't open is tried again until it does", () async {
+      var tries = 0;
+      final phone = await createDemoFamily();
+      final hubDen = await HubFixture.approvedHub(phone);
+      addTearDown(() async {
+        await hubDen.close();
+        await phone.close();
+      });
+      Future<HostedTenant> open(HostedLog log) async {
+        tries++;
+        if (tries < 3) throw StateError('Another den_hub is using it');
+        return (den: hubDen, config: HubConfig(mdns: false, publicUrl: log.publicUrl, log: quiet()), close: () async {});
+      }
+
+      HostState(dir.path).put(HostedLog(id: 'smith', publicUrl: Uri.parse('https://den-b.test'), added: 1));
+      final host = await DenHost.start(HostConfig(
+          port: 0, host: InternetAddress.loopbackIPv4, log: quiet(), dataDir: dir.path, openLog: open,
+          retryInterval: const Duration(milliseconds: 100)));
+      addTearDown(host.stop);
+      final missing = await host.openConfigured();
+      expect(missing.map((l) => l.id), ['smith']);
+      expect((await apiCall(host.localUrl, 'GET', '/api/v1/hub/status', headers: {'host': 'den-b.test'})).status, 503);
+      await eventually(() => host.tenants.isNotEmpty);
+      expect(tries, 3);
+      expect((await apiCall(host.localUrl, 'GET', '/api/v1/hub/status', headers: {'host': 'den-b.test'})).status, 200);
+      expect(host.unavailable, isEmpty);
+    });
+  });
+
+  test('wrong-guess ceilings grow with the families, while each client keeps its own count', () {
+    var families = 1;
+    final guesses = WrongGuesses(perClient: 2, ceiling: 3, window: const Duration(minutes: 10), scale: () => families);
+    for (final c in ['a', 'b', 'c']) {
+      guesses.add(c, 1000);
+    }
+    expect(guesses.wait('d', 1001)?.all, isTrue, reason: 'one family: 3 for everyone');
+    families = 2;
+    expect(guesses.wait('d', 1001), isNull, reason: 'two families: 6 for everyone');
+    guesses
+      ..add('d', 1002)
+      ..add('d', 1003);
+    expect(guesses.wait('d', 1004)?.all, isFalse, reason: "and still 2 for one client");
   });
 
   test('a host with one family answers at any address, as a hub always has', () async {

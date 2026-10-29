@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
@@ -11,6 +12,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import 'access.dart';
 import 'config.dart';
+import 'device_auth.dart';
 import 'edge.dart';
 import 'host_state.dart';
 import 'http_util.dart';
@@ -18,7 +20,6 @@ import 'hub.dart';
 import 'invites.dart';
 import 'log.dart';
 import 'net_guard.dart';
-import 'push/web_push_crypto.dart';
 import 'recovery.dart';
 import 'tenant_router.dart';
 import 'web.dart';
@@ -46,10 +47,14 @@ class HostConfig {
     this.fetchClient,
     this.openLog,
     this.createLog,
+    this.single = false,
+    this.expected = const [],
+    this.retryInterval = const Duration(seconds: 30),
   });
 
   /// The host-wide part of [config], for a host serving that one hub ([DenHub.start]).
   factory HostConfig.of(HubConfig config) => HostConfig(
+        single: true,
         port: config.port,
         host: config.host,
         webDir: config.webDir,
@@ -108,6 +113,20 @@ class HostConfig {
   /// Makes a fresh log for a new family (`den_hub add-family`), ready for its first parent's
   /// phone. Null: as [openLog].
   final Future<HostedTenant> Function(HostedLog log)? createLog;
+
+  /// Whether the host is configured for one family: while `host.json` lists no other, that
+  /// family answers at any address, as a hub always has ([DenHub.start], and `den_hub serve` on
+  /// a data directory with one family). Otherwise each family answers at its own address only,
+  /// and an address that is none of theirs gets no family.
+  final bool single;
+
+  /// The addresses the host serves besides those `host.json` lists (the first family's public
+  /// URL's name). Until the family at one of them is attached, requests to it are answered `503`
+  /// with `Retry-After`, never by another family, and the host's `/health` fails.
+  final List<String> expected;
+
+  /// How often the host tries again to open a family in `host.json` that didn't open.
+  final Duration retryInterval;
 }
 
 /// The Den host: one process serving several families' logs (docs/hosting.md, "One host for
@@ -122,17 +141,19 @@ class HostConfig {
 /// | Request | Goes to |
 /// | --- | --- |
 /// | `/ws` | the family the hello names (read before any session answers); a hello naming none, the address's |
-/// | signed by a device | the hub `X-Den-Hub` names; without it, the address's family, else the one that knows the device |
+/// | signed by a device | the hub `X-Den-Hub` names, once the signature checks out there from the headers; else the address's family |
 /// | a bearer token | the address's family, else the one whose token it is |
 /// | `/ics/<secret>/…` | the address's family, else the one whose link it is |
 /// | invite words, recovery codes, link codes, `den_hub recover` | the one family that keeps them (unique per host) |
-/// | a setup code | the address's family, else the one waiting with that code |
+/// | a setup code | the address's family |
 /// | an invite grant | the hub it names |
 /// | everything else | the address's family |
 ///
 /// "The address's family" is the family whose public URL names the request's host; on a host
-/// with one family, that family whatever the address. With several, a request that names no
-/// family and comes to no family's address gets none: fail closed.
+/// configured for one family ([HostConfig.single]), that family whatever the address. With
+/// several, a request that names no family and comes to no family's address gets none: fail
+/// closed. An address the host is configured to serve whose family isn't attached (it is
+/// starting, or didn't open and is tried again) gets `503` with `Retry-After`.
 class DenHost implements HostLink {
   DenHost._(this.config, this.state, this.log);
 
@@ -148,13 +169,18 @@ class DenHost implements HostLink {
   @override
   final RateLimiter limits = RateLimiter();
 
+  /// Wrong invite words: one client's count is the host's, and the count for everyone together
+  /// grows with the families on it, so a few clients can't keep every family from joining.
   @override
-  final WrongGuesses inviteGuesses =
-      WrongGuesses(perClient: HubInvites.maxWrong, ceiling: HubInvites.wrongCeiling, window: HubInvites.wrongWindow);
+  late final WrongGuesses inviteGuesses = WrongGuesses(
+      perClient: HubInvites.maxWrong, ceiling: HubInvites.wrongCeiling, window: HubInvites.wrongWindow, scale: _families);
 
+  /// Wrong recovery codes, counted as [inviteGuesses] are.
   @override
-  final WrongGuesses recoveryGuesses =
-      WrongGuesses(perClient: HubRecovery.maxWrong, ceiling: HubRecovery.wrongCeiling, window: HubRecovery.wrongWindow);
+  late final WrongGuesses recoveryGuesses = WrongGuesses(
+      perClient: HubRecovery.maxWrong, ceiling: HubRecovery.wrongCeiling, window: HubRecovery.wrongWindow, scale: _families);
+
+  int _families() => max(1, _tenants.length);
 
   @override
   late final http_client.Client http;
@@ -175,7 +201,13 @@ class DenHost implements HostLink {
   final Map<DenHub, HostedTenant> _opened = {};
   final Map<DenHub, String> _ids = {};
   /// Picks the family each request is for.
-  late final TenantRouter<DenHub> router = TenantRouter(() => List.of(_tenants));
+  late final TenantRouter<DenHub> router = TenantRouter(() => List.of(_tenants), single: () => single);
+
+  /// Whether the host answers as one family at any address: configured for one family, and
+  /// `host.json` lists no other.
+  bool get single => config.single && state.logs.isEmpty;
+
+  Timer? _retry;
   final Map<String, int> _sockets = {};
   final Set<String> _warnedProxies = {};
   late final bool _ownsHttp;
@@ -264,9 +296,6 @@ class DenHost implements HostLink {
   // ------------------------------------------------------------------ HostLink
 
   @override
-  VapidKeys? vapidFor(Request request) => router.mapped(requestHostname(request, config.trustedProxies))?.push.keys;
-
-  @override
   bool inviteTaken(String key) => _tenants.any((t) => t.invites.holds(key));
 
   @override
@@ -282,7 +311,7 @@ class DenHost implements HostLink {
   @override
   String admitSocket(Request request) {
     _limit(request, 'sockets', Limits.sockets, message: 'Too many connections from here. Wait a minute.');
-    final key = clientKey(clientAddress(request, config.trustedProxies));
+    final key = _clientKey(request);
     if ((_sockets[key] ?? 0) >= Limits.openSockets) {
       throw ApiError.rateLimited(30, 'Too many connections from here. Close some and try again.');
     }
@@ -291,26 +320,32 @@ class DenHost implements HostLink {
 
   // ------------------------------------------------------------------ limits
 
+  String _clientKey(Request request) => requestClientKey(request, config.trustedProxies);
+
   void _limit(Request request, String name, Rate rate, {String? message}) {
-    final key = clientKey(clientAddress(request, config.trustedProxies));
+    final key = _clientKey(request);
     if (limits.allow(name, key, rate)) return;
     final wait = limits.retryAfter(name, key, rate);
     throw message == null ? ApiError.rateLimited(wait) : ApiError.rateLimited(wait, message);
   }
 
-  void _failed(Request request) => limits.allow('failures', clientKey(clientAddress(request, config.trustedProxies)), Limits.failures);
+  void _failed(Request request) => limits.allow('failures', _clientKey(request), Limits.failures);
 
   void _checkFailures(Request request) {
-    final key = clientKey(clientAddress(request, config.trustedProxies));
+    final key = _clientKey(request);
     if (limits.exhausted('failures', key, Limits.failures)) {
       throw ApiError.rateLimited(limits.retryAfter('failures', key, Limits.failures));
     }
   }
 
+  /// Headers a reverse proxy adds; a request with any of them didn't come from this machine
+  /// itself, whatever its peer address.
+  static const List<String> _proxyHeaders = ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-forwarded-host', 'x-forwarded-proto'];
+
   /// Whether [request] came from this machine itself, not through a proxy.
   static bool local(Request request) {
     final peer = peerAddress(request);
-    return peer != null && peer.isLoopback && !request.headers.containsKey('x-forwarded-for');
+    return peer != null && peer.isLoopback && !_proxyHeaders.any(request.headers.containsKey);
   }
 
   /// The anonymous budget, for a request the host answers or reads itself.
@@ -394,6 +429,25 @@ class DenHost implements HostLink {
   /// No family is at the address, and nothing in the request names one.
   static ApiError _noFamily() => ApiError(404, 'no_family', 'No family\'s Den is at this address.');
 
+  /// The addresses the host is configured to serve: [HostConfig.expected] and every family
+  /// `host.json` lists.
+  Set<String> get _configured => {
+        for (final e in config.expected) ?normalizeHostname(e),
+        for (final l in state.logs) ?l.hostname,
+      };
+
+  /// The configured addresses whose family isn't attached now (starting, or tried again).
+  List<String> get unavailable => [for (final a in _configured) if (router.mapped(a) == null) a];
+
+  /// Whether a request to [hostname] waits for its family: the address is one the host is
+  /// configured to serve and its family isn't attached; or the host is configured for one family
+  /// that isn't attached yet.
+  bool awaiting(String? hostname) {
+    if (single && _tenants.isEmpty) return true;
+    if (hostname == null || router.mapped(hostname) != null) return false;
+    return _configured.contains(hostname);
+  }
+
   FutureOr<Response> _route(Request request) async {
     final segments = request.url.pathSegments.where((s) => s.isNotEmpty).toList();
     final first = segments.isEmpty ? '' : segments.first;
@@ -409,6 +463,24 @@ class DenHost implements HostLink {
     final headers = request.headers;
     final method = request.method;
 
+    // Signed by a device and naming its hub: that hub, once the signature checks out there from
+    // the headers alone (the body hash it covers is in X-Den-Body-SHA256). A signature that
+    // doesn't, or names a hub that isn't here, goes by address like any request, so made-up
+    // headers reach nothing an address doesn't and say nothing about which hubs are here.
+    final named = headers[DeviceRequest.hubHeader];
+    final signed = headers[DeviceRequest.device] != null && headers[DeviceRequest.signature] != null;
+    if (signed && named != null) {
+      final tenant = router.forHub(named);
+      if (tenant != null && await tenant.verifiesHeaders(request)) {
+        return tenant.handle(request.change(context: {DeviceAuth.verifiedHeaders: true}));
+      }
+    }
+
+    // An address the host serves whose family isn't here yet: it is starting (or didn't open,
+    // and is tried again). Never another family's answer, and never a refusal a client could
+    // take for good: a calendar's subscribers keep their copies through a 503.
+    if (awaiting(hostname)) throw ApiError.starting();
+
     // A calendar link: the address's family, else the one whose link it is.
     if (first == 'ics' && segments.length == 3) {
       final secret = segments[1];
@@ -416,19 +488,15 @@ class DenHost implements HostLink {
       if (tenant != null) return tenant.handle(request);
       _checkFailures(request);
       _failed(request);
-      throw ApiError.unauthorized('That calendar link no longer works. Make a new one in Den: Settings, Calendars.');
+      throw _noFamily();
     }
 
-    // Signed by a device: the hub it names (the signature covers the same id), else the
-    // address's family, else the one family that knows the device.
-    final device = headers[DeviceRequest.device];
-    if (device != null && headers[DeviceRequest.signature] != null) {
-      final named = headers[DeviceRequest.hubHeader];
-      final tenant = named != null ? router.forHub(named) : router.forCredential(hostname, (t) => t.knowsDevice(device));
+    // Signed, without a hub that checked it: the address's family, which checks it.
+    if (signed) {
+      final tenant = router.forHostname(hostname);
       if (tenant != null) return tenant.handle(request);
       _checkFailures(request);
       _failed(request);
-      log.warn('Refused a signed request: no family here has that hub');
       throw ApiError.unauthorized('This needs a request signed by a device in this family.');
     }
 
@@ -476,25 +544,19 @@ class DenHost implements HostLink {
       if (tenant != null) return tenant.handle(again);
       throw _noFamily();
     }
-    // A setup code: the address's family, else the one family waiting with that code.
-    if (method == 'POST' && path == 'api/v1/hub/setup') {
-      final at = router.forHostname(hostname);
-      if (at != null) return at.handle(request);
-      final admitted = _anonymous(request);
-      _checkFailures(request);
-      final body = await readBodyBytes(admitted);
-      final code = _setupCode(body);
-      final waiting = code == null ? null : TenantRouter.only(_tenants.where((t) => t.waitsForSetupCode(code)));
-      if (waiting != null) return waiting.handle(admitted.change(body: body));
-      _failed(request);
-      throw ApiError(403, 'permission_denied', 'That setup code isn\'t right.');
-    }
 
+    // Everything else, a setup code included: the address's family.
     final tenant = router.forHostname(hostname);
     if (tenant != null) return tenant.handle(request);
     if (path == 'health') {
       _anonymous(request);
-      return jsonResponse({'ok': true, 'api': 1, 'ready': _tenants.isNotEmpty && _tenants.every((t) => t.ready)});
+      final waiting = unavailable.length;
+      return jsonResponse({
+        'ok': waiting == 0,
+        'api': 1,
+        'ready': waiting == 0 && _tenants.isNotEmpty && _tenants.every((t) => t.ready),
+        if (waiting > 0) 'waiting': waiting,
+      }, status: waiting == 0 ? 200 : 503, headers: {if (waiting > 0) 'retry-after': '10'});
     }
     _anonymous(request);
     throw _noFamily();
@@ -511,16 +573,6 @@ class DenHost implements HostLink {
     }
   }
 
-  static String? _setupCode(List<int> body) {
-    try {
-      final json = jsonDecode(utf8.decode(body));
-      final code = json is Map ? json['code'] : null;
-      return code is String && code.length <= 40 ? code : null;
-    } on Object {
-      return null;
-    }
-  }
-
   /// `GET /ws`: device sync. The host reads each connection's hello before any family answers
   /// it, and hands the connection to the family it names (a hello naming none: the address's),
   /// whose sync node then checks the hello in full and refuses any family but its own. A hello
@@ -531,7 +583,9 @@ class DenHost implements HostLink {
     return helloWebSocketHandler(
       (hello) {
         final family = hello.family;
-        final tenant = family == null ? router.forHostname(hostname) : router.forFamily(family, hostname: hostname);
+        final tenant = family != null
+            ? router.forFamily(family, hostname: hostname)
+            : (awaiting(hostname) ? null : router.forHostname(hostname));
         if (tenant == null || _stopped) {
           unawaited(hello.channel.sink.close().then((_) {}, onError: (Object _) {}));
           return;
@@ -590,7 +644,7 @@ class DenHost implements HostLink {
     throw ApiError.notFound();
   }
 
-  Future<Response> _serial(Future<Response> Function() body) {
+  Future<T> _serial<T>(Future<T> Function() body) {
     final run = _busy.then((_) => body());
     _busy = run.then((_) {}, onError: (Object _) {});
     return run;
@@ -615,23 +669,36 @@ class DenHost implements HostLink {
     return Uri(scheme: uri.scheme, host: uri.host.toLowerCase(), port: uri.hasPort ? uri.port : null);
   }
 
+  /// Throws `409 conflict` when [url]'s name is a family's on this host: one attached, the
+  /// first family's, or any family `host.json` lists, attached now or not.
   void _checkAddress(Uri url) {
     final name = normalizeHostname(url.host);
     if (name == null) throw ApiError.invalid('That isn\'t an address.', field: 'public_url');
-    if (_tenants.any((t) => t.hostnames.contains(name))) {
+    if (_tenants.any((t) => t.hostnames.contains(name)) ||
+        _configured.contains(name) ||
+        (state.primaryUrl != null && normalizeHostname(state.primaryUrl!.host) == name)) {
       throw ApiError(409, 'conflict', '$name is a family\'s address on this host already.');
     }
   }
 
-  /// `POST /api/v1/host/families {public_url}`: a new family at that address, ready for its
+  /// `POST /api/v1/host/families {public_url, id?}`: a new family at that address, ready for its
   /// first parent's phone (the answer has the setup code). An address a family was taken off
-  /// brings that family back.
+  /// brings that family back; when more than one was taken off it, `id` says which.
   Future<Response> _addFamily(Map<String, Object?> json) async {
     final url = _publicUrl(json['public_url']);
     if (url == null) throw ApiError.invalid('"public_url" must be an address like https://den-smith.example.com.', field: 'public_url');
     _checkAddress(url);
-    final previous = state.find(url.host);
-    if (previous != null && previous.removed) {
+    final id = json['id'];
+    final gone = state.removedAt(url.host);
+    if (id != null && (id is! String || !gone.any((l) => l.id == id))) {
+      throw ApiError.invalid('No family taken off ${url.host} has that id.', field: 'id');
+    }
+    if (id == null && gone.length > 1) {
+      throw ApiError(409, 'ambiguous', 'More than one family was taken off ${url.host}: say which with its id.',
+          details: {'ids': [for (final l in gone) l.id]});
+    }
+    final previous = id == null ? gone.firstOrNull : gone.firstWhere((l) => l.id == id);
+    if (previous != null) {
       final back = previous.copyWith(removed: false);
       final tenant = await _open(back, fresh: false);
       state.put(back);
@@ -694,6 +761,35 @@ class DenHost implements HostLink {
     return jsonResponse({'ok': true, 'id': log.id});
   }
 
+  /// The families `host.json` lists that aren't attached.
+  List<HostedLog> get _missing => [for (final l in state.logs) if (!_ids.containsValue(l.id)) l];
+
+  /// Opens and serves every family `host.json` lists that isn't served yet ([HostConfig.openLog]).
+  /// One that doesn't open (its data directory's lock held by a backup, say) is logged and tried
+  /// again every [HostConfig.retryInterval]; until it opens, requests to its address are answered
+  /// `503` and the host's `/health` fails. Returns the families still missing.
+  Future<List<HostedLog>> openConfigured() async {
+    final missing = await _serial(_openMissing);
+    _retry ??= Timer.periodic(config.retryInterval, (_) {
+      if (_stopped || _missing.isEmpty) return;
+      unawaited(_serial(_openMissing).then((_) {}, onError: (Object _) {}));
+    });
+    return missing;
+  }
+
+  Future<List<HostedLog>> _openMissing() async {
+    for (final l in _missing) {
+      try {
+        await _open(l, fresh: false);
+        log.info('Serving ${l.hostname ?? l.id}');
+      } on Object catch (e) {
+        final why = e is ApiError ? e.message : (e is StateError ? e.message : '${e.runtimeType}');
+        log.error('Not serving ${l.hostname ?? l.id} yet ($why); trying again in ${config.retryInterval.inSeconds}s');
+      }
+    }
+    return _missing;
+  }
+
   /// Called by a tenant once it has stopped: closes what the host opened for it.
   Future<void> closed(DenHub tenant) async {
     final opened = _opened.remove(tenant);
@@ -709,10 +805,16 @@ class DenHost implements HostLink {
     return diff == 0;
   }
 
-  /// The family other than the hub [from]'s whose address [url] is (`https`, its name, the port
-  /// its address names), or null.
-  DenHub? _otherFamilyAt(Uri url, String from) {
+  /// The family other than the hub [from]'s whose calendar link [request] reads (`GET` or `HEAD`
+  /// of `/ics/<secret>/<file>` at its `https` address, on the port its address names), or null.
+  /// Nothing else is answered in-process: every other request goes out through NetGuard as any
+  /// fetch does.
+  DenHub? _otherFamilyAt(http_client.BaseRequest request, String from) {
+    final url = request.url;
     if (_stopped || !url.isScheme('https') || url.userInfo.isNotEmpty) return null;
+    if (request.method != 'GET' && request.method != 'HEAD') return null;
+    final path = url.pathSegments;
+    if (path.length != 3 || path[0] != 'ics' || path[1].isEmpty || path[2].isEmpty) return null;
     final at = router.mapped(normalizeHostname(url.host));
     if (at == null || at.hubDevice == from || at.config.publicUrl?.port != url.port) return null;
     return at;
@@ -722,6 +824,7 @@ class DenHost implements HostLink {
   Future<void> stop() async {
     if (_stopped) return;
     _stopped = true;
+    _retry?.cancel();
     for (final t in List.of(_tenants).reversed) {
       await t.stop();
     }
@@ -731,12 +834,14 @@ class DenHost implements HostLink {
   }
 }
 
-/// One family's outgoing client for addresses callers give its hub ([DenHost.fetchFor]): a
-/// request to another family's address on the same host (a calendar that family shares, and its
+/// One family's outgoing client for addresses callers give its hub ([DenHost.fetchFor]): reading
+/// another family's calendar link on the same host (`GET /ics/<secret>/shared.ics`, and its
 /// watch stream) is answered by the host in this process, as if it had come in from outside
-/// with nothing but what it carries, so it needs no DNS, no `extra_hosts` and no `DEN_PEER_HUBS`,
-/// and never leaves the machine. Everything else, its own family's address included, goes
-/// through the host's [NetGuard] client as before.
+/// with nothing but its secret, so it needs no DNS, no `extra_hosts` and no `DEN_PEER_HUBS`, and
+/// never leaves the machine. It counts against the limits of the hub that asked
+/// ([inProcessClient]), so one family's bad links never use up another's. Everything else (any
+/// other path or method, its own family's address) goes through the host's [NetGuard] client as
+/// before.
 class _OtherFamilies extends http_client.BaseClient {
   _OtherFamilies(this._host, this._from);
 
@@ -746,12 +851,13 @@ class _OtherFamilies extends http_client.BaseClient {
   @override
   Future<http_client.StreamedResponse> send(http_client.BaseRequest request) async {
     final url = request.url;
-    if (_host._otherFamilyAt(url, _from) == null) return _host.fetch.send(request);
+    if (_host._otherFamilyAt(request, _from) == null) return _host.fetch.send(request);
     final response = await _host._handler(Request(
       request.method,
       url,
       headers: {...request.headers, 'host': url.host},
       body: request.finalize(),
+      context: {inProcessClient: _from},
     ));
     return http_client.StreamedResponse(
       response.read(),

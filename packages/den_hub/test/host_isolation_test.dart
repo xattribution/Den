@@ -78,11 +78,17 @@ void main() {
     test("a device of a's, signing for b's hub or naming it, is refused by b and learns nothing", () async {
       final forB = await f.signed(a.phone, 'GET', '/api/v1/feeds', hub: b.hubDen.deviceId, hostname: 'den-b.test');
       expect(forB.status, 401);
-      // Signed for a's hub, but X-Den-Hub says b: b gets it, and the signature isn't b's.
+      // Signed for a's hub, but X-Den-Hub says b: the signature doesn't check out at b, so it goes
+      // by address. At a's, a answers its own device; at b's, b refuses it.
       final headers = await DeviceRequest.sign(
           keys: a.phone.keys, method: 'GET', url: f.base.resolve('/api/v1/feeds'), body: const [], hub: a.hubDen.deviceId);
       headers[DeviceRequest.hubHeader] = b.hubDen.deviceId;
-      final tampered = await f.call('GET', '/api/v1/feeds', hostname: 'den-a.test', headers: headers);
+      final atA = await f.call('GET', '/api/v1/feeds', hostname: 'den-a.test', headers: headers);
+      expect(atA.status, 200, reason: "a's device, a's hub, a's address: ${atA.text}");
+      final again = await DeviceRequest.sign(
+          keys: a.phone.keys, method: 'GET', url: f.base.resolve('/api/v1/feeds'), body: const [], hub: a.hubDen.deviceId);
+      again[DeviceRequest.hubHeader] = b.hubDen.deviceId;
+      final tampered = await f.call('GET', '/api/v1/feeds', hostname: 'den-b.test', headers: again);
       expect(tampered.status, 401);
       final push = await f.signed(a.phone, 'PUT', '/api/v1/push', hub: b.hubDen.deviceId, body: {'endpoint': 'https://web.push.apple.com/x'});
       expect(push.status, 401);
@@ -158,7 +164,7 @@ void main() {
       expect(atB.statusCode, 401);
       await atB.stream.drain<void>();
       final made = await f.open('/ics/denfeed_nonsense/shared.ics');
-      expect(made.statusCode, 401);
+      expect(made.statusCode, 404, reason: "no family's link, at no family's address: no family");
       await made.stream.drain<void>();
     });
 
@@ -220,7 +226,7 @@ void main() {
       expect(b.hub.invites.holds('slot:$slot'), isFalse);
     });
 
-    test("a setup code opens only the hub waiting with it, and the address's family comes first", () async {
+    test('a setup code works only at its own hub\'s address, and opens only that hub', () async {
       final fresh = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
       final c = await f.host.add(fresh, HubConfig(mdns: false, publicUrl: Uri.parse('https://den-c.test'), log: HubLog.silent()));
       addTearDown(() async {
@@ -230,13 +236,13 @@ void main() {
       final code = c.setupCode!;
       expect([for (final t in f.host.tenants) t.setupCode].where((x) => x == code), hasLength(1));
       final body = {'code': code, 'invite': 'not an invite'};
-      final found = await f.call('POST', '/api/v1/hub/setup', body: body);
+      final found = await f.call('POST', '/api/v1/hub/setup', hostname: 'den-c.test', body: body);
       expect(found.status, 400, reason: 'the code is right (it got as far as the invite): ${found.text}');
       expect(found.error['details'], {'field': 'invite'});
+      final nowhere = await f.call('POST', '/api/v1/hub/setup', body: body);
+      expect(nowhere.error['code'], 'no_family', reason: "at no family's address, no code is tried at all");
       final atA = await f.call('POST', '/api/v1/hub/setup', hostname: 'den-a.test', body: body);
       expect(atA.status, 409, reason: "a's address is a's, which is set up");
-      final wrong = await f.call('POST', '/api/v1/hub/setup', body: {'code': 'ZZZZ-ZZZZ', 'invite': 'x'});
-      expect(wrong.status, 403);
       // A fresh hub on the host is never set up into a family the host serves already.
       final node = SyncNode(a.phone);
       addTearDown(node.close);
@@ -245,6 +251,15 @@ void main() {
       expect(twice.status, 409, reason: twice.text);
       expect(twice.error['message'], contains('on this server already'));
       expect(c.den.hasFamily, isFalse);
+      // Wrong codes count at the hub they were tried at: five, then a wait.
+      var tries = 0;
+      while (tries < 10) {
+        final wrong = await f.call('POST', '/api/v1/hub/setup', hostname: 'den-c.test', body: {'code': 'ZZZZ-ZZZZ', 'invite': 'x'});
+        if (wrong.status == 429) break;
+        expect(wrong.status, 403);
+        tries++;
+      }
+      expect(tries, 5);
     });
 
     test("recovery: a's code lets a phone into a only, typed at any address; den_hub recover reaches only its family", () async {

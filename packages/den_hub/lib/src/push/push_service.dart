@@ -73,8 +73,7 @@ class WebPushService implements HubService, ReminderSink {
   Map<String, Object?> get _devices => _map('devices');
 
   /// The hub's VAPID keys, made and saved on first use. On a Den host they join the host's
-  /// keyring, so the host can sign with them for a browser subscribed at this family's address
-  /// whichever family it takes reminders from.
+  /// keyring too, which keeps every family's key by its public half.
   VapidKeys get keys {
     final have = _keys;
     if (have != null) return have;
@@ -95,20 +94,14 @@ class WebPushService implements HubService, ReminderSink {
     return made;
   }
 
-  /// The key a browser asking at [request]'s address subscribes with: on a Den host, that
-  /// address's family's key (one origin, one key, whichever family's reminders it takes); else
-  /// this hub's own.
-  VapidKeys _keyFor(Request request) => hub.host?.vapidFor(request) ?? keys;
+  /// The key a browser subscribes with: this family's own, whatever address it asks at, so no
+  /// family's subscriptions are ever signed with another family's key. (One app holding several
+  /// families at one origin will need one key there; that is for the app to bring.)
+  VapidKeys _keyFor(Request request) => keys;
 
-  /// The key [sub] was made with: the one it names (from the host's keyring), else this hub's
-  /// own, which every subscription made before the host was.
-  VapidKeys _signerOf(Map<Object?, Object?> sub) {
-    final named = sub['vapid'];
-    if (named is! String || named == b64url(keys.publicKey)) return keys;
-    final found = hub.host?.vapid[named];
-    if (found == null) hub.log.warn("A browser's push subscription names a Web Push key this host doesn't have; signing with the hub's own");
-    return found ?? keys;
-  }
+  /// The key every push of this family's is signed with: its own, the key every subscription it
+  /// holds was made with (an adopted family's included: its key came with it).
+  VapidKeys _signerOf(Map<Object?, Object?> sub) => keys;
 
   Future<void> _save() async {
     await hub.state.save(_doc);
