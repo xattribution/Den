@@ -18,6 +18,7 @@ import '../../../design/words.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/capture/capture_sources.dart';
 import '../../../platform/web/web_app.dart';
+import '../../assistant/assistant.dart';
 import '../../calendar/calendar_words.dart';
 import '../state/capture_service.dart';
 import '../state/quick_add.dart';
@@ -30,6 +31,11 @@ bool _canCapture(AppState app) =>
 /// Opens Add over whatever is showing (Add.dc.html): type or say anything and Den shows what it
 /// found as you go, with When, Who and Repeats to adjust; Add puts it where it goes, with Undo
 /// in place. Or add one thing by hand.
+///
+/// When a parent has turned the AI helper on for the person, the field reads "Add or ask
+/// anything": Den's own reader still adds plain things at once, and a question, a change to
+/// something already there, or words Den can't place go to the helper (`/ask`). Photos and files
+/// still go to the review page. See DESIGN.md, "AI helper".
 Future<void> showAddSheet(BuildContext context) {
   final router = GoRouter.of(context);
   return showDenSheet<void>(
@@ -88,6 +94,15 @@ class _AddSheetState extends State<AddSheet> {
   void _review(CaptureInput input) {
     _close();
     widget.open('/capture', extra: input);
+  }
+
+  /// Sends the words to the AI helper: Add closes and Ask opens with the answer.
+  void _askNow() {
+    final words = _text.text.trim();
+    if (words.isEmpty) return;
+    final spoken = _spoken;
+    _close();
+    widget.open('/ask', extra: AskRequest(words, spoken: spoken));
   }
 
   /// Adds what Den found; the field clears for the next thing.
@@ -167,6 +182,7 @@ class _AddSheetState extends State<AddSheet> {
     final t = context.text;
     final sources = _sources!;
     final capture = _canCapture(app);
+    final helper = helperOn(app, linked: Assistant.linkFor(context, app) != null);
     final today = app.today;
     final choices = [
       if (app.allows(DenAction.editEvents))
@@ -179,7 +195,16 @@ class _AddSheetState extends State<AddSheet> {
 
     return ListenableBuilder(
       listenable: _add,
-      builder: (context, _) => Padding(
+      builder: (context, _) {
+        // Where the words go while the helper is on: a question or a change goes to it at once;
+        // anything else waits for Den's own reader, which adds what it found and hands the
+        // helper what it couldn't place. Null: nothing to send yet.
+        final words = _add.text.trim();
+        final read = !capture || (!_add.reading && (_add.draft != null || _add.problem != null));
+        final route = !helper || words.isEmpty || (!soundsLikeAsking(words) && !read)
+            ? null
+            : addOrAsk(words, found: capture && (_add.draft?.entries.isNotEmpty ?? false));
+        return Padding(
         padding: EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, MediaQuery.viewInsetsOf(context).bottom + Sp.xl),
         child: SingleChildScrollView(
           child: Column(
@@ -205,22 +230,28 @@ class _AddSheetState extends State<AddSheet> {
                   ],
                 ),
               ),
-              if (capture) ...[
+              if (capture || helper) ...[
                 _Entry(
                   controller: _text,
                   focus: _focus,
                   listening: _listening,
+                  label: capture ? (helper ? 'Add or ask anything' : 'Type or say anything') : 'Ask anything',
+                  hint: helper ? (capture ? 'Milk, or what’s on Saturday?' : 'What are my chores today?') : null,
                   onSpeak: sources.canSpeak ? _speak : null,
-                  onSnap: sources.canSnap ? () => _file(sources.snap) : null,
-                  onPick: () => _file(sources.pick),
-                  onPaste: Capabilities.web ? _paste : null,
+                  onSnap: capture && sources.canSnap ? () => _file(sources.snap) : null,
+                  onPick: capture ? () => _file(sources.pick) : null,
+                  onPaste: capture && Capabilities.web ? _paste : null,
                 ),
-                _Found(
-                  add: _add,
-                  onReview: () => _review(_add.spoken ? CaptureInput.spoken(_add.text) : CaptureInput.typed(_add.text)),
-                  onAdd: _addFound,
-                  onUndo: _undoAdded,
-                ),
+                if (route == AddRoute.ask)
+                  _AskOffer(onAsk: _askNow)
+                else if (capture)
+                  _Found(
+                    add: _add,
+                    onReview: () => _review(_add.spoken ? CaptureInput.spoken(_add.text) : CaptureInput.typed(_add.text)),
+                    onAdd: _addFound,
+                    onUndo: _undoAdded,
+                    onAskInstead: helper && route == AddRoute.add ? _askNow : null,
+                  ),
               ] else
                 Padding(
                   padding: const EdgeInsets.only(bottom: Sp.l),
@@ -240,7 +271,8 @@ class _AddSheetState extends State<AddSheet> {
             ],
           ),
         ),
-      ),
+      );
+      },
     );
   }
 
@@ -256,7 +288,9 @@ class _Entry extends StatelessWidget {
     required this.controller,
     required this.focus,
     required this.listening,
-    required this.onPick,
+    this.label = 'Type or say anything',
+    this.hint,
+    this.onPick,
     this.onSpeak,
     this.onSnap,
     this.onPaste,
@@ -265,9 +299,15 @@ class _Entry extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focus;
   final bool listening;
+
+  /// "Type or say anything", or with the AI helper on, "Add or ask anything".
+  final String label;
+  final String? hint;
   final VoidCallback? onSpeak;
   final VoidCallback? onSnap;
-  final VoidCallback onPick;
+
+  /// Null when the person can only ask, not add.
+  final VoidCallback? onPick;
   final VoidCallback? onPaste;
 
   @override
@@ -293,11 +333,11 @@ class _Entry extends StatelessWidget {
       if (onSpeak != null) way(PhosphorIconsRegular.microphone, listening ? 'Stop' : 'Say it', onSpeak!, on: listening),
       if (onSnap != null)
         way(PhosphorIconsRegular.camera, 'Photo of a flyer', onSnap!)
-      else
-        way(PhosphorIconsRegular.filePlus, 'Photo or PDF', onPick),
+      else if (onPick != null)
+        way(PhosphorIconsRegular.filePlus, 'Photo or PDF', onPick!),
       if (onPaste != null) way(PhosphorIconsRegular.clipboardText, 'Paste', onPaste!),
     ];
-    final file = onSnap == null
+    final file = onSnap == null || onPick == null
         ? null
         : Align(
             alignment: AlignmentDirectional.centerStart,
@@ -312,7 +352,7 @@ class _Entry extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(listening ? 'Listening' : 'Type or say anything', style: t.meta(c.ink2)),
+          Text(listening ? 'Listening' : label, style: t.meta(c.ink2)),
           const SizedBox(height: 6),
           TextField(
             controller: controller,
@@ -329,25 +369,27 @@ class _Entry extends StatelessWidget {
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
-              hintText: 'Soccer Wednesday at 5 for Leo',
+              hintText: hint ?? 'Soccer Wednesday at 5 for Leo',
               hintStyle: t.body(c.ink3).copyWith(fontSize: 20 * t.scale, height: 1.3),
             ),
           ),
-          const SizedBox(height: 14),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              // Side by side while they fit; otherwise one under another.
-              final scale = MediaQuery.textScalerOf(context).scale(1);
-              if (scale <= 1.35 && (ways.length <= 2 && constraints.maxWidth >= 300 || constraints.maxWidth >= 160.0 * ways.length)) {
-                return Row(
-                  children: [
-                    for (final (i, w) in ways.indexed) ...[if (i > 0) const SizedBox(width: Sp.s), Expanded(child: w)],
-                  ],
-                );
-              }
-              return Wrap(spacing: Sp.s, runSpacing: Sp.s, children: ways);
-            },
-          ),
+          if (ways.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                // Side by side while they fit; otherwise one under another.
+                final scale = MediaQuery.textScalerOf(context).scale(1);
+                if (scale <= 1.35 && (ways.length <= 2 && constraints.maxWidth >= 300 || constraints.maxWidth >= 160.0 * ways.length)) {
+                  return Row(
+                    children: [
+                      for (final (i, w) in ways.indexed) ...[if (i > 0) const SizedBox(width: Sp.s), Expanded(child: w)],
+                    ],
+                  );
+                }
+                return Wrap(spacing: Sp.s, runSpacing: Sp.s, children: ways);
+              },
+            ),
+          ],
           if (file != null) ...[const SizedBox(height: Sp.xs), file],
         ],
       ),
@@ -357,12 +399,15 @@ class _Entry extends StatelessWidget {
 
 /// What Den found in the words, to adjust and add; or what was just added, with Undo.
 class _Found extends StatelessWidget {
-  const _Found({required this.add, required this.onReview, required this.onAdd, required this.onUndo});
+  const _Found({required this.add, required this.onReview, required this.onAdd, required this.onUndo, this.onAskInstead});
 
   final QuickAdd add;
   final VoidCallback onReview;
   final VoidCallback onAdd;
   final VoidCallback onUndo;
+
+  /// With the AI helper on: send the words to it instead of adding what Den found.
+  final VoidCallback? onAskInstead;
 
   @override
   Widget build(BuildContext context) {
@@ -411,6 +456,15 @@ class _Found extends StatelessWidget {
             style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
             child: Text(_addLabel(app, ready), maxLines: 1, softWrap: false, overflow: TextOverflow.fade),
           ),
+          if (onAskInstead != null)
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton.icon(
+                onPressed: onAskInstead,
+                icon: const Icon(PhosphorIconsRegular.chatCircle, size: 18),
+                label: const Text('Ask instead'),
+              ),
+            ),
         ],
       );
     } else if (draft != null && add.text.trim().isNotEmpty && !add.reading) {
@@ -468,6 +522,24 @@ class _Found extends StatelessWidget {
     final names = [for (final id in people) ?app.memberById(id)?.name];
     return names.isEmpty ? '' : ' for ${joinWords(names)}';
   }
+}
+
+/// The words go to the AI helper: one button, the helper's word.
+class _AskOffer extends StatelessWidget {
+  const _AskOffer({required this.onAsk});
+
+  final VoidCallback onAsk;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: Sp.l),
+        child: FilledButton.icon(
+          onPressed: onAsk,
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
+          icon: const Icon(PhosphorIconsRegular.chatCircle, size: 22),
+          label: const Text('Ask', maxLines: 1, softWrap: false),
+        ),
+      );
 }
 
 /// One thing Den found: who it's for, what it is, when; and the chips to change those.
