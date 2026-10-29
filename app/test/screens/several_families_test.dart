@@ -147,6 +147,17 @@ void main() {
       await shot(tester, 'families_sheet_phone_text200');
     });
 
+    testWidgets("an invite's link on a device in a family opens joining another family", (tester) async {
+      final home = await twoFamilies(tester);
+      final router = await pumpHome(tester, home);
+      router.go('/join/maple-river-canoe-tiger');
+      await tester.pumpAndSettle();
+      expect(router.state.uri.path, '/families/join');
+      expect(router.state.uri.queryParameters['code'], 'maple-river-canoe-tiger');
+      expect(findWords('Join another family'), findsOneWidget);
+      expect(find.text('I lost my phone'), findsNothing);
+    });
+
     testWidgets('choosing a family shows it at once, everywhere, and the device remembers', (tester) async {
       final home = await twoFamilies(tester);
       final smith = home.logs[1];

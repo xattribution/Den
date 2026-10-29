@@ -42,10 +42,11 @@ String? householdRedirect(Household home, GoRouterState route) {
 /// Where the app sends someone before the main shell. Null means stay.
 ///
 /// 0. An invite's link (`/join/<words>`): joining with its words, or, on a device already in a
-///    family, joining that family beside it (`/families/join`). A fresh hub's setup link (`/setup/<code>/<hub>`): starting the family
-///    with that hub. A recovery link from whoever runs the hub (`/recover/<words>`): "I lost my
-///    phone" with its words, unless this device is already in. A Home Screen app with no
-///    family yet first takes the link Safari kept for it ([Handoff]).
+///    family, joining that family beside it (`/families/join`). A fresh hub's setup link
+///    (`/setup/<code>/<hub>`): starting the family with that hub. A recovery link from whoever
+///    runs the hub (`/recover/<words>`): "I lost my phone" with its words, unless this device is
+///    already in. A Home Screen app with no family yet first takes the link Safari kept for it
+///    ([Handoff]).
 /// 1. No family on this device: onboarding (`/welcome`). A sitter's device past their last day:
 ///    that their access ended (`/ended`).
 /// 2. A join request sent but not approved yet: the waiting screen, whatever was asked for.
