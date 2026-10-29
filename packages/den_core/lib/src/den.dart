@@ -52,6 +52,23 @@ class ReminderDue {
   final List<String> members;
 }
 
+/// What [Den.disownRecovery] did about a phone recovery let in that nobody recognized.
+class DisownedRecovery {
+  const DisownedRecovery({required this.member, required this.kind, required this.retired, required this.letIn});
+
+  /// The parent it got in as.
+  final String member;
+
+  /// Whether their words or the hub's help let it in.
+  final RecoveryKind kind;
+
+  /// Whether those were turned off now; false when they had been replaced or turned off since.
+  final bool retired;
+
+  /// Devices it let in, directly or through devices it let in, still in the family.
+  final List<Device> letIn;
+}
+
 /// What [Den.undo] will write, and what it leaves alone.
 class _UndoPlan {
   _UndoPlan(this.drafts, this.skipped);
@@ -829,29 +846,48 @@ class Den {
     return id;
   }
 
-  Future<void> updateMember(String id, Map<String, Object?> patch) async {
-    if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
-    final fields = _cleanPatch(patch, {'name', 'role', 'tier', 'marker', 'animal', 'picture', 'birthday', 'until', 'grants', 'order'});
-    final grants = fields['grants'];
-    if (grants is Iterable) fields['grants'] = [for (final g in grants) g is Enum ? g.name : g];
-    await _commit([_Draft(RecordType.member, id, Space.family, fields)]);
-  }
+  /// Changes a person. Making a parent anything else takes their recovery words away in the
+  /// same change ([_noRecovery]): if they're a parent again later, they make new ones.
+  Future<void> updateMember(String id, Map<String, Object?> patch) => _locked(() async {
+        final m = member(id);
+        if (m == null) throw const InvalidInput('That person isn\'t in the family');
+        final fields = _cleanPatch(patch, {'name', 'role', 'tier', 'marker', 'animal', 'picture', 'birthday', 'until', 'grants', 'order'});
+        final grants = fields['grants'];
+        if (grants is Iterable) fields['grants'] = [for (final g in grants) g is Enum ? g.name : g];
+        final role = fields['role'];
+        if (role != null && role != Role.parent.name) fields.addAll(_noRecovery(m));
+        await _commitNow([_Draft(RecordType.member, id, Space.family, fields)]);
+      });
 
   /// Removes a member and revokes the devices they own, rotating the keys of the spaces those
-  /// devices held.
+  /// devices held. Their recovery words go first, in the same commit ([_noRecovery]).
   Future<void> removeMember(String id) => _locked(() async {
-        if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
+        final m = member(id);
+        if (m == null) throw const InvalidInput('That person isn\'t in the family');
         final owned = [
           for (final d in devices)
             if (d.member == id && d.id != deviceId && !d.revoked) d.id,
         ];
         final held = {for (final d in owned) ...spacesForDevice(d)};
+        final words = _noRecovery(m);
         await _commitNow([
           for (final d in owned) _revocation(d),
+          if (words.isNotEmpty) _Draft(RecordType.member, id, Space.family, words),
           _Draft(RecordType.member, id, Space.family, {'_deleted': true}),
         ]);
         await _rotateNow(held);
       });
+
+  /// The fields that take [m]'s recovery words away, naming the devices they let in that this
+  /// device holds (which stay), or nothing when they have none. Old words can then let nobody
+  /// in, even with a recovery change clocked before this one (recovery.dart).
+  Map<String, Object?> _noRecovery(Member m) {
+    final key = recoveryKeyOf(m);
+    if (key == null) return const {};
+    return {
+      'recovery': {'key': null, 'kept': keptBy(_mat.store, key: key, member: m.id)},
+    };
+  }
 
   /// Sets how a member signs in on shared screens: `pin` (4 digits), `pattern` (4 animals as
   /// digits 0-8), or `none`. Secrets are salted and hashed before they're written.
@@ -980,6 +1016,62 @@ class Den {
           }),
         ]);
       });
+
+  /// "That wasn't us", for a phone recovery let in ([recoveryOf]): removes it (rotating the keys
+  /// of what it held), and takes away what let it in while the family still trusts it, in the
+  /// same commit: that parent's words (keeping the devices they let in that this device holds,
+  /// the phone among them, so what it did stays on record), or the hub's help. Whoever used them
+  /// can then let nobody in, even with a recovery change clocked before this one. Returns that,
+  /// and the devices the phone let in since, directly or through devices it let in, still in
+  /// the family: for the parent to remove too ([revokeDevice]).
+  Future<DisownedRecovery> disownRecovery(String deviceId) => _locked(() async {
+        final d = device(deviceId);
+        final proof = d == null ? null : recoveryOf(d);
+        if (d == null || proof == null) throw const InvalidInput('That device wasn\'t let in by recovery');
+        final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
+        var retired = false;
+        final drafts = <_Draft>[if (!d.revoked) _revocation(deviceId)];
+        final m = member(proof.member);
+        final f = family;
+        if (proof.kind == RecoveryKind.words && m != null && recoveryKeyOf(m) == proof.key) {
+          retired = true;
+          drafts.add(_Draft(RecordType.member, m.id, Space.family, {
+            'recovery': {'key': null, 'kept': keptBy(_mat.store, key: proof.key, member: m.id)},
+          }));
+        } else if (proof.kind == RecoveryKind.hub && f != null && serverRecoveryKeyOf(f) == proof.key) {
+          retired = true;
+          drafts.add(_Draft(RecordType.family, familyId!, Space.family, {
+            'recovery': {'serverKey': null, 'kept': keptBy(_mat.store, key: proof.key, hub: true)},
+          }));
+        }
+        await _commitNow(drafts);
+        await _rotateNow(held);
+        return DisownedRecovery(member: proof.member, kind: proof.kind, retired: retired, letIn: letInBy(deviceId));
+      });
+
+  /// The devices still in the family that [deviceId] approved, then those they approved, and
+  /// so on, each device's in the order it approved them.
+  List<Device> letInBy(String deviceId) {
+    final byApprover = <String, List<Device>>{};
+    for (final d in devices) {
+      final by = d.rec.fieldTimes['approved']?.device;
+      if (by != null && by != d.id && d.approved) (byApprover[by] ??= []).add(d);
+    }
+    for (final list in byApprover.values) {
+      list.sort((a, b) => a.rec.fieldTimes['approved']!.compareTo(b.rec.fieldTimes['approved']!));
+    }
+    final out = <Device>[];
+    final seen = {deviceId};
+    final queue = [deviceId];
+    while (queue.isNotEmpty) {
+      for (final d in byApprover[queue.removeAt(0)] ?? const <Device>[]) {
+        if (!seen.add(d.id)) continue;
+        queue.add(d.id);
+        if (!d.revoked) out.add(d);
+      }
+    }
+    return out;
+  }
 
   Future<String> addCategory({required String name, String icon = 'calendar'}) async {
     final id = newId();
@@ -2371,8 +2463,9 @@ class Den {
 
   /// Asks to spend points on a reward for [member] (default: the actor). Rewards that don't
   /// need approval, and anyone's whose parents turned off "Rewards need my OK"
-  /// ([Family.rewardsNeedOk]), are approved at once. Refused when the balance, less what
-  /// requests still waiting for a parent would spend, is short.
+  /// ([Family.rewardsNeedOk]), are approved at once, except a points manager's own request,
+  /// which always waits for someone else (they could make any reward need no asking). Refused
+  /// when the balance, less what requests still waiting for a parent would spend, is short.
   Future<String> requestReward(String rewardId, {String? member}) async {
     final rewardEntry = _requireLive(RecordType.reward, rewardId, 'That reward doesn\'t exist');
     final reward = Reward(rewardEntry.rec);
@@ -2386,13 +2479,15 @@ class Den {
           '${waiting > 0 ? ', since $waiting are waiting on a request' : ''}');
     }
     final id = newId();
+    final a = actor;
+    final ownAsManager = a != null && a.id == who && can(a, DenAction.managePoints);
     await _commit([
       _Draft(RecordType.redemption, id, Space.family, {
         'reward': rewardId,
         'member': who,
         'cost': reward.cost,
         // No OK is needed when the reward says so or a parent let this person trade without asking.
-        'status': reward.needsApproval && (family?.rewardsNeedOk(who) ?? true)
+        'status': ownAsManager || (reward.needsApproval && (family?.rewardsNeedOk(who) ?? true))
             ? RedemptionStatus.requested.name
             : RedemptionStatus.approved.name,
         'decidedBy': null,

@@ -163,6 +163,66 @@ void main() {
       expect(den.points().totals[leo], 0);
     });
 
+    test('someone who edits chores moves a chore worth stars to Just me; its price comes along, unset', () async {
+      final gma = await den.addMember(name: 'Grandma', role: Role.adult);
+      final phone = await joinDevice(den, clock, member: gma, name: 'Grandma phone', kind: DeviceKind.phone);
+      final plants = await den.addChore(
+        title: 'Water plants',
+        owner: OwnerMember(gma),
+        schedule: const ChoreSchedule.once('2026-10-01'),
+        points: 3,
+        steps: const [ChoreStep(id: 'deck', text: 'The deck', points: 1)],
+      );
+      final cat = await den.addChore(title: 'Feed cat', owner: OwnerMember(gma), schedule: const ChoreSchedule.once('2026-10-01'), points: 2);
+      await sync(den, phone);
+      clock.advance(const Duration(minutes: 1));
+      await phone.setChoreDone(plants, '2026-10-01', true);
+      await phone.updateChore(plants, {'audience': Audience.justMe});
+      expect(phone.chore(plants)!.space, Space.member(gma));
+      expect(phone.chore(plants)!.points, 3);
+      // A copy that changes the price, a chore with no original in everyone's space, and a new
+      // price still need the points permission.
+      clock.advance(const Duration(minutes: 1));
+      final pricier = await forge(
+        phone.keys,
+        counter: 800,
+        millis: clock.now,
+        type: RecordType.chore,
+        rid: cat,
+        space: Space.member(gma),
+        actor: gma,
+        fields: {...den.chore(cat)!.rec.fields, 'points': 9},
+      );
+      final moved = await forge(
+        phone.keys,
+        counter: 801,
+        millis: clock.now + 1,
+        type: RecordType.chore,
+        rid: 'nooriginal',
+        space: Space.member(gma),
+        actor: gma,
+        fields: {...den.chore(plants)!.rec.fields},
+      );
+      final greedy = await forge(
+        phone.keys,
+        counter: 802,
+        millis: clock.now + 2,
+        type: RecordType.chore,
+        rid: plants,
+        space: Space.member(gma),
+        actor: gma,
+        fields: {'points': 9},
+      );
+      await sync(phone, den);
+      final result = await den.ingest([pricier, moved, greedy]);
+      expect(result.invalid[moved.id], contains('worth'));
+      expect(result.invalid[greedy.id], contains('worth'));
+      expect(result.invalid[pricier.id], contains('worth'));
+      expect(den.chore(plants)!.space, Space.member(gma));
+      expect(den.chore(plants)!.points, 3);
+      expect(den.points().totals[gma], 4, reason: 'what was earned (the chore and its step) moved with it, once');
+    });
+
     test('a new price doesn\'t change what was already earned', () async {
       final dishes = await den.addChore(
         title: 'Dishes',
@@ -351,6 +411,41 @@ void main() {
       await expectLater(den.adjustPoints(den.actor!.id, 5, 'Me'), throwsA(isA<PermissionDenied>()));
       await den.decideRedemption(request, approve: true);
       expect(den.points().totals[leo], 10);
+    });
+
+    test('a points manager asking for themselves waits for someone else, even for a reward that needs no asking', () async {
+      await den.updateMember(leo, {'grants': [Grant.points]});
+      await sync(den, tablet);
+      // Leo may change rewards: he makes this one need no asking, and free.
+      await tablet.updateReward(money, {'needsApproval': false, 'cost': 0});
+      final free = await tablet.requestReward(money);
+      await tablet.updateReward(money, {'cost': 30});
+      final priced = await tablet.requestReward(money);
+      expect(tablet.points().pending.map((r) => r.id), unorderedEquals([free, priced]));
+      await expectLater(tablet.decideRedemption(priced, approve: true), throwsA(isA<PermissionDenied>()));
+      // Nor can a device of his write one approved at once.
+      clock.advance(const Duration(minutes: 1));
+      final forged = await forge(
+        tablet.keys,
+        counter: 900,
+        millis: clock.now,
+        type: RecordType.redemption,
+        rid: 'forgedtreat',
+        actor: leo,
+        fields: {'reward': money, 'member': leo, 'cost': 30, 'status': 'approved', 'decidedBy': null},
+      );
+      expect((await den.ingest([forged])).invalid[forged.id], contains('Someone else needs to approve'));
+      await sync(tablet, den);
+      expect(den.points().totals[leo], 40, reason: 'nothing spent until a parent says yes');
+      await den.decideRedemption(priced, approve: true);
+      expect(den.points().totals[leo], 10);
+      // Anyone else's "no asking" rewards stay granted at once.
+      await den.updateMember(leo, {'grants': <Grant>[]});
+      await den.updateReward(bedtime, {'cost': 5});
+      await sync(den, tablet);
+      await tablet.requestReward(bedtime);
+      await sync(tablet, den);
+      expect(den.points().totals[leo], 5);
     });
   });
 }

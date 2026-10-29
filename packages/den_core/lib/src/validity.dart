@@ -94,6 +94,11 @@ class Validator {
   /// Recovery keys replaced later in the log; the materializer fills this like [cutoffs].
   final RetiredRecoveryKeys retiredRecoveryKeys = RetiredRecoveryKeys();
 
+  /// The counter of the change by [device] that made its record (its join request, its
+  /// recovery change, or the founder's genesis), whose clock is [created]; null when unknown.
+  /// The materializer, which holds the log, answers.
+  int? Function(String device, Hlc created)? createdCounter;
+
   Rejection? check(Change c) {
     final colon = c.id.lastIndexOf(':');
     final counter = colon > 0 ? int.tryParse(c.id.substring(colon + 1)) : null;
@@ -122,6 +127,15 @@ class Validator {
     if (fieldError != null) return _schema(fieldError);
     final crossError = _crossFields(c, existing);
     if (crossError != null) return _schema(crossError);
+    // A cutoff never reaches the change that made the device's record: that would erase the
+    // device itself, everything it wrote and every device it let in, whoever removed it.
+    final after = c.fields['revokedAfter'];
+    if (c.type == RecordType.device && after is int && existing != null) {
+      final made = createdCounter?.call(c.rid, existing.created);
+      if (made != null && after < made) {
+        return _trust('A removal can\'t reach back past the device\'s own request to join');
+      }
+    }
 
     final authorEntry = store.at(Space.family, RecordType.device, c.device);
     // The one way a device approves itself: as an existing parent's, with a recovery proof.
@@ -174,6 +188,14 @@ class Validator {
       return _deny('Only parents can add or change parents-only things');
     }
     final privateOwner = Space.memberOf(c.space);
+    // Acting for a connection, the hub writes only where the person it acts for could read
+    // (or, for a connection with no person, where a parent could): what den_actions checks.
+    if (hub && c.fields.containsKey('_via')) {
+      final readable = actor != null
+          ? canRead(actor, c.space, family)
+          : privateOwner == null || (family?.parentsSeePrivate(privateOwner) ?? true);
+      if (!readable) return _deny('This connection can\'t see that, so it can\'t put things there');
+    }
     if (privateOwner != null) {
       final owner = store.liveAt(Space.family, RecordType.member, privateOwner);
       if (owner == null) return _schema('That person isn\'t in the family');
@@ -356,7 +378,10 @@ class Validator {
         return x.has(DenAction.editEvents) ? null : _deny('${x.who} can\'t add or change events');
       case RecordType.chore:
         if (!x.has(DenAction.editChores)) return _deny('${x.who} can\'t add or change chores');
-        if (_setsPoints(c, x.existing) && !x.has(DenAction.managePoints)) {
+        // Moving a chore to another space writes a copy: one of a chore in everyone's space
+        // (which every replica holding the copy holds too) at the same price sets none.
+        final original = x.existing ?? (c.space == Space.family ? null : store.at(Space.family, RecordType.chore, c.rid));
+        if (_setsPoints(c, original) && !x.has(DenAction.managePoints)) {
           return _deny('${x.who} can\'t set how many stars a chore is worth');
         }
         return null;
@@ -590,7 +615,9 @@ class Validator {
       if (status == RedemptionStatus.approved.name && needsOk && !manager) {
         return _deny('A parent needs to approve that reward');
       }
-      if (forSelf && needsOk && status != RedemptionStatus.requested.name) {
+      // Someone who may change rewards could make one need no asking and take it: asking for
+      // themselves, a points manager always waits for someone else.
+      if (forSelf && (needsOk || manager) && status != RedemptionStatus.requested.name) {
         return _deny('Someone else needs to approve ${x.who}\'s reward');
       }
       if (c.fields['decidedBy'] != null && c.fields['decidedBy'] != c.actor) {

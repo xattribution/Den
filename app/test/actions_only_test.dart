@@ -50,6 +50,8 @@ const Set<String> trust = {
   'endAccessNow',
   'setRecoveryKey',
   'setServerRecoveryKey',
+  // "That wasn't us": removes a phone recovery let in and turns off what let it in.
+  'disownRecovery',
 };
 
 /// Writes in one file each, with why.

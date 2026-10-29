@@ -34,9 +34,13 @@ class FamilyNeedsCard extends StatefulWidget {
 }
 
 class _Settled {
-  const _Settled(this.message, this.receipt);
+  const _Settled(this.message, this.receipt, {this.letIn = const []});
   final String message;
   final Receipt? receipt;
+
+  /// After "That wasn't us": the devices the removed phone let in, still in the family, which
+  /// the row offers to remove too.
+  final List<Device> letIn;
 }
 
 class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
@@ -70,10 +74,12 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
             child: DoneSwap(
               done: settled == null
                   ? null
-                  : DoneRow(
-                      message: settled.message,
-                      onUndo: receipt != null && receipt.undoable && !_busy.contains(key) ? () => _undo(key) : null,
-                    ),
+                  : settled.letIn.isNotEmpty
+                      ? _letInRow(context, key, settled)
+                      : DoneRow(
+                          message: settled.message,
+                          onUndo: receipt != null && receipt.undoable && !_busy.contains(key) ? () => _undo(key) : null,
+                        ),
               child: _ask(context, app, need),
             ),
           ));
@@ -260,7 +266,9 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
     app.markSeen(Recovery.noticeKey(device));
   }
 
-  /// A phone let in by recovery that nobody here recognizes: removed, like any other device.
+  /// A phone let in by recovery that nobody here recognizes: removed, and the words or the
+  /// hub's help that let it in turned off, so whoever used them can't do it again. The row then
+  /// says so, and names any device the phone let in meanwhile, with Remove them too.
   Future<void> _removeRecovered(AppState app, Device device) async {
     final key = Recovery.noticeKey(device);
     final trust = context.trustActions;
@@ -268,15 +276,66 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
       _busy.add(key);
       _failed.remove(key);
     });
-    final problem = await tryWrite(() => trust.revokeDevice(device.id));
+    DisownedRecovery? done;
+    final problem = await tryWrite(() async => done = await trust.thatWasntUs(device.id));
     if (problem == null) app.markSeen(key);
+    if (!mounted) return;
+    setState(() {
+      _busy.remove(key);
+      if (problem != null || done == null) {
+        _failed[key] = problem ?? 'That didn\'t work';
+      } else {
+        _settled[key] = _Settled(RecoveryLines.disowned(app, device, done!), null, letIn: done!.letIn);
+      }
+    });
+  }
+
+  /// What "That wasn't us" did, and the devices the removed phone let in, with Remove them too.
+  Widget _letInRow(BuildContext context, String key, _Settled settled) {
+    final c = context.colors;
+    final busy = _busy.contains(key);
+    final failed = _failed[key];
+    final many = settled.letIn.length > 1;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DoneRow(message: settled.message),
+        Padding(
+          padding: const EdgeInsets.only(left: 22 + Sp.m),
+          child: Text(RecoveryLines.letIn(settled.letIn), style: context.text.meta(c.ink2)),
+        ),
+        const SizedBox(height: Sp.m),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton(
+            onPressed: busy ? null : () => _removeLetIn(key, settled),
+            child: Text(many ? 'Remove them too' : 'Remove it too', maxLines: 1, softWrap: false),
+          ),
+        ),
+        if (failed != null) ...[
+          const SizedBox(height: Sp.s),
+          ErrorState(message: failed, actionLabel: 'Try again', onAction: () => setState(() => _failed.remove(key))),
+        ],
+        const SizedBox(height: Sp.l),
+      ],
+    );
+  }
+
+  Future<void> _removeLetIn(String key, _Settled settled) async {
+    final trust = context.trustActions;
+    final devices = settled.letIn;
+    setState(() {
+      _busy.add(key);
+      _failed.remove(key);
+    });
+    final problem = await tryWrite(() => trust.removeDevices([for (final d in devices) d.id]));
     if (!mounted) return;
     setState(() {
       _busy.remove(key);
       if (problem != null) {
         _failed[key] = problem;
       } else {
-        _settled[key] = _Settled('${device.name} was removed from the family', null);
+        _settled[key] = _Settled('${settled.message} ${RecoveryLines.letInRemoved(devices)}', null);
       }
     });
   }

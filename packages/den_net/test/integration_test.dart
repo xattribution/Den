@@ -245,6 +245,70 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(fam.founder.changesSince(const {}).any((c) => c.id == sneaky.id), isFalse);
     });
+
+    test('removing a teen\'s old phone keeps the private items the hub held from it', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final tia = await fam.founder.addMember(name: 'Tia', role: Role.kid, tier: Tier.teen, grants: {Grant.events});
+      final hub = await fam.approvedDevice(mode: DeviceMode.hub, kind: DeviceKind.hub, name: 'Hub');
+      final old = await fam.approvedDevice(member: tia, name: 'Tia old phone');
+      // Tia's private items are hers alone: the parent's phone never holds them.
+      await fam.founder.updateFamily({'oversight.$tia': {'parentsSeePrivate': false}});
+      final nodes = [SyncNode(fam.founder), SyncNode(hub), SyncNode(old)];
+      addTearDown(() => Future.wait(nodes.map((n) => n.close())));
+      await (await link(nodes[0], nodes[1])).live;
+      await (await link(nodes[1], nodes[2])).live;
+      await old.addEvent(title: 'Family dinner', start: at(18), end: at(19));
+      for (var i = 0; i < 3; i++) {
+        await old.addEvent(title: 'Diary $i', start: at(20 + i), end: at(21 + i), audience: Audience.justMe);
+      }
+      final wrote = maxOwnCounter(old);
+      await eventually(() => hub.events.length == 4 && fam.founder.events.length == 1);
+      // The hub vouches for the counters it holds, in spaces the parent's phone doesn't receive.
+      await eventually(() => (fam.founder.versionVector[old.deviceId] ?? 0) >= wrote, timeout: const Duration(seconds: 5));
+
+      await fam.founder.revokeDevice(old.deviceId);
+      expect(fam.founder.device(old.deviceId)!.revokedAfter, wrote);
+      await eventually(() => hub.device(old.deviceId)?.revoked ?? false);
+      expect(hub.events.map((e) => e.title), containsAll(['Family dinner', 'Diary 0', 'Diary 1', 'Diary 2']));
+      // Tia's new phone gets them from the hub.
+      expect(fam.founder.device(old.deviceId)!.revoked, isTrue);
+      final fresh = await fam.approvedDevice(member: tia, name: 'Tia new phone');
+      final freshNode = SyncNode(fresh);
+      addTearDown(freshNode.close);
+      await eventually(() => hub.device(fresh.deviceId)?.approved ?? false);
+      await (await link(nodes[1], freshNode)).live;
+      await eventually(() => fresh.events.length == 4);
+    });
+
+    test('only a peer holding every space this device holds vouches for counters, never its own', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final sam = await fam.founder.addMember(name: 'Sam', role: Role.kid, grants: {Grant.events});
+      final hub = await fam.approvedDevice(mode: DeviceMode.hub, kind: DeviceKind.hub, name: 'Hub');
+      final tablet = await fam.approvedDevice(member: sam, kind: DeviceKind.tablet, name: 'Sam tablet');
+      final phoneNode = SyncNode(fam.founder);
+      final hubNode = SyncNode(hub);
+      final tabletNode = SyncNode(tablet);
+      addTearDown(() => Future.wait([phoneNode.close(), hubNode.close(), tabletNode.close()]));
+      final fromHub = await link(phoneNode, hubNode);
+      final fromTablet = await link(phoneNode, tabletNode);
+      await fromHub.live;
+      await fromTablet.live;
+      final someone = await DeviceKeys.generate();
+      final other = await someone.deviceId();
+      int held(String device) => fam.founder.versionVector[device] ?? 0;
+      final hubHeld = held(hub.deviceId), tabletHeld = held(tablet.deviceId);
+      // Sam's tablet holds less than the parent's phone: what it vouches for doesn't count.
+      await fromTablet.session.send({'t': 'push', 'list': const <Object?>[], 'through': {other: 40, tablet.deviceId: 999}});
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(held(other), 0);
+      expect(held(tablet.deviceId), tabletHeld);
+      // The hub holds every space: it vouches for others' changes, never for its own.
+      await fromHub.session.send({'t': 'push', 'list': const <Object?>[], 'through': {other: 40, hub.deviceId: 999}});
+      await eventually(() => held(other) == 40);
+      expect(held(hub.deviceId), hubHeld);
+    });
   });
 
   group('a hub this device has not heard of', () {

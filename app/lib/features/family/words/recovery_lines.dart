@@ -29,6 +29,24 @@ abstract final class RecoveryLines {
     return app.formats.monthDay(app.formats.localDate(at), relativeTo: app.today);
   }
 
+  /// What "That wasn't us" did: "We removed Priya's new iPhone and turned off the words it
+  /// used. Priya needs new recovery words."
+  static String disowned(FamilyReads app, Device d, DisownedRecovery done) {
+    if (!done.retired) return 'We removed ${d.name}';
+    return switch (done.kind) {
+      RecoveryKind.words =>
+        'We removed ${d.name} and turned off the words it used. ${app.memberById(done.member)?.name ?? 'They'} needs new recovery words.',
+      RecoveryKind.hub => "We removed ${d.name} and turned off the hub's help getting back in",
+    };
+  }
+
+  /// "It also let in Sam's iPad and Sam's laptop": devices the removed phone approved.
+  static String letIn(List<Device> devices) => 'It also let in ${FamilyWords.joinAnd([for (final d in devices) d.name])}';
+
+  /// After removing those too: "Sam's iPad and Sam's laptop were removed too".
+  static String letInRemoved(List<Device> devices) =>
+      '${FamilyWords.joinAnd([for (final d in devices) d.name])} ${devices.length == 1 ? 'was' : 'were'} removed too';
+
   /// The line Needs you shows under it.
   static String detail(FamilyReads app, Device d) {
     final proof = recoveryOf(d);

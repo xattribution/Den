@@ -15,7 +15,9 @@ class TrustActions {
   final Den _den;
 
   /// Makes [member] a [role]; a kid also gets [tier], and [grants] when given (a role change to
-  /// kid starts from the age group's switches).
+  /// kid starts from the age group's switches). Making a parent anything else takes their
+  /// recovery words away in the same change ([Den.updateMember]), so old words can't let them
+  /// back in; made a parent again, they make new ones.
   Future<void> setRole(String member, Role role, {Tier? tier, Set<Grant>? grants}) => _den.updateMember(member, {
         'role': role.name,
         'tier': role == Role.kid ? tier?.name : null,
@@ -80,6 +82,8 @@ class TrustActions {
     ));
   }
 
+  /// Removes [member]: their devices, and their recovery words in the same commit
+  /// ([Den.removeMember]).
   Future<void> removePerson(String member) => _den.removeMember(member);
 
   /// `none`, or a PIN or picture pattern with its [secret].
@@ -90,6 +94,18 @@ class TrustActions {
       _den.approveDevice(device, member: member, mode: mode);
 
   Future<void> revokeDevice(String device) => _den.revokeDevice(device);
+
+  /// "That wasn't us" for a phone recovery let in: removes it, turns off what let it in (that
+  /// parent's words, or the hub's help) in the same commit, and says which devices it let in
+  /// since, for [removeDevices] ([Den.disownRecovery]).
+  Future<DisownedRecovery> thatWasntUs(String device) => _den.disownRecovery(device);
+
+  /// Removes [devices], one after another.
+  Future<void> removeDevices(Iterable<String> devices) async {
+    for (final d in devices) {
+      await _den.revokeDevice(d);
+    }
+  }
 
   /// Whether this device may remove one of the family's hubs: a parent's own personal device.
   /// Never a hub, even one a parent keeps online on their computer, and never a shared screen.
