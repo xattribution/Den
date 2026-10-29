@@ -137,6 +137,16 @@ void main() {
       });
     }
 
+    testWidgets('at 200 % text the switch and the sheet wrap rather than cut off', (tester) async {
+      withTextScale(tester, 2);
+      final home = await twoFamilies(tester);
+      await pumpHome(tester, home);
+      await shot(tester, 'families_today_phone_text200');
+      await tester.tap(find.byType(FamilySwitch));
+      await tester.pumpAndSettle();
+      await shot(tester, 'families_sheet_phone_text200');
+    });
+
     testWidgets('choosing a family shows it at once, everywhere, and the device remembers', (tester) async {
       final home = await twoFamilies(tester);
       final smith = home.logs[1];

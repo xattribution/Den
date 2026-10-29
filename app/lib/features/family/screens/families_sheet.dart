@@ -112,7 +112,8 @@ class _FamiliesSheetState extends State<FamiliesSheet> {
             ),
           // Phase 3 adds "Shared with other families" (the groups) here, each opening its page.
         ];
-        return Padding(
+        // Scrolls when large text makes it taller than the sheet may be.
+        return SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.xl),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -283,6 +284,14 @@ class FamilySwitch extends StatelessWidget {
   Widget build(BuildContext context) {
     final home = Household.maybeOf(context);
     if (home == null || !home.several) return const SizedBox.shrink();
+    // The dot follows what every family needs, not only the one showing.
+    return ListenableBuilder(
+      listenable: Listenable.merge([for (final l in home.families) l.state]),
+      builder: (context, _) => _switch(context, home),
+    );
+  }
+
+  Widget _switch(BuildContext context, Household home) {
     final c = context.colors;
     final t = context.text;
     final all = home.showingAll;

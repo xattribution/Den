@@ -257,9 +257,14 @@ class Household extends ChangeNotifier {
 
   void _watch(FamilyLog log) {
     var had = log.den.hasFamily;
+    var approved = log.den.isApproved;
     var name = log.den.family?.name;
     void check() {
       if (_disposed) return;
+      if (log.den.isApproved != approved) {
+        approved = log.den.isApproved;
+        _changed();
+      }
       final now = log.den.hasFamily;
       if (had && !now && _logs.length > 1 && _logs.contains(log)) {
         // A family this device left (start over, or its access ended and it started over)

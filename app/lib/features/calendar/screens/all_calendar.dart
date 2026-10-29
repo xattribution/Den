@@ -10,6 +10,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../design/words.dart';
 import '../state/calendar_models.dart';
+import '../state/calendar_sources.dart';
 import '../widgets/calendar_parts.dart';
 import '../widgets/calendar_surface.dart';
 import '../widgets/day_list.dart' show openEvent;
@@ -136,12 +137,13 @@ class _AllCalendarScreenState extends State<AllCalendarScreen> {
       inset: side,
       children: [
         for (final log in families)
-          PersonPill(
-            face: SourceTag(label: log.name, color: log.color, size: 28, semantics: false),
-            name: log.name,
-            selected: !_hidden.contains(log.id),
-            onTap: () => _toggle(log),
-          ),
+          if (familySource(log) case final source)
+            PersonPill(
+              face: SourceTag(label: source.label, color: source.color, size: 28, semantics: false),
+              name: source.label,
+              selected: !_hidden.contains(log.id),
+              onTap: () => _toggle(log),
+            ),
       ],
     );
 
@@ -172,6 +174,11 @@ class _AllCalendarScreenState extends State<AllCalendarScreen> {
     );
   }
 }
+
+/// [log]'s family as a calendar source in "All my families": its name, and the color of its tag
+/// on this device.
+CalendarSource familySource(FamilyLog log) =>
+    CalendarSource(kind: CalendarSourceKind.family, id: log.id, label: log.name, color: log.color);
 
 /// One day of "All my families": its heading, then each family's events by time.
 class _AllDay extends StatelessWidget {
@@ -224,7 +231,8 @@ class _SourcedBlock extends StatelessWidget {
     final c = context.colors;
     final t = context.text;
     final f = log.state.formats;
-    final color = log.color;
+    final source = familySource(log);
+    final color = source.color;
     final time = occ.allDay || f.localDate(occ.start) != date ? 'All day' : f.time(occ.start);
     Widget block = LogScope(
       log: log,
@@ -243,7 +251,7 @@ class _SourcedBlock extends StatelessWidget {
     }
     final above = MediaQuery.textScalerOf(context).scale(1) > 1.35;
     final when = Text(keepUnits(time), style: t.meta(c.ink2), maxLines: 1, softWrap: false);
-    final tag = SourceTag(label: log.name, color: color, size: 20);
+    final tag = SourceTag(label: source.label, color: color, size: 20);
     if (above) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

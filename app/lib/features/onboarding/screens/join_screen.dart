@@ -80,7 +80,7 @@ class _JoinScreenState extends State<JoinScreen> {
     final pairing = Pairing.of(context);
     if (pairing == _pairing) return;
     _pairing = pairing;
-    final steps = _browser && _web.needsHomeScreen;
+    final steps = _browser && _web.needsHomeScreen && !widget.another;
     if (!_typing && !steps) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _look();
@@ -224,7 +224,7 @@ class _JoinScreenState extends State<JoinScreen> {
   @override
   Widget build(BuildContext context) {
     final web = _web;
-    if (_browser && web.needsHomeScreen && !_inSafari) {
+    if (_browser && web.needsHomeScreen && !_inSafari && !widget.another) {
       final link = widget.code == null ? null : DenLink.parse(widget.code!);
       return DenPage(
         title: _title,
