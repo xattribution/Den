@@ -24,14 +24,23 @@ import 'home_screen_steps.dart';
 ///
 /// In Safari on an iPhone or iPad, Den goes on the Home Screen first: the family will live in
 /// the Home Screen app, which keeps its own storage and picks the invite up by itself.
+///
+/// With [another] it joins another family beside the one this device is in (`/families/join`):
+/// its title says so, and getting back in on a new phone isn't offered there.
 class JoinScreen extends StatefulWidget {
-  const JoinScreen({super.key, this.scan, this.code, this.browser, this.web});
+  const JoinScreen({super.key, this.scan, this.code, this.hub, this.another = false, this.browser, this.web});
 
   /// Forces the camera on or off, for tests; by default phones and tablets scan.
   final bool? scan;
 
   /// The invite's words, from its link.
   final String? code;
+
+  /// The hub's address, when the invite's link carried it.
+  final String? hub;
+
+  /// Joining another family beside the one this device is in.
+  final bool another;
 
   /// Joins as a browser served by the hub, for tests; by default only on the web.
   final bool? browser;
@@ -45,7 +54,7 @@ class JoinScreen extends StatefulWidget {
 
 class _JoinScreenState extends State<JoinScreen> {
   late final _words = TextEditingController(text: widget.code);
-  final _hub = TextEditingController();
+  late final _hub = TextEditingController(text: widget.hub);
   DeviceKind? _kind;
   late bool _scanning = widget.code == null && (widget.scan ?? Capabilities.scanQr);
   bool _busy = false;
@@ -106,7 +115,8 @@ class _JoinScreenState extends State<JoinScreen> {
   Future<void> _look() async {
     setState(() => _error = null);
     try {
-      final peek = await _pairing!.peekInvite(_words.text);
+      final hub = _hub.text.trim();
+      final peek = await _pairing!.peekInvite(_words.text, hubUrl: hub.isEmpty ? null : hub);
       if (mounted) setState(() => _peek = peek);
     } on PairingException catch (e) {
       if (mounted) {
@@ -199,7 +209,7 @@ class _JoinScreenState extends State<JoinScreen> {
     final hub = typed.hub ?? (_hub.text.trim().isEmpty ? null : _hub.text.trim());
     final kind = _kind!;
     _join((p) async {
-      if (_browser || hub != null) {
+      if (_browser || hub != null || widget.another) {
         try {
           return await p.joinWithInvite(words, hubUrl: hub, deviceName: _name, kind: kind);
         } on PairingException catch (e) {
@@ -217,7 +227,7 @@ class _JoinScreenState extends State<JoinScreen> {
     if (_browser && web.needsHomeScreen && !_inSafari) {
       final link = widget.code == null ? null : DenLink.parse(widget.code!);
       return DenPage(
-        title: 'Join your family',
+        title: _title,
         children: [
           HomeScreenSteps(ipad: web.ipad, link: link?.words == null ? null : DenLink(kind: DenLinkKind.family, words: link!.words)),
           Align(
@@ -252,7 +262,7 @@ class _JoinScreenState extends State<JoinScreen> {
             ? DenAvatar.picture(picture, color: color, size: 64, semanticLabel: name)
             : DenAvatar.initial(name, color: color, size: 64, semanticLabel: name);
     return DenPage(
-      title: 'Join your family',
+      title: _title,
       bottom: FilledButton(
         onPressed: _busy || peek == null ? null : _sendWords,
         style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
@@ -308,13 +318,13 @@ class _JoinScreenState extends State<JoinScreen> {
     final width = MediaQuery.sizeOf(context).width;
     final camera = (width.clamp(0.0, 560.0) - 64).clamp(200.0, 420.0);
     return DenPage(
-      title: 'Join your family',
+      title: _title,
       bottom: _scanning
           ? null
           : FilledButton(
               onPressed: _busy ? null : _sendWords,
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-              child: Text(_busy ? 'Joining' : 'Join the family'),
+              child: Text(_busy ? 'Joining' : widget.another ? 'Join' : 'Join the family'),
             ),
       children: [
         if (_scanning) ...[
@@ -404,13 +414,16 @@ class _JoinScreenState extends State<JoinScreen> {
               ),
             ),
         ],
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(onPressed: () => context.push('/welcome/recover'), child: const Text('I lost my phone')),
-        ),
+        if (!widget.another)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(onPressed: () => context.push('/welcome/recover'), child: const Text('I lost my phone')),
+          ),
       ],
     );
   }
+
+  String get _title => widget.another ? 'Join another family' : 'Join your family';
 }
 
 /// An invite as someone typed or pasted it: the four words, and the hub's address when it came

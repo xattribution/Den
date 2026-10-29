@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:go_router/go_router.dart';
 
 import '../features/family/family.dart' show accessEndedHere;
@@ -6,15 +8,41 @@ import '../platform/capabilities.dart';
 import '../platform/web/handoff.dart';
 import '../platform/web/web_app.dart';
 import 'app_state.dart';
+import 'household.dart';
+import 'log_scope.dart';
 
 /// The adult shell's four tabs.
 bool _isShellTab(String loc) =>
     loc == '/today' || loc == '/chores' || loc == '/lists' || loc == '/calendar' || loc.startsWith('/calendar/');
 
+/// Where the app sends someone, on a device that may hold several families ([home]):
+///
+/// - `/l/<log>/<page>` is that family's page, in its scope; `/l/<log>` alone, or with one of the
+///   app's places (`/l/<log>/today`), shows that family and goes to the place. A family this
+///   device doesn't hold (any more), or one still waiting for a parent, gets the page in the
+///   family the device shows.
+/// - `/families/...` (joining another family) is for a device already in one.
+/// - Everything else is [familyRedirect] for the family the device shows.
+String? householdRedirect(Household home, GoRouterState route) {
+  final split = splitLog(route.uri.toString());
+  if (split != null) {
+    final log = home.byId(split.log);
+    if (log == null || !log.den.isApproved) return split.rest;
+    if (isPlaceRoute(split.rest)) {
+      if (!identical(log, home.active) || home.showingAll) scheduleMicrotask(() => home.choose(log));
+      return split.rest;
+    }
+    return null;
+  }
+  final state = home.active.state;
+  if (route.uri.path.startsWith('/families/') && !state.den.isApproved) return '/welcome';
+  return familyRedirect(state, route);
+}
+
 /// Where the app sends someone before the main shell. Null means stay.
 ///
-/// 0. An invite's link (`/join/<words>`): joining with its words, or Today for a device that is
-///    already in a family. A fresh hub's setup link (`/setup/<code>/<hub>`): starting the family
+/// 0. An invite's link (`/join/<words>`): joining with its words, or, on a device already in a
+///    family, joining that family beside it (`/families/join`). A fresh hub's setup link (`/setup/<code>/<hub>`): starting the family
 ///    with that hub. A recovery link from whoever runs the hub (`/recover/<words>`): "I lost my
 ///    phone" with its words, unless this device is already in. A Home Screen app with no
 ///    family yet first takes the link Safari kept for it ([Handoff]).
@@ -41,8 +69,10 @@ String? familyRedirect(AppState state, GoRouterState route) {
     if (kept != null) path = kept;
   }
   if (path.startsWith('/join/')) {
-    if (den.hasFamily) return '/today';
     final words = path.substring('/join/'.length);
+    // A device in a family already joins another one beside it.
+    if (den.isApproved) return Uri(path: '/families/join', queryParameters: {'code': words}).toString();
+    if (den.hasFamily) return '/today';
     return Uri(path: '/welcome/join', queryParameters: {'code': words}).toString();
   }
 

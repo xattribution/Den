@@ -105,6 +105,16 @@ class _HubRecovery extends RecoverySession {
   return (words: words, code: words == null ? net.normalizeCode(rest) : null, hub: hub);
 }
 
+/// The family an invite is to, and the hub that keeps it ([NetPairing.inviteTarget]).
+class InviteTarget {
+  const InviteTarget({required this.base, required this.familyId, this.familyName});
+
+  /// The hub's HTTP base address, `https://den.example.com`.
+  final Uri base;
+  final String familyId;
+  final String? familyName;
+}
+
 /// [PairingService] on den_net: QR invites and spoken codes over the hub, the relay's
 /// rendezvous, or (with neither) a direct connection on the same Wi-Fi.
 class NetPairing extends PairingService {
@@ -455,6 +465,30 @@ class NetPairing extends PairingService {
     if (base == null) throw const PairingException("Type the hub's address too. It's the start of the invite's link.");
     return base;
   }
+
+  /// Which family [words] are an invite to, at the hub at [hubUrl] (or the one that served this
+  /// page), before anything is written: for a device already in a family, which starts the
+  /// family's own engine under its id before it joins ([shareRedeemed] hands the answer on, so
+  /// the hub isn't asked twice).
+  Future<InviteTarget> inviteTarget(String words, {String? hubUrl}) async {
+    final code = net.normalizeCode(words);
+    if (code == null) {
+      throw const PairingException("Those aren't the four words from an invite. Check them against the message.");
+    }
+    final base = _inviteBase(hubUrl);
+    final redeemed = await _redeem(base, code);
+    final net.Invite invite;
+    try {
+      invite = await net.Invite.parse(redeemed.invite);
+    } on FormatException {
+      throw const PairingException('This invite has expired. Ask for a new one.');
+    }
+    return InviteTarget(base: base, familyId: invite.familyId, familyName: redeemed.familyName);
+  }
+
+  /// Hands [other] the invites this one redeemed already, so it joins with them without asking
+  /// the hub again.
+  void shareRedeemed(NetPairing other) => other._redeemed.addAll(_redeemed);
 
   @override
   Future<InvitePeek> peekInvite(String words, {String? hubUrl}) async {

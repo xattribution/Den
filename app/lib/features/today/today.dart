@@ -5,5 +5,6 @@
 /// from the same hour.
 library;
 
+export 'state/needs_you.dart' show NeedsModel;
 export 'state/today_model.dart' show TodayModel, todayReads;
 export 'words/today_words.dart' show showsTomorrow;

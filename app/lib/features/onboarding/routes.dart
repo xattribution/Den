@@ -1,5 +1,9 @@
 import 'package:go_router/go_router.dart';
 
+import '../../app/household.dart';
+import '../../platform/sync/pairing.dart';
+import '../family/family.dart' show AnotherFamilyPairing;
+
 import 'screens/add_people_screen.dart';
 import 'screens/join_screen.dart';
 import 'screens/link_this_browser_screen.dart';
@@ -40,4 +44,22 @@ final List<RouteBase> onboardingRoutes = [
   GoRoute(path: '/join/:code', redirect: (_, _) => '/welcome/join'),
   GoRoute(path: '/recover/:code', redirect: (_, _) => '/welcome/recover'),
   GoRoute(path: '/setup/:code/:hub', redirect: (_, _) => '/welcome/start'),
+];
+
+/// Joining another family on a device already in one (FAMILY-LINKS-PLAN §5.1):
+/// `/families/join?code=&hub=`, from Paste an invite or an invite's link. The join screen, with
+/// [AnotherFamilyPairing] starting the new family's own engine beside the others.
+final List<RouteBase> familiesRoutes = [
+  GoRoute(
+    path: '/families/join',
+    builder: (context, s) {
+      final home = Household.maybeOf(context);
+      final screen = JoinScreen(
+        code: s.uri.queryParameters['code']?.replaceAll(RegExp(r'[-_]+'), ' '),
+        hub: s.uri.queryParameters['hub'],
+        another: true,
+      );
+      return home == null ? screen : PairingScope(service: AnotherFamilyPairing.of(home), child: screen);
+    },
+  ),
 ];

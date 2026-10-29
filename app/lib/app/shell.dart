@@ -11,8 +11,9 @@ import '../design/tokens.dart';
 import '../design/widgets.dart';
 import '../features/add/add.dart';
 import '../features/assistant/assistant.dart' show askPlace, askShortcutOn, openAsk;
-import '../features/family/family.dart' show AccessWatch;
+import '../features/family/family.dart' show AccessWatch, FamilySwitch;
 import 'app_state.dart';
+import 'household.dart';
 
 /// The adult app's frame. On a phone: the screen over a tab bar with Today, Calendar, Add in the
 /// middle, Chores and Lists. From 700 pt: the 248 pt sidebar with the family's name, Add, the
@@ -95,6 +96,8 @@ class AppShell extends StatelessWidget {
           children: [
             DenSidebar(
               title: app.den.family?.name ?? 'Den',
+              // With several families, the title is the switcher.
+              heading: (Household.maybeOf(context)?.several ?? false) ? const FamilySwitch(large: true) : null,
               places: [
                 ...places,
                 NavPlace(

@@ -3,5 +3,6 @@
 library;
 
 export 'state/list_actions.dart';
+export 'state/lists_model.dart' show ListsModel, listReads;
 export 'widgets/item_adder.dart' show AddItemRow;
 export 'words/list_words.dart';

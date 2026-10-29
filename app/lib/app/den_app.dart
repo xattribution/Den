@@ -11,6 +11,9 @@ import '../design/theme.dart';
 import '../design/tokens.dart';
 import 'app_state.dart';
 import 'family_colors.dart';
+import 'household.dart';
+import 'log_scope.dart';
+import '../platform/sync/pairing.dart';
 import '../platform/web/web_app.dart';
 import '../platform/web/web_insets.dart';
 import '../features/add/add.dart';
@@ -18,40 +21,54 @@ import '../features/add/add.dart';
 /// The root widget: theme from tokens (day, night, or following the system) in the family's
 /// colors, the system's text size times the person's own (held to 200 %), larger type on a wall
 /// display.
+///
+/// It shows the [household]'s family ([Household.active]): every screen reads that family's
+/// state through [DenScope], and switching families swaps it in place. A device in one family
+/// (or [state] alone) has a household of one.
 class DenApp extends StatefulWidget {
-  const DenApp({super.key, required this.state});
-  final AppState state;
+  DenApp({super.key, AppState? state, Household? household})
+      : assert(state != null || household != null),
+        household = household ?? Household.single(state!);
+
+  final Household household;
 
   @override
   State<DenApp> createState() => _DenAppState();
 }
 
 class _DenAppState extends State<DenApp> {
-  late final GoRouter _router = buildRouter(widget.state);
+  Household get _home => widget.household;
+  late final GoRouter _router = buildRouter(_home.active.state, household: _home);
   StreamSubscription<String>? _taps;
   StreamSubscription<Object>? _shares;
 
-  /// The theme, the text size and the wall setting: all that rebuilds the app itself.
-  late final ChangeNotifier _prefs = widget.state.watching(const {Changes.prefs});
+  /// The theme, the text size and the wall setting, the same for every family on the device:
+  /// all that rebuilds the app itself.
+  late final DevicePrefs _prefs = _home.active.state.device;
+
+  /// Opens [route] from a tapped reminder or notification: a page over whatever is showing, in
+  /// its own family (`/l/<log>/...`); one of the app's places (Today) by going there.
+  void _open(String route) {
+    final place = isPlaceRoute(splitLog(route)?.rest ?? route);
+    if (place) {
+      _router.go(route);
+    } else {
+      _router.push(route);
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     // A tapped reminder opens its event or chore over whatever is showing.
-    _taps = widget.state.reminders?.taps.listen((route) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _router.push(route));
+    _taps = _home.active.state.reminders?.taps.listen((route) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _open(route));
       WidgetsBinding.instance.scheduleFrame();
     });
     // In a browser, a tapped notification from the hub opens its event, chore or Today.
     WebApp.listen((route) {
       if (!mounted || !route.startsWith('/')) return;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (route == '/today') {
-          _router.go(route);
-        } else {
-          _router.push(route);
-        }
-      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => _open(route));
       WidgetsBinding.instance.scheduleFrame();
     });
     // Something shared from another app opens straight on what Den found in it.
@@ -71,33 +88,41 @@ class _DenAppState extends State<DenApp> {
   void dispose() {
     _taps?.cancel();
     _shares?.cancel();
-    _prefs.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return DenScope(
-      state: widget.state,
+    return HouseholdScope(
+      household: _home,
       child: ListenableBuilder(
-        listenable: _prefs,
-        builder: (context, _) {
-          final scale = widget.state.wall ? DenType.wallScale : 1.0;
+        listenable: _home,
+        builder: (context, child) {
+          final log = _home.active;
+          final pairing = log.pairing;
+          final scoped = DenScope(state: log.state, child: child!);
+          return pairing == null ? scoped : PairingScope(service: pairing, child: scoped);
+        },
+        child: ListenableBuilder(
+          listenable: _prefs,
+          builder: (context, _) {
+          final scale = _prefs.wall ? DenType.wallScale : 1.0;
           return MaterialApp.router(
             title: 'Den',
             debugShowCheckedModeBanner: false,
             routerConfig: _router,
             builder: (context, child) =>
-                FamilyColors(child: DenTextScale(size: widget.state.textSize, child: WebSafeArea(child: child))),
+                FamilyColors(child: DenTextScale(size: _prefs.textSize, child: WebSafeArea(child: child))),
             theme: denTheme(DenColors.day, typeScale: scale),
             darkTheme: denTheme(DenColors.night, typeScale: scale),
-            themeMode: switch (widget.state.theme) {
+            themeMode: switch (_prefs.theme) {
               ThemeChoice.auto => ThemeMode.system,
               ThemeChoice.day => ThemeMode.light,
               ThemeChoice.night => ThemeMode.dark,
             },
           );
-        },
+          },
+        ),
       ),
     );
   }

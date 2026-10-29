@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
+import '../../../app/household.dart';
 import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
@@ -107,6 +108,17 @@ class _WaitingScreenState extends State<WaitingScreen> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Joining another family: the ones this device is in already stay a tap away.
+            if (Household.maybeOf(context) case final home?)
+              for (final other in home.families)
+                if (!identical(other, home.active) && other.den.isApproved && !_startingOver)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: () => home.choose(other),
+                      child: Text('Back to ${other.name} meanwhile'),
+                    ),
+                  ),
             if (!_startingOver)
               Align(
                 alignment: Alignment.centerLeft,
