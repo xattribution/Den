@@ -13,8 +13,11 @@ import 'package:den_app/features/settings/screens/calendars_screen.dart';
 import 'package:den_app/features/settings/screens/family_settings_screen.dart';
 import 'package:den_app/features/settings/screens/settings_screen.dart';
 import 'package:den_app/features/settings/state/assistant_hub.dart';
+import 'package:den_app/features/settings/state/feed_links.dart';
+import 'package:den_app/platform/web/web_app.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -53,6 +56,38 @@ class FakeAssistant implements AssistantSource {
     );
   }
 }
+
+/// The hub's calendar links, answering at once.
+class FakeFeedLinks implements FeedLinksSource {
+  final links = <FeedLink>[];
+  final made = <(String, String)>[];
+
+  @override
+  Future<List<FeedLink>> list() async => [...links];
+
+  @override
+  Future<FeedLink> create({required String feed, required String label}) async {
+    made.add((feed, label));
+    final secret = 'denfeed_q3JxV8kd2Lmw';
+    final link = FeedLink(
+      id: 'L${made.length}',
+      label: label,
+      feed: feed,
+      feedName: feed == 'family' ? 'The Carters' : 'Leo',
+      made: demoNow.millisecondsSinceEpoch,
+      url: 'https://den.example.com/ics/$secret/$feed.ics',
+      webcal: 'webcal://den.example.com/ics/$secret/$feed.ics',
+    );
+    links.insert(0, link);
+    return link;
+  }
+
+  @override
+  Future<void> remove(String id) async => links.removeWhere((l) => l.id == id);
+}
+
+/// Den opened from an iPhone's Home Screen.
+const iPhoneApp = WebAppInfo(ios: true, iosVersion: (major: 18, minor: 1), standalone: true, secure: true, push: true);
 
 /// The apps a parent set up on the hub, answering at once.
 class FakeApps implements HubAppsSource {
@@ -164,6 +199,79 @@ void main() {
       expect(state.den.subscriptions.single.url, 'https://school.example.org/oak.ics');
       expect(state.den.subscriptions.single.label, 'Oak Grove');
       await matchShot('settings_calendars_phone');
+    });
+
+    testWidgets('Show Den in iPhone Calendar is one tap: the hub makes the link and Calendar is asked to subscribe',
+        (tester) async {
+      final state = await connected(tester);
+      final links = FakeFeedLinks();
+      final opened = <Uri>[];
+      await pumpScreen(
+        tester,
+        CalendarsScreen(
+          feedLinks: links,
+          web: iPhoneApp,
+          openCalendar: (uri) async {
+            opened.add(uri);
+            return true;
+          },
+        ),
+        state: state,
+        size: _tall,
+        pushed: true,
+      );
+      expect(find.text('Den in iPhone Calendar'), findsOneWidget);
+      await _tapAndWait(tester, find.text('Show Den in iPhone Calendar'));
+      expect(links.made.single, ('family', "Alex's iPhone"));
+      expect(opened.single.toString(), 'webcal://den.example.com/ics/denfeed_q3JxV8kd2Lmw/family.ics');
+      expect(find.text("Alex's iPhone"), findsOneWidget);
+      expect(find.textContaining('should ask to'), findsOneWidget);
+      await matchShot('settings_calendars_iphone_phone');
+    });
+
+    testWidgets("where Calendar doesn't open, it says how to add the link, with Copy link", (tester) async {
+      final state = await connected(tester);
+      final links = FakeFeedLinks();
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String?;
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+      await pumpScreen(
+        tester,
+        CalendarsScreen(feedLinks: links, web: iPhoneApp, openCalendar: (_) async => false),
+        state: state,
+        size: _tall,
+        pushed: true,
+      );
+      await _tapAndWait(tester, find.text('Show Den in iPhone Calendar'));
+      expect(find.textContaining('Add Subscription Calendar'), findsOneWidget);
+      await _tapAndWait(tester, find.text('Copy link'));
+      expect(copied, 'https://den.example.com/ics/denfeed_q3JxV8kd2Lmw/family.ics');
+      expect(find.text('Copied'), findsOneWidget);
+      await matchShot('settings_calendars_iphone_fallback_phone');
+    });
+
+    testWidgets("one person's calendar, and turning a link off", (tester) async {
+      final state = await connected(tester);
+      final links = FakeFeedLinks();
+      await pumpScreen(
+        tester,
+        CalendarsScreen(feedLinks: links, web: iPhoneApp, openCalendar: (_) async => true),
+        state: state,
+        size: _tall,
+        pushed: true,
+      );
+      await tester.tap(find.text("Just one person's events"));
+      await tester.pumpAndSettle();
+      await _tapAndWait(tester, find.text('Leo'));
+      expect(links.made.single.$1, state.den.members.firstWhere((m) => m.name == 'Leo').id);
+      expect(find.textContaining("Leo's events"), findsOneWidget);
+      await tester.tap(find.text('Turn off'));
+      await tester.pumpAndSettle();
+      await _tapAndWait(tester, find.text("Turn off Alex's iPhone"));
+      expect(links.links, isEmpty);
     });
 
     testWidgets("an address that isn't one says so where it was typed", (tester) async {
