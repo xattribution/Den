@@ -72,8 +72,8 @@ Future<int> mcp(ArgResults a, DataDir data, int port, CliIo io) async {
       node: SyncNode(den),
       http: http.Client(),
     );
-    if (accessForToken(den, token) == null) throw StateError('That token doesn\'t work. Make one in the Den app.');
-    await serveMcpStdio(McpServer(ctx), () => accessForToken(den, token), io.input, io.out.writeln);
+    if (ctx.access(token) == null) throw StateError('That token doesn\'t work. Make one in the Den app.');
+    await serveMcpStdio(McpServer(ctx), () => ctx.access(token), io.input, io.out.writeln);
     await ctx.node.close();
     ctx.http.close();
     return 0;
@@ -147,6 +147,9 @@ Future<int> importSett(ArgResults a, DataDir data, CliIo io) async {
   final path = a.rest.single;
   if (!File(path).existsSync()) throw StateError('There\'s no file at $path');
   final name = _required(a, 'as');
+  if (data.file('hub/$restoreMarkerDoc.json').existsSync()) {
+    throw StateError('$catchingUpStatus Then stop the hub and import.');
+  }
   return _withDen(data, (den) async {
     if (!den.isApproved) throw StateError('This hub isn\'t part of a family yet.');
     final parent = den.members.where((m) => m.name.toLowerCase() == name.toLowerCase()).firstOrNull;
@@ -199,10 +202,15 @@ Future<int> openLinking(ArgResults a, DataDir data, CliIo io) async {
   return 0;
 }
 
+/// What `den_hub status` adds while the hub waits for a device after a restore.
+const String catchingUpStatus = 'Catching up after a restore: the hub writes nothing of its own until a phone or '
+    'tablet in the family has synced with it. Open Den on one.';
+
 /// `den_hub status`.
 Future<int> status(DataDir data, int port, CliIo io) async {
   final base = Uri.parse('http://127.0.0.1:$port');
   final health = await _getJson(base.resolve('/health'));
+  final catchingUp = data.file('hub/$restoreMarkerDoc.json').existsSync();
   if (health != null) {
     final setup = await _getJson(base.resolve('/api/v1/hub/status'));
     // In the public posture /health leaves out the name, device and version, and a hub in a
@@ -216,6 +224,7 @@ Future<int> status(DataDir data, int port, CliIo io) async {
       'removed' => '${setup?['removed'] ?? 'This hub was removed from the family; reset it to add it again'}.',
       final stage => 'Setup: ${stage ?? 'unknown'}',
     });
+    if (catchingUp) io.out.writeln(catchingUpStatus);
     final words = setup?['matching_words'];
     if (words is List && words.isNotEmpty) {
       io.out.writeln('Matching words: ${words.join(' ')} (approve this hub in the Den app only if it shows the same three)');
@@ -236,6 +245,7 @@ Future<int> status(DataDir data, int port, CliIo io) async {
             : den.hasFamily
                 ? 'Asked to join a family; not approved yet.'
                 : 'Not in a family yet.');
+    if (catchingUp) io.out.writeln(catchingUpStatus);
     return 0;
   });
 }
@@ -377,9 +387,10 @@ Future<int> backup(ArgResults a, DataDir data, CliIo io) async {
 }
 
 /// What a restore says once it has written the files.
-const String restoreAdvice = 'Before anyone changes anything, start the hub and let the family\'s phones and tablets '
-    'connect to it. What the hub wrote after this backup is still on them; the hub takes it back as they sync and '
-    'carries on after it, instead of writing over it.';
+const String restoreAdvice = 'Start the hub, then open Den on a phone or tablet in the family. What the hub wrote '
+    'after this backup is still on the family\'s devices, so until one of them has synced with it the hub writes '
+    'nothing of its own: calendar feeds wait, and apps and assistants are told to try again shortly. '
+    '`den_hub status` says when it has caught up.';
 
 /// `den_hub restore --in FILE --passphrase-env VAR [--force]`. Refuses while a hub runs on the
 /// directory (stop it, then `docker compose run --rm hub restore ...`); with `--force` it first
@@ -413,6 +424,14 @@ Future<int> restore(ArgResults a, DataDir data, CliIo io) async {
       if (e.key == 'keys.json' || e.key.startsWith('hub/')) restrictToOwner(f.path);
       written++;
     }
+    // The hub writes nothing of its own until a device of the family has synced with it.
+    final marker = data.file('hub/$restoreMarkerDoc.json');
+    await marker.parent.create(recursive: true);
+    await marker.writeAsString(
+      jsonEncode({'at': DateTime.now().toUtc().millisecondsSinceEpoch, 'from': File(input).uri.pathSegments.last}),
+      flush: true,
+    );
+    restrictToOwner(marker.path);
     io.out.writeln('Restored $written files into ${data.path}.');
     io.out.writeln(restoreAdvice);
     return 0;

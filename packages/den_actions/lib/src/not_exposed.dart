@@ -43,7 +43,7 @@ const Map<String, String> notExposed = {
   'requestRecovery': 'A new device lets itself in as a parent\'s own with their recovery words or the hub\'s proof; '
       'nothing acting for the family can',
   'requestOAuthConnection': 'Written by the hub\'s OAuth server when an app asks to connect; a parent approves it',
-  'setConnectionToken': 'Written by the hub\'s OAuth server when it issues a token for approved access',
+  'setConnectionToken': 'Written by the hub\'s OAuth server, which clears the token hash an older hub recorded',
   // The hub's and the runner's own bookkeeping.
   'setSubscriptionStatus': 'Written by the hub after it fetches a subscribed calendar',
   'recording': 'The runner\'s own bookkeeping: every write runs inside a recording, which becomes its receipt',

@@ -81,10 +81,11 @@ class FeedService implements HubService {
         s.url, s.label, s.category, s.assignee, s.targetSpace, s.include, s.exclude, s.skipAllDay,
       ]);
 
-  /// Fetches every feed (or, with [onlyChanged], the new and changed ones) one at a time.
+  /// Fetches every feed (or, with [onlyChanged], the new and changed ones) one at a time. Does
+  /// nothing while the hub is catching up after a restore ([HubContext.catchingUp]).
   Future<void> syncAll({bool onlyChanged = false}) {
     final run = _running.then((_) async {
-      if (_stopping) return;
+      if (_stopping || hub.catchingUp) return;
       final subs = await hub.gate.asHub(() => hub.den.subscriptions);
       final ids = {for (final s in subs) s.id};
       for (final gone in _doc.keys.where((k) => !ids.contains(k)).toList()) {
@@ -136,9 +137,10 @@ class FeedService implements HubService {
     }
   }
 
-  /// Fetches one feed and applies it. Returns how many series it holds, or null when it failed
-  /// or the hub is stopping.
+  /// Fetches one feed and applies it. Returns how many series it holds, or null when it failed,
+  /// the hub is stopping, or it is catching up after a restore.
   Future<int?> syncOne(Subscription s) async {
+    if (hub.catchingUp) return null;
     final entry = _entry(s.id);
     final fingerprint = _fingerprint(s);
     final changedConfig = entry['config'] != fingerprint;
@@ -148,7 +150,7 @@ class FeedService implements HubService {
       etag: changedConfig ? null : entry['etag'] as String?,
       modified: changedConfig ? null : entry['modified'] as String?,
     );
-    if (_stopping) return null;
+    if (_stopping || hub.catchingUp) return null;
     if (fetched.problem != null) {
       hub.log.warn('A calendar feed failed: ${fetched.temporary ? 'temporarily' : 'link broken'}');
       await _status(s, fetched.problem!);

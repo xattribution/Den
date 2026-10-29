@@ -7,6 +7,7 @@ import 'dart:io';
 
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
+import 'package:den_hub/cli_support.dart' show HubState, restoreMarkerDoc;
 import 'package:den_hub/den_hub.dart';
 import 'package:den_net/den_net.dart';
 import 'package:http/http.dart' as http;
@@ -182,8 +183,20 @@ void main() {
     final (wrong, _, _) = await run(['restore', '--in', file, '--passphrase-env', 'DEN_PASS', '--data', target],
         env: {'DEN_PASS': 'not the passphrase'});
     expect(wrong, 1);
-    final (ok, _, okErr) = await run(['restore', '--in', file, '--passphrase-env', 'DEN_PASS', '--data', target], env: env);
+    final (ok, okOut, okErr) = await run(['restore', '--in', file, '--passphrase-env', 'DEN_PASS', '--data', target], env: env);
     expect(ok, 0, reason: okErr);
+    expect(okOut, contains('open Den on a phone or tablet in the family'));
+    // The restored hub writes nothing of its own until a device has synced with it, and says so.
+    final marker = File('$target${Platform.pathSeparator}hub${Platform.pathSeparator}$restoreMarkerDoc.json');
+    expect(marker.existsSync(), isTrue);
+    expect(HubState(target).restored, isTrue);
+    final (_, statusOut, _) = await run(['status', '--data', target, '--port', '9']);
+    expect(statusOut, contains('Catching up after a restore'));
+    final db = '${tmp.path}${Platform.pathSeparator}restore-coord.db';
+    writeSettFixture(db);
+    final (refused, _, refusedErr) = await run(['import-sett', db, '--as', 'Alex', '--data', target]);
+    expect(refused, 1);
+    expect(refusedErr, contains('Catching up after a restore'));
     final restored = await DataDir(target).open();
     addTearDown(restored.close);
     final original = await DataDir(dataPath).keys();
@@ -303,7 +316,7 @@ void main() {
     final target = '${tmp.path}${Platform.pathSeparator}live-restored';
     final (ok, out, okErr) = await run(['restore', '--in', file, '--passphrase-env', 'DEN_PASS', '--data', target], env: env);
     expect(ok, 0, reason: okErr);
-    expect(out, contains('let the family'));
+    expect(out, contains('open Den on a phone or tablet'));
     expect(File('$target${Platform.pathSeparator}notify.json').readAsStringSync(), contains('den-alex'));
     final restored = await DataDir(target).open();
     final count = restored.changesSince(const {}).length;

@@ -176,8 +176,8 @@ class _Listener {
 
   /// Whether the token still works; closes the stream when it doesn't.
   bool _valid() {
-    final current = hub.den.connectionForToken(token);
-    if (current != null && current.id == access.connection.id) return true;
+    final current = hub.access(token);
+    if (current != null && current.connection.id == access.connection.id) return true;
     unawaited(close());
     if (!controller.isClosed) unawaited(controller.close());
     return false;

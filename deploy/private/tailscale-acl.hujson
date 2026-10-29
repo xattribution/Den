@@ -1,0 +1,61 @@
+// The tailnet policy for Den's private setup (docs/hosting.md, "Private: home networks plus
+// Tailscale"). In the Tailscale admin console, Access controls, replace the policy with this,
+// after putting in the family's sign-in emails. If Den joins a tailnet you already use for other
+// things, add these entries to your policy instead of replacing it.
+//
+// Phones and computers in the family reach one thing on the tailnet: the Den server, on HTTPS
+// (443) and DNS (53), which answers den.<domain> with the server's Tailscale address. Nothing
+// else, not even each other's devices, and no exit node, so Tailscale carries only Den's traffic
+// (and later, other family services you add here). Everything not granted is denied.
+{
+	"groups": {
+		// Everyone in the family who signs in to Tailscale. The free Personal plan allows
+		// 6 users, each with as many devices as they like.
+		"group:family": ["parent-one@example.com", "parent-two@example.com"],
+
+		// Whoever looks after the server: also SSH to it.
+		"group:admins": ["owner@example.com"],
+	},
+
+	"tagOwners": {
+		// The Den server joins as tag:den-server (install.sh: tailscale up
+		// --advertise-tags=tag:den-server), so it belongs to no one person and its key
+		// doesn't expire. Admins may give it the tag.
+		"tag:den-server": ["group:admins"],
+	},
+
+	"grants": [
+		// Den itself, and the DNS answer that sends den.<domain> through the tunnel.
+		{
+			"src": ["group:family", "group:admins"],
+			"dst": ["tag:den-server"],
+			"ip":  ["tcp:443", "udp:53", "tcp:53"],
+		},
+		// SSH to the server, for the admins only.
+		{
+			"src": ["group:admins"],
+			"dst": ["tag:den-server"],
+			"ip":  ["tcp:22"],
+		},
+
+		// Other family services (photos, files) on another server: tag that server, say
+		// tag:family-cloud, add it to tagOwners, and grant its ports the same way:
+		// {"src": ["group:family"], "dst": ["tag:family-cloud"], "ip": ["tcp:443"]},
+		// Its name goes through the tunnel like Den's: another split-DNS entry, or one more
+		// --interface-name line for dnsmasq if it runs on the Den server.
+	],
+
+	// Checked by Tailscale every time the policy is saved: a change that lets the family reach
+	// more than Den, or takes Den away, is refused.
+	"tests": [
+		{
+			"src":    "parent-one@example.com",
+			"accept": ["tag:den-server:443", "tag:den-server:53"],
+			"deny":   ["tag:den-server:22", "tag:den-server:47733", "tag:den-server:80"],
+		},
+		{
+			"src":    "owner@example.com",
+			"accept": ["tag:den-server:22", "tag:den-server:443"],
+		},
+	],
+}

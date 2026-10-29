@@ -9,6 +9,10 @@ This guide assumes you're comfortable with SSH and a Linux shell. Every task is 
 paste, run as root (or with `sudo`) on the server.
 
 - [Choose a setup](#choose-a-setup)
+- [Private: home networks plus Tailscale](#private-home-networks-plus-tailscale), the recommended
+  setup: [who can reach it](#who-can-reach-this-server), [install](#install-private),
+  [commands](#everyday-commands-private), [moving](#moving-a-private-server),
+  [maintenance](#maintenance-private), [what's closed](#closed-on-purpose)
 - [What you need](#what-you-need)
 - [Install (setup A)](#install-setup-a): [B](#setup-b-cloudflare-tunnel), [C](#setup-c-tailscale),
   [D](#setup-d-a-computer-at-home), [E](#setup-e-several-families-on-one-server)
@@ -27,13 +31,344 @@ paste, run as root (or with `sudo`) on the server.
 
 | | Setup | |
 | --- | --- | --- |
-| **A** | A VPS with a domain, HTTPS through the bundled Caddy | The main path: the family opens `https://den.example.com` from anywhere |
+| **P** | **Private: home networks plus Tailscale** (recommended) | Only the family reaches it: from their homes, or from anywhere through Tailscale, at one address. Nothing else on the internet gets an answer |
+| **A** | A VPS with a domain, HTTPS through the bundled Caddy | Public: the family opens `https://den.example.com` from anywhere, with no app, and so can anyone try to |
 | **B** | A VPS behind a Cloudflare Tunnel | No open ports; Cloudflare holds the certificate and sees the traffic at its edge |
-| **C** | Private, with Tailscale | Only devices on your tailnet reach it; every phone needs the Tailscale app |
+| **C** | Tailscale only | Only devices on your tailnet reach it, at its `ts.net` name; every phone needs the Tailscale app, at home too |
 | **D** | A computer at home | On the home network, for the Den app (found by mDNS). For iPhones' Home Screen app, which needs HTTPS, run setup C on that computer instead |
 | **E** | Several families on one server | A hub per family, each with its own address and data, behind one Caddy |
 
+## Private: home networks plus Tailscale
+
+The recommended setup (P). A server the internet can't see: the family reaches Den at
+`https://den.example.com` from their homes, and from anywhere else through Tailscale. It's one
+address everywhere, which matters: Safari ties a Home Screen app's storage to its address, so a
+second address would be a second app, and a second device in the family.
+
+- **At home**, the phone looks up `den.example.com` in public DNS, gets the server's public
+  address, and the firewall lets it in because it comes from one of the family's homes. Each home
+  keeps a DDNS name pointed at its address; the server looks them up every 3 minutes.
+- **Away, with Tailscale on**, Tailscale's split DNS asks the server itself about
+  `den.example.com`, the server answers with its Tailscale address, and the same request goes
+  through the tunnel. Tailscale carries nothing else: it isn't a VPN for the rest of the phone.
+- **The certificate** comes from Let's Encrypt through Cloudflare's DNS (the DNS-01 challenge),
+  so port 80 never opens. Inside all that, Den's own sign-in stands as before: every device was let
+  in by a parent, and the hub keeps [the public posture](#settings) anyway.
+
+### Who can reach this server
+
+> | Port | Open to | Why |
+> | --- | --- | --- |
+> | TCP 443: Den, through Caddy | Each home's current public address (its IPv4 address, and its IPv6 /64), from its DDNS name; the family's devices on Tailscale | Den itself |
+> | UDP and TCP 53: dnsmasq | The family's devices on Tailscale (it listens on the server's Tailscale address only) | Sends `den.example.com` through the tunnel |
+> | TCP 22: SSH | Admins on Tailscale. While you set up, also the address you installed from, until you've said SSH over Tailscale works | Looking after the server |
+> | UDP 41641: Tailscale | Anyone, but WireGuard answers only devices of your tailnet: to everyone else it looks closed | Direct connections, instead of Tailscale's relays |
+> | Everything else: port 80, the hub's port 47733 (on `127.0.0.1` only anyway), ping, any port a container ever publishes | Nobody. Dropped without an answer, IPv4 and IPv6 | |
+>
+> The name and the server's address are public (DNS, and the log every certificate goes in), but
+> nothing answers there. One nftables table, `inet den_fw` with policy drop, decides; Docker's
+> and Tailscale's rules sit beside it and can't open what it drops. On the tailnet, the policy in
+> `tailscale-acl.hujson` lets the family reach this server's 443 and 53 and nothing else.
+> `sudo den-allowlist --dry-run` shows what the firewall lets in right now.
+
+### What you need (private)
+
+- **A server**, as for the other setups ([What you need](#what-you-need)): 2 GB of memory,
+  Ubuntu 24.04 or Debian 12. If the provider puts a firewall of its own in front of it, open TCP
+  443 and UDP 41641 there (and TCP 22 while you set up), or leave it off: the server's own
+  firewall is the one that decides.
+- **A domain on Cloudflare** (its DNS, on any plan). Den gets a name in it, like
+  `den.smith.family`.
+- **A Cloudflare API token** for the certificate. In Cloudflare: My Profile, API Tokens, Create
+  Token, Create Custom Token, with two permissions, **Zone / Zone / Read** and
+  **Zone / DNS / Edit**, and Zone Resources **Include, Specific zone,** your domain. Caddy finds
+  the zone with the first and writes the challenge's TXT record with the second.
+- **A DDNS name for each home**, on Cloudflare as **DNS only** (grey cloud), kept pointed at the
+  home's public address by something there: the router's DDNS client, Home Assistant's Cloudflare
+  integration, a script on a computer that's always on. See [Home addresses](#home-addresses).
+- **A Tailscale account.** The free Personal plan allows 6 users, each with as many devices as
+  they like (since April 2026: [tailscale.com/pricing](https://tailscale.com/pricing)).
+- **Your own computer on the tailnet**, for SSH.
+
+### Before you install: the tailnet
+
+1. Make a tailnet for the family at [tailscale.com](https://tailscale.com). If Den joins a tailnet
+   you already use, merge the policy below into yours instead of replacing it.
+2. In the admin console, **Access controls**: paste `deploy/private/tailscale-acl.hujson`, put
+   the family's sign-in emails in `group:family` and yours in `group:admins`, and save. Tailscale
+   runs the tests at its end as it saves.
+3. **Users, Invite users**: invite everyone in the family ([users or sharing](#users-or-sharing)).
+4. Install Tailscale on your computer and sign in.
+
+### Install (private)
+
+On the server, as a user with sudo, or as root:
+
+```sh
+git clone https://github.com/xattribution/den.git
+cd den/deploy/private
+sudo ./install.sh
+```
+
+(`git clone` asks for a token: see [Install (setup A)](#install-setup-a).) It asks for the
+domain, the Cloudflare token and the homes' DDNS names, and prints a Tailscale link: open it and
+sign in as yourself, so the server joins as `tag:den-server` (or run it as
+`sudo TS_AUTHKEY=tskey-... ./install.sh` with an auth key for that tag). In order, it:
+
+1. installs nftables, Docker (from Docker's repository) and Tailscale (with its install script);
+2. writes `.env` (readable by root only), with a new backup passphrase: copy it into your
+   password manager (`grep PASSPHRASE .env`);
+3. joins the tailnet as `tag:den-server`, leaving the server's own DNS alone
+   (`--accept-dns=false`), and turns on Tailscale's updates;
+4. turns on nightly security updates, with a reboot at 04:30 (server time) when one needs it;
+5. makes SSH key-only, once your account has a key (otherwise it leaves passwords on and says how
+   to add one);
+6. installs the firewall (`/etc/den/den_fw.nft`), `den-allowlist` and its timer. If you're
+   connected over SSH from the internet, it asks you to try SSH over Tailscale first; unless you
+   say it works, it keeps the address you're connected from allowed (`DEN_SSH_ALLOW` in `.env`).
+   The session you're in stays up either way: the firewall keeps open connections;
+7. builds and starts the hub, Caddy and dnsmasq (about 10 minutes the first time);
+8. prints what's left, below.
+
+Run it again any time, after `git pull` or a change to `.env`: it changes only what isn't right
+yet. `sudo ./install.sh --check` says what it would do and changes nothing.
+
+### After the install
+
+1. **Public DNS.** In Cloudflare, an `A` record for `den.example.com` with the server's public
+   IPv4 address, **DNS only** (an `AAAA` too, if you like: [Home addresses](#home-addresses)).
+2. **Split DNS.** Tailscale admin console, **DNS**, **Nameservers**, **Add nameserver**,
+   **Custom**: the server's Tailscale address (`tailscale ip -4`; install.sh prints it), with
+   **Restrict to domain** on, for `den.example.com`. Only that name goes to the server: if it's
+   ever down, the family's other lookups don't notice. Leave MagicDNS on, as it is by default.
+3. **SSH over Tailscale.** From your computer, `ssh root@100.x.y.z` (or the server's name in the
+   admin console). Once that works, take your address out of `DEN_SSH_ALLOW` in `.env`, if
+   install.sh put it there, and run `sudo systemctl start den-allowlist`.
+4. **A password, for the console.** If install.sh said your account has none, give it one
+   (`sudo passwd root`, or your user): SSH won't take it, but the VPS provider's web console asks
+   for it, and that console is the way in if the network ever isn't.
+5. **The first parent**, at home (with Private Relay off for the home Wi-Fi) or anywhere with
+   Tailscale on: the steps after the setup code in [Install (setup A)](#install-setup-a). Then send
+   the family [their message](#for-the-family-private).
+
+### Home addresses
+
+- **DNS only.** A home's DDNS record must be grey cloud: proxied, it resolves to Cloudflare
+  instead of the home. den-allowlist refuses Cloudflare's addresses and private ones, logs why,
+  and that home keeps its last good addresses.
+- **When a home's address changes**, its DDNS client updates the record and the server lets the
+  new address in within about 3 minutes, plus the record's TTL (5 minutes for Cloudflare's
+  "Auto"). Meanwhile Tailscale works. When a name can't be looked up at all, the home keeps its
+  last good addresses, and the log says so.
+- **IPv6.** Each device at home has its own IPv6 address in the home's /64, so the firewall lets
+  in the whole /64 around the home's `AAAA` address (`DEN_HOME_V6_PREFIX` in `.env`). That
+  needs the `AAAA` to come from a device on the home network (Home Assistant, a NAS, a computer);
+  a router that publishes its own outside address puts a different /64 there. When IPv6 is
+  dropped, Safari falls back to IPv4 within a moment, so a mismatch is slow, not broken. Simplest:
+  give `den.example.com` only an `A` record, and everything at home uses IPv4.
+- **Shared addresses.** Some internet providers put many customers behind one public IPv4
+  address (carrier-grade NAT, common with mobile and satellite home internet). Allowing it would
+  let those neighbours reach port 443 too, where Den's sign-in still stops them; better to leave
+  that home out of `DEN_HOMES` and use Tailscale there, or its IPv6.
+- **Changing the list:** edit `DEN_HOMES` in `.env`, then `sudo systemctl start den-allowlist`.
+  A home with a fixed address and no DDNS name goes in `DEN_ALLOW_EXTRA`.
+
+### Tailscale on the phones
+
+Once per phone: install Tailscale from the App Store, sign in with the invited account, and
+allow the VPN configuration. Then in the app, the profile picture, **VPN On Demand**: turn it on
+and set Wi-Fi and Cellular to **Always**, so it connects by itself after restarts and network
+changes. Leave Tailscale's DNS settings on, as they are by default: split DNS needs them.
+
+What it costs: the VPN icon in the status bar, and a little battery. Tailscale carries only
+traffic for the tailnet, Den and the lookup of its name; everything else goes as it always did,
+unless someone picks an exit node. Don't (the policy allows none anyway).
+
+#### Users or sharing
+
+- **Users** (the fit for a family): everyone joins the tailnet (Users, Invite users). They get the
+  tailnet's split DNS by themselves, and `group:family` covers them. Six users fit on the free
+  plan, with any number of devices; a child without an account can sign in to Tailscale as a
+  parent on their own device (in Den they're still themselves).
+- **Sharing the machine** (Machines, the server's menu, Share) gives the server to someone who
+  stays in their own tailnet, and must be its admin to accept. Their tailnet's DNS settings
+  apply, not yours, so each of them adds the same split-DNS nameserver in their own admin
+  console; in the policy, add `autogroup:shared` to the first grant's `src`. It fits a relative
+  who already runs a tailnet of their own.
+
+### For the family (private)
+
+Send this, with your family's address in it:
+
+1. **At home**, turn off iCloud Private Relay for the home Wi-Fi: Settings, Wi-Fi, tap the (i)
+   next to the home network, and turn off **iCloud Private Relay** (on older iPhones, **Limit IP
+   Address Tracking**). With it on, Safari's requests come from Apple's relay instead of from home, and
+   Den won't open.
+2. **For everywhere else**, install Tailscale from the App Store, sign in with the invitation you
+   got, and turn on VPN On Demand (the profile picture, VPN On Demand, Wi-Fi and Cellular:
+   Always).
+3. Open **https://den.example.com** in Safari, at home or with Tailscale on. Tap **Share**, then
+   **Add to Home Screen**, then **Add**, and open Den from the Home Screen.
+4. **Calendar:** when you turn on **Show Den in iPhone Calendar**, and the iPhone shows where it
+   adds the calendar, choose **On My iPhone**, not iCloud: iCloud would fetch it from Apple's
+   servers, which can't reach your hub. (Added to iCloud already? Delete it in the Calendar app
+   and turn it on again.)
+
+### Everyday commands (private)
+
+From `den/deploy/private`, with `sudo` (or as root). [Everyday commands](#everyday-commands),
+[Updating](#updating), [Backups](#backups) and [Admin and reset](#admin-and-reset) work the same
+from this folder, with your address in place of `https://den.example.com`; the firewall and
+Tailscale stay as they are through a reset. What differs or adds:
+
+| Task | Command |
+| --- | --- |
+| Health | `docker compose ps` (the hub should say `healthy`). `/health` answers only from the homes and over Tailscale |
+| Logs | `docker compose logs -f --tail 100 hub` (`caddy` for the certificate, `dnsmasq` for lookups) |
+| Who can reach the server now | `den-allowlist --dry-run` |
+| The firewall's log: homes' new addresses, failed lookups | `journalctl -u den-allowlist -n 50` |
+| After changing `DEN_HOMES`, `DEN_ALLOW_EXTRA` or the SSH settings in `.env` | `systemctl start den-allowlist` |
+| The firewall as loaded | `nft list table inet den_fw` |
+| Tailscale | `tailscale status` |
+| Restore | As in [Restore](#restore); then open Den on a phone at home or with Tailscale on, as the hub waits for one to sync (`den_hub status` says `Catching up after a restore` until then) |
+| Update | A backup and `docker tag den-hub den-hub:previous` as in [Updating](#updating), then `git pull` and `./install.sh`: it updates the firewall and its units too, and runs `docker compose up -d --build` |
+
+**Backups off the server** go over Tailscale, as SSH is closed to the internet: with the
+server's Tailscale name or address,
+`scp 'root@den-server:den/deploy/private/backups/*.denbackup' ~/den-backups/`. The nightly
+crontab line is the one in [Backups](#backups), with `deploy/private` in it.
+
+### Moving a private server
+
+The family keeps the address and the hub, as in [Moving to a new server](#moving-to-a-new-server);
+the private setup also moves the names that point at the server. Your computer reaches the old
+server over Tailscale, and the new one at its public address until it joins.
+
+1. **The new server.** `git clone` as in [Install (private)](#install-private), then from your
+   computer copy `.env` across:
+   `scp -3 root@old-den:den/deploy/private/.env root@<new address>:den/deploy/private/.env`.
+   On the new server, `sudo ./install.sh`: it joins the tailnet as `tag:den-server` too, sets up
+   the firewall and starts an empty hub.
+2. **Back up the old one**, with its hub stopped:
+   `docker compose stop hub && docker compose run --rm backup`.
+3. **Copy the backup**, from your computer, over Tailscale both ways now:
+   `scp -3 'root@old-den:den/deploy/private/backups/den-*.denbackup' root@new-den:den/deploy/private/backups/`.
+4. **Restore on the new one:** `docker compose stop hub`, then
+   `docker compose run --rm backup restore backups/den-2026-10-28-0317.denbackup` (the newest),
+   then `docker compose up -d`.
+5. **Point the names at it:**
+   - **Public DNS:** the `A` (and `AAAA`) record of `den.example.com`, to the new public address.
+   - **Split DNS:** Tailscale admin console, DNS, the nameserver for `den.example.com`, to the new
+     server's Tailscale address (`tailscale ip -4` there).
+   - **The tailnet policy:** nothing to change while the new server carries `tag:den-server`
+     (if it doesn't: Machines, its menu, Edit ACL tags). Once the old server is off, remove it
+     (Machines, its menu, Remove), so the tag means one server again.
+   - The homes' DDNS names and the Cloudflare token stay as they are.
+6. **Open Den on a phone at home or with Tailscale on**, one that has been in use since the backup
+   (the most recent is best), and let it sync: a restored hub writes nothing of its own until a
+   phone has ([Restore](#restore)). Then `docker compose exec hub /app/bin/den_hub status` says
+   `In a family and serving.` and no longer `Catching up after a restore`. Check from one phone
+   at home and one with Tailscale on.
+7. **Retire the old one:** `docker compose down` and `tailscale logout` there; delete it a few
+   days later.
+
+### Maintenance (private)
+
+- **Updates** install themselves: security updates every night, with a reboot at 04:30 when one
+  needs it (delete `/etc/apt/apt.conf.d/52den-unattended-upgrades` to reboot by hand instead),
+  and Tailscale's own. After a reboot the firewall loads before the network, with the homes' last
+  good addresses, and Den starts by itself. `apt update && apt upgrade -y` any time.
+- **Certificates** renew through Cloudflare's DNS about a month ahead, with the token in `.env`.
+  If the token is deleted or expires, `docker compose logs caddy` says so weeks before Safari
+  would. The current certificate's dates, on the server:
+
+  ```sh
+  echo | openssl s_client -connect 127.0.0.1:443 -servername den.example.com 2>/dev/null | openssl x509 -noout -dates
+  ```
+
+- **Watching it:** an uptime monitor on the internet can't reach the server; one on the tailnet
+  can watch `https://den.example.com/health`. Or `docker compose ps` now and then.
+- Disk space, logs and time: as in [Server maintenance](#server-maintenance).
+
+### Closed on purpose
+
+- **No public `/health`.** Docker checks the hub every 30 seconds (`docker compose ps`); from the
+  homes and over Tailscale, `/health` answers as usual.
+- **AI assistants can't connect.** Claude, ChatGPT and the rest call `/mcp` from their own servers,
+  and the firewall drops them. Den's own AI helper and the readers still work: the hub calls out.
+
+To open only MCP and OAuth to one assistant later, keep the one name. The hub's OAuth metadata
+names `https://den.example.com` for every endpoint (`DEN_PUBLIC_URL`), so a Tailscale Funnel or a
+Cloudflare Tunnel on another name would send the assistant back to an address it can't reach;
+and putting `den.example.com` itself behind Cloudflare's proxy or a tunnel would make the phones
+at home arrive from Cloudflare instead of from home. What works is letting the assistant's
+published addresses reach 443, for those paths only. For Claude, whose servers call from
+`160.79.104.0/21` (check Anthropic's current list):
+
+1. In `.env`, `DEN_ALLOW_EXTRA=160.79.104.0/21`; then `sudo systemctl start den-allowlist`.
+2. In `Caddyfile`, inside the `{$DEN_DOMAIN}` block, before `reverse_proxy`:
+
+   ```caddyfile
+   @assistant_elsewhere {
+   	remote_ip 160.79.104.0/21
+   	not path /mcp /mcp/* /.well-known/oauth-* /oauth/token /oauth/register
+   }
+   respond @assistant_elsewhere 404
+   ```
+
+   then `docker compose restart caddy`.
+
+The parent who connects it signs in at `/oauth/authorize` in their own browser, at home or over
+Tailscale, and approves it in Den as usual ([Connecting AI assistants](#connecting-ai-assistants)).
+
+### Troubleshooting (private)
+
+**Den doesn't open at home.** iCloud Private Relay, most likely: off for the home Wi-Fi. Then,
+does the firewall know the home's current address? `sudo den-allowlist --dry-run` lists what it
+allows; compare it with the home's address (search "what is my IP" on a computer at home).
+`journalctl -u den-allowlist` says when a home's name can't be looked up, is proxied, or moved.
+
+**Den doesn't open with Tailscale on.** Is the phone connected (the Tailscale app says)? Does the
+split-DNS nameserver have the server's current Tailscale address? From your computer on the
+tailnet, `nslookup den.example.com 100.x.y.z` should answer with that same address. Then
+`tailscale status` on the server, and the policy's grants (443 and 53). If only Safari fails
+there, turn iCloud Private Relay off for that network to see whether it's the one answering
+Safari's lookups instead of Tailscale.
+
+**No certificate.** `docker compose logs caddy` says why; usually the token (both permissions, on
+the right zone, in `CLOUDFLARE_API_TOKEN`; after changing it, `docker compose up -d`).
+
+**Locked out of SSH.** Use the VPS provider's web console, with your account's password. From
+there, put the address you're at in `DEN_SSH_ALLOW` in `.env` and run
+`systemctl start den-allowlist`, or see what `tailscale status` says. To take the firewall away
+entirely until you start the timer again:
+`systemctl stop den-allowlist.timer && nft delete table inet den_fw`.
+
+### Uninstall (private)
+
+```sh
+cd den/deploy/private
+docker compose --profile '*' down -v --rmi all
+docker image rm den-hub:previous     # if you kept one when updating
+docker builder prune -af
+systemctl disable --now den-allowlist.timer
+systemctl disable den-firewall.service
+nft delete table inet den_fw         # from here on, the server has no firewall
+rm -f /etc/systemd/system/den-firewall.service /etc/systemd/system/den-allowlist.* /usr/local/sbin/den-allowlist
+rm -rf /etc/den /var/lib/den
+systemctl daemon-reload
+tailscale logout                     # then remove the machine in the admin console
+cd && rm -rf den
+```
+
+Key-only SSH and the update settings stay (`/etc/ssh/sshd_config.d/10-den.conf`,
+`/etc/apt/apt.conf.d/52den-unattended-upgrades`); delete them too if the server goes on without
+Den.
+
 ## What you need
+
+For setups A to E. Setup P has [its own list](#what-you-need-private), and its install script
+does the rest.
 
 - **A server.** 2 GB of memory, 2 vCPUs (1 works, slower) and 25 GB of disk, with Ubuntu 24.04
   or Debian 12, x86 or ARM. The hub and Caddy use a few tens of MB; building the hub's image is
@@ -172,7 +507,8 @@ next port.
 
 ## Everyday commands
 
-From `den/deploy/hosted`:
+From `den/deploy/hosted` (setup P: from `den/deploy/private`, with
+[a few more](#everyday-commands-private)):
 
 | Task | Command |
 | --- | --- |
@@ -188,7 +524,8 @@ From `den/deploy/hosted`:
 | After a reboot | Nothing: Docker starts everything again by itself (`restart: unless-stopped`), unless you stopped it with `docker compose stop` |
 
 From anywhere, `curl -fsS https://den.example.com/health` answers
-`{"ok":true,"api":1,"ready":true}` once the hub is in a family.
+`{"ok":true,"api":1,"ready":true}` once the hub is in a family (with setup P, only from the homes
+and over Tailscale).
 
 ## Updating
 
@@ -278,9 +615,16 @@ docker compose run --rm backup restore backups/den-2026-10-28-0317.denbackup
 docker compose up -d
 ```
 
-Then let the family open Den on their phones before anyone changes anything through scripts or
-assistants: whatever happened after the backup is still on those phones, and the hub takes it
-back from them as they sync.
+**Then open Den on a phone.** What the hub wrote after the backup (an event an assistant added,
+a calendar feed's updates) isn't in the backup; it's on the family's phones. So a restored hub
+writes nothing of its own until a phone or tablet in the family has synced with it: calendar
+feeds wait, and assistants and scripts that try to change something are told "The hub is
+catching up after a restore" and to try again in a minute. Open Den on a phone that has been in
+use since the backup was made (the one used most recently is best) and let it sync. The hub
+takes back what it wrote and carries on after it; the other phones catch up as they open.
+
+To check, `docker compose exec hub /app/bin/den_hub status` says `Catching up after a restore`
+until a phone has synced, and stops saying it once one has.
 
 ## Moving to a new server
 
@@ -335,9 +679,12 @@ A day ahead, lower the DNS record's TTL to 300 seconds, so the switch takes minu
 5. **Point DNS** at the new server: change the `A` (and `AAAA`) record to its address. Caddy gets
    the certificate as soon as the name reaches it; `docker compose logs -f caddy` shows it.
 
-6. **Check**: `curl -fsS https://den.example.com/health` from your computer says
-   `"ready":true`, `docker compose exec hub /app/bin/den_hub status` says
-   `In a family and serving.`, and Den on a phone syncs again.
+6. **Open Den on a phone** once `curl -fsS https://den.example.com/health` from your computer
+   says `"ready":true`. A restored hub writes nothing of its own until a phone or tablet in the
+   family has synced with it ([Restore](#restore)); until then calendar feeds wait and assistants
+   are asked to try again. When the phone has synced,
+   `docker compose exec hub /app/bin/den_hub status` says `In a family and serving.` and no
+   longer says `Catching up after a restore`.
 
 7. **Shut the old one down**: `docker compose down` there. Keep it a few days, then delete it.
 
@@ -470,12 +817,15 @@ Then, on a parent's phone: Settings, Advanced, Hub and sync, Add a device, **Ano
 the hub the whole family, and the other phones catch up through it, the ones that haven't heard
 of the new hub yet too (it shows them the parent's approval).
 
-The new hub is a new device. The phone that added it sees that the old one used the same address
-and offers **Remove the old hub**: do that, so phones stop looking for it. If you skipped it,
-remove it later under Hub and sync, where each hub shows when this phone last saw it and when it
-was added; the old one is the one not seen since the reset. Until then phones still sync, with
-whichever hub answers at the address. If the family lets the hub help them get back in, the new
-hub has a new recovery key: see [If a parent loses their phone](#if-a-parent-loses-their-phone).
+The new hub is a new device, and the old one stays in the family until a parent removes it: an
+approved device that holds a copy of everything the hub held, whose keys are in the old volume and
+every backup of it. Remove it. The phone that added the new hub sees that the old one used the
+same address and offers **Remove the old hub**. If you skipped it, remove it under Settings,
+Advanced, Hub and sync, where each hub shows when this phone last saw it and when it was added;
+the old one is the one not seen since the reset, and **Remove** takes it out of the family on
+every device. Until then phones still sync, with whichever hub answers at the address. If the
+family lets the hub help them get back in, the new hub has a new recovery key: see
+[If a parent loses their phone](#if-a-parent-loses-their-phone).
 
 ### Factory reset
 
@@ -504,7 +854,9 @@ phone:
    tap **Find me**.
 4. Den shows whose words they are. **Yes, let this phone in**, and the phone is theirs at once.
 
-The hub only carries the request: it can't make up words, and no setting is needed.
+The hub only carries the request: it can't make up words, and no setting is needed. In the Home
+Screen web app the words are typed into the app the hub serves, so they are only as safe as the
+server is (see below).
 
 **With the hub's help, only if the family turned it on.** A parent turns on Settings, Family,
 **Let the hub help us get back in** on their own phone. Then, from `den/deploy/hosted`:
@@ -533,9 +885,19 @@ server help on, the command says so and how, and lets nobody in.
 
 **What this means for whoever runs the server.** With server help on, the admin could add a
 phone as any parent; every device in the family shows when that happens ("Alex's new iPhone was
-let in by the hub's recovery"), and any parent can remove it. With it off, the admin can't let
-anyone in: turning it off makes the hub's key useless, even for a request dated earlier. Root on
-the server can still read what the hub holds, as always.
+let in by the hub's recovery"), and any parent can remove it. With it off, the hub's key lets
+nobody in, even for a request dated earlier. Root on the server can still read what the hub
+holds, as always.
+
+There is one more thing whoever controls the server can do, with server help on or off. The
+Home Screen web app comes from the hub, and it holds each parent's key on their phone. So whoever
+controls what the hub serves (root on the server, the hub's image, or Caddy and its certificate)
+could serve a changed app that acts as any parent who opens it: approve a phone, change who is a
+parent. The family's devices can't tell that apart from the parent. To keep that from happening,
+keep the server patched and its logins to people you trust, and build the image from this
+repository (or pull a published release). A parent who wants the stronger guarantee makes these
+decisions (approving devices, roles, AI access, recovery) in the Den app installed on their
+phone, tablet or computer, whose code doesn't come from the server.
 
 The hub's server recovery key lives in its data volume (`hub/recovery.json`) and is in every
 backup (`docker compose run --rm backup`), so a [restore](#restore) keeps server help working. A
@@ -546,17 +908,23 @@ Either way, the new phone then offers **Remove your old phone** on the parent's 
 
 ### Bring in a family from Sett
 
-Copy Sett's `coord.db` into `den/deploy/hosted` on the server (`chmod 644 coord.db` so the hub
-can read it). With the hub in a family, and the name of a parent in it:
+Copy Sett's `coord.db` into `den/deploy/hosted` on the server and keep it to root
+(`chmod 600 coord.db`): it holds Sett's secrets. With the hub in a family, and the name of a
+parent in it, hand the file to the hub's own user inside its data volume, import, and delete
+both copies:
 
 ```sh
 docker compose stop hub
-docker compose run --rm -v "$PWD/coord.db:/coord.db:ro" hub import-sett /coord.db --as Alex
+docker compose run --rm -T --entrypoint sh hub -c 'umask 077 && cat > /data/coord.db' < coord.db
+docker compose run --rm hub import-sett /data/coord.db --as Alex
+docker compose run --rm --entrypoint rm hub -f /data/coord.db
 docker compose start hub
 rm coord.db
 ```
 
-It says what it brought over and what it left behind; the phones get it as they sync.
+The copy in the volume is the hub user's alone (mode 600), so no other account on the server
+can read it while it is there. The import says what it brought over and what it left behind;
+the phones get it as they sync.
 
 ### Uninstall
 
@@ -644,7 +1012,8 @@ Only these paths have to be public for the assistants; the rest can stay behind 
 | `/ics/*` | Only for calendar services that fetch feeds from their own servers (Google Calendar does; Apple Calendar fetches from the device) |
 
 With setup A or B everything is public, which works: the public posture's limits and a parent's
-approval of every sign-in apply either way. The hub also fetches out (Claude's and ChatGPT's
+approval of every sign-in apply either way. With setup P none of them can connect until you open
+these paths to them: [Closed on purpose](#closed-on-purpose). The hub also fetches out (Claude's and ChatGPT's
 client documents, calendar feeds), and refuses addresses on its own machine and network unless
 `DEN_FETCH_ALLOW` admits them.
 

@@ -1,0 +1,13 @@
+# Runs den-allowlist.service every 3 minutes: a home whose address changes is let in again within
+# about 3 minutes of its DDNS record changing (plus that record's TTL).
+
+[Unit]
+Description=Den firewall: refresh the homes' addresses every 3 minutes
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=3min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

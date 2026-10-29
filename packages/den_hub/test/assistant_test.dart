@@ -24,6 +24,9 @@ void main() {
   final sent = <http.Request>[];
   var usage = <String, Object?>{'input_tokens': 1000, 'output_tokens': 200};
   var down = false;
+  // Whether the stand-in answers with a tool call (each with an id of its own).
+  var callsTool = false;
+  var calls = 0;
   const key = 'sk-ant-hub-test-123';
   const said = 'What is on today for the family';
 
@@ -45,9 +48,12 @@ void main() {
               'role': 'assistant',
               'model': 'claude-haiku-5-5',
               'content': [
-                {'type': 'text', 'text': 'Soccer at 5.'},
+                if (callsTool)
+                  {'type': 'tool_use', 'id': 'toolu_${++calls}', 'name': 'get_overview', 'input': <String, Object?>{}}
+                else
+                  {'type': 'text', 'text': 'Soccer at 5.'},
               ],
-              'stop_reason': 'end_turn',
+              'stop_reason': callsTool ? 'tool_use' : 'end_turn',
               'usage': usage,
             }),
             200,
@@ -88,7 +94,9 @@ void main() {
     return f.call(method, path, body: text, headers: {...sig, ...headers});
   }
 
-  Map<String, Object?> ask(String text, {int maxTokens = 1024, bool photo = false, bool toolResult = false, String model = 'claude-haiku-5-5'}) => {
+  Map<String, Object?> ask(String text,
+          {int maxTokens = 1024, bool photo = false, bool toolResult = false, String toolId = 't1', String model = 'claude-haiku-5-5'}) =>
+      {
         'model': model,
         'max_tokens': maxTokens,
         'messages': [
@@ -107,13 +115,13 @@ void main() {
             {
               'role': 'assistant',
               'content': [
-                {'type': 'tool_use', 'id': 't1', 'name': 'get_overview', 'input': <String, Object?>{}},
+                {'type': 'tool_use', 'id': toolId, 'name': 'get_overview', 'input': <String, Object?>{}},
               ],
             },
             {
               'role': 'user',
               'content': [
-                {'type': 'tool_result', 'tool_use_id': 't1', 'content': 'Soccer at 5'},
+                {'type': 'tool_result', 'tool_use_id': toolId, 'content': 'Soccer at 5'},
               ],
             },
           ],
@@ -207,10 +215,20 @@ void main() {
     final long = await model(mayaPhone, ask(said, maxTokens: 4096));
     expect(long.error['code'], 'too_long', reason: 'kids\' answers are shorter');
 
-    expect((await model(mayaPhone, ask(said))).status, 200);
-    expect((await model(mayaPhone, ask(said, toolResult: true))).status, 200, reason: 'a tool\'s answer isn\'t a new question');
-    expect((await model(mayaPhone, ask('And tomorrow?'))).status, 200);
-    final limited = await model(mayaPhone, ask('And the day after?'));
+    // Her question asks for a tool; the request carrying its answer is part of the same turn,
+    // because the hub forwarded that very call to her.
+    callsTool = true;
+    final first = await model(mayaPhone, ask(said));
+    callsTool = false;
+    expect(first.status, 200);
+    final call = (((first.body['content'] as List).single as Map)['id']) as String;
+    expect((await model(mayaPhone, ask(said, toolResult: true, toolId: call))).status, 200);
+    expect(((await signed(mayaPhone, 'GET', '/api/v1/assistant')).body['you'] as Map)['used_today'], 1,
+        reason: 'a tool\'s answer to a call the hub forwarded isn\'t a new question');
+    // The same answer again, or one to a call the hub never forwarded, counts like a question:
+    // a device marking every request as a tool's answer doesn't dodge the limit.
+    expect((await model(mayaPhone, ask(said, toolResult: true, toolId: call))).status, 200);
+    final limited = await model(mayaPhone, ask(said, toolResult: true, toolId: 'toolu_made_up'));
     expect(limited.status, 429);
     expect(limited.error['code'], 'daily_limit');
     expect(limited.error['message'], contains('Maya'));
@@ -263,50 +281,85 @@ void main() {
     }
   });
 
-  test('a new question, not a tool\'s answer, is what counts, for every provider\'s format', () {
-    expect(HubAssistant.newTurn(ModelProvider.anthropic, ask('hi')), isTrue);
-    expect(HubAssistant.newTurn(ModelProvider.anthropic, ask('hi', toolResult: true)), isFalse);
+  test('the tool calls a request answers and an answer asks for, in every provider\'s format', () {
+    expect(HubAssistant.answeredCalls(ModelProvider.anthropic, ask('hi')), isNull);
+    expect(HubAssistant.answeredCalls(ModelProvider.anthropic, ask('hi', toolResult: true, toolId: 'toolu_9')), ['toolu_9']);
     expect(
-        HubAssistant.newTurn(ModelProvider.openai, {
+        HubAssistant.toolCalls(ModelProvider.anthropic, {
+          'content': [
+            {'type': 'text', 'text': 'Let me look.'},
+            {'type': 'tool_use', 'id': 'toolu_1', 'name': 'x', 'input': <String, Object?>{}},
+          ],
+        }),
+        ['toolu_1']);
+    expect(
+        HubAssistant.answeredCalls(ModelProvider.openai, {
           'input': [
             {'role': 'user', 'content': 'hi'},
           ],
         }),
-        isTrue);
+        isNull);
     expect(
-        HubAssistant.newTurn(ModelProvider.xai, {
+        HubAssistant.answeredCalls(ModelProvider.xai, {
           'input': [
-            {'type': 'function_call_output', 'call_id': 'c', 'output': '{}'},
+            {'type': 'function_call', 'call_id': 'c1', 'name': 'x', 'arguments': '{}'},
+            {'type': 'function_call', 'call_id': 'c2', 'name': 'y', 'arguments': '{}'},
+            {'type': 'function_call_output', 'call_id': 'c1', 'output': '{}'},
+            {'type': 'function_call_output', 'call_id': 'c2', 'output': '{}'},
           ],
         }),
-        isFalse);
+        ['c2', 'c1']);
     expect(
-        HubAssistant.newTurn(ModelProvider.gemini, {
-          'contents': [
+        HubAssistant.toolCalls(ModelProvider.openai, {
+          'output': [
+            {'type': 'function_call', 'call_id': 'c3', 'name': 'x', 'arguments': '{}'},
+          ],
+        }),
+        ['c3']);
+    final geminiAnswer = {
+      'contents': [
+        {
+          'role': 'user',
+          'parts': [
             {
-              'role': 'user',
-              'parts': [
-                {
-                  'functionResponse': {'name': 'x', 'response': <String, Object?>{}},
-                },
-              ],
+              'functionResponse': {'name': 'x', 'id': 'g1', 'response': <String, Object?>{}},
+            },
+          ],
+        },
+      ],
+    };
+    expect(HubAssistant.answeredCalls(ModelProvider.gemini, geminiAnswer), ['g1']);
+    (((geminiAnswer['contents']!.single)['parts'] as List).single as Map)['functionResponse'] = {'name': 'x', 'response': {}};
+    expect(HubAssistant.answeredCalls(ModelProvider.gemini, geminiAnswer), isEmpty, reason: 'no id: nothing to match, so it counts');
+    expect(
+        HubAssistant.toolCalls(ModelProvider.gemini, {
+          'candidates': [
+            {
+              'content': {
+                'parts': [
+                  {
+                    'functionCall': {'name': 'x', 'id': 'g2', 'args': <String, Object?>{}},
+                  },
+                ],
+              },
             },
           ],
         }),
-        isFalse);
+        ['g2']);
     expect(
-        HubAssistant.newTurn(ModelProvider.ollama, {
+        HubAssistant.answeredCalls(ModelProvider.ollama, {
           'messages': [
             {'role': 'tool', 'content': '{}'},
           ],
         }),
-        isFalse);
+        isEmpty,
+        reason: 'a model at home names no calls: every request counts');
     expect(
-        HubAssistant.newTurn(ModelProvider.ollama, {
+        HubAssistant.answeredCalls(ModelProvider.ollama, {
           'messages': [
             {'role': 'user', 'content': 'hi'},
           ],
         }),
-        isTrue);
+        isNull);
   });
 }

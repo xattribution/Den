@@ -149,6 +149,7 @@ void main() {
     expect(back.queryParameters['state'], 'xyz');
     final code = back.queryParameters['code']!;
 
+    final logged = f.hubDen.changesSince(const {}).length;
     final wrong = await form('/oauth/token', {
       'grant_type': 'authorization_code', 'code': code, 'redirect_uri': redirect, 'client_id': clientId, 'code_verifier': 'x' * 50,
     });
@@ -169,8 +170,10 @@ void main() {
       'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '2025-06-18'},
     });
     expect(init.status, 200);
-    expect(f.hubDen.connections.firstWhere((c) => c.id == pending.id).tokenHash, hashToken(access));
-    expect(f.hubDen.connections.firstWhere((c) => c.id == pending.id).expires, isNotNull);
+    // The hourly token lives in the hub's own state, never in the family's log.
+    expect(f.hubDen.connections.firstWhere((c) => c.id == pending.id).tokenHash, isNull);
+    expect(f.hubDen.connections.firstWhere((c) => c.id == pending.id).expires, isNull);
+    expect(f.hub.context.oauthStore.accessConnection(access, DateTime.now().millisecondsSinceEpoch), pending.id);
 
     final refreshed = await form('/oauth/token', {'grant_type': 'refresh_token', 'refresh_token': tokens['refresh_token'] as String, 'client_id': clientId});
     expect(refreshed['status'], 200);
@@ -181,6 +184,37 @@ void main() {
     expect(reuse['error'], 'invalid_grant');
     expect((await f.call('GET', '/api/v1/members', token: refreshed['access_token'] as String)).status, 401,
         reason: 'reusing a refresh token ends the connection\'s tokens');
+    expect(f.hubDen.changesSince(const {}).length, logged, reason: 'issuing and refreshing tokens writes nothing to the log');
+  });
+
+  test('a parent turning an app off ends its token at once', () async {
+    final pending = await f.phone.requestOAuthConnection(label: 'Claude', client: 'c1', scopes: {Scope.read});
+    await f.phone.approveConnection(pending, scopes: {Scope.read});
+    await eventually(() => f.hubDen.connections.any((c) => c.id == pending && c.status == ConnectionStatus.active));
+    const token = 'den_an-access-token-the-hub-issued';
+    await f.hub.context.oauthStore.issueAccess(token,
+        connection: pending, client: 'c1', expires: DateTime.now().millisecondsSinceEpoch + 3600000);
+    expect((await f.call('GET', '/api/v1/members', token: token)).status, 200);
+    await f.phone.revokeConnection(pending);
+    await eventually(() => f.hubDen.connections.any((c) => c.id == pending && c.status == ConnectionStatus.revoked));
+    expect((await f.call('GET', '/api/v1/members', token: token)).status, 401);
+  });
+
+  test('a token an older hub wrote into the log moves to the hub\'s state and keeps working', () async {
+    final id = await f.hubDen.requestOAuthConnection(label: 'ChatGPT', client: 'c2', scopes: {Scope.read});
+    await f.toPhone();
+    await f.phone.approveConnection(id, scopes: {Scope.read});
+    await f.toHub();
+    const token = 'den_a-token-from-an-older-hub';
+    await f.hubDen.setConnectionToken(id, hashToken(token), expires: DateTime.now().millisecondsSinceEpoch + 3600000);
+    await f.hub.oauth.adoptLoggedTokens();
+    final record = f.hubDen.connections.firstWhere((c) => c.id == id);
+    expect(record.tokenHash, isNull, reason: 'gone from the log');
+    expect(record.expires, isNull);
+    expect((await f.call('GET', '/api/v1/members', token: token)).status, 200, reason: 'the app\'s token still works');
+    final after = f.hubDen.changesSince(const {}).length;
+    await f.hub.oauth.adoptLoggedTokens();
+    expect(f.hubDen.changesSince(const {}).length, after, reason: 'once');
   });
 
   test('a parent declining sends the app back with access_denied', () async {

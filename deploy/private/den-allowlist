@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+"""den-allowlist: keeps Den's firewall open to the family's homes, and to nobody else.
+
+Every home keeps a DDNS name (on Cloudflare, DNS only) pointing at its current public address.
+This reads those names from Den's .env (DEN_HOMES), looks up their A and AAAA records with a
+resolver it trusts (Cloudflare's 1.1.1.1 over HTTPS, not this server's own resolver), and puts
+the addresses in the nftables sets that may reach HTTPS (home_v4, home_v6) and, if .env asks,
+SSH (ssh_v4, ssh_v6), in table inet den_fw. All four sets change in one transaction.
+
+It fails safe: a home whose name can't be looked up keeps its last known good addresses
+(remembered in /var/lib/den/allowlist.json), and the error is logged. If the table itself is
+missing (someone flushed the ruleset), it loads /etc/den/den_fw.nft again first.
+
+    den-allowlist              look up, apply and remember: what den-allowlist.timer runs
+    den-allowlist --dry-run    look up and print what it would allow; change nothing
+    den-allowlist --offline    apply the last known good addresses, looking nothing up (at boot)
+
+Exit status: 0 applied; 2 applied, but some name couldn't be looked up (it kept that home's
+last known good addresses); 1 nothing applied (bad .env, or nft refused).
+
+.env (the private setup's, through the link /etc/den/env):
+    DEN_HOMES             the homes' DDNS names, separated by spaces or commas
+    DEN_HOME_V6_PREFIX    how much of a home's IPv6 address to allow: 64 (its whole /64) by default
+    DEN_ALLOW_EXTRA       fixed addresses or networks also allowed on 443 (a home with a static IP)
+    DEN_SSH_FROM_HOMES    1 to allow SSH from the homes too (default 0: SSH over Tailscale only)
+    DEN_SSH_ALLOW         fixed addresses or networks also allowed SSH
+    DEN_RESOLVERS         DNS-over-HTTPS (JSON) URLs, tried in turn; default 1.1.1.1, then 1.0.0.1
+"""
+
+import argparse
+import datetime
+import fcntl
+import ipaddress
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import urllib.parse
+import urllib.request
+
+TABLE = "inet den_fw"
+SETS = ("home_v4", "home_v6", "ssh_v4", "ssh_v6")
+DEFAULT_RESOLVERS = "https://1.1.1.1/dns-query https://1.0.0.1/dns-query"
+
+# Cloudflare's proxy addresses (https://www.cloudflare.com/ips/). A home's DDNS record that
+# resolves here is proxied (orange cloud): the home's real address is hidden, and allowing
+# these would let in anyone who routes through Cloudflare. Home records must be DNS only.
+CLOUDFLARE_PROXY = [ipaddress.ip_network(n) for n in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18",
+    "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17",
+    "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32",
+    "2a06:98c0::/29", "2c0f:f248::/32",
+)]
+
+
+def log(message):
+    print(message, flush=True)
+
+
+def warn(message):
+    print(message, file=sys.stderr, flush=True)
+
+
+# --- Settings ---------------------------------------------------------------------------------
+
+def read_env(path):
+    """KEY=VALUE lines as Docker Compose reads them: # comments, optional quotes."""
+    values = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key, value = key.strip(), value.strip()
+            if key.startswith("export "):
+                key = key[len("export "):].strip()
+            if value[:1] in ("'", '"') and value[-1:] == value[:1] and len(value) >= 2:
+                value = value[1:-1]
+            elif " #" in value:
+                value = value.split(" #", 1)[0].rstrip()
+            values[key] = value
+    return values
+
+
+def words(text):
+    return [w for w in (text or "").replace(",", " ").split() if w]
+
+
+def networks(text, setting):
+    """Addresses or networks from a setting, as ip_network objects."""
+    found = []
+    for word in words(text):
+        try:
+            found.append(ipaddress.ip_network(word, strict=False))
+        except ValueError:
+            raise SystemExit(f"{setting}: {word!r} isn't an address or network")
+    return found
+
+
+class Settings:
+    def __init__(self, env):
+        self.homes = []
+        for name in words(env.get("DEN_HOMES")):
+            name = name.rstrip(".").lower()
+            if name not in self.homes:
+                self.homes.append(name)
+        prefix = env.get("DEN_HOME_V6_PREFIX") or "64"
+        if not prefix.isdigit() or not 32 <= int(prefix) <= 128:
+            raise SystemExit(f"DEN_HOME_V6_PREFIX: {prefix!r} should be a prefix length from 32 to 128, like 64")
+        self.v6_prefix = int(prefix)
+        self.extra = networks(env.get("DEN_ALLOW_EXTRA"), "DEN_ALLOW_EXTRA")
+        self.ssh_from_homes = (env.get("DEN_SSH_FROM_HOMES") or "0").lower() in ("1", "yes", "true")
+        self.ssh_allow = networks(env.get("DEN_SSH_ALLOW"), "DEN_SSH_ALLOW")
+        self.resolvers = words(env.get("DEN_RESOLVERS") or DEFAULT_RESOLVERS)
+
+
+# --- Looking up the homes -----------------------------------------------------------------------
+
+class ResolveError(Exception):
+    pass
+
+
+def query(resolvers, name, rtype):
+    """The addresses in name's rtype (A or AAAA) records, asked over DNS-over-HTTPS (JSON).
+    An empty list is a real answer (no such records); a failure of every resolver raises."""
+    wanted = {"A": 1, "AAAA": 28}[rtype]
+    problems = []
+    for url in resolvers:
+        full = url + ("&" if "?" in url else "?") + urllib.parse.urlencode({"name": name, "type": rtype})
+        request = urllib.request.Request(full, headers={"accept": "application/dns-json"})
+        try:
+            with urllib.request.urlopen(request, timeout=8) as response:
+                answer = json.load(response)
+        except Exception as e:  # network, TLS, HTTP or JSON: try the next resolver
+            problems.append(f"{urllib.parse.urlsplit(url).netloc}: {e}")
+            continue
+        status = answer.get("Status")
+        if status == 0:
+            return [a["data"] for a in answer.get("Answer") or [] if a.get("type") == wanted]
+        reason = {2: "SERVFAIL", 3: "no such name (NXDOMAIN)", 5: "REFUSED"}.get(status, f"DNS status {status}")
+        if status == 3:  # an authoritative "no": another resolver won't say otherwise
+            raise ResolveError(reason)
+        problems.append(f"{urllib.parse.urlsplit(url).netloc}: {reason}")
+    raise ResolveError("; ".join(problems) or "no resolver configured")
+
+
+def home_networks(name, settings):
+    """A home's allowed networks: its IPv4 address, and the /64 (DEN_HOME_V6_PREFIX) around its
+    IPv6 address. Raises ResolveError if it can't be looked up or the answer can't be a home."""
+    found = []
+    for rtype in ("A", "AAAA"):
+        for text in query(settings.resolvers, name, rtype):
+            address = ipaddress.ip_address(text)
+            if any(address in net for net in CLOUDFLARE_PROXY):
+                raise ResolveError(f"{address} is Cloudflare's proxy: make {name} DNS only (grey cloud)")
+            if not address.is_global:
+                raise ResolveError(f"{address} isn't a public address")
+            prefix = 32 if address.version == 4 else settings.v6_prefix
+            found.append(ipaddress.ip_network(f"{address}/{prefix}", strict=False))
+    return found
+
+
+# --- Remembering --------------------------------------------------------------------------------
+
+def load_state(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            state = json.load(f)
+    except FileNotFoundError:
+        return {"homes": {}, "applied": {}}
+    except (OSError, ValueError) as e:
+        warn(f"Couldn't read {path} ({e}); starting without last known addresses")
+        return {"homes": {}, "applied": {}}
+    state.setdefault("homes", {})
+    state.setdefault("applied", {})
+    return state
+
+
+def save_state(path, state):
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".allowlist-")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+# --- The sets -----------------------------------------------------------------------------------
+
+def element(net):
+    return str(net.network_address) if net.prefixlen == net.max_prefixlen else str(net)
+
+
+def split(nets):
+    """Collapsed, sorted element strings, IPv4 and IPv6 apart."""
+    v4 = ipaddress.collapse_addresses(n for n in nets if n.version == 4)
+    v6 = ipaddress.collapse_addresses(n for n in nets if n.version == 6)
+    return [element(n) for n in v4], [element(n) for n in v6]
+
+
+def desired_sets(settings, homes):
+    """homes: {name: [networks]} -> {set name: [elements]}."""
+    home_nets = [n for nets in homes.values() for n in nets]
+    https = home_nets + settings.extra
+    ssh = settings.ssh_allow + (home_nets if settings.ssh_from_homes else [])
+    sets = {}
+    sets["home_v4"], sets["home_v6"] = split(https)
+    sets["ssh_v4"], sets["ssh_v6"] = split(ssh)
+    return sets
+
+
+def nft_batch(sets):
+    lines = [f"flush set {TABLE} {name}" for name in SETS]
+    for name in SETS:
+        if sets[name]:
+            lines.append(f"add element {TABLE} {name} {{ {', '.join(sets[name])} }}")
+    return "\n".join(lines) + "\n"
+
+
+def apply(sets, nft, table_file):
+    batch = nft_batch(sets)
+    exists = subprocess.run([nft, "list", "table", *TABLE.split()], capture_output=True).returncode == 0
+    if not exists:
+        warn(f"Table {TABLE} is missing (was the ruleset flushed?); loading {table_file} again")
+        batch = f'include "{table_file}"\n' + batch
+    result = subprocess.run([nft, "-f", "-"], input=batch, text=True, capture_output=True)
+    if result.returncode != 0:
+        raise SystemExit(f"nft refused the change:\n{result.stderr.strip()}\n--- what it was given:\n{batch}")
+
+
+def describe(elements):
+    return ", ".join(elements) if elements else "nobody"
+
+
+def changes(old, new):
+    out = []
+    for name in SETS:
+        before, after = set(old.get(name) or []), set(new[name])
+        added = sorted(after - before)
+        removed = sorted(before - after)
+        if added or removed:
+            parts = [f"+{e}" for e in added] + [f"-{e}" for e in removed]
+            out.append(f"{name}: {' '.join(parts)}")
+    return out
+
+
+# --- Main ---------------------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(description="Keep Den's firewall open to the family's homes.")
+    parser.add_argument("--dry-run", action="store_true", help="print what it would allow; change nothing")
+    parser.add_argument("--offline", action="store_true", help="apply the last known good addresses without looking up")
+    parser.add_argument("--config", default="/etc/den/env", help="Den's .env (default /etc/den/env)")
+    parser.add_argument("--state", default="/var/lib/den/allowlist.json", help="last known good addresses")
+    parser.add_argument("--table-file", default="/etc/den/den_fw.nft", help="the table, to load again if it's missing")
+    parser.add_argument("--nft", default="nft", help="the nft command")
+    args = parser.parse_args()
+
+    lock = None
+    if not args.dry_run:
+        os.makedirs(os.path.dirname(args.state) or ".", mode=0o700, exist_ok=True)
+        lock = open(args.state + ".lock", "w")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+
+    state = load_state(args.state)
+
+    if args.offline:
+        sets = {name: list(state["applied"].get(name) or []) for name in SETS}
+        apply(sets, args.nft, args.table_file)
+        log(f"Applied the last known good addresses: HTTPS from {describe(sets['home_v4'] + sets['home_v6'])}; "
+            f"SSH (besides Tailscale) from {describe(sets['ssh_v4'] + sets['ssh_v6'])}")
+        return 0
+
+    try:
+        settings = Settings(read_env(args.config))
+    except OSError as e:
+        raise SystemExit(f"Can't read {args.config}: {e}")
+
+    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+    homes, failed = {}, []
+    for name in settings.homes:
+        known = state["homes"].get(name)
+        known_nets = [ipaddress.ip_network(n) for n in known["networks"]] if known else []
+        try:
+            nets = home_networks(name, settings)
+        except (ResolveError, ValueError) as e:
+            failed.append(name)
+            homes[name] = known_nets
+            if known:
+                warn(f"{name}: lookup failed ({e}); it keeps its last known addresses "
+                     f"{describe([element(n) for n in known_nets])} (looked up {known['checked']})")
+            else:
+                warn(f"{name}: lookup failed ({e}); no last known addresses, so this home isn't allowed yet")
+            continue
+        homes[name] = nets
+        found = [element(n) for n in nets]
+        if args.dry_run:
+            log(f"{name}: {describe(found)}")
+        elif not known or known_nets != nets:
+            log(f"{name}: {describe(found)}" + (f" (was {describe([element(n) for n in known_nets])})" if known else ""))
+        if not args.dry_run:
+            state["homes"][name] = {"networks": [str(n) for n in nets], "checked": now}
+
+    sets = desired_sets(settings, homes)
+
+    if args.dry_run:
+        log(f"HTTPS (443) would be open to: {describe(sets['home_v4'] + sets['home_v6'])}")
+        log(f"SSH would be open to: Tailscale" + (
+            f", and {', '.join(sets['ssh_v4'] + sets['ssh_v6'])}" if sets["ssh_v4"] or sets["ssh_v6"] else " only"))
+        log("Tailscale (everything the tailnet policy allows) and UDP 41641: always")
+        log("--- the change it would make, in one nft transaction:")
+        sys.stdout.write(nft_batch(sets))
+        return 2 if failed else 0
+
+    for line in changes(state["applied"], sets):
+        log(line)
+    apply(sets, args.nft, args.table_file)
+    for gone in [n for n in state["homes"] if n not in settings.homes]:
+        del state["homes"][gone]  # a home taken out of DEN_HOMES
+    state["applied"] = sets
+    save_state(args.state, state)
+    return 2 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -2483,8 +2483,10 @@ class Den {
     ]);
   }
 
-  /// Records the hash of an OAuth access token issued for an approved connection (hubs only).
-  Future<void> setConnectionToken(String id, String tokenHash, {int? expires}) async {
+  /// Records the hash of an OAuth access token issued for an approved connection, or clears it
+  /// with null (hubs only). A hub now keeps the hashes of the hourly tokens it issues in its own
+  /// state, not the log, and clears the one an older hub recorded here.
+  Future<void> setConnectionToken(String id, String? tokenHash, {int? expires}) async {
     if (thisDevice?.mode != DeviceMode.hub) throw const PermissionDenied('Only the hub issues access tokens');
     _requireLive(RecordType.connection, id, 'That connection doesn\'t exist');
     await _commit([
@@ -2511,6 +2513,13 @@ class Den {
       return c;
     }
     return null;
+  }
+
+  /// The live connection with [id], whoever is acting: for a hub checking an access token it
+  /// keeps the hash of outside the log.
+  Connection? connectionWithId(String id) {
+    final e = _mat.store.liveAt(Space.parents, RecordType.connection, id);
+    return e == null ? null : Connection(e.rec);
   }
 
   // ---------------------------------------------------------------- pictures, sitters, privacy

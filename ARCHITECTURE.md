@@ -54,7 +54,10 @@ they are signed too and can't be stripped on the way.
 
 A device numbers its changes from its own counter and never reuses one. A device that receives
 its own changes back from a peer (after a restore from an older backup, say) moves its counter
-past them before it writes again.
+past them before it writes again. A hub restored with `den_hub restore` writes nothing of its own
+(calendar feeds, the OAuth sweep and tokens, API and MCP writes, which answer `503 catching_up`)
+until an approved device of the family has finished a sync with it: the restore leaves a marker
+(`<data>/hub/restored.json`) that the hub removes then, and `den_hub status` reports.
 
 **Merging.** Each field of a record takes the value from the valid change with the greatest HLC
 that set it (last-writer-wins per field). HLC order is `(millis, counter, deviceId)`, with the
@@ -174,7 +177,9 @@ family online") with no `_via`. A shared display never makes them, whoever verif
 neither does a hub nobody owns. A change carrying `_via` (the hub acting for an API token or MCP
 client) never touches a device record at all, its own included, so a connection can't switch the
 hub back to a personal device and act as its owner. The hub keeps its narrow part of connections: asking for OAuth access
-(`pending`), recording token hashes for active ones, and revoking. Adding a member isn't a trust
+(`pending`), clearing the token hash an older hub recorded on an active one, and revoking. It
+keeps the hashes of the hourly OAuth access tokens and refresh tokens it issues in its own state
+(`<data>/hub/oauth.json`, owner-only, in backups), not the log. Adding a member isn't a trust
 decision (a parent's import through the hub does it): nothing can act for a new member until a
 parent approves a device or an AI connection for them on their own device.
 
@@ -264,10 +269,20 @@ it away. The parent's new phone offers "Remove your old phone" on their page. Re
 an action: no MCP client, API token or assistant can set up, turn on or use it
 (`not_exposed.dart`).
 
-What whoever runs the hub can do: with server help **off**, read what the hub holds (every space,
-as always) and stop it serving, but make no trust decision and let in no device, and a key the
-family turned off stays useless; with server help **on**, also let in a phone as any parent, which
-every device shows and any parent can remove.
+What whoever runs the hub can do: read what the hub holds (every space, as always) and stop it
+serving; with server help **on**, also let in a phone as any parent, which every device shows and
+any parent can remove. The hub's own key makes no trust decision, and with server help **off** it
+lets in no device, and a key the family turned off stays useless.
+
+That is about the hub's key, and it isn't the whole story for a family that uses **the web app**.
+The hub serves the web app's code, and that code holds the parent's signing key in the browser
+(see "The web app"). Whoever controls what the hub serves (root on the server, the hub's image,
+or the TLS proxy in front of it) can serve a modified app that signs as any parent who opens it,
+making every trust decision that parent's device can; the family's devices can't tell it from
+the parent. What reduces it: keep the server patched and its access to people the family trusts,
+run an image built from a repository the family trusts, and, for parents who need the stronger
+guarantee, make trust decisions (approving devices, roles, AI access, recovery) in the Den app
+installed on their phone, tablet or computer, whose code doesn't come from the hub.
 
 ### Record types and fields
 
@@ -290,7 +305,7 @@ commit too (`Den.restoreAll`).
 
 | Type | Space | Fields |
 | --- | --- | --- |
-| `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map: memberId -> `{parentsSeePrivate: bool}`, and `<memberId>.rewardsNeedOk` and `<memberId>.ownPicture` -> bool or null; see "Parental controls"), `assistant` (`{enabled, members, kidDailyLimit, budgetCents}`: the in-app assistant, off until a parent turns it on; parents and the members listed may use it, never a little kid or a pre-reader; default 20 questions a day for a kid and $5 a month), `recovery` (`{serverKey, kept}`: the hub key the family lets help a parent back in, null while off; see "Recovery") |
+| `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `oversight` (map: memberId -> `{parentsSeePrivate: bool}`, and `<memberId>.rewardsNeedOk` and `<memberId>.ownPicture` -> bool or null; see "Parental controls"), `assistant` (`{enabled, members, kidDailyLimit, budgetCents}`: the in-app assistant, off until a parent turns it on; parents and the members listed may use it, never a little kid or a pre-reader; default 20 questions a day for a kid and $5 a month, which the captures the hub's reader reads count against too), `recovery` (`{serverKey, kept}`: the hub key the family lets help a parent back in, null while off; see "Recovery") |
 | `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, `initial`, or `photo:<id>` naming one of their `photo` records), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `until` (a sitter's last day with access, a local date, or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order`, `recovery` (a parent's `{key, kept}`: their recovery key, base64url Ed25519, or null; see "Recovery") |
 | `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`), `recovery` (written once, by a device letting itself in: `{kind: words\|hub, member, key, nonce, expires, sig}`; see "Recovery") |
 | `category` | `f` | `name`, `icon` |
@@ -306,7 +321,7 @@ commit too (`Den.restoreAll`).
 | `item` | same as list | `list`, `text`, `qty`, `store`, `checked`, `checkedBy`, `order` (fractional index string), `toGroceries` (meal items) |
 | `subscription` | `p` | ICS feed: `url`, `label`, `category`, `assignee`, `space` for imported events, `include`, `exclude`, `skipAllDay`, `status` |
 | `photo` | `f` | A person's photo: `member`, `mime` (`image/jpeg`\|`image/webp`), `data` (base64). The schema reads the format and size from the headers: a 256 px square of at most 40 KB, its `mime` matching its bytes. Never changed: a new picture is a new record |
-| `connection` | `p` | AI or automation access: `label`, `kind` (`token`\|`oauth`), `scopes`, `member` (whose permissions it uses; null = parent-level), `tokenHash` (SHA-256 hex), `client` (OAuth client id), `status` (`pending`\|`active`\|`revoked`), `expires`. A hub may create `pending` OAuth connections and set `tokenHash` on approved ones; only a parent's device may set `active` or change scopes. The hub writes a `pending` one only after a parent's own device admits the sign-in request (a request needs no credentials, so the hub holds it until then), and turns down pending ones nobody approved within 15 minutes |
+| `connection` | `p` | AI or automation access: `label`, `kind` (`token`\|`oauth`), `scopes`, `member` (whose permissions it uses; null = parent-level), `tokenHash` (SHA-256 hex of a token a parent made; null for OAuth, whose hourly access tokens the hub keeps in its own state), `client` (OAuth client id), `status` (`pending`\|`active`\|`revoked`), `expires`. A hub may create `pending` OAuth connections and set or clear `tokenHash` on approved ones; only a parent's device may set `active` or change scopes. The hub writes a `pending` one only after a parent's own device admits the sign-in request (a request needs no credentials, so the hub holds it until then), and turns down pending ones nobody approved within 15 minutes |
 | `signInTries` | `f` | Append-only, from a shared display about itself, with no actor: `device` (the display), `member` (whose PIN or pattern), `tries` (wrong in a row there). The display writes one at every tenth wrong try; a parent's own device says so in Needs you, and History shows it ("Kitchen display counted 10 wrong tries at Alex's PIN"). Nothing else may write one, and it is never changed |
 
 **Points are derived, not stored.** A done completion awards the chore's points to the day's owner
@@ -515,9 +530,13 @@ handshake inside the WebSocket:
 
 Fresh ephemeral keys per session give forward secrecy. A device the other side doesn't know as
 approved gets only the pairing messages below. A device serving sessions (the hub, a phone during
-pairing) gives devices it doesn't know as approved a few places of their own (8 by default,
+pairing) gives devices it doesn't know as approved places of their own (64 by default,
 counting handshakes in progress), apart from the approved devices' places, and 30 seconds to
 prove an invite or code; a device that proved one may wait 15 minutes for a parent's approval.
+Each client has its own share of those places (4): an IPv4 address or an IPv6 /64, as the relay
+counts them, from the hub's `/ws`; sessions that arrive without one (a relay tunnel, a
+rendezvous) share one client's places. So one address can't keep the family from joining or
+getting back in.
 
 A session frame carries at most 1 MiB of plaintext; a larger frame closes the session before it
 is decrypted. Servers built on den_net's WebSocket helpers (the hub's `/ws`) and the relay read
@@ -557,7 +576,10 @@ receive; the session's limit then applies.
   with the words through the share sheet. Whoever has the words gets the invite back
   (`POST /api/v1/invites/redeem`), joins over the hub's `/ws` pinning the hub's key, and asks
   to be that person's device; a parent approves with one tap on their own device. Wrong words count against every
-  invite: 10 in 10 minutes and the hub stops answering for a while. The hub drops an invite
+  invite, per client: 10 in 10 minutes and the hub stops answering that client for a while, and
+  200 in 10 minutes from everyone together (twenty clients' worth, so no one client can use
+  them up) and it stops answering everyone. Recovery codes count the same way. An invite is used once: the hub drops it when a parent
+  approves a device that joined with it, or after three devices joined with it unapproved. The hub drops an invite
   whose parent device has since been revoked or no longer belongs to a parent.
 - **Recovery words** ("I lost my phone"): the joiner connects to a device that serves sessions
   (the hub) with no family, and sends `pair {kind: recovery, key, proof}`: `key` is hex SHA-256
@@ -661,7 +683,7 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `POST /api/v1/invites` | an `InviteGrant` from a parent's own device | Keeps the invite under four words; returns them and a link |
 | `POST /api/v1/invites/redeem` | the four words | The invite, who it is for, the family's name |
 | `GET`/`PUT`/`DELETE /api/v1/push`, `POST /api/v1/push/test` | signed by a personal device | The hub's VAPID key; this device's Web Push subscription; a test notification |
-| `GET /ics/<token>/family.ics` | read token in path | Read-only ICS feed for other calendar apps |
+| `GET /ics/<secret>/family.ics`, `GET /ics/<secret>/<memberId>.ics` | a calendar link's secret in the path (never an API token) | Read-only ICS feed for other calendar apps, read as the parent who made the link; it ends when they turn it off, leave the family, or the device they made it on is removed |
 | `GET /ws` | session handshake | Device sync |
 | `POST /mcp` | bearer or OAuth | MCP Streamable HTTP: 2026-07-28 (stateless, headers checked against the body) and the session-based versions before it |
 | OAuth: `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/mcp]`, `/oauth/register`, `/oauth/authorize`, `/oauth/token` | | OAuth 2.1 with PKCE for remote MCP clients such as claude.ai: client ID metadata documents, registration, or clients a parent sets up; `resource` checked; `iss` on every redirect |
@@ -928,6 +950,13 @@ proxy in front of the hub, where it has the hub as its own origin.
   and takes over when Den next opens with no window on the old one (or on coming back after ten
   minutes away, with a fresh page), never under a page that runs the old one. The hub's own paths
   (`/api`, `/ws`, `/mcp`, `/oauth`, `/ics`, `/health`, `/.well-known`) are never cached.
+- **Whose code it runs.** The check above is that a build is whole, not who made it: the worker
+  and every file come from the hub, and the browser runs whatever the hub serves, with the
+  device's keys. So for families on the web app, whoever controls the hub (root on the server,
+  its image, the TLS proxy) can act as any parent who opens the app (see "Recovery", what whoever
+  runs the hub can do). Nothing the page itself shows, such as a build number, can catch that: a
+  modified build draws that page too. Parents who need the stronger guarantee make trust
+  decisions in an installed Den app.
 - **Founding from a browser.** A browser served by a fresh hub starts the family itself and
   takes the hub in with the setup code it printed (the same flow as from a phone,
   `/api/v1/hub/setup`), approving it on its own when the hub reports the same matching words:
