@@ -230,6 +230,7 @@ Tailscale stay as they are through a reset. What differs or adds:
 | After changing `DEN_HOMES`, `DEN_ALLOW_EXTRA` or the SSH settings in `.env` | `systemctl start den-allowlist` |
 | The firewall as loaded | `nft list table inet den_fw` |
 | Tailscale | `tailscale status` |
+| Restore | As in [Restore](#restore); then open Den on a phone at home or with Tailscale on, as the hub waits for one to sync (`den_hub status` says `Catching up after a restore` until then) |
 | Update | A backup and `docker tag den-hub den-hub:previous` as in [Updating](#updating), then `git pull` and `./install.sh`: it updates the firewall and its units too, and runs `docker compose up -d --build` |
 
 **Backups off the server** go over Tailscale, as SSH is closed to the internet: with the
@@ -263,8 +264,11 @@ server over Tailscale, and the new one at its public address until it joins.
      (if it doesn't: Machines, its menu, Edit ACL tags). Once the old server is off, remove it
      (Machines, its menu, Remove), so the tag means one server again.
    - The homes' DDNS names and the Cloudflare token stay as they are.
-6. **Check** from a phone at home and from one with Tailscale on;
-   `docker compose exec hub /app/bin/den_hub status` says `In a family and serving.`
+6. **Open Den on a phone at home or with Tailscale on**, one that has been in use since the backup
+   (the most recent is best), and let it sync: a restored hub writes nothing of its own until a
+   phone has ([Restore](#restore)). Then `docker compose exec hub /app/bin/den_hub status` says
+   `In a family and serving.` and no longer `Catching up after a restore`. Check from one phone
+   at home and one with Tailscale on.
 7. **Retire the old one:** `docker compose down` and `tailscale logout` there; delete it a few
    days later.
 
