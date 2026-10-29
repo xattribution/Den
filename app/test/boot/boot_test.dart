@@ -11,6 +11,9 @@ class MemoryKeys implements KeyStore {
 
   @override
   Future<void> write(String key, String value) async => values[key] = value;
+
+  @override
+  Future<void> delete(String key) async => values.remove(key);
 }
 
 Future<Den> founded(DenStorage storage, MemoryKeys keys) async {

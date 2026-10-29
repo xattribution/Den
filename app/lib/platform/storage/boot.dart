@@ -5,6 +5,7 @@ import 'package:den_core/den_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'device_keychain.dart';
+import 'memberships.dart';
 import 'storage_stub.dart'
     if (dart.library.io) 'storage_native.dart'
     if (dart.library.js_interop) 'storage_web.dart';
@@ -14,18 +15,50 @@ import '../capabilities.dart';
 abstract interface class KeyStore {
   Future<String?> read(String key);
   Future<void> write(String key, String value);
+  Future<void> delete(String key);
 }
 
 /// Starts the engine: this device's keys from the platform keychain (created on first run),
 /// its change log from local storage, and, with `--dart-define=DEN_DEMO=true`, a demo family.
+///
+/// A device holds one engine per family ([Membership]): the first under the names Den always
+/// used ([start]), each other one under its own ([startLog]), with keys of its own.
 class Boot {
-  static const keysName = 'den.device.keys';
+  static const keysName = Membership.primaryKeys;
   static const demo = bool.fromEnvironment('DEN_DEMO');
 
   /// With [background] (a refresh with Den closed, maybe on a locked phone) the engine opens
   /// only as the device it already is; it never starts over.
   static Future<Den> start({bool background = false}) async =>
       open(storage: await openDeviceStorage(), keys: await _keyStore(), background: background);
+
+  /// The engine of [log]: its own change log and its own keys. The first log is [start]'s.
+  static Future<Den> startLog(Membership log, {bool background = false}) async => open(
+        storage: await openDeviceStorage(name: log.storage),
+        keys: await _keyStore(),
+        keysName: log.keys,
+        background: background,
+        allowDemo: log.primary,
+      );
+
+  /// A fresh engine for a family this device is about to join: an empty log under [log]'s
+  /// name and new keys of its own. Whatever an earlier try left there is cleared first.
+  static Future<Den> startFresh(Membership log) async {
+    await forgetLog(log);
+    return startLog(log);
+  }
+
+  /// Deletes what this device kept for [log]: its change log and its keys. The engine over it
+  /// must be closed first.
+  static Future<void> forgetLog(Membership log) async {
+    await deleteDeviceStorage(log.storage);
+    try {
+      await (await _keyStore()).delete(log.keys);
+    } on Object {
+      // A keychain item that can't be deleted has no log left to sign for: the next engine
+      // under this name finds no family and starts over with new keys.
+    }
+  }
 
   /// Opens the engine over [storage] with this device's keys from [keys].
   ///
@@ -37,7 +70,15 @@ class Boot {
   /// fresh keys and an empty log, and joins the family again. So does a device that left its
   /// family, since the family remembers the keys it declined or removed. With [background] it
   /// throws instead, so a keychain that can't be read yet never costs the device its family.
-  static Future<Den> open({required DenStorage storage, required KeyStore keys, bool background = false}) async {
+  ///
+  /// [keysName] is the keychain item of the log's keys ([Membership.keys]).
+  static Future<Den> open({
+    required DenStorage storage,
+    required KeyStore keys,
+    String keysName = Boot.keysName,
+    bool background = false,
+    bool allowDemo = true,
+  }) async {
     final meta = await storage.loadMeta();
     final inFamily = meta?['familyId'] is String;
     final saved = await keys.read(keysName);
@@ -55,7 +96,7 @@ class Boot {
       deviceKeys = await DeviceKeys.generate();
       await keys.write(keysName, jsonEncode(await deviceKeys.toJson()));
     }
-    if (demo && !inFamily) return createDemoFamily(storage: storage, keys: deviceKeys);
+    if (demo && allowDemo && !inFamily) return createDemoFamily(storage: storage, keys: deviceKeys);
     return Den.open(storage: storage, keys: deviceKeys);
   }
 
@@ -82,6 +123,9 @@ class _Keychain implements KeyStore {
 
   @override
   Future<void> write(String key, String value) => const DeviceKeychain().write(key, value);
+
+  @override
+  Future<void> delete(String key) => const DeviceKeychain().delete(key);
 }
 
 class _PageStorage implements KeyStore {
@@ -91,5 +135,10 @@ class _PageStorage implements KeyStore {
   @override
   Future<void> write(String key, String value) async {
     await (await SharedPreferences.getInstance()).setString(key, value);
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    await (await SharedPreferences.getInstance()).remove(key);
   }
 }
