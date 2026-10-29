@@ -213,7 +213,7 @@ void main() {
     expect(browser.family!.name, 'The Testers');
   });
 
-  test('A browser starts the family, takes in the hub that served it, and invites by message', () async {
+  test('A browser starts the family, takes in the hub that served it, and invites by message, asking first', () async {
     final (hubDen, hub) = await startHub();
     final served = Uri.parse('http://127.0.0.1:${hub.port}/');
 
@@ -231,10 +231,10 @@ void main() {
     expect(isFamilyHub(mom, hubDen.deviceId), isTrue, reason: 'approved without a tap: both ends showed the same words');
     await until(() => momNet.status.state.name == 'live', what: 'Mom to sync with the hub');
 
-    // An invite for Grandma, sent as a message.
+    // An invite for Grandma, sent as a message, with "Let them in right away" turned off.
     final grandmaId = await mom.addMember(name: 'Grandma', role: Role.adult, marker: Marker.grass, animal: Animal.bird);
     final grandma = mom.member(grandmaId)!;
-    final message = await momPairing.createInvite(memberId: grandma.id);
+    final message = await momPairing.createInvite(memberId: grandma.id, letIn: false);
     expect(message.words, hasLength(4));
     expect(message.link.fragment, '/join/${message.words.join('-')}');
     expect(message.text, contains(message.code));
@@ -263,6 +263,56 @@ void main() {
     await mom.approveDevice(ipad.deviceId);
     await until(() => ipad.isApproved, what: 'the iPad to hear it was approved');
     expect(ipad.family!.name, 'The Testers');
+  });
+
+  test('An invite lets Grandma\'s iPad in by itself, and Mom hears of it', () async {
+    final (_, hub) = await startHub();
+    final served = Uri.parse('http://127.0.0.1:${hub.port}/');
+    final mom = await parentPhone();
+    final momNet = DenNetwork(mom, localHub: noHub());
+    addTearDown(momNet.dispose);
+    final momPairing = NetPairing(momNet, servedBy: served);
+    final adoption = momPairing.adoptServingHub((await momPairing.servingHub())!, hub.setupCode!);
+    await until(() => adoption.stage == HubSetupStage.done || adoption.stage == HubSetupStage.failed, what: 'the hub to be taken in');
+    await until(() => momNet.status.state.name == 'live', what: 'Mom to sync with the hub');
+
+    // "Let them in right away" is on by default: Mom's phone writes the invite's key.
+    final grandmaId = await mom.addMember(name: 'Grandma', role: Role.adult, marker: Marker.grass, animal: Animal.bird);
+    final message = await momPairing.createInvite(memberId: grandmaId);
+    final keys = mom.inviteKeys.toList();
+    expect(keys, hasLength(1));
+    expect(keys.single.member, grandmaId);
+
+    // Grandma's iPad, from the link: one tap, and it's in. Nobody approves.
+    final ipad = await freshDen();
+    final ipadNet = DenNetwork(ipad, localHub: noHub());
+    addTearDown(ipadNet.dispose);
+    final ipadPairing = NetPairing(ipadNet, servedBy: served);
+    final peek = await ipadPairing.peekInvite(message.words.join('-'));
+    expect(peek.letsIn, isTrue);
+    final ticket = await ipadPairing.joinWithInvite(
+      message.code,
+      deviceName: (forName) => "$forName's iPad",
+      kind: DeviceKind.tablet,
+    );
+    expect(ticket.admitted, isTrue);
+    await until(() => ipad.isApproved, what: 'the iPad to be in');
+    expect(ipad.thisDevice!.member, grandmaId);
+
+    // Mom's phone hears it: an approved iPad for Grandma, let in by her invite, used up.
+    await until(() => mom.device(ipad.deviceId)?.approved ?? false, what: 'Mom to hear the iPad joined');
+    expect(mom.pendingDevices, isEmpty);
+    expect(mom.usedInvite(keys.single.id)?.id, ipad.deviceId);
+    expect(mom.inviteUses(keys.single), 0);
+
+    // The same words don't let a second device in.
+    final another = await freshDen();
+    final anotherNet = DenNetwork(another, localHub: noHub());
+    addTearDown(anotherNet.dispose);
+    await expectLater(
+      NetPairing(anotherNet, servedBy: served).joinWithInvite(message.code, deviceName: (_) => 'iPad', kind: DeviceKind.tablet),
+      throwsA(isA<PairingException>()),
+    );
   });
 
   test('A device turned away while it waits hears it and stops asking, also after Den opens again', () async {

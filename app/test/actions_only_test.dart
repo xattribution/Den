@@ -33,6 +33,7 @@ const Map<String, String> deviceLocal = {
   'verifySignIn': 'Checking a PIN or pattern on a shared screen',
   'noteSignInTries': 'A shared screen telling the parents someone kept getting a PIN wrong there',
   'requestRecovery': 'A new phone lets itself in with a parent\'s recovery words or the hub\'s proof',
+  'requestInviteJoin': 'A new device lets itself in with an invite a parent made',
 };
 
 /// Trust decisions: only a parent on their own device makes them, never anything acting
@@ -52,6 +53,11 @@ const Set<String> trust = {
   'setServerRecoveryKey',
   // "That wasn't us": removes a phone recovery let in and turns off what let it in.
   'disownRecovery',
+  // An invite that lets a device in without a tap is a parent's approval given ahead of time,
+  // and "That wasn't them" takes it back.
+  'createInviteKey',
+  'withdrawInviteKey',
+  'disownInvite',
 };
 
 /// Writes in one file each, with why.

@@ -10,8 +10,8 @@ import '../widgets/device_sync.dart';
 import '../widgets/hubs_section.dart';
 
 /// Advanced → Hub and sync: how this device syncs, the family's hubs (with Remove), and adding
-/// devices the plumbing way (a hub with its setup code, a browser on a computer, a device in the
-/// same room). People join with an invite from their page in Family instead.
+/// devices: a hub with its setup code, Den on your computer (your own link), a device in the
+/// same room. People join with an invite from their page in Family instead.
 class HubScreen extends StatelessWidget {
   const HubScreen({super.key});
 
@@ -39,9 +39,10 @@ class HubScreen extends StatelessWidget {
                 onTap: trust ? () => context.push('/settings/advanced/hub/add') : null,
               ),
               NavRow(
-                icon: PhosphorIconsRegular.browser,
-                label: 'A browser on a computer',
-                onTap: trust ? () => context.push('/settings/advanced/hub/browser') : null,
+                icon: PhosphorIconsRegular.laptop,
+                label: 'Open Den on your computer',
+                detail: 'A link that lets your browser in as you',
+                onTap: trust ? () => context.push('/settings/advanced/hub/computer') : null,
               ),
               if (!Capabilities.web)
                 NavRow(

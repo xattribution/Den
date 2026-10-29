@@ -23,10 +23,11 @@ abstract final class RecordType {
   static const connection = 'connection';
   static const photo = 'photo';
   static const signInTries = 'signInTries';
+  static const inviteKey = 'inviteKey';
 
   static const all = {
     family, member, device, category, event, eventException, chore, completion, adjustment,
-    goal, reward, redemption, list, item, subscription, connection, photo, signInTries,
+    goal, reward, redemption, list, item, subscription, connection, photo, signInTries, inviteKey,
   };
 }
 

@@ -181,7 +181,8 @@ The hub counts what each client does, by IP address (an IPv6 address by its /64)
 | Tokens or device signatures that don't work, link codes that don't match | 30 in 5 minutes; then every authenticated request from that client gets `429` until the budget refills |
 | Browser link slots and link grants, invite and recovery redemptions | 20 in 10 minutes |
 | Wrong setup codes | 5, then that client waits a minute, doubling to an hour with each further wrong code |
-| Wrong invite words, wrong recovery codes | 10 in 10 minutes for each (and 200 in 10 minutes from all clients together) |
+| Wrong invite words or slots, wrong recovery codes | 10 in 10 minutes for each (and 200 in 10 minutes from all clients together) |
+| Invite keys on `/ws` that name nothing (`pair` kind `key`) | 10 in 10 minutes from one client, 200 from all clients together; then `pair_fail` `rate-limited` |
 | Devices on `/ws` that aren't approved yet (proving an invite or code, or waiting for a parent) | 4 at once, of 64 for everyone |
 | OAuth: registrations, sign-in requests, token requests | 10 an hour, 10 in 15 minutes, 60 in 5 minutes |
 | WebSocket connections (`/ws`, `/api/v1/hub/setup/ws`) | 120 new a minute, 64 open at once. A message may be 2 MiB (a session frame, base64 encoded); a frame announcing more closes the socket as its header arrives, before any of it is buffered |
@@ -1363,6 +1364,17 @@ No token. Where the hub is in joining a family, for the app's "Add a hub" screen
 In the public posture a hub already in a family answers only `paired`, `setup_needed` and
 `stage`.
 
+### The setup link
+
+`den_hub setup-link` (and the private setup's `install.sh`, at its end) prints a fresh hub's
+setup link, `https://den.example.com/#/setup/<setup code>/<hub device id>`, with a QR code to
+scan with the first parent's iPhone; the hub's log shows it beside the setup code when it has a
+public URL (`DEN_PUBLIC_URL`). It carries the setup code, which the phone sends to
+`POST /api/v1/hub/setup` as before (the hub knows the phone by it), and the hub's device id, the
+hash of its key: the phone takes in only a hub whose status names that id and whose pairing
+session proves that key, so nothing is compared by eye and no words are shown. In the fragment,
+which browsers never send. The setup code alone keeps working.
+
 ### `POST /api/v1/link/window`
 
 Signed by a parent's own device ([`DeviceRequest`](#capture-reading-for-every-device), not a
@@ -1671,7 +1683,12 @@ the provider's token counts and den_assistant's prices; the hub logs once when t
 
 A parent invites someone (a partner, a grandparent, a kid's iPad) from anywhere, and they join
 later, with no camera and with the parent's phone asleep: the hub keeps the invite and admits
-the device on the parent's behalf. A parent still approves every device that asks.
+the device on the parent's behalf.
+
+The app's invites let the person in at once: the parent's phone writes an invite key into the
+family's log (ARCHITECTURE.md, "Invite keys") and the invite carries the key, so the device
+that opens it lets itself in and nobody taps Approve. With "Let them in right away" off, or for
+an invite that names nobody, a parent approves the device that asks, as before.
 
 These endpoints take no token. Creating an invite carries its own proof, an `InviteGrant`
 (`packages/den_net`): the invite names this hub as the inviting device and is signed by a
@@ -1680,7 +1697,16 @@ parent's own approved device.
 ### `POST /api/v1/invites`
 
 Body: `InviteGrant.toJson()`, with `context` `invite` (anyone) or `invite:<memberId>` (an invite
-for that person; the device that uses it asks to be theirs).
+for that person; the device that uses it asks to be theirs), and two optional fields:
+
+| Field | |
+| --- | --- |
+| `slot` | The app's own words: 64 hex characters, den_net's `InviteWords.slot`, Argon2id of the four words the parent's phone picked, then HMAC-SHA256. The hub keeps the invite under it and never learns the words |
+| `key` | With `slot` and a named person: the invite key's public half. The hub checks that the family's log holds that key for that person, live; until the parent's phone has synced it the answer is `409 not_synced` (try again in a moment) |
+
+With a `slot` the answer is `201` with `{"slot", "base", "expires", "expires_ms", "member",
+"preapproved"}`: the app builds the link on `base` with its own words
+(`<base>/#/join/<w>-<w>-<w>-<w>`). Without one, the hub picks the words as below.
 
 ```json
 {"invite": "den://join?f=...&d=<hub>&k=<hub key>&s=...&h=wss%3A%2F%2Fden.example.com%2Fws&x=1793750400",
@@ -1709,31 +1735,52 @@ family, or not naming this hub), `429 rate_limited` (50 invites waiting), `503 n
 
 ### `POST /api/v1/invites/redeem`
 
-Body `{"code": "maple river canoe tiger"}`, typed any way people type it (case, commas, hyphens;
-each word may be its first four letters). Answer `200`:
+Body `{"slot": "<64 hex>"}` (the app stretches the words itself), or
+`{"code": "maple river canoe tiger"}`, typed any way people type it (case, commas, hyphens; each
+word may be its first four letters). A `code` the hub keeps no invite under is stretched to its
+slot on the hub, so words typed into an older app still find the app's own invites. Answer
+`200`:
 
 ```json
 {
   "invite": "den://join?...",
+  "key": "<the invite key's public half, base64url>",
+  "preapproved": true,
   "member": "M5ZOE7QK4MXN3TB2",
   "member_name": "Zoe",
+  "member_marker": "coral",
+  "member_picture": "fox",
   "family": "The Carters",
   "expires": "2026-10-31T17:00:00.000Z",
   "expires_ms": 1793466000000
 }
 ```
 
-The hub starts accepting the invite on `/ws` (see ARCHITECTURE.md, "Pairing"); the device joins
-with it there, pinning the hub's key from the invite. An invite is for one person, once: it stops
-working (`404`, "used already") when a parent approves a device that joined with it, or once
-three devices have joined with it without one being approved (a second device, or Den started
-over, before anyone approved; a code that leaked puts no more than three requests in front of a
-parent). Each device still needs a parent's approval. Errors: `400 invalid_input` (not
-four words from the list), `404 not_found` (no such invite, expired, or its parent's device was
-revoked since), `429 rate_limited` with `Retry-After` (10 wrong codes in 10 minutes from one client, against every
-invite, or 200 from all clients together; and per client, redeeming counts against the browser
-link budget and a wrong code against the failed-tries budget, see
-[Limits per client](#limits-per-client)), `503 not_ready`.
+With `preapproved` (the family's log holds the invite's key, live and unused), the device joins
+over `/ws` with the key (`pair` kind `key`, below) and lets itself in. Otherwise the hub starts
+accepting the invite on `/ws` (see ARCHITECTURE.md, "Pairing"); the device joins with it there,
+pinning the hub's key from the invite, and waits for a parent. An invite is for one person,
+once: it stops working (`404`, "used already") when its key let a device in, when a parent
+approves a device that joined with it, or once three devices have joined with it without one
+being approved (a second device, or Den started over, before anyone approved; a code that leaked
+puts no more than three requests in front of a parent). Errors: `400 invalid_input` (not four
+words from the list, or not a slot), `404 not_found` (no such invite, expired, or its parent's
+device was revoked since), `429 rate_limited` with `Retry-After` (10 wrong codes or slots in 10
+minutes from one client, against every invite, or 200 from all clients together; and per client,
+redeeming counts against the browser link budget and a wrong code against the failed-tries
+budget, see [Limits per client](#limits-per-client)), `503 not_ready`.
+
+### Joining with an invite key on `/ws`
+
+Not an HTTP endpoint, but the hub's part of it: after the session handshake, a device with an
+invite key sends `pair {kind: "key", invite: <the key's record id>, proof}` (den_net's
+admission.dart: the key's signature over the session's transcript and the device's key). The hub
+(or any device serving the family) finds the key in the family's log, checks it can still let a
+device in and the signature, and answers `pair_ok` with the family, its founder key, what the key
+admits (`admit: {mode, member, expires}`) and its own proof, an HMAC keyed by the key's public
+half. The device then sends its `join`: one change to its own device record, approved, carrying
+the key's proof (ARCHITECTURE.md, "Invite keys"). Keys that name nothing count against the
+client (see [Limits per client](#limits-per-client)).
 Redeeming needs no open "Add a device" window in the public posture: the invite is a parent's
 consent already.
 

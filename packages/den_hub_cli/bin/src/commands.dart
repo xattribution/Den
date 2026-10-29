@@ -9,6 +9,7 @@ import 'package:den_hub/cli_support.dart';
 import 'package:den_net/den_net.dart';
 import 'package:den_sett_import/den_sett_import.dart';
 import 'package:http/http.dart' as http;
+import 'package:qr/qr.dart';
 
 import 'cli.dart';
 import 'data_dir.dart';
@@ -182,6 +183,63 @@ Future<int> setupCode(DataDir data, int port, CliIo io) async {
   }
   io.out.writeln(file.readAsStringSync().trim());
   return 0;
+}
+
+/// `den_hub setup-link [--url U]`: for a fresh hub, the one-time link that starts the family on
+/// the first parent's phone with nothing to type and no words to compare, as text and as a QR
+/// code to scan with the phone's camera, with the setup code to type when the link can't be
+/// used. The link carries the setup code (the hub knows the phone by it) and the hub's device
+/// id (the phone knows the hub by it), in the fragment, which browsers never send. Its address
+/// is `--url` or `DEN_PUBLIC_URL`, which the compose files set.
+Future<int> setupLinkCommand(ArgResults a, DataDir data, int port, CliIo io) async {
+  final status = await _getJson(Uri.parse('http://127.0.0.1:$port/api/v1/hub/status'));
+  if (status != null && status['paired'] == true) {
+    io.out.writeln('This hub is already part of a family. Invite people from the Den app.');
+    return 0;
+  }
+  final file = File('${data.path}${Platform.pathSeparator}hub${Platform.pathSeparator}setup-code');
+  final device = status?['device'];
+  if (status == null || device is! String || !file.existsSync()) {
+    io.err.writeln('No fresh hub is running here. Start it with den_hub serve; it prints its setup code.');
+    return 1;
+  }
+  final code = file.readAsStringSync().trim();
+  final url = a['url'] as String? ?? io.environment['DEN_PUBLIC_URL'];
+  final base = url == null || url.isEmpty ? null : Uri.tryParse(url);
+  if (base == null || !base.hasScheme || base.host.isEmpty) {
+    io.out.writeln('Setup code: $code');
+    io.out.writeln("Add --url https://den.example.com (the hub's address) for a link to open on the phone.");
+    return 0;
+  }
+  final link = setupLink(base, code, device).toString();
+  io.out
+    ..writeln("On the first parent's iPhone, scan this with the Camera, or open the link in Safari:")
+    ..writeln()
+    ..writeln(terminalQr(link))
+    ..writeln('  $link')
+    ..writeln()
+    ..writeln('Then add Den to the Home Screen as it shows, and open it from there.')
+    ..writeln('If Den asks for the setup code, it is: $code');
+  return 0;
+}
+
+/// [text] as a QR code for a terminal: two rows of modules per line in half blocks, black on
+/// white whatever the terminal's colors, with a quiet zone around it.
+String terminalQr(String text) {
+  final qr = QrImage(QrCode.fromData(data: text, errorCorrectLevel: QrErrorCorrectLevel.L));
+  const quiet = 2;
+  final size = qr.moduleCount;
+  bool dark(int x, int y) => x >= 0 && y >= 0 && x < size && y < size && qr.isDark(y, x);
+  final out = StringBuffer();
+  for (var y = -quiet; y < size + quiet; y += 2) {
+    out.write('  \x1b[30;47m');
+    for (var x = -quiet; x < size + quiet; x++) {
+      final top = dark(x, y), bottom = dark(x, y + 1);
+      out.write(top && bottom ? '█' : top ? '▀' : bottom ? '▄' : ' ');
+    }
+    out.writeln('\x1b[0m');
+  }
+  return out.toString().trimRight();
 }
 
 /// `den_hub open-linking [--minutes N]`: in the public posture, browsers may ask the hub for a

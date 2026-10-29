@@ -332,6 +332,18 @@ class WebPushService implements HubService, ReminderSink {
         if (!fresh('join:${d.id}')) continue;
         out.add((parents, {'title': '${d.name} wants to join', 'body': 'Approve it on Today.', 'route': '/today', 'tag': 'join:${d.id}'}));
       }
+      // A device an invite let in at once: the parents hear of it, so nobody gets in unseen.
+      for (final d in den.devices) {
+        final invite = inviteOf(d);
+        if (invite == null || !d.approved || d.revoked || !fresh('joined:${d.id}')) continue;
+        final who = invite.member == null ? null : den.member(invite.member!)?.name;
+        out.add(({...parents}..remove(invite.member), {
+          'title': '${d.name} joined the family',
+          'body': who == null ? 'With your invite. If nobody here added it, remove it on Today.' : "With your invite. If it wasn't $who, remove it on Today.",
+          'route': '/today',
+          'tag': 'joined:${d.id}',
+        }));
+      }
     }
     if (types.contains(RecordType.redemption)) {
       final points = den.points();

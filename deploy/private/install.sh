@@ -507,10 +507,10 @@ cat <<EOF
    2. Tailscale admin console, DNS, Nameservers, Add nameserver, Custom:
         Nameserver $ts, Restrict to domain on, domain $name
 
-   3. The setup code, for the first parent's phone:
-        docker compose exec hub /app/bin/den_hub setup-code
-      On that iPhone, at home (iCloud Private Relay off for the home Wi-Fi) or with Tailscale on:
-      open https://$name in Safari, Share, Add to Home Screen, then Start a family.
+   3. The first parent's iPhone, once 1 and 2 are done, at home (iCloud Private Relay off for the
+      home Wi-Fi) or with Tailscale on: scan the code below with the Camera, add Den to the Home
+      Screen as Safari shows, open it from there and tap Create family. Again any time:
+        docker compose exec hub /app/bin/den_hub setup-link
 
    4. Who can reach this server, any time: sudo den-allowlist --dry-run
 EOF
@@ -520,3 +520,9 @@ if [ ${#LATER[@]} -gt 0 ]; then
   for line in "${LATER[@]}"; do printf '   - %s\n' "$line"; done
 fi
 echo
+
+# The first parent's setup link, with its QR code (only while the hub isn't in a family yet).
+if [ "$CHECK" != 1 ]; then
+  docker compose exec -T hub /app/bin/den_hub setup-link 2>/dev/null | sed 's/^/   /' || true
+  echo
+fi

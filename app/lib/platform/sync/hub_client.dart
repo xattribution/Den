@@ -64,27 +64,60 @@ class LinkSlot {
 
 /// An invite the hub keeps for a parent (`POST /api/v1/invites`).
 class HubInvite {
-  const HubInvite({required this.words, required this.link, required this.expires, this.member});
+  const HubInvite({
+    required this.words,
+    required this.link,
+    required this.expires,
+    this.member,
+    this.bySlot = false,
+    this.preapproved = false,
+  });
+
+  /// The words the hub chose; empty when it keeps the invite by the slot of words this device
+  /// chose ([bySlot]), which it never learns.
   final List<String> words;
 
-  /// `https://<hub>/#/join/<word>-<word>-<word>-<word>`.
+  /// `https://<hub>/#/join/<word>-<word>-<word>-<word>`; for an invite kept by its slot, the
+  /// hub's address the link goes on.
   final Uri link;
 
   /// UTC milliseconds.
   final int expires;
   final String? member;
+
+  /// The hub keeps it under the slot this device sent (an older hub ignores the slot and picks
+  /// words of its own).
+  final bool bySlot;
+
+  /// It carries an invite key, so whoever opens it is let in at once.
+  final bool preapproved;
 }
 
 /// What an invite's words opened (`POST /api/v1/invites/redeem`): the invite to join with, who
 /// it is for, and the family's name.
 class RedeemedInvite {
-  const RedeemedInvite({required this.invite, this.member, this.memberName, this.familyName});
+  const RedeemedInvite({
+    required this.invite,
+    this.member,
+    this.memberName,
+    this.memberMarker,
+    this.memberPicture,
+    this.familyName,
+    this.preapproved = false,
+  });
 
   /// A `den://join` invite naming the hub.
   final String invite;
   final String? member;
   final String? memberName;
+
+  /// Their color and picture, to show their face before this device holds the family.
+  final String? memberMarker;
+  final String? memberPicture;
   final String? familyName;
+
+  /// The invite carries a key the family made: the words let this device in at once.
+  final bool preapproved;
 }
 
 /// What a recovery code from whoever runs the hub opened (`POST /api/v1/recovery/redeem`):
@@ -218,7 +251,8 @@ class HubClient {
     );
   }
 
-  /// `POST /api/v1/invites` with a parent's signed invite grant.
+  /// `POST /api/v1/invites` with a parent's signed invite grant, and the slot of the words this
+  /// device chose and the invite key's public half when it has them.
   Future<HubInvite> createInvite(Uri base, Map<String, Object?> grant) async {
     final json = await _send(
       () => _http.post(
@@ -234,19 +268,22 @@ class HubClient {
           for (final w in words)
             if (w is String) w,
       ],
-      link: Uri.parse(json['link'] as String? ?? base.toString()),
+      link: Uri.parse(json['link'] as String? ?? json['base'] as String? ?? base.toString()),
       expires: (json['expires_ms'] as num?)?.toInt() ?? 0,
       member: json['member'] as String?,
+      bySlot: json['slot'] is String,
+      preapproved: json['preapproved'] == true,
     );
   }
 
-  /// `POST /api/v1/invites/redeem` with the four words someone typed.
-  Future<RedeemedInvite> redeemInvite(Uri base, String code) async {
+  /// `POST /api/v1/invites/redeem` with the slot an invite's words stretch to, or the four words
+  /// themselves ([code]) for an invite whose words the hub chose.
+  Future<RedeemedInvite> redeemInvite(Uri base, {String? code, String? slot}) async {
     final json = await _send(
       () => _http.post(
         base.replace(path: '/api/v1/invites/redeem'),
         headers: const {'content-type': 'application/json'},
-        body: jsonEncode({'code': code}),
+        body: jsonEncode({'slot': ?slot, if (slot == null) 'code': code}),
       ),
       base,
     );
@@ -256,7 +293,10 @@ class HubClient {
       invite: invite,
       member: json['member'] as String?,
       memberName: json['member_name'] as String?,
+      memberMarker: json['member_marker'] as String?,
+      memberPicture: json['member_picture'] as String?,
       familyName: json['family'] as String?,
+      preapproved: json['preapproved'] == true,
     );
   }
 

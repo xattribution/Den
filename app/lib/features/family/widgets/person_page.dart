@@ -1,5 +1,6 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -262,7 +263,8 @@ class _PersonPageState extends State<PersonPage> {
     await attempt(context, () => family.saveDetails(m.id, birthday: DateFormat('yyyy-MM-dd').format(picked)));
   }
 
-  /// Their own phones and tablets, each with Remove; Invite for another.
+  /// Their own phones and tablets, each with Remove; Invite for another, or on a parent's own
+  /// page, Add a computer.
   Widget _devices(BuildContext context, AppState app, Member m, {required bool trust}) {
     final c = context.colors;
     final den = app.den;
@@ -326,7 +328,10 @@ class _PersonPageState extends State<PersonPage> {
       title: '${FamilyWords.possessive(m.name)} devices',
       trailing: invite && devices.isNotEmpty
           ? SectionLink('Invite', semanticLabel: 'Invite ${m.name} on another device', onTap: () => showInviteSheet(context, memberId: m.id))
-          : null,
+          // A parent's own page: Den on their computer, with a link that lets its browser in as them.
+          : trust && app.me?.id == m.id
+              ? SectionLink('Add a computer', semanticLabel: 'Open Den on your computer', onTap: () => context.push('/settings/advanced/hub/computer'))
+              : null,
       child: devices.isEmpty
           ? EmptyState(
               compact: true,

@@ -1,4 +1,5 @@
 import 'package:den_core/den_core.dart';
+import 'package:den_net/den_net.dart' show DenLink, DenLinkKind;
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -11,8 +12,10 @@ import '../../../design/widgets.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../platform/time_zone.dart';
+import '../../../platform/web/web_app.dart';
 import '../state/onboarding_actions.dart';
 import '../state/this_device.dart';
+import 'home_screen_steps.dart';
 
 /// Starting a family: its name and time zone, and you (the first parent) with your picture.
 /// This device's name and kind come from what it is ("Sam's iPhone"). Creating it writes the
@@ -20,15 +23,29 @@ import '../state/this_device.dart';
 ///
 /// In a browser served by a fresh hub, the hub's setup code goes here too: once the family
 /// exists, this browser takes the hub in (see [PairingService.adoptServingHub]) while "Add
-/// people" shows how that goes.
+/// people" shows how that goes. Opened from the hub's setup link (`den_hub setup-link`), the
+/// link brings the code and the hub's device id, so there's nothing to type and no words to
+/// compare: only the hub the link names is taken in.
 class StartFamilyScreen extends StatefulWidget {
-  const StartFamilyScreen({super.key, this.initialTimeZone, this.hub});
+  const StartFamilyScreen({super.key, this.initialTimeZone, this.hub, this.setupCode, this.hubDevice, this.web, this.browser});
 
   /// Overrides the device's time zone, for tests and screenshots.
   final String? initialTimeZone;
 
   /// The fresh hub that served this page, for tests; by default asked of the hub on the web.
   final HubInfo? hub;
+
+  /// The setup code from the hub's setup link.
+  final String? setupCode;
+
+  /// The device id of the hub that printed the setup link.
+  final String? hubDevice;
+
+  /// The browser, for tests; by default read from the page.
+  final WebAppInfo? web;
+
+  /// Runs as a browser served by the hub, for tests; by default only on the web.
+  final bool? browser;
 
   @override
   State<StartFamilyScreen> createState() => _StartFamilyScreenState();
@@ -46,7 +63,20 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
   DeviceKind? _kind;
   bool _tried = false;
   bool _saving = false;
+  bool _inSafari = false;
   String? _error;
+
+  /// Typing the setup code after all: the link named another hub than the one that answered.
+  bool _typeCode = false;
+
+  /// The link brought the setup code.
+  bool get _linked => widget.setupCode != null && !_typeCode;
+
+  /// The hub that answered isn't the one the setup link names.
+  bool get _wrongHub {
+    final hub = _hub;
+    return _linked && widget.hubDevice != null && hub != null && hub.device.isNotEmpty && hub.device != widget.hubDevice;
+  }
 
   @override
   void initState() {
@@ -93,8 +123,9 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
     setState(() => _tried = true);
     if (_family.text.trim().isEmpty || _name.text.trim().isEmpty) return;
     final hub = _adopting ? _hub : null;
-    final code = _code.text.trim();
+    final code = _linked ? widget.setupCode! : _code.text.trim();
     if (hub != null && code.isEmpty) return;
+    if (_wrongHub) return;
     setState(() {
       _saving = true;
       _error = null;
@@ -115,7 +146,7 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
     if (problem == null && hub != null) {
       // The router has already moved on to Add people, which follows this.
       try {
-        Pairing.adoption.value = pairing.adoptServingHub(hub, code);
+        Pairing.adoption.value = pairing.adoptServingHub(hub, code, expectDevice: widget.hubDevice);
       } on PairingException {
         Pairing.adoption.value = null;
       }
@@ -164,9 +195,25 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
     String? need(TextEditingController field, String message) => _tried && field.text.trim().isEmpty ? message : null;
     final name = _name.text.trim();
     final color = PersonColor.forMarker(_marker).color;
+    final web = widget.web ?? WebApp.info;
+    if ((widget.browser ?? Capabilities.web) && web.needsHomeScreen && !_inSafari) {
+      return DenPage(
+        title: 'Start your family',
+        children: [
+          HomeScreenSteps(
+            ipad: web.ipad,
+            link: _linked ? DenLink(kind: DenLinkKind.setup, code: widget.setupCode, hubDevice: widget.hubDevice) : null,
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(onPressed: () => setState(() => _inSafari = true), child: const Text('Use Den in Safari instead')),
+          ),
+        ],
+      );
+    }
 
     return DenPage(
-      title: 'Start a family',
+      title: _linked ? 'Start your family' : 'Start a family',
       bottom: FilledButton(
         onPressed: _saving ? null : _create,
         style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
@@ -224,7 +271,15 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
             ),
           ),
         ),
-        if (_adopting)
+        if (_wrongHub)
+          ErrorState(
+            message: "This page came from another hub than the one that printed the link. Open the link from the hub's own output again.",
+            actionLabel: 'Type the setup code instead',
+            onAction: () => setState(() => _typeCode = true),
+          )
+        else if (_adopting && _linked)
+          NoticeLine(icon: PhosphorIconsRegular.hardDrives, message: "${_hub!.name} joins as the family's hub")
+        else if (_adopting)
           LabeledField(
             label: 'Setup code for ${_hub!.name}, from the hub\'s log',
             error: need(_code, "Add the hub's setup code."),

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:den_core/den_core.dart' show deviceIdOf;
+import 'package:den_core/den_core.dart' show deviceIdOf, inviteKeyIdOf;
 import 'package:den_net/den_net.dart';
 import 'package:shelf/shelf.dart';
 
@@ -26,6 +26,13 @@ import 'setup.dart' show restrictToOwner;
 /// An invite is for one person, once: it stops working when a parent approves a device that
 /// joined with it, or once [maxJoins] devices have joined with it and wait (or were turned away).
 /// The hub learns which device used which invite from its [HubInviteBook].
+///
+/// The app's own invites pick their four words on the parent's phone and give the hub only
+/// their slot (den_net's `InviteWords.slot`, a stretch of the words the hub can't run back), so
+/// the hub keeps the invite without knowing the words. Such an invite may carry the public half
+/// of an invite key (den_core's invite_keys.dart) the parent's phone wrote into the family's
+/// log: then whoever has the words lets their device in at once, and the hub checks first that
+/// the key reached it. Words typed into an older app still work: the hub stretches them itself.
 class HubInvites {
   /// Creates the invite endpoints for [hub].
   HubInvites(this.hub) {
@@ -81,6 +88,19 @@ class HubInvites {
 
   String _newCode() => List.generate(4, (_) => wordList[_random.nextInt(wordList.length)]).join(' ');
 
+  static final RegExp _slotRe = RegExp(r'^[0-9a-f]{64}$');
+
+  /// Whether the hub keeps any invite under a slot, so typed words are worth stretching.
+  bool get _hasSlots => _invites.keys.any((k) => k.startsWith('slot:'));
+
+  /// Whether the invite key [key] lets a device in now, by this hub's replica.
+  bool _preapproved(Object? key) {
+    if (key is! String) return false;
+    final id = inviteKeyIdOf(key);
+    final record = id == null ? null : hub.den.inviteKey(id);
+    return record != null && record.key == key && record.liveAt(hub.now()) && hub.den.inviteUses(record) > 0;
+  }
+
   /// Who an invite's context names: null for anyone, the member id after `invite:`.
   static String? _memberOf(String context) => context.startsWith('invite:') ? context.substring('invite:'.length) : null;
 
@@ -105,14 +125,47 @@ class HubInvites {
     if (expires - now > longest.inMilliseconds + const Duration(minutes: 5).inMilliseconds) {
       throw ApiError.invalid('An invite lasts a week at most.');
     }
+    final slot = json['slot'];
+    final key = json['key'];
+    if (slot != null && (slot is! String || !_slotRe.hasMatch(slot))) {
+      throw ApiError.invalid("That invite's slot isn't one the Den app makes.", field: 'slot');
+    }
+    if (key != null && (key is! String || slot == null || member == null)) {
+      throw ApiError.invalid('An invite that lets someone in at once names them and comes with its slot.', field: 'key');
+    }
     final problem = await hub.gate.asHub(() => grant.problem(hub.den, expectedContext: context));
     if (problem != null) {
       hub.log.warn('Refused an invite: $problem');
       throw ApiError.denied("Only a parent's own device in this family can invite someone.");
     }
+    if (key is String) {
+      final id = inviteKeyIdOf(key);
+      final record = id == null ? null : hub.den.inviteKey(id);
+      // The parent's phone wrote the key a moment ago; it may not have synced yet.
+      if (record == null) throw ApiError(409, 'not_synced', "The invite hasn't reached the hub yet. Try again in a moment.");
+      if (record.member != member || record.key != key || !record.liveAt(now)) {
+        throw ApiError.invalid("That invite's key isn't one the family made for them.", field: 'key');
+      }
+    }
     _prune(now);
     if (_invites.length >= maxLive) {
       throw ApiError(429, 'rate_limited', 'Too many invites are waiting. Try again once some are used or have expired.');
+    }
+    final base = hub.base(request);
+    if (slot is String) {
+      final at = 'slot:$slot';
+      if (_invites.containsKey(at)) throw ApiError(409, 'conflict', 'That invite is already waiting. Make a new one.');
+      _invites[at] = {'grant': grant.toJson(), 'url': grant.invite.toUrl(), 'expires': expires, 'made': now, 'key': ?key};
+      await _save();
+      hub.log.info(key == null ? 'A parent made an invite' : 'A parent made an invite that lets someone in at once');
+      return jsonResponse({
+        'slot': slot,
+        'base': base.toString(),
+        'expires': DateTime.fromMillisecondsSinceEpoch(expires, isUtc: true).toIso8601String(),
+        'expires_ms': expires,
+        'member': member,
+        'preapproved': key != null,
+      }, status: 201);
     }
     var code = _newCode();
     while (_invites.containsKey(code)) {
@@ -122,7 +175,6 @@ class HubInvites {
     await _save();
     hub.log.info('A parent made an invite');
     final words = code.split(' ');
-    final base = hub.base(request);
     return jsonResponse({
       'code': code,
       'words': words,
@@ -136,9 +188,13 @@ class HubInvites {
   /// The devices that joined with the invite [entry] holds.
   static List<String> _joins(Map<Object?, Object?> entry) => [...((entry['joins'] as List?) ?? const []).whereType<String>()];
 
-  /// Whether [entry]'s invite has done its job: a parent approved a device that joined with it,
-  /// or [maxJoins] devices did.
+  /// Whether [entry]'s invite has done its job: its key let in what it may, a parent approved a
+  /// device that joined with it, or [maxJoins] devices did.
   bool _usedUp(Map<Object?, Object?> entry) {
+    // An invite that lets someone in at once is used up once its key let in what it may.
+    final key = entry['key'];
+    final record = key is String ? hub.den.inviteKey(inviteKeyIdOf(key) ?? '') : null;
+    if (record != null && hub.den.inviteUses(record) <= 0) return true;
     final joins = _joins(entry);
     return joins.length >= maxJoins || joins.any((id) => hub.den.device(id)?.approved ?? false);
   }
@@ -157,8 +213,10 @@ class HubInvites {
     }
   }
 
-  /// `POST /api/v1/invites/redeem {code}`: the invite behind four words, for the device about to
-  /// join with it over `/ws`, while it hasn't been used ([maxJoins]); `404` once it has.
+  /// `POST /api/v1/invites/redeem {code}` or `{slot}`: the invite behind four words (or the slot
+  /// they stretch to), for the device about to join with it over `/ws`, while it hasn't been
+  /// used ([maxJoins]); `404` once it has. Says whether it lets the device in at once
+  /// (`preapproved`, with the invite key's public half as `key`).
   Future<Response> redeem(Request request) async {
     if (!hub.ready) throw ApiError.notReady();
     hub.checkFailures(request);
@@ -174,11 +232,22 @@ class HubInvites {
               : 'Too many wrong codes from here. Wait ten minutes, then try again.');
     }
     final b = Body(await readJsonObject(request, required: true));
-    final code = normalizeCode(b.string('code', required: true, min: 1, max: 200)!);
-    if (code == null) {
-      throw ApiError.invalid("Those aren't the four words from an invite. Check them against the message.", field: 'code');
+    final slot = b.string('slot', max: 64);
+    String code;
+    if (slot != null) {
+      if (!_slotRe.hasMatch(slot)) throw ApiError.invalid("That isn't an invite's slot.", field: 'slot');
+      code = 'slot:$slot';
+    } else {
+      final typed = normalizeCode(b.string('code', required: true, min: 1, max: 200)!);
+      if (typed == null) {
+        throw ApiError.invalid("Those aren't the four words from an invite. Check them against the message.", field: 'code');
+      }
+      code = typed;
     }
     _prune(now);
+    // Words typed into an app that doesn't stretch them: the hub does, for an invite it keeps by
+    // its slot (one Argon2id run, so only after the limits above let the client try).
+    if (slot == null && !_invites.containsKey(code) && _hasSlots) code = 'slot:${await InviteWords.slot(code)}';
     final entry = _invites[code];
     InviteGrant? grant;
     if (entry is Map && entry['grant'] is Map) {
@@ -214,10 +283,16 @@ class HubInvites {
     if (!hub.node.invites.live.any((i) => i.toUrl() == url)) hub.node.invites.add(invite);
     entry['url'] ??= url;
     final member = _memberOf(held.context);
+    final key = entry['key'];
     return jsonResponse({
       'invite': url,
+      'key': ?(key is String ? key : null),
+      'preapproved': _preapproved(key),
       'member': member,
       'member_name': member == null ? null : hub.den.member(member)?.name,
+      // Their color and picture, to show whose device this becomes before it holds the family.
+      'member_marker': member == null ? null : hub.den.member(member)?.marker.name,
+      'member_picture': member == null ? null : hub.den.member(member)?.picture,
       'family': hub.den.family?.name,
       'expires': invite.expires.toUtc().toIso8601String(),
       'expires_ms': invite.expires.millisecondsSinceEpoch,

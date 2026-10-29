@@ -134,14 +134,16 @@ family_start() { # NAME: start (or keep) its hub, and the shared services with t
 family_stop() { # NAME: stop and remove its hub; its volume stays
   run docker compose rm --stop --force "hub-$1"
 }
-family_setup() { # NAME: the hub's setup link if it has one, else its setup code
+family_setup() { # NAME: the hub's setup link and its QR code, else (an older hub) its setup code
   local out
   if out=$(docker compose exec -T "hub-$1" /app/bin/den_hub setup-link 2>/dev/null) && [[ "$out" == *https://* ]]; then
     printf '%s' "$out"
-  elif out=$(docker compose exec -T "hub-$1" /app/bin/den_hub setup-code 2>/dev/null); then
+  elif out=$(docker compose exec -T "hub-$1" /app/bin/den_hub setup-code 2>/dev/null) && [[ "$out" != *' '* ]]; then
+    printf 'Open https://%s in Safari, Share, Add to Home Screen, open Den from there,\nthen Start a family, with the setup code %s' "$(family_domain "$1")" "$out"
+  elif [ -n "${out:-}" ]; then
     printf '%s' "$out"
   else
-    printf '(hub-%s gives it once it runs: docker compose exec hub-%s /app/bin/den_hub setup-code)' "$1" "$1"
+    printf '(hub-%s gives it once it runs: docker compose exec hub-%s /app/bin/den_hub setup-link)' "$1" "$1"
   fi
 }
 
@@ -468,10 +470,9 @@ $(host_dns_records "$domain")
 EOF
   [ -z "${allowed:-}" ] || printf '      The firewall lets them in now:\n%s\n' "$allowed"
   cat <<EOF
-   4. For their first parent's phone, at home or with Tailscale on: https://$domain in Safari,
-      Share, Add to Home Screen, then Start a family, with
+   4. For their first parent's iPhone, at home or with Tailscale on, once 1 and 2 are done:
 $(family_setup "$name" | sed 's/^/        /')
-      (docker compose exec hub-$name /app/bin/den_hub setup-code shows it again.) Then send them
+      (docker compose exec hub-$name /app/bin/den_hub setup-link shows it again.) Then send them
       "For the family (private)" from docs/hosting.md, with their address in it.
 
 EOF
@@ -504,7 +505,7 @@ families_whats_left() { # step 8: the other families' names, which need the same
   [ -n "$names" ] || return 0
   printf '\n   The other families on this server need the same public DNS record (a CNAME to %s\n   does) and split-DNS nameserver for their own addresses (sudo ./install.sh families):\n' "$(env_get DEN_DOMAIN)"
   for f in $names; do
-    printf '        %-10s %-32s setup code: docker compose exec hub-%s /app/bin/den_hub setup-code\n' \
+    printf '        %-10s %-32s setup link: docker compose exec hub-%s /app/bin/den_hub setup-link\n' \
       "$f" "$(family_domain "$f")" "$f"
   done
 }

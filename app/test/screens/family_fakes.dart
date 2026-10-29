@@ -26,6 +26,8 @@ class FakePairing extends PairingService {
     this.serving,
     this.recoveryKey,
     this.recovery,
+    this.peek,
+    this.admits = false,
   });
 
   final List<PendingJoin> pending;
@@ -54,6 +56,19 @@ class FakePairing extends PairingService {
   /// What [startRecovery] was asked: the words and the device name it chose for "Alex".
   final List<(String, String)> recoveriesStarted = [];
 
+  /// What [peekInvite] finds; without one, the words find nothing.
+  final InvitePeek? peek;
+
+  /// Whether [joinWithInvite] lets the device in at once, as an invite with a key does.
+  final bool admits;
+
+  /// Whether each invite [createInvite] made was to let them in at once.
+  final List<bool> invitesLetIn = [];
+
+  /// The hubs [setUpHub] and [adoptServingHub] were asked to take in, and the device id each
+  /// expected from a setup link.
+  final List<(String, String?)> hubsSetUp = [];
+
   @override
   Future<String> hubRecoveryKey() async => recoveryKey ?? (throw const PairingException(LocalOnlyPairing.message));
 
@@ -73,8 +88,18 @@ class FakePairing extends PairingService {
   Future<HubInfo?> servingHub() async => serving;
 
   @override
-  Future<InviteMessage> createInvite({String? memberId}) async =>
-      invite ?? (throw const PairingException(LocalOnlyPairing.message));
+  Future<InviteMessage> createInvite({String? memberId, bool letIn = true}) async {
+    invitesLetIn.add(letIn);
+    return invite ?? (throw const PairingException(LocalOnlyPairing.message));
+  }
+
+  @override
+  Future<InvitePeek> peekInvite(String words, {String? hubUrl}) async =>
+      peek ??
+      (throw const PairingException(
+        "That code isn't right, or the invite has expired. Ask for a new invite.",
+        reason: PairingException.unknownCode,
+      ));
 
   @override
   Future<JoinTicket> joinWithInvite(
@@ -84,7 +109,7 @@ class FakePairing extends PairingService {
     required DeviceKind kind,
   }) async {
     invitesUsed.add((words, deviceName('Zoe')));
-    return const JoinTicket(familyId: 'FAMILY', familyName: 'The Carters');
+    return JoinTicket(familyId: 'FAMILY', familyName: 'The Carters', admitted: admits);
   }
 
   @override
@@ -95,7 +120,16 @@ class FakePairing extends PairingService {
       hubInfo ?? (throw const PairingException("Couldn't reach a hub at that address."));
 
   @override
-  HubSetupSession setUpHub(HubInfo hub, String code) => setup!;
+  HubSetupSession setUpHub(HubInfo hub, String code, {String? expectDevice}) {
+    hubsSetUp.add((code, expectDevice));
+    return setup!;
+  }
+
+  @override
+  HubSetupSession adoptServingHub(HubInfo hub, String code, {String? expectDevice}) {
+    hubsSetUp.add((code, expectDevice));
+    return setup ?? (throw const PairingException(LocalOnlyPairing.message));
+  }
 
   @override
   Future<BrowserLinkSession> linkThisBrowser({required String Function() deviceName}) async =>

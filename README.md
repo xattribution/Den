@@ -21,11 +21,12 @@ updates, backups and moving servers):
 ```sh
 git clone https://github.com/xattribution/den.git && cd den/deploy/private
 sudo ./install.sh        # asks for the domain, a Cloudflare token and the homes' DDNS names
-docker compose exec hub /app/bin/den_hub setup-code
 ```
 
-Then open `https://den.example.com` in Safari on a parent's iPhone, at home or with Tailscale on,
-add it to the Home Screen, tap **Start a family** and type the setup code.
+install.sh ends with a link and a QR code for the first parent's iPhone (again any time:
+`docker compose exec hub /app/bin/den_hub setup-link`). Scan it at home or with Tailscale on, add
+Den to the Home Screen as Safari shows, open it and tap **Create family**. Invite the others from
+Den: they open their link, add Den to the Home Screen, tap **Join**, and they're in.
 
 Other ways to run it:
 
@@ -59,7 +60,7 @@ questions and makes changes from Add, with Undo. Its key stays on the hub.
 | `packages/den_net/` | Encrypted sessions, sync, pairing, key rotation, relay client, encrypted backups |
 | `packages/den_capture/` | Capture: readers, resolution to the family, checks against den_core, writes with undo |
 | `packages/den_hub/` | The hub library: HTTP API, MCP with OAuth, Home Assistant bridge, reminders, calendar feeds, mDNS |
-| `packages/den_hub_cli/` | The `den_hub` command: serve, setup code, status, backup and restore, MCP over stdio, Sett import |
+| `packages/den_hub_cli/` | The `den_hub` command: serve, setup code and link, status, backup and restore, MCP over stdio, Sett import |
 | `packages/den_relay/` | The relay: tunnel, mailbox and pairing rendezvous |
 | `packages/den_sett_import/` | Reads Sett's `coord.db` |
 | `integrations/homeassistant/` | The Home Assistant integration, published from [`xattribution/den-homeassistant`](https://github.com/xattribution/den-homeassistant) for HACS |

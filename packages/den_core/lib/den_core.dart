@@ -7,6 +7,16 @@ export 'src/den.dart';
 export 'src/family_controls.dart';
 export 'src/hlc.dart';
 export 'src/ids.dart' show newId, base32, randomBytes;
+export 'src/invite_keys.dart'
+    show
+        InviteKey,
+        InviteKeyRecord,
+        InviteProof,
+        inviteKeyDefaultLife,
+        inviteKeyIdOf,
+        inviteKeyMaxLife,
+        inviteKeyMaxUses,
+        inviteOf;
 export 'src/model.dart';
 export 'src/permissions.dart';
 export 'src/recovery.dart'

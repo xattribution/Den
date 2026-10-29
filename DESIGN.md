@@ -639,6 +639,9 @@ why.
   Flutter measure again. The keyboard's height comes from the page (`WebSafeArea`), so a
   keyboard closed with its own button rather than Return leaves nothing lifted. A sheet rises
   over the keyboard once; what's inside it lays out as if there were none.
+- Getting in: [onboarding](docs/design/onboarding.md). A link opens the step it is for; Safari
+  shows the Home Screen steps with a picture of where Share is, and Copy invite above them; the
+  welcome screen has Paste an invite.
 - `MediaQuery.disableAnimations` must follow Reduce Motion (read `prefers-reduced-motion` if it
   doesn't). Dynamic Type doesn't reach web apps, so the Text size setting lives in Settings.
 

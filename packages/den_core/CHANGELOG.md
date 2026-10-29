@@ -1,5 +1,14 @@
 ## Unreleased
 
+- Invite keys (`invite_keys.dart`): a parent's own device writes an `inviteKey` record, the
+  public half of an Ed25519 key bound to a member (or, bound to no one, to device modes), with a
+  use count (1 by default) and an expiry (at most `inviteKeyMaxLife`). A device that proves the
+  key (`InviteProof`, single-use nonce) approves itself with `requestInviteJoin`; validity accepts
+  it while the inviting parent is still a parent with that approved device. `withdrawInviteKey`,
+  and removing or demoting the parent or revoking their device, retire the key with a `kept` set,
+  like recovery keys. `disownInvite` ("That wasn't them") revokes the device and the key.
+  `snapshotFormat` is 4.
+
 - `family.colors` (optional, `ColorPack`: `bright`, `deep`, `soft` or `bold`; `Family.colors`
   reads `bright` when it's unset or unknown): which shades of the eight person colors the whole
   family sees. People keep their `marker`, so a pack changes shades, never who has which color.

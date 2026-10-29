@@ -21,6 +21,7 @@ import 'package:cryptography/cryptography.dart';
 import 'change.dart';
 import 'hlc.dart';
 import 'ids.dart';
+import 'invite_keys.dart' show InviteProof, retiredInviteKey;
 import 'materializer.dart' show Applied;
 import 'model.dart';
 import 'store.dart';
@@ -242,11 +243,19 @@ class RetiredRecoveryKeys {
     return out;
   }
 
-  /// The keys valid changes in [applied] replaced.
+  /// The scope an invite key taken away is kept under (invite_keys.dart), beside parents' words
+  /// and the hub's key: a join with it clocked before that counts only for the devices kept.
+  static const String _invites = 'invite';
+
+  /// The keys valid changes in [applied] replaced, and the invite keys they took away.
   static RetiredRecoveryKeys of(Iterable<Applied> applied) {
     final out = RetiredRecoveryKeys();
     for (final a in applied) {
       final c = a.change;
+      if (retiredInviteKey(a) case (final key, final kept)) {
+        out._retired.add(_Retired(_invites, key, c.hlc, kept));
+        continue;
+      }
       if (!setsRecoveryKey(c)) continue;
       final member = c.type == RecordType.member;
       final name = member ? 'key' : 'serverKey';
@@ -261,9 +270,13 @@ class RetiredRecoveryKeys {
     return out;
   }
 
-  /// Whether recovery change [c] used a key that a later change replaced without knowing of it.
+  /// Whether recovery change [c] used a key that a later change replaced without knowing of it,
+  /// or a join with an invite key that a later change took away.
   bool excludes(Change c) {
     if (c.type != RecordType.device || _retired.isEmpty) return false;
+    if (InviteProof.parse(c.fields['invite']) case final invite?) {
+      return _retired.any((r) => r.scope == _invites && r.key == invite.key && c.hlc < r.at && !r.kept.contains(c.rid));
+    }
     final proof = RecoveryProof.parse(c.fields['recovery']);
     if (proof == null) return false;
     final scope = proof.kind == RecoveryKind.hub ? '' : proof.member;

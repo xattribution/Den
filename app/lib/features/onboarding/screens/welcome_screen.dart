@@ -1,8 +1,11 @@
+import 'package:den_net/den_net.dart' show DenLink, DenLinkKind;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../design/mark.dart';
+import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/sync/pairing.dart';
@@ -10,12 +13,15 @@ import '../../../platform/web/web_app.dart';
 import '../state/demo_session.dart';
 import 'home_screen_steps.dart';
 
-/// The first screen on a device with no family: the task, as plain rows.
+/// The first screen on a device with no family, when no link opened Den: the task, as plain
+/// rows. A link opens the step it is for instead (an invite opens Join, a setup link Start), so
+/// most people never see this screen.
 ///
 /// In a browser the hub served, the rows follow the hub: a fresh hub offers to start the family
 /// here (this browser becomes the founding parent's device and takes the hub in with its setup
-/// code); a hub already in a family offers to join it. Safari on an iPhone or iPad first shows
-/// how to put Den on the Home Screen, where the family should live.
+/// code); a hub already in a family offers to join it. Paste an invite takes a link copied in
+/// Safari, which is how a link reaches a Home Screen app that is already there. Safari on an
+/// iPhone or iPad first shows how to put Den on the Home Screen, where the family should live.
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key, this.browser, this.hub, this.web});
 
@@ -36,6 +42,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   bool _startingDemo = false;
   bool _inSafari = false;
   String? _error;
+  String? _pasteError;
   HubInfo? _hub;
   bool _asked = false;
 
@@ -68,6 +75,34 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
         _error = "Couldn't open the demo family: $e";
       });
     }
+  }
+
+  /// Opens the step a link copied in Safari is for. Called straight from the tap, so a browser
+  /// lets it read the clipboard.
+  Future<void> _paste() async {
+    final pasted = await WebApp.paste();
+    String? text = pasted.text;
+    if (text == null) {
+      try {
+        text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+      } on Object {
+        text = null;
+      }
+    }
+    if (!mounted) return;
+    final link = DenLink.parse(text ?? '');
+    final String? problem = switch (link?.kind) {
+      null => "There's no invite on the clipboard. In Safari, tap Copy invite, then come back and tap Paste again.",
+      DenLinkKind.group => 'Invites to a group of families come with a later version of Den.',
+      _ => null,
+    };
+    setState(() => _pasteError = problem);
+    if (problem != null) return;
+    context.go(switch (link!.kind) {
+      DenLinkKind.setup => Uri(path: '/welcome/start', queryParameters: {'setup': link.code, 'hub': ?link.hubDevice}).toString(),
+      DenLinkKind.recover => Uri(path: '/welcome/recover', queryParameters: {'code': link.words}).toString(),
+      _ => Uri(path: '/welcome/join', queryParameters: {'code': link.words}).toString(),
+    });
   }
 
   @override
@@ -108,16 +143,24 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                     detail: 'With the invite a parent sent you',
                     onTap: () => context.go('/welcome/join'),
                   ),
+                NavRow(
+                  icon: PhosphorIconsRegular.clipboardText,
+                  label: 'Paste an invite',
+                  detail: 'One you copied from a message or from Safari',
+                  chevron: false,
+                  onTap: _paste,
+                ),
                 if (_browser && !web.ios && hub != null && hub.paired)
                   NavRow(
                     icon: PhosphorIconsRegular.browser,
                     label: "Link with a parent's phone",
-                    detail: 'For a computer in the house',
+                    detail: 'Show a code to scan, for a computer in the house',
                     onTap: () => context.go('/welcome/link'),
                   ),
               ], indent: 36),
             ),
           ),
+          if (_pasteError != null) Text(_pasteError!, style: context.text.meta(context.colors.destructive)),
           GroupCard(
             child: NavRow(
               icon: PhosphorIconsRegular.usersThree,

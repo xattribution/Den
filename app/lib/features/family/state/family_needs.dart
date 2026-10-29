@@ -2,6 +2,7 @@ import 'package:den_core/den_core.dart';
 
 import '../../../app/app_state.dart';
 import '../../../platform/sync/pairing.dart';
+import 'invites.dart';
 import 'recovery.dart';
 import 'recovery_reminder.dart';
 
@@ -47,6 +48,16 @@ final class RecoveredNotice extends FamilyNeed {
   String get key => Recovery.noticeKey(device);
 }
 
+/// A device an invite let in by itself, said on every parent's own device until someone there
+/// puts it away, so nobody gets in unseen: Got it, or That wasn't Dad (remove it).
+final class InvitedNotice extends FamilyNeed {
+  const InvitedNotice(this.device);
+  final Device device;
+
+  @override
+  String get key => Invites.noticeKey(device);
+}
+
 /// The family has a shared screen and this parent has no PIN, so they can't act there and
 /// nobody can act as them.
 final class PinAsk extends FamilyNeed {
@@ -82,6 +93,7 @@ List<FamilyNeed> familyNeeds(AppState app, List<PendingJoin> joins) {
     for (final c in den.connections)
       if (c.status == ConnectionStatus.pending) ConnectionAsk(c),
     for (final d in Recovery.unseen(den, app.seen)) RecoveredNotice(d),
+    for (final d in Invites.unseen(den, app.seen, now: den.now(), me: app.me?.id)) InvitedNotice(d),
   ];
   final me = app.me;
   final display = sharedDisplays(den).firstOrNull;
