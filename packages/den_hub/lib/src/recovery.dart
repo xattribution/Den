@@ -204,7 +204,13 @@ class HubRecovery {
       final ticket = await issue(person);
       return jsonResponse(ticket.toJson(), status: 201);
     } on RecoveryRefused catch (e) {
-      throw ApiError(e.code == 'off' ? 403 : (e.code == 'busy' ? 429 : 400), e.code, e.message);
+      final status = switch (e.code) {
+        'off' => 403,
+        'busy' => 429,
+        'not_ready' => 503,
+        _ => 400,
+      };
+      throw ApiError(status, e.code, e.message);
     }
   }
 
