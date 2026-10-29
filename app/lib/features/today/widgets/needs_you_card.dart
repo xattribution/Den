@@ -287,6 +287,8 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
       detail: detail,
       action: failed == null ? action : null,
       onTap: open,
+      // Two buttons beside the words would leave the words a sliver of an iPad column.
+      actionBelow: need is RecoveryWordsNeed ? true : null,
     );
     if (failed == null || retry == null) return row;
     return Column(

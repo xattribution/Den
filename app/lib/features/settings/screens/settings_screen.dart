@@ -48,7 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Paste an invite to another family. Straight from the tap, so a browser lets it read the
   /// clipboard.
   Future<void> _joinAnother() async {
-    final problem = await pasteAnotherFamily(GoRouter.maybeOf(context), web: widget.web);
+    final problem = await pasteAnotherFamily(GoRouter.maybeOf(context));
     if (mounted) setState(() => _pasteError = problem);
   }
 
@@ -273,8 +273,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: !_leaving
               ? const SizedBox(width: double.infinity)
               : ConfirmPanel(
-                  message: '$name leaves $thing: its calendar, chores and lists, and this device in it. '
-                      "The family's parents see it go. To come back, ask one of them for a new invite.",
+                  message: "$name's calendar, chores and lists leave $thing, and the family's parents see $thing go. "
+                      'Your other families stay. To come back, ask one of its parents for a new invite.',
                   confirmLabel: 'Leave $name',
                   destructive: true,
                   busy: _leavingBusy,

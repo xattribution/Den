@@ -10,17 +10,15 @@ import '../../../design/motion.dart';
 import '../../../design/sheet.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
-import '../../../platform/capabilities.dart';
 import '../../../platform/web/web_app.dart';
 import '../../today/today.dart' show NeedsModel;
 import '../state/membership_actions.dart';
 
 /// Paste an invite, on a device already in a family: reads the clipboard and opens joining the
 /// family it invites to (`/families/join`) with [router], or answers why it can't (nothing on
-/// the clipboard, a group, another server in the web app). Call it straight from the tap, so a
-/// browser lets it read the clipboard. [web] reads invites as the web app does (only this
-/// server's); by default on the web.
-Future<String?> pasteAnotherFamily(GoRouter? router, {bool? web, VoidCallback? before}) async {
+/// the clipboard, a group, not an invite). Whether the family is on this server, the join screen
+/// asks the server. Call it straight from the tap, so a browser lets it read the clipboard.
+Future<String?> pasteAnotherFamily(GoRouter? router, {VoidCallback? before}) async {
   final pasted = await WebApp.paste();
   String? text = pasted.text;
   if (text == null) {
@@ -30,8 +28,7 @@ Future<String?> pasteAnotherFamily(GoRouter? router, {bool? web, VoidCallback? b
       text = null;
     }
   }
-  final page = (web ?? Capabilities.web) ? Uri.base : null;
-  switch (PastedInvite.read(text ?? '', page: page == null ? null : Uri(scheme: page.scheme, host: page.host, port: page.port))) {
+  switch (PastedInvite.read(text ?? '')) {
     case PasteProblem(:final message):
       return message;
     case final JoinRoute join:
@@ -83,7 +80,7 @@ class _FamiliesSheetState extends State<FamiliesSheet> {
   /// Called straight from the tap, so a browser lets it read the clipboard.
   Future<void> _paste() async {
     final navigator = Navigator.of(context);
-    final problem = await pasteAnotherFamily(widget.router, web: widget.web, before: navigator.maybePop);
+    final problem = await pasteAnotherFamily(widget.router, before: navigator.maybePop);
     if (mounted) setState(() => _pasteError = problem);
   }
 
@@ -125,7 +122,7 @@ class _FamiliesSheetState extends State<FamiliesSheet> {
                 padding: const EdgeInsets.fromLTRB(DenLayout.headingInset, Sp.s, DenLayout.headingInset, Sp.l),
                 child: Semantics(header: true, child: Text('Your families', style: t.sheetTitle(c.ink))),
               ),
-              GroupCard(child: Column(children: ruled(rows, indent: 52))),
+              GroupCard(child: Column(children: ruled(rows, indent: _ChoiceRow.lead + Sp.m))),
               const SizedBox(height: Sp.l),
               GroupCard(
                 child: Column(
@@ -176,15 +173,9 @@ class _FamilyRow extends StatelessWidget {
     // The family's faces in the family's own colors.
     final faces = LogScope(
       log: log,
-      child: SizedBox(
-        width: 40,
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: people.isEmpty
-              ? SourceTag(label: log.name, color: log.color, size: 32, semantics: false)
-              : FaceStack(faces: [for (final m in people.take(3)) DenAvatar(m, size: 22)], size: 22, max: 3),
-        ),
-      ),
+      child: people.isEmpty
+          ? SourceTag(label: log.name, color: log.color, size: 32, semantics: false)
+          : FaceStack(faces: [for (final m in people.take(3)) DenAvatar(m, size: 20)], size: 20, max: 3),
     );
     return _ChoiceRow(
       leading: faces,
@@ -215,6 +206,9 @@ class _ChoiceRow extends StatelessWidget {
   final bool needs;
   final VoidCallback onTap;
 
+  /// The room for the faces before the name: three 20 pt faces, overlapping.
+  static const double lead = 56;
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -235,7 +229,7 @@ class _ChoiceRow extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: Sp.m),
             child: Row(
               children: [
-                SizedBox(width: 40, child: Align(alignment: Alignment.centerLeft, child: leading)),
+                SizedBox(width: lead, child: Align(alignment: Alignment.centerLeft, child: leading)),
                 const SizedBox(width: Sp.m),
                 Expanded(
                   child: Column(

@@ -231,12 +231,14 @@ class _SourcedBlock extends StatelessWidget {
       child: Builder(builder: (inner) => EventBlock(occ: occ, date: date, onTap: () => openEvent(inner, occ))),
     );
     if (color != null) {
+      // The family's color as a ring around the block, a gap of the page between them, the way
+      // a face is ringed: never on the block itself, which stays its people's.
       block = DecoratedBox(
         decoration: BoxDecoration(
-          border: Border.all(color: c.marker(color), width: 2),
-          borderRadius: BorderRadius.circular(Radii.block + 3),
+          border: Border.all(color: c.marker(color), width: 2.5),
+          borderRadius: BorderRadius.circular(Radii.block + 4.5),
         ),
-        child: Padding(padding: const EdgeInsets.all(1), child: block),
+        child: Padding(padding: const EdgeInsets.all(2), child: block),
       );
     }
     final above = MediaQuery.textScalerOf(context).scale(1) > 1.35;

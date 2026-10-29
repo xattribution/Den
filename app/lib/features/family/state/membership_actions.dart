@@ -17,17 +17,16 @@ import '../../../platform/web/web_app.dart';
 sealed class PastedInvite {
   const PastedInvite();
 
-  /// Reads [text] (the link alone, the whole message, or four words) for this device, whose page
-  /// came from [page] on the web (null in the native apps, which reach any server).
-  static PastedInvite read(String text, {Uri? page}) {
+  /// Reads [text] (the link alone, the whole message, or four words). Whether the family is on
+  /// this server is for the server to say: on a Den host every family has its own address, and
+  /// the app asks its own address about any of them ([AnotherFamilyPairing]).
+  static PastedInvite read(String text) {
     final link = net.DenLink.parse(text);
     return switch (link?.kind) {
       null => const PasteProblem("There's no invite on the clipboard. Copy the whole invite, then tap Paste an invite again."),
       net.DenLinkKind.group => const PasteProblem('Invites to a group of families come with a later version of Den.'),
       net.DenLinkKind.setup => const PasteProblem("That's a link to set up a new hub, not an invite to a family."),
       net.DenLinkKind.recover => const PasteProblem("That's a link to get back into a family on a new phone, not an invite."),
-      net.DenLinkKind.family when page != null && link!.hub != null && !sameServer(link.hub!, page) =>
-        PasteProblem(otherServer(link.hub!)),
       net.DenLinkKind.family => JoinRoute(words: link!.words!, hub: link.hub),
     };
   }
@@ -73,9 +72,11 @@ final class PasteProblem extends PastedInvite {
 /// fails takes the new engine away again. A family this device holds already is refused: one
 /// engine per family.
 ///
-/// In the web app the invite must come from the server the app came from (several families at
-/// one origin share the app, its storage and its push subscription); the native apps join a
-/// family on any server.
+/// In the web app everything goes through the server the app came from (several families at one
+/// origin share the app, its storage and its push subscription): a Den host finds an invite
+/// whichever family's address its link names, and says it has none for a family on another
+/// server, which the app then says plainly (until families on different servers come, phase 9).
+/// The native apps join a family on any server, at its link's address.
 class AnotherFamilyPairing extends PairingService {
   AnotherFamilyPairing(this.home, {Uri? servedBy, bool? web})
       : _servedBy = servedBy,
@@ -108,27 +109,34 @@ class AnotherFamilyPairing extends PairingService {
     return Uri(scheme: base.scheme, host: base.host, port: base.hasPort ? base.port : null);
   }
 
-  /// Where the invite is kept: the link's hub; on the web the app's own server (and only it);
-  /// for words alone in the native apps, the server the family shown is on, where a Den host
-  /// keeps every family's invites.
+  /// Where the invite is asked about: on the web the app's own server, always; in the native
+  /// apps the link's address, or for words alone the server the family shown is on, where a Den
+  /// host keeps every family's invites.
   Future<String?> _hubFor(String? hubUrl) async {
     final typed = hubUrl == null || hubUrl.trim().isEmpty ? null : HubClient.baseFor(hubUrl);
     final page = _page;
-    if (_web) {
-      if (typed != null && page != null && !PastedInvite.sameServer(typed, page)) {
-        throw PairingException(PastedInvite.otherServer(typed));
-      }
-      return page?.toString();
-    }
+    if (_web) return page?.toString();
     if (typed != null) return typed.toString();
     if (page != null) return page.toString();
     final bases = await home.active.network?.hubBases() ?? const <Uri>[];
     return bases.firstOrNull?.toString();
   }
 
-  /// The family [words] invite to, refused when this device holds it already.
-  Future<InviteTarget> _target(String words, String? hub) async {
-    final target = await _probe.inviteTarget(words, hubUrl: hub);
+  /// The family [words] invite to, refused when this device holds it already. In the web app,
+  /// an invite this server doesn't know whose link names another server is that family's Den
+  /// elsewhere.
+  Future<InviteTarget> _target(String words, String? hub, String? linked) async {
+    final InviteTarget target;
+    try {
+      target = await _probe.inviteTarget(words, hubUrl: hub);
+    } on PairingException catch (e) {
+      final link = linked == null || linked.trim().isEmpty ? null : HubClient.baseFor(linked);
+      final page = _page;
+      if (_web && e.reason == PairingException.unknownCode && link != null && page != null && !PastedInvite.sameServer(link, page)) {
+        throw PairingException(PastedInvite.otherServer(link), reason: PairingException.unknownCode);
+      }
+      rethrow;
+    }
     final here = home.byId(target.familyId);
     if (here != null) throw PairingException('This device is in ${here.name} already.');
     return target;
@@ -137,7 +145,7 @@ class AnotherFamilyPairing extends PairingService {
   @override
   Future<InvitePeek> peekInvite(String words, {String? hubUrl}) async {
     final hub = await _hubFor(hubUrl);
-    await _target(words, hub);
+    await _target(words, hub, hubUrl);
     return _probe.peekInvite(words, hubUrl: hub);
   }
 
@@ -149,7 +157,7 @@ class AnotherFamilyPairing extends PairingService {
     required DeviceKind kind,
   }) async {
     final hub = await _hubFor(hubUrl);
-    final target = await _target(words, hub);
+    final target = await _target(words, hub, hubUrl);
     return _join(target.familyId, target.base, target.familyName, (pairing) async {
       _probe.shareRedeemed(pairing);
       return pairing.joinWithInvite(words, hubUrl: hub, deviceName: deviceName, kind: kind);
@@ -168,9 +176,6 @@ class AnotherFamilyPairing extends PairingService {
     if (here != null) throw PairingException('This device is in ${here.name} already.');
     final sync = invite.hubs.firstOrNull;
     final base = sync == null ? null : HubClient.baseFor(sync.toString());
-    if (_web && base != null && _page != null && !PastedInvite.sameServer(base, _page!)) {
-      throw PairingException(PastedInvite.otherServer(base));
-    }
     return _join(invite.familyId, base, null, (pairing) => pairing.joinWithQr(uri, deviceName: deviceName, kind: kind));
   }
 
