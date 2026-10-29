@@ -205,7 +205,7 @@ class FeedService implements HubService {
       }
 
       final watcher = ShareWatcher(
-        client: hub.fetch,
+        client: hub.feedFetch,
         uri: shareWatchUri(s.url)!,
         log: hub.log,
         onHello: maybe,
@@ -310,7 +310,7 @@ class FeedService implements HubService {
     final fingerprint = _fingerprint(s);
     final changedConfig = entry['config'] != fingerprint;
     final fetched = await fetchFeed(
-      hub.fetch,
+      hub.feedFetch,
       s.url,
       etag: changedConfig ? null : entry['etag'] as String?,
       modified: changedConfig ? null : entry['modified'] as String?,

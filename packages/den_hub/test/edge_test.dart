@@ -220,8 +220,10 @@ void main() {
       // Without the body's hash a signature can't be checked on the way in: a stranger's budget.
       var refused = false;
       for (var i = 0; i < 200 && !refused; i++) {
+        // As an older app signs: DeviceRequest.sign sends the hash now.
         final unhashed = await DeviceRequest.sign(
-            keys: f.phone.keys, method: 'GET', url: url, body: const [], hub: f.hubDen.deviceId, actorId: f.phone.actor?.id);
+            keys: f.phone.keys, method: 'GET', url: url, body: const [], hub: f.hubDen.deviceId, actorId: f.phone.actor?.id)
+          ..remove(DeviceRequest.bodyHash);
         refused = (await client.get(url, headers: {...from, ...unhashed})).statusCode == 429;
       }
       expect(refused, isTrue);

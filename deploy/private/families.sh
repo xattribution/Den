@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Den, private setup: several families on one server (docs/hosting.md, "Several families").
 # install.sh sources this and calls three things:
-#   families_command add-family|remove-family|families ...   for sudo ./install.sh add-family ...
+#   families_command add-family|remove-family|merge-families|families ...   for sudo ./install.sh ...
 #   families_render       in step 7, before docker compose: the generated files below
 #   families_whats_left   in step 8: the other families' names to point at this server
 # It uses install.sh's helpers (step, info, stop, run, put, env_get, env_set) and CHECK.
@@ -9,49 +9,66 @@
 # The first family is the one install.sh set up: DEN_DOMAIN, DEN_HOMES and DEN_PORT in .env, the
 # service hub, the volume den-hub, its backups in backups/. Each other family is one line in .env,
 # which add-family writes and remove-family takes out:
-#   DEN_FAMILY_SMITH=den-smith.example.com 47735 home.smith.example.net
-#                    its address           its hub's port, then its homes' DDNS names
+#   DEN_FAMILY_SMITH=den-smith.example.com host home.smith.example.net
+#                    its address           where it runs, then its homes' DDNS names
+# Where it runs is `host` (the default): the first family's hub is a Den host, one process
+# serving several families, and the family is one more of them, its data in the volume den-hub
+# under logs/<id>/ (den_hub add-family). Or a port (47735, ...): the family has a hub container
+# of its own, hub-smith, with its own volume den-smith (add-family --container, and every family
+# added before the host). merge-families moves those onto the host.
+#
 # From those lines install.sh keeps two generated files in step (don't edit them; they're written
 # again on every run), and sets COMPOSE_FILE in .env so that plain `docker compose ...` reads both
 # compose files:
-#   compose.families.yaml   hub-smith: the hub service again, on its own port and 127.0.0.1, with
-#                           its own volume den-smith; for every hub, every family's address on
-#                           this server pointed at Caddy on 127.0.0.1 (extra_hosts) and listed in
-#                           DEN_PEER_HUBS, so a calendar one family shares with another is fetched
-#                           on this machine; dnsmasq's answer for its address; the backup
-#                           service's view of its data; and Caddy's copy of
-#   Caddyfile.families      a site for each family's address, to its own hub only
+#   compose.families.yaml   the hub-<name> container of each family that has one; for every hub,
+#                           when there is any such container, every family's address pointed at
+#                           Caddy on 127.0.0.1 (extra_hosts) and listed in DEN_PEER_HUBS, so a
+#                           calendar one family shares with another is fetched on this machine
+#                           (families on the host need neither: the host reads them in-process);
+#                           dnsmasq's answer for each address; the backup service's view of each
+#                           family's data; and Caddy's copy of
+#   Caddyfile.families      a site for each family's address: the host's port for a family on the
+#                           host, its own hub's port for one in its own container
 # den-allowlist reads the same lines and lets each family's homes reach 443.
 #
 # The functions named host_* make one address reach this server (its Caddy site, dnsmasq answer,
 # split-DNS line, public DNS record) and don't care what serves it; the family_* ones are about
-# its hub container. Every family keeps its own volume and its own DEN_PUBLIC_URL.
+# where its hub runs. Every family keeps its own data, its own keys and its own DEN_PUBLIC_URL.
 
 FAMILY_FIRST_PORT=47735
 
 families_usage() {
   cat >&2 <<'EOF'
 Usage:
-  sudo ./install.sh add-family NAME ADDRESS ["HOMES"]
+  sudo ./install.sh add-family NAME ADDRESS ["HOMES"] [--container]
       like: sudo ./install.sh add-family smith den-smith.example.com "home.smith.example.net"
       NAME is short, lower-case letters and digits; HOMES are the family's homes' DDNS names,
       separated by spaces (none: Tailscale only). Run it again with the same name and address to
-      change the homes.
-  sudo ./install.sh remove-family NAME [--delete-data]
-      takes the family off this server; its data stays unless --delete-data
+      change the homes. The family joins the Den host (the first family's hub), with its own
+      keys and data; --container gives it a hub container of its own instead.
+  sudo ./install.sh remove-family NAME [--delete-data [--yes]]
+      takes the family off this server; its data stays unless --delete-data, which asks you to
+      type the name first (--yes instead, where there is no terminal to ask on)
+  sudo ./install.sh remove-family NAME ADDRESS --delete-data [--yes]
+      deletes the data the Den host kept for a family taken off it earlier (never one .env
+      still has)
+  sudo ./install.sh merge-families [--dry-run]
+      moves every family that has a hub container of its own onto the Den host: a backup of
+      every family first, then each hub's data, keys and all, so no phone pairs again
   sudo ./install.sh families
       the families on this server: address, hub, port, data and backups
 EOF
   exit 64
 }
 
-families_command() { # add-family | remove-family | families, then its arguments
+families_command() { # add-family | remove-family | merge-families | families, then its arguments
   local cmd=$1
   shift
   [ "$(id -u)" = 0 ] || stop "run it as root: sudo ./install.sh $cmd ..."
   case $cmd in
     add-family) families_add "$@" ;;
     remove-family) families_remove "$@" ;;
+    merge-families) families_merge "$@" ;;
     families) [ $# -eq 0 ] || families_usage; families_list ;;
   esac
 }
@@ -64,8 +81,12 @@ families_names() { # the other families, in the order of their lines in .env
 }
 family_key() { printf 'DEN_FAMILY_%s' "$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"; }
 family_domain() { env_get "$(family_key "$1")" | awk '{print $1}'; }
-family_port() { env_get "$(family_key "$1")" | awk '{print $2}'; }
+family_port() { env_get "$(family_key "$1")" | awk '{print $2}'; } # a port, or "host"
 family_homes() { env_get "$(family_key "$1")" | awk '{$1 = $2 = ""; sub(/^ +/, ""); print}'; }
+family_hosted() { [ "$(family_port "$1")" = host ]; } # NAME: is it a family of the Den host?
+families_hosted() { local f; for f in $(families_names); do family_hosted "$f" && printf '%s\n' "$f"; done; return 0; }
+families_contained() { local f; for f in $(families_names); do family_hosted "$f" || printf '%s\n' "$f"; done; return 0; }
+families_host_port() { env_get DEN_PORT | grep . || echo 47733; } # the Den host's port (the first family's hub)
 
 families_project() { # Compose's project name: den, from compose.yaml
   local p=${COMPOSE_PROJECT_NAME:-}
@@ -75,7 +96,7 @@ families_project() { # Compose's project name: den, from compose.yaml
 families_volume() { printf '%s_den-%s' "$(families_project)" "$1"; }
 
 families_check_name() {
-  [[ $1 =~ ^[a-z][a-z0-9]{0,19}$ ]] || stop "a family's name is lower-case letters and digits, starting with a letter, at most 20, like smith (it names hub-smith, its volume and its backups' folder)"
+  [[ $1 =~ ^[a-z][a-z0-9]{0,19}$ ]] || stop "a family's name is lower-case letters and digits, starting with a letter, at most 20, like smith (it names its backups' folder, and hub-smith if it has a container)"
   [ "$1" != hub ] || stop "hub is the first family's hub; give this family another name"
 }
 families_valid_address() { [[ $1 =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$ ]]; }
@@ -94,7 +115,7 @@ families_env_line() {
     sed -i "${after}a\\
 $key=$value" .env
   else
-    printf '\n# Other families on this server, a line each: the address, the hub'"'"'s port, the homes'"'"' DDNS\n# names. sudo ./install.sh add-family and remove-family write them (docs/hosting.md).\n%s=%s\n' "$key" "$value" >> .env
+    printf '\n# Other families on this server, a line each: the address, where its hub runs (host: on the\n# Den host; a port: its own container), the homes'"'"' DDNS names. sudo ./install.sh add-family\n# and remove-family write them (docs/hosting.md).\n%s=%s\n' "$key" "$value" >> .env
   fi
 }
 
@@ -102,8 +123,8 @@ $key=$value" .env
 
 # Two kinds of piece, kept apart. Per address (needed however the family is served): its Caddy
 # site, its dnsmasq answer, and (further down) its split-DNS line and public DNS record. Per hub
-# container (what a single Den process serving several families would replace): its compose
-# service, its backup mount, starting it, and its setup code.
+# container (only for a family with a container of its own): its compose service, its backup
+# mount, starting it, and its setup code.
 
 host_caddy_site() { # ADDRESS PORT: Caddy's site for an address, to the hub on that port
   printf '\n%s {\n\timport den %s\n}\n' "$1" "$2"
@@ -112,9 +133,13 @@ host_dnsmasq_args() { # ADDRESS: dnsmasq's answer for it, the server's Tailscale
   printf '      - --interface-name=%s,tailscale0/4\n      - --local=/%s/\n' "$1" "$1"
 }
 
-family_hub_service() { # NAME ADDRESS PORT: the family's hub, as a compose service
+family_upstream() { # NAME: the port Caddy sends its address to
+  if family_hosted "$1"; then families_host_port; else family_port "$1"; fi
+}
+
+family_hub_service() { # NAME ADDRESS PORT: a family's own hub container, as a compose service
   cat <<EOF
-  # $1: https://$2
+  # $1: https://$2, in a container of its own
   hub-$1:
     extends: {file: compose.yaml, service: hub}
     # The image the first family's hub builds (or DEN_IMAGE names), built once for every family.
@@ -133,12 +158,14 @@ EOF
 }
 
 # Calendars shared between the families on this server (docs/hosting.md, "Calendars shared
-# between families on this server"). Each hub sees every family's address as 127.0.0.1, where
-# Caddy answers it (this server's own network), so one hub fetches another family's shared
-# calendar through Caddy with the certificate checked, without leaving the machine, and without
-# depending on the server reaching its own public address (which a provider that puts the public
-# address in front of the server doesn't loop back, and the firewall would drop as a stranger).
-# DEN_PEER_HUBS lets the hub's NetGuard reach loopback for these names only, over https.
+# between families on this server"). Families on the Den host read each other's in the host's
+# own process, with nothing to configure. A family in a container of its own is another process:
+# each hub then sees every family's address as 127.0.0.1, where Caddy answers it (this server's
+# own network), so one hub fetches another family's shared calendar through Caddy with the
+# certificate checked, without leaving the machine, and without depending on the server reaching
+# its own public address (which a provider that puts the public address in front of the server
+# doesn't loop back, and the firewall would drop as a stranger). DEN_PEER_HUBS lets the hub's
+# NetGuard reach loopback for these names only, over https.
 families_addresses() { # every family's address here: the first's as ${DEN_DOMAIN} (compose fills it in), then the others'
   printf '%s\n' '${DEN_DOMAIN}'
   local f
@@ -154,28 +181,100 @@ families_peers_hosts() { # the extra_hosts a hub needs: every family's address a
 }
 family_backup_mount() { printf '      - den-%s:/families/%s\n' "$1" "$1"; }
 family_volume_decl() { printf '  den-%s:\n' "$1"; }
-family_start() { # NAME: start (or keep) its hub, and the shared services with the new files
-  run docker compose up -d --no-deps --wait --wait-timeout 300 "hub-$1" $(families_other_hubs "$1") dnsmasq caddy
+families_hosted_env() { # what backup.sh needs to find the families on the host: name=address ...
+  local f out=""
+  for f in $(families_hosted); do out+="${out:+ }$f=$(family_domain "$f")"; done
+  printf '%s' "$out"
+}
+
+family_start() { # NAME: start (or keep) where its hub runs, and the shared services with the new files
+  local domain served=0
+  if family_hosted "$1"; then
+    domain=$(family_domain "$1")
+    # The host's own compose service is unchanged by a family on it, so it keeps running:
+    # nobody else's sync drops. Caddy and dnsmasq start again with the new address.
+    run docker compose up -d --no-deps --wait --wait-timeout 300 hub $(families_container_hubs) dnsmasq caddy || return 1
+    if [ "$CHECK" = 1 ]; then info "would run: docker compose exec -T hub /app/bin/den_hub add-family --hostname $domain"; return 0; fi
+    families_served "$domain" || served=$?
+    case $served in
+      0) info "The host has $domain already"; families_not_open "$domain"; return 0 ;;
+      1) ;;
+      *) info "The host didn't say which families it has (docker compose exec hub /app/bin/den_hub families)."; return 1 ;;
+    esac
+    run docker compose exec -T hub /app/bin/den_hub add-family --hostname "$domain" >/dev/null
+  else
+    run docker compose up -d --no-deps --wait --wait-timeout 300 "hub-$1" $(families_other_hubs "$1") dnsmasq caddy
+  fi
+}
+# What `den_hub families` says, a line a family: its address, then `first` or `id <id>`, then how
+# it is (`taken off`, `not open: <why>`, ...). Fails when the host can't be asked.
+families_host_list() {
+  [ "$CHECK" = 1 ] && return 0
+  docker compose exec -T hub /app/bin/den_hub families 2>/dev/null
+}
+families_on_host() { # the addresses the host has (serving, or opening again), one per line; fails when it can't be asked
+  local list
+  list=$(families_host_list) || return 2
+  printf '%s\n' "$list" | awk '/^https?:\/\// && !($2 == "id" && $4 == "taken") {print $1}'
+}
+families_served() { # ADDRESS: 0 the host has it (serving it, or opening it again), 1 it doesn't, 2 it can't be asked
+  local list
+  [ "$CHECK" = 1 ] && return 1
+  list=$(families_on_host) || return 2
+  printf '%s\n' "$list" | grep -qx "https://$1"
+}
+families_id() { # ADDRESS: the id of the family the host has there (not one taken off), or nothing
+  families_host_list | awk -v a="https://$1" '$1 == a && $2 == "id" && $4 != "taken" {print $3; exit}'
+}
+families_not_open() { # [ADDRESS]: says which families on the host aren't open, and why (den_hub families)
+  local list line
+  list=$(families_host_list) || return 0
+  while IFS= read -r line; do
+    [[ "$line" == *"  not open: "* ]] || continue
+    [ -z "${1:-}" ] || [[ "$line" == "https://$1 "* ]] || continue
+    info "Not open yet, and tried again: ${line%%  data *}"
+  done <<<"$list"
+  return 0
+}
+families_container_hubs() { # every family's own hub container
+  local f
+  for f in $(families_contained); do printf ' hub-%s' "$f"; done
 }
 families_other_hubs() { # [NAME]: every other hub on this server; up -d restarts those whose list
   # of families (DEN_PEER_HUBS, extra_hosts) changed, and leaves the rest running
   local f
   printf 'hub'
-  for f in $(families_names); do [ "$f" = "${1:-}" ] || printf ' hub-%s' "$f"; done
+  for f in $(families_contained); do [ "$f" = "${1:-}" ] || printf ' hub-%s' "$f"; done
 }
-family_stop() { # NAME: stop and remove its hub; its volume stays
+family_stop() { # NAME: stop and remove its hub container; its volume stays
   run docker compose rm --stop --force "hub-$1"
+}
+family_exec() { # NAME COMMAND...: den_hub COMMAND for the family, where its hub runs
+  local name=$1
+  shift
+  if family_hosted "$name"; then
+    docker compose exec -T hub /app/bin/den_hub "$@" --family "$(family_domain "$name")"
+  else
+    docker compose exec -T "hub-$name" /app/bin/den_hub "$@"
+  fi
+}
+family_exec_shown() { # NAME COMMAND: how the owner runs den_hub COMMAND for the family by hand
+  if family_hosted "$1"; then
+    printf 'docker compose exec hub /app/bin/den_hub %s --family %s' "$2" "$(family_domain "$1")"
+  else
+    printf 'docker compose exec hub-%s /app/bin/den_hub %s' "$1" "$2"
+  fi
 }
 family_setup() { # NAME: the hub's setup link and its QR code, else (an older hub) its setup code
   local out
-  if out=$(docker compose exec -T "hub-$1" /app/bin/den_hub setup-link 2>/dev/null) && [[ "$out" == *https://* ]]; then
+  if out=$(family_exec "$1" setup-link 2>/dev/null) && [[ "$out" == *https://* ]]; then
     printf '%s' "$out"
-  elif out=$(docker compose exec -T "hub-$1" /app/bin/den_hub setup-code 2>/dev/null) && [[ "$out" != *' '* ]]; then
+  elif out=$(family_exec "$1" setup-code 2>/dev/null) && [[ "$out" != *' '* ]]; then
     printf 'Open https://%s in Safari, Share, Add to Home Screen, open Den from there,\nthen Start a family, with the setup code %s' "$(family_domain "$1")" "$out"
   elif [ -n "${out:-}" ]; then
     printf '%s' "$out"
   else
-    printf '(hub-%s gives it once it runs: docker compose exec hub-%s /app/bin/den_hub setup-link)' "$1" "$1"
+    printf '(its hub gives it once it runs: %s)' "$(family_exec_shown "$1" setup-link)"
   fi
 }
 
@@ -183,16 +282,18 @@ families_caddyfile() {
   local f
   cat <<'EOF'
 # Generated by install.sh (families.sh) from the DEN_FAMILY_ lines in .env; don't edit it.
-# A site for each of the other families' addresses, to that family's own hub only. The den
-# snippet (the certificate, compression, the proxy) is in Caddyfile, which imports this file.
+# A site for each of the other families' addresses: to the Den host for a family on it (the one
+# upstream every family on the host shares), to its own hub for one in a container of its own.
+# The den snippet (the certificate, compression, the proxy) is in Caddyfile, which imports it.
 EOF
   for f in $(families_names); do
-    host_caddy_site "$(family_domain "$f")" "$(family_port "$f")"
+    host_caddy_site "$(family_domain "$f")" "$(family_upstream "$f")"
   done
 }
 
 families_compose() {
-  local f
+  local f contained
+  contained=$(families_contained)
   cat <<'EOF'
 # Generated by install.sh (families.sh) from the DEN_FAMILY_ lines in .env; don't edit it: it's
 # written again on every run. sudo ./install.sh add-family and remove-family change the families
@@ -200,17 +301,20 @@ families_compose() {
 
 services:
 EOF
-  cat <<EOF
-  # The first family's hub (compose.yaml) sees the other families' addresses on this machine too.
+  if [ -n "$contained" ]; then
+    cat <<EOF
+  # The Den host (compose.yaml) sees the addresses of the families in containers of their own on
+  # this machine too.
   hub:
     environment:
 $(families_peers_env)
 $(families_peers_hosts)
 
 EOF
-  for f in $(families_names); do
-    family_hub_service "$f" "$(family_domain "$f")" "$(family_port "$f")"
-  done
+    for f in $contained; do
+      family_hub_service "$f" "$(family_domain "$f")" "$(family_port "$f")"
+    done
+  fi
   cat <<EOF
   # Caddy reads its configuration only when it starts (its admin API is off): when the families
   # change, the label changes and \`docker compose up -d\` starts it again.
@@ -229,14 +333,18 @@ EOF
   for f in $(families_names); do
     host_dnsmasq_args "$(family_domain "$f")"
   done
-  printf '\n  # docker compose run --rm backup: every family; backup.sh finds them in /families.\n  backup:\n    volumes:\n'
-  for f in $(families_names); do
-    family_backup_mount "$f"
-  done
-  printf '\nvolumes:\n'
-  for f in $(families_names); do
-    family_volume_decl "$f"
-  done
+  printf '\n  # docker compose run --rm backup: every family; backup.sh finds those on the Den host by\n  # DEN_HOSTED_FAMILIES (in /data, by address) and the others in /families.\n  backup:\n'
+  printf '    environment:\n      DEN_HOSTED_FAMILIES: "%s"\n' "$(families_hosted_env)"
+  if [ -n "$contained" ]; then
+    printf '    volumes:\n'
+    for f in $contained; do
+      family_backup_mount "$f"
+    done
+    printf '\nvolumes:\n'
+    for f in $contained; do
+      family_volume_decl "$f"
+    done
+  fi
 }
 
 families_compose_files() { # what COMPOSE_FILE says when there are other families
@@ -287,10 +395,16 @@ families_ready() { # the first family's install has run on this server
   [ -f /etc/den/den_fw.nft ] || stop "the firewall isn't installed yet: sudo ./install.sh"
 }
 
-families_free_port() { # the next port for a hub: 47735, 47737, ...
+families_host_ready() { # the Den host runs, and is new enough to take families on
+  [ "$CHECK" = 1 ] && return 0
+  docker compose exec -T hub /app/bin/den_hub families >/dev/null 2>&1 ||
+    stop "the first family's hub isn't running a Den host yet. Update it first (git pull, then sudo ./install.sh), then run this again. Nothing changed."
+}
+
+families_free_port() { # the next port for a hub container: 47735, 47737, ...
   local p=$FAMILY_FIRST_PORT used f
   used=" 47733 $(env_get DEN_PORT) "
-  for f in $(families_names); do used+="$(family_port "$f") "; done
+  for f in $(families_contained); do used+="$(family_port "$f") "; done
   while [[ "$used" == *" $p "* ]] || { command -v ss >/dev/null && [ -n "$(ss -Hltn "sport = :$p" 2>/dev/null)" ]; }; do
     p=$((p + 2))
   done
@@ -337,18 +451,27 @@ families_firewall() { # den-allowlist, now, with the families' homes as .env has
 }
 
 families_add() {
-  [ $# -ge 2 ] && [ $# -le 3 ] || families_usage
-  local name=$1 domain homes h f old port verdict image first
+  local name="" domain="" homes="" given=0 container=0 h f old where verdict image first a
+  local -a words=()
+  for a in "$@"; do
+    case $a in
+      --container) container=1 ;;
+      -*) families_usage ;;
+      *) words+=("$a") ;;
+    esac
+  done
+  [ ${#words[@]} -ge 2 ] && [ ${#words[@]} -le 3 ] || families_usage
+  name=${words[0]}
   families_ready
   families_check_name "$name"
-  domain=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+  domain=$(printf '%s' "${words[1]}" | tr '[:upper:]' '[:lower:]')
   domain=${domain#https://}; domain=${domain%%/*}; domain=${domain%.}
-  families_valid_address "$domain" || stop "$2 isn't an address like den-$name.example.com"
-  if [ $# -eq 3 ]; then
-    homes=$(printf '%s' "$3" | tr ',' ' ' | tr '[:upper:]' '[:lower:]' | awk '{$1 = $1; print}')
-  else
-    homes=$(family_homes "$name")   # run again without homes: they stay as they are
+  families_valid_address "$domain" || stop "${words[1]} isn't an address like den-$name.example.com"
+  if [ ${#words[@]} -eq 3 ]; then
+    given=1
+    homes=$(printf '%s' "${words[2]}" | tr ',' ' ' | tr '[:upper:]' '[:lower:]' | awk '{$1 = $1; print}')
   fi
+  [ "$given" = 1 ] || homes=$(family_homes "$name")   # run again without homes: they stay as they are
   for h in $homes; do
     families_valid_address "${h%.}" || stop "$h isn't a DDNS name like home.$name.example.net"
   done
@@ -359,8 +482,13 @@ families_add() {
   old=$(family_domain "$name")
   [ -z "$old" ] || [ "$old" = "$domain" ] ||
     stop "$name is on this server already, at $old. A new address is a new app on every phone; to move them anyway, remove-family $name (its data stays), then add-family $name with the new address."
-  port=$(family_port "$name")
-  [ -n "$port" ] || port=$(families_free_port)
+  # Where it runs: as it was for a family already here; else on the host, or its own container.
+  where=$(family_port "$name")
+  if [ -z "$where" ]; then
+    if [ "$container" = 1 ]; then where=$(families_free_port); else where=host; fi
+  elif [ "$container" = 1 ] && [ "$where" = host ]; then
+    stop "$name is on the Den host already; a container of its own would be a second hub for the same family"
+  fi
 
   step "Family $name: https://$domain"
   # Caddy gets every family's certificate with the one token in .env, through the zone's DNS.
@@ -374,44 +502,104 @@ families_add() {
       stop "Caddy gets each family's certificate with CLOUDFLARE_API_TOKEN from .env, and that token doesn't see $domain's zone (or can't edit its DNS records). In Cloudflare, My Profile, API Tokens, the token's Edit: add that zone under Zone Resources, if it's in your account. Or give the family a name in the zone the token has, like den-$name.${first#*.}. Nothing changed."
       ;;
   esac
-  image=$(env_get DEN_IMAGE)
-  if [ -z "$image" ] && ! docker image inspect den-hub >/dev/null 2>&1; then
-    stop "the hub's image isn't built yet: sudo ./install.sh builds it. Nothing changed."
+  if [ "$where" = host ]; then
+    families_host_ready
+  else
+    image=$(env_get DEN_IMAGE)
+    if [ -z "$image" ] && ! docker image inspect den-hub >/dev/null 2>&1; then
+      stop "the hub's image isn't built yet: sudo ./install.sh builds it. Nothing changed."
+    fi
   fi
 
-  families_env_line "$(family_key "$name")" "$domain $port${homes:+ $homes}"
+  families_env_line "$(family_key "$name")" "$domain $where${homes:+ $homes}"
   families_render
-  family_start "$name" ||
-    stop "hub-$name didn't come up: docker compose logs hub-$name says why. Fix that and run this again, or remove-family $name."
+  if [ "$where" = host ]; then
+    family_start "$name" ||
+      stop "the Den host didn't take $name on (above says why; docker compose logs hub says more). Fix that and run this again, or remove-family $name."
+  else
+    family_start "$name" ||
+      stop "hub-$name didn't come up: docker compose logs hub-$name says why. Fix that and run this again, or remove-family $name."
+  fi
   families_firewall
   families_show "$name"
 }
 
+# families_confirm NAME WHAT: --delete-data goes on only when the owner typed NAME, or gave --yes.
+families_confirm() {
+  local answer
+  [ "$CHECK" = 1 ] && return 0
+  [ "$YES" = 1 ] && return 0
+  [ -t 0 ] || stop "--delete-data deletes $2 for good, and there's no terminal here to ask on. Run it in a terminal, or add --yes. Nothing changed."
+  read -rp "   This deletes $2 for good: its keys and everything it holds. Type $1 to go on: " answer
+  [ "$answer" = "$1" ] || stop "nothing changed"
+}
+
 families_remove() {
-  local name="" delete=0 a domain volume answer
+  local name="" addr="" delete=0 a domain volume hosted=0 f id
+  YES=0
   for a in "$@"; do
     case $a in
       --delete-data) delete=1 ;;
+      --yes) YES=1 ;;
       -*) families_usage ;;
-      *) [ -z "$name" ] || families_usage; name=$a ;;
+      *)
+        if [ -z "$name" ]; then name=$a
+        elif [ -z "$addr" ]; then addr=$a
+        else families_usage; fi
+        ;;
     esac
   done
   [ -n "$name" ] || families_usage
   families_ready
   families_check_name "$name"
   domain=$(family_domain "$name")
+  if [ -z "$domain" ] && [ -n "$addr" ]; then
+    # A family the Den host had, taken off earlier: only the data the host keeps is left. Never
+    # an address a family here still has: a mistyped name must not delete a family in use.
+    addr=$(printf '%s' "$addr" | tr '[:upper:]' '[:lower:]')
+    addr=${addr#https://}; addr=${addr%%/*}; addr=${addr%.}
+    families_valid_address "$addr" || stop "$addr isn't an address like den-$name.example.com"
+    [ "$addr" != "$(env_get DEN_DOMAIN)" ] || stop "$addr is the first family's address. Nothing changed."
+    for f in $(families_names); do
+      [ "$(family_domain "$f")" != "$addr" ] ||
+        stop "$addr is $f's address, and $name isn't on this server: did you mean sudo ./install.sh remove-family $f? Nothing changed."
+    done
+    [ "$delete" = 1 ] || stop "$name isn't on this server. To delete the data the host keeps for it: sudo ./install.sh remove-family $name $addr --delete-data"
+    families_confirm "$name" "the hub the host kept for $addr"
+    run docker compose exec -T hub /app/bin/den_hub remove-family --family "$addr" --delete-data ||
+      stop "the Den host didn't delete it (above says why; den_hub families lists what it keeps, with ids)."
+    info "Deleted the data the host kept for $addr."
+    return 0
+  fi
+  [ -z "$addr" ] || [ "$addr" = "$domain" ] || stop "$name is at $domain, not $addr"
   volume=$(families_volume "$name")
+  family_hosted "$name" && hosted=1
   if [ -z "$domain" ] && ! docker volume inspect "$volume" >/dev/null 2>&1; then
     stop "there's no family called $name on this server (sudo ./install.sh families lists them)"
   fi
-  if [ "$delete" = 1 ] && [ -t 0 ]; then
-    read -rp "   This deletes $name's hub for good: its keys and everything it holds. Type $name to go on: " answer
-    [ "$answer" = "$name" ] || stop "nothing changed"
-  fi
+  [ "$delete" = 0 ] || families_confirm "$name" "$name's hub"
 
   if [ -n "$domain" ]; then
     step "Taking $name (https://$domain) off this server"
-    family_stop "$name"
+    if [ "$hosted" = 1 ] && [ "$delete" = 1 ]; then
+      # Deleting a family the host has takes its id, which den_hub families gives for its address.
+      id=""
+      [ "$CHECK" = 1 ] || id=$(families_id "$domain") ||
+        stop "the Den host didn't say which families it has (docker compose exec hub /app/bin/den_hub families). Nothing changed."
+      if [ -n "$id" ] || [ "$CHECK" = 1 ]; then
+        run docker compose exec -T hub /app/bin/den_hub remove-family --family "$domain" --id "${id:-<its id>}" --delete-data ||
+          stop "the Den host didn't let $name go: docker compose logs hub says why. Nothing else changed."
+      else
+        # Not on the host (taken off already, by hand): its data, by its address.
+        run docker compose exec -T hub /app/bin/den_hub remove-family --family "$domain" --delete-data ||
+          stop "the Den host didn't delete $name's data (above says why; den_hub families lists what it keeps, with ids). Nothing else changed."
+      fi
+    elif [ "$hosted" = 1 ]; then
+      run docker compose exec -T hub /app/bin/den_hub remove-family --family "$domain" ||
+        stop "the Den host didn't let $name go: docker compose logs hub says why. Nothing else changed."
+    else
+      family_stop "$name"
+    fi
     if [ "$CHECK" = 0 ]; then sed -i "/^$(family_key "$name")=/d" .env; fi
     families_render
     run docker compose up -d --no-deps --wait --wait-timeout 300 $(families_other_hubs) dnsmasq caddy
@@ -421,7 +609,14 @@ families_remove() {
   fi
 
   echo
-  if [ "$delete" = 1 ]; then
+  if [ "$hosted" = 1 ]; then
+    if [ "$delete" = 1 ]; then
+      info "Deleted $name's data from the Den host."
+    else
+      info "$name's data stays on the Den host (in the volume $(families_volume hub), under logs/):"
+      info "add-family $name $domain brings the same family back. To delete it: sudo ./install.sh remove-family $name $domain --delete-data"
+    fi
+  elif [ "$delete" = 1 ]; then
     if docker volume inspect "$volume" >/dev/null 2>&1; then
       run docker volume rm "$volume"
       info "Deleted $name's hub and its data (the volume $volume)."
@@ -445,6 +640,129 @@ families_remove() {
 EOF
   fi
   echo
+}
+
+# --- Moving containers onto the host ---------------------------------------------------------
+
+# families_merge [--dry-run]: every family with a hub container of its own (a port in its line)
+# moves onto the Den host, one by one: a backup of every family first; then for each, its hub
+# stops, `den_hub adopt` copies its data (keys.json included, so it keeps its device id and no
+# phone pairs again) into the host, which serves it at once, and its line says host. A family
+# whose adopt fails gets its own hub back, started again, and the merge stops there. Then Caddy
+# sends every address to the host, and the containers go. Their volumes stay, untouched but for
+# a note that makes such a hub wait for a phone before writing, should it ever start again.
+families_merge() {
+  local dry=0 a f domain volume served moving=() moved=()
+  for a in "$@"; do
+    case $a in
+      --dry-run) dry=1 ;;
+      *) families_usage ;;
+    esac
+  done
+  families_ready
+  for f in $(families_contained); do moving+=("$f"); done
+  if [ ${#moving[@]} -eq 0 ]; then
+    info "Every family here is on the Den host already: nothing to merge."
+    return 0
+  fi
+  step "Moving ${moving[*]} onto the Den host (hub, https://$(env_get DEN_DOMAIN), port $(families_host_port))"
+  for f in "${moving[@]}"; do
+    domain=$(family_domain "$f")
+    volume=$(families_volume "$f")
+    docker volume inspect "$volume" >/dev/null 2>&1 || stop "$f's volume $volume isn't here; nothing changed"
+    info "$f: https://$domain, hub-$f on port $(family_port "$f"), data in $volume -> the host, data in $(families_volume hub) under logs/"
+  done
+  if [ "$dry" = 1 ] || [ "$CHECK" = 1 ]; then
+    cat <<EOF
+
+   What it would do (--dry-run: nothing changed):
+   1. docker compose run --rm backup             every family, into backups/
+   2. for each of ${moving[*]}:
+        docker compose stop hub-<name>             (only that, if the host has it already)
+        docker compose run --rm --no-deps -v <its volume>:/adopt/<name> hub \\
+          adopt /adopt/<name> --hostname <its address>
+        (the host serves it at once, as the same hub: no phone pairs again; if adopt fails,
+        hub-<name> starts again only if the host doesn't have it)
+        DEN_FAMILY_<NAME>=<address> host ...       in .env
+        Caddyfile.families and compose.families.yaml again, and Caddy and dnsmasq restarted:
+        its address to port $(families_host_port) at once
+   3. docker compose up -d --remove-orphans dnsmasq caddy    (the hub-<name> containers go)
+   The volumes stay as they are. Phones and computers need nothing: same addresses, same hubs.
+   Safe to run again if it stops part way.
+EOF
+    return 0
+  fi
+  families_host_ready
+
+  step "A backup of every family first"
+  run docker compose run --rm backup ||
+    stop "the backup didn't finish (above says why); nothing was moved. Fix it and run this again."
+
+  for f in "${moving[@]}"; do
+    domain=$(family_domain "$f")
+    volume=$(families_volume "$f")
+    step "$f: https://$domain onto the host"
+    # The host may serve it already (a merge that stopped after the copy, run again): then its
+    # container must never run again, whatever happens next. Two of the same hub would number
+    # their changes the same.
+    served=0
+    families_served "$domain" || served=$?
+    [ "$served" -le 1 ] ||
+      stop "the Den host didn't say whether it has $f (docker compose exec hub /app/bin/den_hub families failed), so hub-$f is left as it is. ${moved[*]:+Moved: ${moved[*]}. }Run this again once the host answers."
+    run docker compose stop "hub-$f"
+    if [ "$served" = 0 ]; then
+      info "The host has $f already."
+      families_not_open "$domain"
+      # adopt again, which changes nothing for a hub the host has at that address but leave the
+      # note that keeps the old hub from writing, should it ever start.
+      run docker compose run --rm --no-deps -v "$volume:/adopt/$f" hub adopt "/adopt/$f" --hostname "$domain" ||
+        info "Couldn't leave the note in $volume (above says why). Never start hub-$f again: the host is that hub now."
+    elif ! run docker compose run --rm --no-deps -v "$volume:/adopt/$f" hub adopt "/adopt/$f" --hostname "$domain"; then
+      # adopt can fail after the host took the family on (a connection cut after its answer):
+      # ask the host, never the exit code, before starting the container again.
+      served=0
+      families_served "$domain" || served=$?
+      case $served in
+        0)
+          info "The host took $f on all the same."
+          families_not_open "$domain"
+          ;;
+        1)
+          info "The host doesn't have $f; starting hub-$f again, as it was."
+          run docker compose start "hub-$f" || true
+          stop "merging $f didn't finish (above says why). ${moved[*]:+Moved: ${moved[*]}. }$f and the families after it keep their own containers; run this again once it's fixed."
+          ;;
+        *)
+          stop "merging $f didn't finish, and the Den host didn't say whether it has $f, so hub-$f stays stopped (never two of one hub). ${moved[*]:+Moved: ${moved[*]}. }Once the host answers (docker compose exec hub /app/bin/den_hub families), run this again."
+          ;;
+      esac
+    fi
+    families_env_line "$(family_key "$f")" "$domain host$( [ -n "$(family_homes "$f")" ] && printf ' %s' "$(family_homes "$f")")"
+    moved+=("$f")
+    # Its address to the host now, not at the end: each family is down only while it moves.
+    families_render
+    run docker compose up -d --no-deps --wait --wait-timeout 300 dnsmasq caddy
+  done
+  families_merge_finish
+  step "Every family is on the Den host"
+  for f in "${moved[@]}"; do
+    info "$f: $(family_exec "$f" status 2>/dev/null | tail -n 1)"
+  done
+  families_not_open
+  cat <<EOF
+
+   Nothing changes for phones and computers: the same addresses, the same hubs (each kept its
+   keys), so they keep syncing; reminders, calendar links and assistants keep working.
+   The old volumes stay as they were ($(for f in "${moved[@]}"; do printf '%s ' "$(families_volume "$f")"; done)):
+   never start those hubs again. Once you're happy, docker volume rm them. backups/<name>/ has
+   each family's backup from just before the move.
+
+EOF
+}
+
+families_merge_finish() { # after families moved: the files again, and the containers gone
+  families_render
+  run docker compose up -d --remove-orphans --no-deps --wait --wait-timeout 300 $(families_other_hubs) dnsmasq caddy
 }
 
 # --- What the owner does, and sees -----------------------------------------------------------
@@ -485,7 +803,7 @@ host_split_dns() { # ADDRESS: the split-DNS entry that sends it through the tunn
 }
 
 families_show() { # NAME: where it lives, and what's left to do by hand
-  local name=$1 domain port homes allowed nohomes
+  local name=$1 domain port homes allowed nohomes where
   domain=$(family_domain "$name")
   port=$(family_port "$name")
   homes=$(family_homes "$name")
@@ -493,10 +811,16 @@ families_show() { # NAME: where it lives, and what's left to do by hand
   if [ -n "$homes" ]; then
     allowed=$(/usr/local/sbin/den-allowlist --dry-run 2>&1 | sed -n "s/^\(.*($name):.*\)$/        \1/p" || true)
   fi
+  if family_hosted "$name"; then
+    where="the Den host (hub, 127.0.0.1:$(families_host_port)) serves https://$domain, with
+   $name's own keys and data in the volume $(families_volume hub) under logs/"
+  else
+    where="hub-$name serves https://$domain from 127.0.0.1:$port, with
+   its own data in the volume $(families_volume "$name")"
+  fi
   cat <<EOF
 
-   $name is on this server: hub-$name serves https://$domain from 127.0.0.1:$port, with
-   its own data in the volume $(families_volume "$name"); its backups go to backups/$name/.
+   $name is on this server: $where; its backups go to backups/$name/.
 
    1. Public DNS, in Cloudflare, DNS only (grey cloud), one of:
 $(host_dns_records "$domain")
@@ -512,30 +836,37 @@ EOF
   cat <<EOF
    4. For their first parent's iPhone, at home or with Tailscale on, once 1 and 2 are done:
 $(family_setup "$name" | sed 's/^/        /')
-      (docker compose exec hub-$name /app/bin/den_hub setup-link shows it again.) Then send them
+      ($(family_exec_shown "$name" setup-link) shows it again.) Then send them
       "For the family (private)" from docs/hosting.md, with their address in it.
 
 EOF
 }
 
 families_list() {
-  local f fmt='   %-8s %-30s %-11s %-6s %-22s %-15s %s\n' states
+  local f fmt='   %-8s %-30s %-11s %-6s %-22s %-15s %s\n' states hostport
   [ -f .env ] || stop "no .env here yet: sudo ./install.sh sets up the first family"
   states=$(docker compose ps -a --format '{{.Service}}	{{.Status}}' 2>/dev/null || true)
   state() { printf '%s' "$states" | awk -F '\t' -v s="$1" '$1 == s {print $2}'; }
+  hostport=$(families_host_port)
   echo
   printf "$fmt" family address hub port data backups now
-  printf "$fmt" "(first)" "$(env_get DEN_DOMAIN)" hub "$(env_get DEN_PORT | grep . || echo 47733)" \
-    "$(families_volume hub)" backups/ "$(state hub)"
+  printf "$fmt" "(first)" "$(env_get DEN_DOMAIN)" hub "$hostport" "$(families_volume hub)" backups/ "$(state hub)"
   for f in $(families_names); do
-    printf "$fmt" "$f" "$(family_domain "$f")" "hub-$f" "$(family_port "$f")" "$(families_volume "$f")" \
-      "backups/$f/" "$(state "hub-$f")"
+    if family_hosted "$f"; then
+      printf "$fmt" "$f" "$(family_domain "$f")" "hub (host)" "$hostport" "$(families_volume hub)" "backups/$f/" "$(state hub)"
+    else
+      printf "$fmt" "$f" "$(family_domain "$f")" "hub-$f" "$(family_port "$f")" "$(families_volume "$f")" \
+        "backups/$f/" "$(state "hub-$f")"
+    fi
   done
   echo
   printf '   homes:   (first) %s\n' "$(env_get DEN_HOMES | grep . || echo 'none (Tailscale only)')"
   for f in $(families_names); do
     printf '            %s %s\n' "$f" "$(family_homes "$f" | grep . || echo 'none (Tailscale only)')"
   done
+  if [ -n "$(families_contained)" ]; then
+    printf '\n   In containers of their own: %s. sudo ./install.sh merge-families moves them onto the Den host.\n' "$(families_contained | paste -sd ' ' -)"
+  fi
   echo
 }
 
@@ -545,7 +876,6 @@ families_whats_left() { # step 8: the other families' names, which need the same
   [ -n "$names" ] || return 0
   printf '\n   The other families on this server need the same public DNS record (a CNAME to %s\n   does) and split-DNS nameserver for their own addresses (sudo ./install.sh families):\n' "$(env_get DEN_DOMAIN)"
   for f in $names; do
-    printf '        %-10s %-32s setup link: docker compose exec hub-%s /app/bin/den_hub setup-link\n' \
-      "$f" "$(family_domain "$f")" "$f"
+    printf '        %-10s %-32s setup link: %s\n' "$f" "$(family_domain "$f")" "$(family_exec_shown "$f" setup-link)"
   done
 }

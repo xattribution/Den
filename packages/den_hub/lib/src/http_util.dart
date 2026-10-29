@@ -58,6 +58,17 @@ class ApiError implements Exception {
         'This hub isn\'t part of a family yet, or is still starting.',
       );
 
+  /// `503 not_ready`, with `Retry-After`: a Den host serves this address, and the family at it
+  /// is starting (or didn't open, and is tried again). Clients wait and try again; a calendar's
+  /// subscribers keep their copies.
+  factory ApiError.starting([int retryAfter = 10]) => ApiError(
+        503,
+        'not_ready',
+        'This family\'s Den is starting. Try again in a moment.',
+        details: {'retry_after': retryAfter},
+        headers: {'retry-after': '$retryAfter'},
+      );
+
   /// `503 catching_up`, with `Retry-After`: the hub was restored from a backup and writes nothing
   /// until a device of the family has synced with it (`HubContext.catchingUp`).
   factory ApiError.catchingUp() => ApiError(

@@ -144,7 +144,12 @@ class HubSetup {
   static String display(String code) => '${code.substring(0, 4)}-${code.substring(4)}';
 
   void _issueCode() {
-    _code = _newCode(_random);
+    var code = _newCode(_random);
+    // Unique on a Den host, so a code typed at an address that names no family finds one.
+    while (hub.host?.setupCodeTaken(code) ?? false) {
+      code = _newCode(_random);
+    }
+    _code = code;
     _tries.clear();
     final shown = display(_code!);
     _log.info('Setup code for this hub: $shown (enter it in the Den app to add this hub to your family)');
@@ -219,6 +224,10 @@ class HubSetup {
 
   /// A setup code as typed: upper case, no spaces or dashes.
   static String normalize(String text) => text.toUpperCase().replaceAll(RegExp(r'[\s\-]'), '');
+
+  /// Whether the hub waits for a phone with the setup code [given] (as typed), compared in
+  /// constant time.
+  bool codeMatches(String given) => _attempt == null && _backChannel == null && _codeMatches(given);
 
   bool _codeMatches(String given) {
     final want = _code;
@@ -296,6 +305,10 @@ class HubSetup {
     }
     if (hub.den.hasFamily && hub.den.familyId != invite.familyId) {
       throw ApiError(409, 'already_set_up', 'This hub asked to join another family. Reset its data to start over.');
+    }
+    if (hub.host?.familyElsewhere(invite.familyId, hub.den.deviceId) ?? false) {
+      throw ApiError(409, 'already_set_up',
+          'That family is on this server already, at its own address. Invite people from the Den app there instead.');
     }
     final dial = !direct && (invite.hubs.isNotEmpty || invite.relay != null);
     if (dial) {
@@ -454,6 +467,12 @@ class LinkSlots {
   }
 
   String _token(int bytes) => b64e(List.generate(bytes, (_) => _random.nextInt(256)));
+
+  /// Whether a browser waits here under the link code [id].
+  bool holds(String id) {
+    _prune();
+    return _slots.containsKey(id);
+  }
 
   void _prune() {
     final now = hub.now();

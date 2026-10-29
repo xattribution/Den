@@ -14,11 +14,13 @@
 #   dnsmasq  port 53 on the Tailscale address only: den.<domain> through the tunnel
 #
 # More families on the same server (sudo ./install.sh add-family smith den-smith.example.com):
-# compose.families.yaml, which install.sh writes and .env's COMPOSE_FILE adds to this file, gives
-# each its own hub (hub-smith, on 47735, 47737, ...) with its own volume, and adds its address to
-# Caddy and dnsmasq. It also points every family's address at Caddy on 127.0.0.1 inside each hub
-# (extra_hosts, DEN_PEER_HUBS), so a calendar one family shares with another is fetched on this
-# machine. docs/hosting.md, "Several families".
+# the hub below is a Den host, one process serving every family, each with its own keys, data
+# (in this volume, under logs/) and address; add-family adds one to the running host, and
+# compose.families.yaml, which install.sh writes and .env's COMPOSE_FILE adds to this file, adds
+# its address to Caddy and dnsmasq, all to this one hub. A family can keep a hub container of its
+# own instead (add-family --container: hub-smith, on 47735, ..., with its own volume, and every
+# family's address pointed at Caddy on 127.0.0.1 inside each hub, so shared calendars are fetched
+# on this machine); merge-families moves those onto the host. docs/hosting.md, "Several families".
 name: den
 
 x-logging: &logging
@@ -73,9 +75,12 @@ services:
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]
     security_opt: ["no-new-privileges:true"]
+    # Started with the hub, not after it is healthy: the hub reports unhealthy while it starts
+    # (until every family on it has had its first try at opening), and Caddy needn't wait for that
+    # to serve the families that are open.
     depends_on:
       hub:
-        condition: service_healthy
+        condition: service_started
     logging: *logging
 
   dnsmasq:

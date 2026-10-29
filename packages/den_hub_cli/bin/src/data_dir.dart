@@ -8,6 +8,11 @@ import 'package:den_hub/den_hub.dart';
 /// The hub's data directory: `keys.json` (device keys, owner-only), `log/` (the change log),
 /// `hub/` (the hub's own state), `notify.json` (reminder targets, optional) and `hub.lock`
 /// (held while a process uses it).
+///
+/// On a Den host this is the first family's, unchanged, and it also holds `logs/<id>/`, each
+/// other family's data directory in the same layout ([log]), and `host/`, the host's own state
+/// (which logs it serves at which addresses, every Web Push key). A family's backup holds only
+/// its own directory's files.
 class DataDir {
   /// Wraps the directory at [path].
   DataDir(this.path);
@@ -31,6 +36,26 @@ class DataDir {
 
   /// The change log's directory.
   String get logDir => _join('log');
+
+  /// The data directory of the host's log [id]: `logs/<id>/`.
+  DataDir log(String id) => DataDir(_join('$hostLogsDir${Platform.pathSeparator}$id'));
+
+  /// Writes [files] (a backup's, or another hub's being adopted), relative paths with forward
+  /// slashes, keeping only what [backupPath] allows; keys and the hub's state owner-only.
+  /// Returns how many it wrote.
+  Future<int> writeFiles(Map<String, List<int>> files) async {
+    await Directory(path).create(recursive: true);
+    var written = 0;
+    for (final e in files.entries) {
+      if (!backupPath(e.key)) continue;
+      final f = file(e.key);
+      await f.parent.create(recursive: true);
+      await f.writeAsBytes(e.value, flush: true);
+      if (e.key == 'keys.json' || e.key.startsWith('hub/')) restrictToOwner(f.path);
+      written++;
+    }
+    return written;
+  }
 
   /// Takes the lock, or throws [StateError] when another process holds it.
   Future<void> lock() async {

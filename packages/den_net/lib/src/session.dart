@@ -371,6 +371,77 @@ class Session {
   }
 }
 
+/// A client's hello, read before any session answers it ([peekHello]), and the channel to start
+/// that session on.
+class PeekedHello<T> {
+  /// Creates the result of a peek.
+  const PeekedHello(this.family, this.channel);
+
+  /// The family the hello names, or null for a client that names none (a spoken-code or
+  /// recovery-words joiner, which learns its family during pairing). Unverified: the session
+  /// that starts on [channel] checks the hello in full, and the serving side refuses a family
+  /// that isn't its own.
+  final String? family;
+
+  /// The same channel, giving the hello again before everything after it.
+  final StreamChannel<T> channel;
+}
+
+/// Reads the first message on [channel], a client's `hello {v, family, device, pubkey, eph}`,
+/// without answering it, so a server holding several logs (a Den host) can tell which family the
+/// client asks for before one of them starts the session. Returns that, with a channel that
+/// hands the hello over again and then the rest, so [Session.accept] (through
+/// `SyncNode.serve`) reads it as if nothing had looked. Null, with [channel] closed, when nothing
+/// arrives within [timeout], or the first message isn't a hello: too large, not JSON, not an
+/// object, or naming a family that isn't text.
+Future<PeekedHello<T>?> peekHello<T>(StreamChannel<T> channel, {Duration timeout = const Duration(seconds: 20)}) async {
+  final queue = StreamQueue<T>(channel.stream);
+  Future<PeekedHello<T>?> refuse() async {
+    unawaited(queue.cancel(immediate: true)?.then((_) {}, onError: (Object _) {}));
+    try {
+      unawaited(channel.sink.close().then((_) {}, onError: (Object _) {}));
+    } on Object {
+      // Already closed.
+    }
+    return null;
+  }
+
+  final T first;
+  try {
+    if (!await queue.hasNext.timeout(timeout)) return refuse();
+    first = await queue.next;
+  } on Object {
+    return refuse();
+  }
+  final Object? raw = first;
+  String? text;
+  if (raw is String) {
+    text = raw;
+  } else if (raw is List<int> && raw.length <= maxHandshakeBytes) {
+    try {
+      text = utf8.decode(raw);
+    } on FormatException {
+      text = null;
+    }
+  }
+  if (text == null || text.length > maxHandshakeBytes) return refuse();
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(text);
+  } on FormatException {
+    return refuse();
+  }
+  final hello = asJsonObject(decoded);
+  final family = hello?['family'];
+  if (hello == null || hello['t'] != 'hello' || (family != null && family is! String)) return refuse();
+  Stream<T> replay() async* {
+    yield first;
+    yield* queue.rest;
+  }
+
+  return PeekedHello<T>(family as String?, StreamChannel<T>(replay(), channel.sink));
+}
+
 final Uint8List _serverLabel = utf8Bytes('den/session/v1/server');
 final Uint8List _clientLabel = utf8Bytes('den/session/v1/client');
 

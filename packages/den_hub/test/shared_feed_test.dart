@@ -387,6 +387,21 @@ void main() {
       expect(b.hubDen.subscription(other)!.status, "That link doesn't work anymore: the server answered 401");
     });
 
+    test('a share that answers 503 or 500 (its host starting, say) keeps every copy: only 401 means stopped', () async {
+      final b = await hubFor('Smith family');
+      const family = 'qrstuvwxyzabcdef';
+      final share = await _FakeShare.start(name: 'Carter family', family: family, at: day(b.phone, 3));
+      addTearDown(share.close);
+      final sub = await subscribe(b, share.url);
+      expect(titles(imported(b)), {'Carter picnic'});
+      for (final status in [503, 500, 502]) {
+        share.status = status;
+        await b.hub.feeds.syncAll();
+        expect(titles(imported(b)), {'Carter picnic'}, reason: '$status');
+        expect(b.hubDen.subscription(sub)!.status, isNot(contains('stopped sharing')), reason: '$status');
+      }
+    });
+
     test('says who stopped in words that fit the family\'s name', () {
       expect(familyPhrase('Kotvas'), 'The Kotvas family');
       expect(familyPhrase('Carter family'), 'The Carter family');

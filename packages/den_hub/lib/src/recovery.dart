@@ -21,6 +21,10 @@ const String recoveryCliFile = 'recovery-cli';
 /// backups leave it out, since each code lasts 30 minutes.
 const String recoveryTicketsDoc = 'recovery-tickets';
 
+/// The header `den_hub recover` shows the running hub its secret in ([recoveryCliFile]); on a
+/// Den host, the secret also says which family the code is for.
+const String recoverySecretHeader = 'x-den-recovery-secret';
+
 /// Why the hub won't make a recovery code: [code] for scripts, [message] for people.
 class RecoveryRefused implements Exception {
   /// Creates the refusal.
@@ -115,8 +119,24 @@ class HubRecovery {
   static const String _keyDoc = 'recovery';
 
   final Random _random = Random.secure();
-  final WrongGuesses _wrong = WrongGuesses(perClient: maxWrong, ceiling: wrongCeiling, window: wrongWindow);
+  late final WrongGuesses _own = WrongGuesses(perClient: maxWrong, ceiling: wrongCeiling, window: wrongWindow);
   String? _cliSecret;
+
+  /// Wrong codes, counted for the whole host when the hub is one family of a Den host.
+  WrongGuesses get _wrong => hub.host?.recoveryGuesses ?? _own;
+
+  /// Whether this family keeps a live recovery code whose hash is [hash].
+  bool holdsCode(String hash) {
+    final tickets = hub.state.read(recoveryTicketsDoc);
+    _prune(tickets, hub.now());
+    return tickets.containsKey(hash);
+  }
+
+  /// Whether [given] is the secret this hub left for `den_hub recover` ([recoveryCliFile]).
+  bool cliSecretIs(String? given) {
+    final secret = _cliSecret;
+    return secret != null && given != null && _same(utf8.encode(given.trim()), utf8.encode(secret));
+  }
 
   /// Adds the recovery routes.
   void register(Routes routes) {
@@ -193,13 +213,8 @@ class HubRecovery {
   /// `POST /api/v1/recovery/tickets {person}`, from `den_hub recover` on the hub's own machine:
   /// a one-time code for that parent.
   Future<Response> tickets(Request request) async {
-    final secret = _cliSecret;
-    final given = request.headers['x-den-recovery-secret'];
     final client = hub.client(request);
-    if (secret == null ||
-        given == null ||
-        !_same(utf8.encode(given.trim()), utf8.encode(secret)) ||
-        !(client?.isLoopback ?? false)) {
+    if (!cliSecretIs(request.headers[recoverySecretHeader]) || !(client?.isLoopback ?? false)) {
       hub.failed(request);
       throw ApiError.denied('Only den_hub recover, on the hub\'s own machine, can make a recovery code.');
     }
@@ -247,7 +262,8 @@ class HubRecovery {
     _prune(tickets, now);
     if (tickets.length >= maxLive) throw const RecoveryRefused('busy', 'Too many recovery codes are waiting. Wait half an hour.');
     var words = _newWords();
-    while (tickets.containsKey(_hash(words))) {
+    // Unique per host, so the words typed at any family's address find one code.
+    while (tickets.containsKey(_hash(words)) || (hub.host?.recoveryCodeTaken(_hash(words)) ?? false)) {
       words = _newWords();
     }
     final expires = now + ticketLife.inMilliseconds;
@@ -294,13 +310,21 @@ class HubRecovery {
   /// hub signs a recovery proof for that parent and that device, and gives the phone an invite
   /// to join over `/ws` with it. A code works for one device: asked again by the same device
   /// it answers the same proof. Wrong codes count like an invite's.
-  Future<Response> redeem(Request request) async {
-    if (!hub.ready) throw ApiError.notReady();
+  Future<Response> redeem(Request request) => redeemAcross(request, [this]);
+
+  /// [redeem] across [books], every family's on a Den host: codes are unique per host, so the
+  /// words typed at any family's address find their code. The limits and wrong-code counts are
+  /// the host's; the family that keeps the code answers.
+  static Future<Response> redeemAcross(Request request, List<HubRecovery> books) async {
+    final ready = [for (final b in books) if (b.hub.ready) b];
+    if (ready.isEmpty) throw ApiError.notReady();
+    final first = ready.first;
+    final hub = first.hub;
     hub.checkFailures(request);
     hub.limit(request, 'pairing', Limits.pairing);
     final now = hub.now();
     final client = hub.clientOf(request);
-    final wait = _wrong.wait(client, now);
+    final wait = first._wrong.wait(client, now);
     if (wait != null) {
       throw ApiError.rateLimited(
           wait.seconds,
@@ -315,11 +339,20 @@ class HubRecovery {
       throw ApiError.invalid('Those aren\'t the four words from whoever runs your hub.', field: 'code');
     }
     if (_bytes(pubkey)?.length != 32) throw ApiError.invalid('That isn\'t a device key.', field: 'pubkey');
+    final hash = _hash(code.split(' '));
+    final holders = [for (final book in ready) if (book.holdsCode(hash)) book];
+    // Unique per host; with none (or, by mistake, two), it is a wrong code, counted like any
+    // other, and no family answers.
+    final owner = holders.length == 1 ? holders.single : null;
+    return (owner ?? first)._answer(request, owner == null ? null : hash, pubkey, client, now);
+  }
+
+  /// The code with [hash] this family keeps (none: a wrong code), for [redeemAcross].
+  Future<Response> _answer(Request request, String? hash, String pubkey, String client, int now) async {
     final tickets = hub.state.read(recoveryTicketsDoc);
     _prune(tickets, now);
-    final hash = _hash(code.split(' '));
-    final ticket = tickets[hash];
-    if (ticket is! Map || (ticket['device'] != null && ticket['device'] != pubkey)) {
+    final ticket = hash == null ? null : tickets[hash];
+    if (hash == null || ticket is! Map || (ticket['device'] != null && ticket['device'] != pubkey)) {
       _wrong.add(client, now);
       hub.failed(request);
       hub.log.warn('Someone tried words that match no recovery code');

@@ -1,13 +1,10 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:den_actions/den_actions.dart' show standardRunner;
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
-import 'package:den_net/io.dart';
-import 'package:http/http.dart' as http;
 import 'package:shelf/shelf.dart';
-import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:stream_channel/stream_channel.dart';
 
 import 'access.dart';
 import 'api.dart';
@@ -19,6 +16,8 @@ import 'device_auth.dart';
 import 'edge.dart';
 import 'feed.dart';
 import 'gate.dart';
+import 'host.dart';
+import 'host_state.dart';
 import 'http_util.dart';
 import 'ics/export.dart';
 import 'ics/feeds.dart';
@@ -35,8 +34,8 @@ import 'relay_watch.dart';
 import 'reminders.dart';
 import 'setup.dart';
 import 'state.dart';
+import 'tenant_router.dart';
 import 'usage.dart';
-import 'web.dart';
 
 /// The Den hub: the family's always-on device. Serves device sync at `/ws`, the HTTP API and
 /// event stream under `/api/v1`, MCP at `/mcp` with OAuth for remote clients, calendar feeds,
@@ -44,8 +43,12 @@ import 'web.dart';
 ///
 /// Runs anywhere `dart:io` does: the `den_hub` binary, or in-process inside the Den app on
 /// desktop and Android (where [den] is the app's own engine, in hub mode).
-class DenHub {
-  DenHub._(this.den, this.config, this._ctx, this._feed, this._ownsHttp);
+///
+/// A hub is one family (a tenant) of a [DenHost], which owns the server and hands it the
+/// requests ([handle]) and sync connections ([serveSocket]) that are its family's.
+/// [DenHub.start] runs a host with this one family, as a hub always ran.
+class DenHub implements RoutableLog {
+  DenHub._(this.den, this.config, this._ctx, this._feed, this._host);
 
   /// The hub's engine. A fresh one with no family waits for setup.
   final Den den;
@@ -55,9 +58,12 @@ class DenHub {
 
   final HubContext _ctx;
   final ChangeFeed _feed;
-  final bool _ownsHttp;
+  final DenHost _host;
+  bool _ownsHost = false;
   late final HubSetup _setup;
   late final LinkSlots _links;
+  late final HubInvites _invites;
+  late final HubFeedLinks _feedLinks;
   late final EventStream _stream;
   late final RestApi _api;
   late final HubCapture _capture;
@@ -72,10 +78,6 @@ class DenHub {
   late final HubRecovery _recovery;
   final Routes _routes = Routes();
   late final DeviceAuth _auth;
-  final Map<String, int> _sockets = {};
-  final Set<String> _warnedProxies = {};
-  Handler? _web;
-  HttpServer? _server;
   RelayTunnel? _tunnel;
   MailboxSync? _mailbox;
   late final RelayWatch _relayWatch = RelayWatch(_ctx.log);
@@ -91,22 +93,37 @@ class DenHub {
   bool _servicesStarted = false;
   bool _stopped = false;
 
-  /// Starts a hub over [den] (already open) and begins serving.
+  /// Starts a hub over [den] (already open) and begins serving: a [DenHost] of its own with this
+  /// one family, which answers whatever address it is asked at. [stop] stops both.
   static Future<DenHub> start(Den den, HubConfig config) async {
-    final log = config.log ?? HubLog();
-    final client = config.httpClient ?? http.Client();
+    final host = await DenHost.start(HostConfig.of(config));
+    try {
+      final hub = await host.add(den, config);
+      hub._ownsHost = true;
+      return hub;
+    } catch (_) {
+      await host.stop();
+      rethrow;
+    }
+  }
+
+  /// Starts [den]'s hub as one family of [host] ([DenHost.add] calls this): its own engine,
+  /// state and services, with the host's server, limits and clients.
+  static Future<DenHub> tenantOf(DenHost host, Den den, HubConfig config) async {
     final node = SyncNode(den, invites: HubInviteBook());
     final ctx = HubContext(
       den: den,
       gate: DenGate(den),
       config: config,
-      log: log,
+      log: config.log ?? host.log,
       state: HubState(config.dataDir),
       node: node,
-      http: client,
-      fetch: config.fetchClient,
+      http: host.http,
+      fetch: host.fetch,
+      feedFetch: host.fetchFor(den.deviceId),
+      host: host,
     );
-    final hub = DenHub._(den, config, ctx, ChangeFeed(den), config.httpClient == null);
+    final hub = DenHub._(den, config, ctx, ChangeFeed(den), host);
     await hub._start();
     return hub;
   }
@@ -114,14 +131,46 @@ class DenHub {
   /// The shared context, for the hub's own services.
   HubContext get context => _ctx;
 
+  /// The host this hub is one family of.
+  DenHost get host => _host;
+
   /// Sync for [den]; devices connect to it at `/ws`.
   SyncNode get node => _ctx.node;
 
   /// The port being served.
-  int get port => _server!.port;
+  int get port => _host.port;
 
   /// `http://127.0.0.1:<port>`.
-  Uri get localUrl => Uri.parse('http://127.0.0.1:$port');
+  Uri get localUrl => _host.localUrl;
+
+  @override
+  String? get familyId => den.familyId;
+
+  @override
+  String get hubDevice => den.deviceId;
+
+  @override
+  Set<String> get hostnames => {?normalizeHostname(config.publicUrl?.host)};
+
+  /// Invites by message, for the host's lookups across families.
+  HubInvites get invites => _invites;
+
+  /// Whether [request]'s signature checks out for this hub from its headers alone: signed for
+  /// this hub, with the body hash it covers, by an approved device of this family, fresh. No side
+  /// effects; the host hands the request here only then ([DenHost], `X-Den-Hub`).
+  Future<bool> verifiesHeaders(Request request) => _auth.headersVerify(request);
+
+  /// Whether [token] is a working token of this family's.
+  bool holdsToken(String token) => _ctx.ready && _ctx.access(token) != null;
+
+  /// Whether this family made the calendar link with [secret].
+  bool holdsFeed(String secret) => _ctx.ready && _feedLinks.holds(secret);
+
+  /// Whether a browser waits here under the link code [slot].
+  bool holdsLinkSlot(String slot) => _links.holds(slot);
+
+  /// Whether this hub waits for its first parent's phone with the setup code [code].
+  bool waitsForSetupCode(String code) => !_ctx.ready && _setup.codeMatches(code);
 
   /// The setup code while the hub has no family (shown as `ABCD-EFGH`), else null.
   String? get setupCode => _setup.code == null ? null : HubSetup.display(_setup.code!);
@@ -180,7 +229,7 @@ class DenHub {
     _mcp = McpServer(_ctx, runner: actions, reader: _capture.reader);
     _mcpHttp = McpHttp(_ctx, _mcp, _feed);
     _oauth = OAuthServer(_ctx, _auth);
-    final feedLinks = HubFeedLinks(_ctx, _auth);
+    final feedLinks = _feedLinks = HubFeedLinks(_ctx, _auth);
     _ics = IcsExport(_ctx, links: feedLinks);
     _feeds = FeedService(_ctx);
     _reminders = ReminderService(_ctx);
@@ -197,13 +246,12 @@ class DenHub {
           'has synced with it. Open Den on one.');
       _peers = node.peerConnected.listen(_watchCatchUp);
     }
-    _web = webAppHandler(config.webDir, policy: _webPolicy);
     _routes
       ..add('GET', '/health', (r, _) => _health())
       ..add('GET', '/api/v1/hub/status', (r, _) => _setup.status(r))
       ..add('POST', '/api/v1/hub/setup', (r, _) => _setup.setup(r))
       ..add('GET', '/api/v1/hub/setup/ws', (r, _) {
-        _admitSocket(r);
+        _host.admitSocket(r);
         return _setup.backChannel(r);
       })
       ..add('POST', '/api/v1/link', (r, _) => _links.create(r))
@@ -233,7 +281,7 @@ class DenHub {
     _api.register(_routes);
     _capture.register(_routes);
     _assistant = HubAssistant(_ctx, _auth, usage)..register(_routes);
-    HubInvites(_ctx).register(_routes);
+    _invites = HubInvites(_ctx)..register(_routes);
     feedLinks.register(_routes);
     _recovery = HubRecovery(_ctx, _auth)..register(_routes);
     _push.register(_routes);
@@ -242,10 +290,7 @@ class DenHub {
       final m = _mdns;
       if (m != null && !_sameAdvert(m.advert, _advert())) unawaited(m.update(_advert()));
     });
-    final pipeline = const Pipeline().addMiddleware(_headers).addMiddleware(_errors).addMiddleware(_admission).addHandler(_route);
-    _server = await shelf_io.serve(pipeline, config.bindAddress, config.port);
-    _server!.idleTimeout = const Duration(seconds: 120);
-    log.info('Den hub ${den.deviceId} serving on port ${_server!.port}');
+    log.info('Den hub ${den.deviceId} serving on port ${_host.port}');
     if (config.mdns) {
       final mdns = _mdns = MdnsResponder(_advert(), log: log);
       await _guarded('mDNS', mdns.start);
@@ -327,7 +372,7 @@ class DenHub {
   MdnsAdvert _advert() => MdnsAdvert(
         instance: _ctx.name,
         host: 'den-${den.deviceId.substring(0, 8)}',
-        port: _server?.port ?? config.port,
+        port: _host.port,
         txt: {
           'id': den.deviceId,
           'name': _ctx.name,
@@ -349,99 +394,54 @@ class DenHub {
         if (!config.publicPosture) ...{'version': hubVersion, 'device': den.deviceId, 'name': _ctx.name},
       });
 
-  /// The web app's Content-Security-Policy for [request]: `DEN_CSP` when set, else
-  /// [webAppPolicy] allowing sync over the hub's own `ws:`/`wss:` origin.
-  String _webPolicy(Request request, List<String> scriptHashes) {
-    final custom = config.contentSecurityPolicy;
-    if (custom != null && custom.trim().isNotEmpty) return custom;
-    final base = _ctx.base(request);
-    return webAppPolicy(connect: '${base.scheme == 'https' ? 'wss' : 'ws'}://${base.authority}', scriptHashes: scriptHashes);
+  /// Answers [request], which the host found to be this family's: first what every request
+  /// passes (the anonymous budget, the body size), then its route; `404` for none.
+  Future<Response> handle(Request request) async {
+    final admitted = await _admit(request);
+    final found = _routes.find(admitted);
+    if (found != null) return found.$1.handler(admitted, found.$2);
+    throw ApiError.notFound();
   }
 
-  /// Admits a WebSocket upgrade from [request]'s client, within its budget of new connections
-  /// a minute and connections open at once, and returns the client's key.
-  String _admitSocket(Request request) {
-    _ctx.limit(request, 'sockets', Limits.sockets, message: 'Too many connections from here. Wait a minute.');
-    final key = _ctx.clientOf(request);
-    if ((_sockets[key] ?? 0) >= Limits.openSockets) {
-      throw ApiError.rateLimited(30, 'Too many connections from here. Close some and try again.');
+  /// Serves one sync connection the host found to be this family's (its hello names this
+  /// family, or none at this family's address), until it closes. [client] says where it came
+  /// from. The sync node checks the hello in full and refuses any other family.
+  Future<void> serveSocket(StreamChannel<dynamic> channel, {String? client}) async {
+    if (_stopped) {
+      unawaited(channel.sink.close().then((_) {}, onError: (Object _) {}));
+      return;
     }
-    return key;
+    await node.serve(channel, client: client);
   }
-
-  /// `GET /ws`: device sync over a WebSocket whose messages den_net bounds as they arrive (a
-  /// frame announcing more than a session carries closes it before anything is buffered),
-  /// counted against its client's connections while it is open.
-  FutureOr<Response> _ws(Request request) {
-    final key = _admitSocket(request);
-    return boundedWebSocketHandler(
-      (socket) {
-        _sockets[key] = (_sockets[key] ?? 0) + 1;
-        var open = true;
-        void closed() {
-          if (!open) return;
-          open = false;
-          final left = (_sockets[key] ?? 1) - 1;
-          if (left <= 0) {
-            _sockets.remove(key);
-          } else {
-            _sockets[key] = left;
-          }
-        }
-
-        unawaited(socket.sink.done.then((_) => closed(), onError: (Object _) => closed()));
-        // Devices that aren't approved yet get places per client, so no one address can keep
-        // everyone else from joining or recovering.
-        unawaited(node.serve(socket, client: key));
-      },
-      maxMessageBytes: maxSyncSocketMessageBytes,
-      pingInterval: const Duration(seconds: 30),
-    )(request);
-  }
-
-  /// Security headers on every answer: no content sniffing, no referrer, HSTS when the request
-  /// came over HTTPS, no framing and same-origin opener isolation for pages, and a CSP that
-  /// allows nothing for JSON.
-  Handler _headers(Handler inner) => (Request request) async {
-        final response = await inner(request);
-        final type = response.headers['content-type'] ?? '';
-        final html = type.startsWith('text/html');
-        return response.change(headers: {
-          'x-content-type-options': 'nosniff',
-          'referrer-policy': 'no-referrer',
-          if (_ctx.secure(request)) 'strict-transport-security': 'max-age=31536000',
-          if (html) 'x-frame-options': 'DENY',
-          if (html) 'cross-origin-opener-policy': 'same-origin',
-          if (type.startsWith('application/json') && !response.headers.containsKey('content-security-policy'))
-            'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
-        });
-      };
 
   /// What every request passes before it is routed: a per-client budget for requests without
   /// a working token or device signature (this machine itself excepted), and a body no larger
-  /// than the endpoint takes, refused by its declared length before a byte is read.
+  /// than the endpoint takes, refused by its declared length before a byte is read. The budget
+  /// is the host's, shared by every family on it.
   ///
-  /// A request counts as signed only once what it carries checks out: a bearer token the hub
-  /// knows, or a device signature over the body hash it claims. Any other header (a made-up
-  /// token, a signature that doesn't verify, or one that can't be checked before the body) is a
-  /// request like any stranger's.
-  Handler _admission(Handler inner) => (Request request) async {
-        final forwarded = request.headers.containsKey('x-forwarded-for');
-        if (forwarded && !viaTrustedProxy(request, config.trustedProxies)) _warnUntrustedProxy(request);
-        final peer = peerAddress(request);
-        final local = peer != null && peer.isLoopback && !forwarded;
-        var admitted = request;
-        if (!local) {
-          if (await _auth.headersVerify(request)) {
-            admitted = request.change(context: {DeviceAuth.verifiedHeaders: true});
-          } else if (!_tokenWorks(request)) {
-            _ctx.limit(request, 'anonymous', Limits.anonymous);
-          }
+  /// A request counts as signed only once what it carries checks out: a bearer token this
+  /// family knows, or a device signature over the body hash it claims. Any other header (a
+  /// made-up token, a signature that doesn't verify, or one that can't be checked before the
+  /// body) is a request like any stranger's.
+  Future<Request> _admit(Request request) async {
+    var admitted = request;
+    // Counted already, or (the host checked its signature for this hub) signed.
+    final settled = request.context[DenHost.admittedKey] == true || request.context[DeviceAuth.verifiedHeaders] == true;
+    if (!settled) {
+      final forwarded = request.headers.containsKey('x-forwarded-for');
+      if (forwarded && !viaTrustedProxy(request, config.trustedProxies)) _host.warnUntrustedProxy(request);
+      if (!DenHost.local(request)) {
+        if (await _auth.headersVerify(request)) {
+          admitted = request.change(context: {DeviceAuth.verifiedHeaders: true});
+        } else if (!_tokenWorks(request)) {
+          _ctx.limit(request, 'anonymous', Limits.anonymous);
         }
-        final declared = request.contentLength;
-        if (declared != null && declared > _bodyLimit(request)) throw ApiError.tooLarge();
-        return inner(admitted);
-      };
+      }
+    }
+    final declared = request.contentLength;
+    if (declared != null && declared > _bodyLimit(request)) throw ApiError.tooLarge();
+    return admitted;
+  }
 
   /// Whether [request] carries a bearer token that resolves to a working connection.
   bool _tokenWorks(Request request) {
@@ -455,63 +455,17 @@ class DenHub {
         _ => maxBodyBytes,
       };
 
-  void _warnUntrustedProxy(Request request) {
-    final peer = peerAddress(request)?.address;
-    if (peer == null || _warnedProxies.length >= 16 || !_warnedProxies.add(peer)) return;
-    _ctx.log.warn('Requests from $peer carry X-Forwarded-For, but DEN_TRUSTED_PROXIES doesn\'t list $peer, so the hub '
-        'ignores the header and limits everyone behind that proxy as one client. List the proxy to fix that.');
-  }
-
   Response _openStream(Request request) {
     final access = _api.authenticate(request, Scope.read);
     return _stream.open(access, bearerToken(request.headers['authorization'])!);
   }
 
-  Handler _errors(Handler inner) => (Request request) async {
-        final started = DateTime.now();
-        Response response;
-        try {
-          response = await inner(request);
-        } on ApiError catch (e) {
-          response = e.toResponse();
-        } on HijackException {
-          rethrow;
-        } on Object catch (e, st) {
-          _ctx.log.error('${request.method} ${_safePath(request)} failed: ${describeError(e, st)}');
-          response = ApiError(500, 'internal', 'Something went wrong on the hub.').toResponse();
-        }
-        _ctx.log.debug(
-            '${request.method} ${_safePath(request)} ${response.statusCode} ${DateTime.now().difference(started).inMilliseconds}ms');
-        return response;
-      };
-
-  /// The request path with secrets in it (feed tokens, link slots) hidden and no query.
-  static String _safePath(Request request) {
-    final segments = request.url.pathSegments;
-    final out = <String>[];
-    for (var i = 0; i < segments.length; i++) {
-      final hide = i > 0 && (segments[i - 1] == 'ics' || segments[i - 1] == 'link');
-      out.add(hide ? '…' : segments[i]);
-    }
-    return '/${out.join('/')}';
-  }
-
-  FutureOr<Response> _route(Request request) {
-    final path = request.url.path;
-    if (path == 'ws') return _ws(request);
-    final found = _routes.find(request);
-    if (found != null) return found.$1.handler(request, found.$2);
-    final web = _web;
-    final first = request.url.pathSegments.isEmpty ? '' : request.url.pathSegments.first;
-    const reserved = {'api', 'mcp', 'oauth', 'ics', '.well-known', 'ws', 'health'};
-    if (web != null && !reserved.contains(first)) return web(request);
-    throw ApiError.notFound();
-  }
-
-  /// Stops serving: says goodbye to event streams and mDNS, closes sync and the tunnel.
+  /// Stops serving: says goodbye to event streams and mDNS, closes sync and the tunnel. The host
+  /// sends this family nothing more; a hub that [start] made stops its host too.
   Future<void> stop() async {
     if (_stopped) return;
     _stopped = true;
+    _host.detach(this);
     await _stream.shutdown();
     await _mcpHttp.shutdown();
     await _ics.shutdown();
@@ -530,13 +484,13 @@ class DenHub {
     await _tunnel?.stop();
     await node.close();
     await _feed.close();
-    await _server?.close(force: true);
     await _ctx.state.flush();
-    if (_ownsHttp) _ctx.http.close();
-    _ctx.fetch.close();
     _ctx.log.info('Den hub stopped');
+    await _host.closed(this);
+    if (_ownsHost) await _host.stop();
   }
 }
+
 
 /// A background part of the hub (calendar feeds, reminders, mDNS), started once the hub is in a
 /// family and stopped with it.

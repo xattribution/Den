@@ -250,7 +250,7 @@ Tailscale stay as they are through a reset. What differs or adds:
 | Tailscale | `tailscale status` |
 | Restore | As in [Restore](#restore); then open Den on a phone at home or with Tailscale on, as the hub waits for one to sync (`den_hub status` says `Catching up after a restore` until then) |
 | Update | A backup and `docker tag den-hub den-hub:previous` as in [Updating](#updating), then `git pull` and `./install.sh`: it updates the firewall and its units too, and runs `docker compose up -d --build`, which updates every family's hub |
-| [Several families](#several-families) | `sudo ./install.sh add-family`, `remove-family`, `families`; the commands above with `hub-smith` for smith's hub |
+| [Several families](#several-families) | `sudo ./install.sh add-family`, `remove-family`, `merge-families`, `families`; `den_hub` commands for one family take `--family` and its address |
 
 **Backups off the server** go over Tailscale, as SSH is closed to the internet: with the
 server's Tailscale name or address,
@@ -270,13 +270,15 @@ them, and the backup and restore below cover each.
    computer copy `.env` across:
    `scp -3 root@old-den:den/deploy/private/.env root@<new address>:den/deploy/private/.env`.
    On the new server, `sudo ./install.sh`: it joins the tailnet as `tag:den-server` too, sets up
-   the firewall and starts an empty hub for each family.
+   the firewall and starts the hub, empty (and an empty container for each family that has one
+   of its own).
 2. **Back up the old one**, with its hubs stopped:
    `docker compose stop && docker compose run --rm backup`.
 3. **Copy the backups**, from your computer, over Tailscale both ways now:
    `scp -3 -r root@old-den:den/deploy/private/backups root@new-den:den/deploy/private/`.
 4. **Restore on the new one**, every family from its newest backup: `docker compose stop`, then
-   `docker compose run --rm backup restore newest`, then `docker compose up -d`.
+   `docker compose run --rm backup restore newest`, then `docker compose up -d`. Each family on the
+   host restores into its own place in the new hub, at its address.
 5. **Point the names at it**, each family's:
    - **Public DNS:** the `A` (and `AAAA`) record of `den.example.com`, to the new public address.
      (Other families' names that are a `CNAME` to it follow by themselves.)
@@ -290,23 +292,33 @@ them, and the backup and restore below cover each.
    (the most recent is best), and let it sync: a restored hub writes nothing of its own until a
    phone has ([Restore](#restore)). Then `docker compose exec hub /app/bin/den_hub status` says
    `In a family and serving.` and no longer `Catching up after a restore`. Check from one phone
-   at home and one with Tailscale on. Each family does the same with its own hub (`hub-smith`).
+   at home and one with Tailscale on. Each family does the same: `den_hub status --family
+   den-smith.example.com` (or, for a family in a container of its own, its hub, `hub-smith`).
 7. **Retire the old one:** `docker compose down` and `tailscale logout` there; delete it a few
    days later.
 
 ### Several families
 
-One server carries a few families. Each gets its own hub, with its own keys, data, address and
-backups, behind the same Caddy, dnsmasq, firewall and backup service. The family `install.sh`
-set up stays exactly as it is.
+One server carries a few families. They all run in the one hub the first family has, which is a
+**Den host**: one process serving several families, each with its own keys, data, address and
+backups, behind the same Caddy, dnsmasq, firewall and backup service. The family `install.sh` set
+up stays exactly as it is: its data, keys and address don't move.
 
-**How many fit.** Measured with five families on one server (fresh hubs): each hub about 8 MiB at
-rest and 16–17 MiB after serving a burst of 800 requests (about 25 MiB resident), Caddy 13–21
-MiB, dnsmasq under 2 MiB, Docker itself about 120 MiB; no CPU at rest, about 1% per hub during
-the burst. Hubs in use with a family on them run at 15–20 MiB. So three families' hubs take
-60–80 MiB and five take 100–130 MiB: with Caddy, Docker, Tailscale and the system, well under
-1 GB of the 2 GB server. The 2 GB is for building the hub (about 1.2 GB at the peak), and that
-doesn't grow: one image serves every family, built once per update. Keep the swap from
+**Why one host.** Adding a family is one command and nothing restarts: the hub keeps serving
+everyone while it takes the new family on. Families on the host share calendars with nothing to
+configure. And it is what lets one Den app on a phone hold more than one family later (one
+address, one Home Screen app), which separate hubs at separate addresses can't.
+
+**What it costs.** One process: a crash or a bad update stops every family at once (Docker's
+restart brings them all back together). Whoever runs the server can read every family's data, as
+with separate hubs on one server. A family that should have a process of its own can keep a hub
+container of its own instead ([A container of its own](#a-container-of-its-own)).
+
+**How many fit.** Each family on the host adds its own data and its services (reminders, feeds) to
+the one process, a few MiB at a family's size; there is one runtime instead of one per family, so
+a few families fit well under 1 GB of the 2 GB server, with Caddy, Docker, Tailscale and the
+system. The 2 GB is for building the hub (about 1.2 GB at the peak), and that doesn't grow: one
+image serves every family, built once per update. Keep the swap from
 [Building on a small server](#building-on-a-small-server), or use
 [published images](#published-images).
 
@@ -321,11 +333,12 @@ The name is short (letters and digits); the address is the family's own, in a zo
 Cloudflare token has; the homes are their DDNS names, DNS only (leave them out for Tailscale
 only; run it again with the same name and address and a new list to change them). It checks that
 the token sees the address's zone, adds a line for the family to `.env`
-(`DEN_FAMILY_SMITH=den-smith.example.com 47735 home.smith-ddns.example ...`), writes
+(`DEN_FAMILY_SMITH=den-smith.example.com host home.smith-ddns.example ...`), writes
 `compose.families.yaml` and `Caddyfile.families` from those lines (generated: don't edit them),
-starts the family's hub on the next port with its own volume, restarts Caddy, dnsmasq and the
-other hubs with the new address (every family's app reconnects within a moment), lets their
-homes through the firewall, and prints, with your values filled in:
+restarts Caddy and dnsmasq with the new address (the hub keeps running: nobody's sync drops), has
+the running hub take the family on (`den_hub add-family --hostname den-smith.example.com`: its
+own keys and data, in the hub's volume under `logs/`), lets their homes through the firewall, and
+prints, with your values filled in:
 
 1. **Public DNS**, DNS only: a `CNAME` from their address to yours (`den.example.com`), so a move
    changes one record; or an `A` record.
@@ -333,9 +346,8 @@ homes through the firewall, and prints, with your values filled in:
    has one: `smith.den.example.com` is covered by `den.example.com`'s); a group for them,
    `"group:family-smith"`, in the policy and in the `src` of the grant to `tag:den-server`; and
    their invitations ([Tailscale for several families](#tailscale-for-several-families)).
-3. **The setup link**, with its QR code, for their first parent's iPhone (`den_hub setup-link`
-   on their hub). Then send them [their message](#for-the-family-private), with their address
-   in it.
+3. **The setup link**, with its QR code, for their first parent's iPhone. Then send them
+   [their message](#for-the-family-private), with their address in it.
 
 **Certificates.** Caddy gets every address's certificate with the one token in `.env`, so any
 name in the token's zone works. For an address in another zone of your Cloudflare account, add
@@ -344,6 +356,64 @@ nothing, until the token sees it. A zone in someone else's Cloudflare account ca
 token: use a name in yours. If the token loses a zone later, that address's certificate stops
 renewing (`docker compose logs caddy` says so weeks ahead), and only that family notices.
 
+#### Merging families that have their own containers
+
+Before the Den host, `add-family` gave each family a hub container of its own (`hub-smith`, on
+its own port, with its own volume `den_den-smith`). `merge-families` moves them onto the host:
+
+```sh
+cd den/deploy/private
+git pull
+sudo ./install.sh                            # builds the new hub; the first family's becomes the host
+sudo ./install.sh merge-families --dry-run   # what it would do; nothing changes
+sudo ./install.sh merge-families
+sudo ./install.sh families                   # every family: hub (host), port 47733
+```
+
+What it does, family by family:
+
+1. A backup of every family first (`docker compose run --rm backup`), into `backups/` and
+   `backups/<name>/`. If it doesn't finish, nothing is moved.
+2. For each family in a container of its own: stops `hub-smith`, then
+   `den_hub adopt /adopt/smith --hostname den-smith.example.com`, in a short-lived container with
+   the host's volume and smith's: it checks the host serves neither smith's hub, nor its family,
+   nor its address, copies smith's data in, `keys.json` included, checks the copy, and has the
+   running host serve it at once. Smith's line in `.env` then says `host`. If the adopt fails,
+   `hub-smith` starts again as it was, and the merge stops there (the families before it stay
+   merged; run it again once it's fixed).
+3. As soon as each family is on the host, Caddy sends its address there (Caddy and dnsmasq
+   restart, a moment for everyone), so a family is down only while it moves. At the end
+   `compose.families.yaml` drops the containers and the `hub-<name>` containers go. The first
+   family's hub restarts too when it loses the calendar settings the containers needed: every
+   family's app reconnects within a moment.
+
+**Run it again** whenever it stopped: before it stops or starts any family's container it asks
+the host whether it already has that family, so a family the host took on is never started in
+its old container again, even when the move was cut short after the copy (it still leaves the
+note in the old volume that keeps that hub from writing, should it ever start). When the host
+can't be asked, the merge stops and leaves the container as it is, stopped if it was stopping.
+
+**What changes for phones and computers: nothing.** The same address (Caddy now sends it to the
+host), the same hub (its keys moved with it, so it has the same device id), so every app keeps
+syncing with no pairing again. Home Screen apps keep their data and their reminders (at that
+address the host hands the browser the same Web Push key it subscribed with, and signs with it).
+Calendar links in phones' calendars, API tokens and assistants' connections keep working: same
+address, same secrets, same sign-in page. Nobody needs to be told.
+
+**The old volumes stay** (`den_den-smith`), untouched but for a note: never start an old
+`hub-smith` again, since the host is that same hub now and two copies would number their changes
+the same. Should one start by mistake, the note makes it wait for a phone of the family to sync
+before writing anything, as after a restore. Once you're happy, `docker volume rm den_den-smith`.
+
+#### A container of its own
+
+`sudo ./install.sh add-family smith den-smith.example.com --container` gives a new family a hub
+container of its own instead, `hub-smith` on the next port (47735, 47737, ...) with its own volume,
+as every family had before the host. Its line in `.env` names its port instead of `host`.
+Families in containers share calendars through Caddy on this machine
+([Calendars shared between families on this server](#calendars-shared-between-families-on-this-server)),
+and `merge-families` moves them onto the host whenever you like.
+
 #### The families on this server
 
 `sudo ./install.sh families` prints this for your server:
@@ -351,44 +421,78 @@ renewing (`docker compose logs caddy` says so weeks ahead), and only that family
 | Family | Address | Hub | Port (127.0.0.1) | Data (volume) | Backups |
 | --- | --- | --- | --- | --- | --- |
 | The first | `DEN_DOMAIN`, like `den.example.com` | `hub` | 47733 | `den_den-hub` | `backups/` |
-| `smith` | `den-smith.example.com` | `hub-smith` | 47735 | `den_den-smith` | `backups/smith/` |
-| The next ones | theirs | `hub-<name>` | 47737, 47739, … | `den_den-<name>` | `backups/<name>/` |
+| `smith`, on the host | `den-smith.example.com` | `hub (host)` | 47733 | `den_den-hub`, under `logs/` | `backups/smith/` |
+| A family in a container of its own | theirs | `hub-<name>` | 47735, 47737, … | `den_den-<name>` | `backups/<name>/` |
 
 #### Commands, per family
 
-From `den/deploy/private`, with `hub-smith` for smith (`hub` is the first family's). The rest of
+From `den/deploy/private`. Every `den_hub` command for one family takes `--family` and its
+address (without it, the first family). The rest of
 [Everyday commands (private)](#everyday-commands-private) is the same for everyone.
 
 | Task | Command |
 | --- | --- |
-| Health, every hub | `docker compose ps` |
-| Logs | `docker compose logs -f --tail 100 hub-smith` |
-| Status, setup link | `docker compose exec hub-smith /app/bin/den_hub status` (or `setup-link`, `setup-code`, `open-linking`, `recover`) |
+| Health | `docker compose ps` |
+| The families the host serves | `docker compose exec hub /app/bin/den_hub families` |
+| Logs | `docker compose logs -f --tail 100 hub` (each family's lines start with its address) |
+| Status, setup link | `docker compose exec hub /app/bin/den_hub status --family den-smith.example.com` (or `setup-link`, `setup-code`, `open-linking`, `recover --person NAME`) |
 | Back up every family | `docker compose run --rm backup` (the nightly crontab line in [Backups](#backups) runs this) |
 | Back up one | `docker compose run --rm backup smith` (`hub` for the first) |
-| Restore one | `docker compose stop hub-smith`, `docker compose run --rm backup restore backups/smith/den-2026-10-28-0317.denbackup`, `docker compose up -d hub-smith`, then a phone of theirs as in [Restore](#restore) |
+| Restore one | `docker compose stop hub` (every family on the host pauses for it), `docker compose run --rm backup restore backups/smith/den-2026-10-28-0317.denbackup`, `docker compose up -d hub`, then a phone of theirs as in [Restore](#restore) |
 | Restore every family | `docker compose stop`, `docker compose run --rm backup restore newest`, `docker compose up -d` |
-| Update | As for one family ([Everyday commands (private)](#everyday-commands-private)): every hub runs the one image, so they update, and roll back, together |
-| Move to a new server | All together: [Moving a private server](#moving-a-private-server) |
-| Reset one hub, keep the family | `docker compose rm -sf hub-smith && docker volume rm den_den-smith && docker compose up -d hub-smith`, then a parent's phone as in [Reset the hub, keep the family](#reset-the-hub-keep-the-family) |
+| Update | As for one family ([Everyday commands (private)](#everyday-commands-private)): one hub serves every family, so they update, and roll back, together |
+| Move to a new server | All together: [Moving a private server](#moving-a-private-server); each family's backup restores into its own place on the new host |
+| Reset one family's hub, keep the family | `sudo ./install.sh remove-family smith --delete-data`, then `sudo ./install.sh add-family smith den-smith.example.com`, then a parent's phone as in [Reset the hub, keep the family](#reset-the-hub-keep-the-family) |
 | Take a family off | `sudo ./install.sh remove-family smith` |
 
-**Taking a family off** stops and removes `hub-smith`, takes its address out of Caddy and dnsmasq
-and its homes out of the firewall, and keeps its data: the volume `den_den-smith` stays, and
-`add-family smith` with the same address brings the same hub back, family and all.
-`remove-family smith --delete-data` deletes the volume too. Either way the backups stay in
-`backups/smith/`, and its DNS record, split-DNS entry and Tailscale group are yours to delete.
+For a family in a container of its own, use its hub in place of `hub` and leave out `--family`:
+`docker compose exec hub-smith /app/bin/den_hub status`, `docker compose stop hub-smith` to
+restore it.
+
+**Taking a family off** stops the host serving it, takes its address out of Caddy and dnsmasq and
+its homes out of the firewall, and keeps its data (in the hub's volume under `logs/`, or its own
+volume for a container): `add-family smith` with the same address brings the same hub back,
+family and all (when more than one family was taken off that address, it lists their ids: `docker
+compose exec hub /app/bin/den_hub add-family --hostname den-smith.example.com --id <id>` picks
+one, then `add-family smith` again). `remove-family smith --delete-data` deletes it, once you
+type its name (`--yes` instead, where there is no terminal to ask on); for a family taken off the
+host earlier, `remove-family smith den-smith.example.com --delete-data`, which refuses an address
+a family in `.env` still has. Either way the backups stay in `backups/smith/`, and its DNS
+record, split-DNS entry and Tailscale group are yours to delete.
+
+By hand, `den_hub remove-family` deletes the data of a family still on the host only by its id
+(`--id`, which `den_hub families` lists), never by its address, so a mistyped name never deletes
+a family in use. The running host lets the family go and deletes its data itself.
+
+**A family that won't open.** When the hub starts, a family whose data doesn't open (its lock
+held by a backup that is still running, say) is left out and tried again every 30 seconds; its
+address answers "starting" meanwhile, never another family's page, and its calendar's
+subscribers keep their copies. The hub reports healthy once every family has had its first try,
+so `install.sh` and the other families aren't held up; `install.sh`, `den_hub families` and
+`den_hub status --family ...` say which family isn't open and why (`docker compose logs hub` has
+the rest).
 
 #### What keeps families apart
 
-- **Their own hub.** Each family's hub has its own keys and volume, and knows only its own
-  address (`DEN_PUBLIC_URL`). No hub can open another's data.
-- **Their own address.** Caddy sends each address to its own hub and nowhere else; a request
-  that names another family's address over a connection made for this one is refused (421).
+- **Their own hub.** Each family on the host is a hub of its own inside the one process: its own
+  keys and device id, its own data (`logs/<id>/`), tokens, calendar links, invites, sign-in
+  clients and Web Push key, and its own address, which its links and sign-in pages name. No
+  family's hub holds another's data.
+- **Every request goes to one family, which checks it.** The host hands each request to the
+  family it is for: a phone's sync by the family it names, a device's signed request by the hub
+  it is addressed to, a token or a calendar link by the address it came to, a code by the family
+  that made it. That family checks the device, token, link or code against its own records only,
+  so a request meant for one family can never open another's. A request that names no family,
+  at an address that is none of theirs, gets no family's answer. (`den_hub`'s tests check each of
+  these, family against family.)
+- **Their own address.** Caddy sends each address to the host, which answers it as that family;
+  a request that names another family's address over a connection made for this one is refused
+  (421).
 - **One allowlist for every home.** The firewall lets all the families' homes reach 443, so
   someone at the Smiths' can open the Joneses' address. They get Den's sign-in page and no
-  further: nothing in the Joneses' hub opens without a device a Jones parent let in, and the
-  hub's public posture (limits per address, a parent's say before a browser links) holds.
+  further: nothing of the Joneses' opens without a device a Jones parent let in, and the hub's
+  public posture (limits per address, a parent's say before a browser links) holds; limits count
+  across every family, so trying one family's address after another buys no more tries.
 - **No per-family filter in Caddy, on purpose.** Caddy could refuse one family's address to the
   other families' homes (`remote_ip` per site, from the same lists). It isn't worth it: it guards a
   door the hub's sign-in already guards; Caddy reads its addresses only when it starts, so each
@@ -399,7 +503,7 @@ and its homes out of the firewall, and keeps its data: the volume `den_den-smith
 - **On Tailscale**, each family has its own group, and every group reaches the same server on
   443 and 53. So anyone in any family can reach every family's address on the server and look up
   their names, as they could from a home: they get the sign-in page. They can't reach another
-  family's data, anyone's phones or computers, SSH, the hubs' own ports or anything else on your
+  family's data, anyone's phones or computers, SSH, the hub's own port or anything else on your
   tailnet; the Tailscale app shows them the server and nothing else. The split-DNS list is part
   of the tailnet's settings, so a curious member can read every family's Den address (they're
   in public certificate logs anyway).
@@ -415,18 +519,24 @@ and its homes out of the firewall, and keeps its data: the volume `den_den-smith
 A family can share its calendar with another family: their Everyone events (titles, times,
 places, notes), never Parents-only or Just-me ones. The sharing family's hub makes the link; the
 other family's hub fetches it, keeps a watch stream open to hear changes within a second or two,
-and fetches every 15 minutes in case the stream drops. When both families are on this server,
-one hub fetches from the other's address, `https://den-smith.example.com`, on the same machine.
+and fetches every 15 minutes in case the stream drops.
 
-**How that works here.** Every hub runs on the server's own network (`network_mode: host`).
-Left alone, a hub would look the other family's address up in public DNS, get the server's
-public address and connect to it. Where the provider puts that address on the server itself,
-the connection stays on the machine and arrives on `lo`, which the firewall accepts. But where
-the provider puts the public address in front of the server (install.sh's "If that A address
-starts with 10., ..."), the connection leaves the server and comes back from the server's own
-public address, which isn't one of the homes, so the firewall drops it, if the provider sends it
-back at all. So `install.sh`, whenever there is more than one family, writes two things into
-`compose.families.yaml` for every hub, the first family's included:
+**Families on the host** need nothing for it. When one family's hub fetches another family's
+link (`https://den-smith.example.com/ics/...`), the host sees that the address is one of its own
+families' and answers in its own process, as if the request had come in from outside with only
+the link's secret: no DNS, no Caddy, no loop through the server's public address, so it works
+whatever the provider does with that address. Any other address still goes through the hub's
+guard on outgoing fetches (NetGuard, [Settings](#settings)).
+
+**A family in a container of its own** is another process. Left alone, a hub would look the other
+family's address up in public DNS, get the server's public address and connect to it. Where the
+provider puts that address on the server itself, the connection stays on the machine and arrives
+on `lo`, which the firewall accepts. But where the provider puts the public address in front of
+the server (install.sh's "If that A address starts with 10., ..."), the connection leaves the
+server and comes back from the server's own public address, which isn't one of the homes, so the
+firewall drops it, if the provider sends it back at all. So while any family has a container of
+its own, `install.sh` writes two things into `compose.families.yaml` for every hub, the host
+included:
 
 ```yaml
     environment:
@@ -443,20 +553,21 @@ back at all. So `install.sh`, whenever there is more than one family, writes two
   doesn't depend on public DNS or the provider.
 - **`DEN_PEER_HUBS`** lists the same names for the hub's guard on outgoing fetches (NetGuard,
   [Settings](#settings)). The guard refuses this machine and private networks for any address
-  someone gives the hub, so a calendar link can't reach into the server or the home. It now lets
-  exactly these names, and the hub's own `DEN_PUBLIC_URL`, lead to loopback: only over `https`,
-  only on their port (443), and the certificate must match the name. `http://` to the same name,
-  another port, any other name, or an IP address is refused as before, after a redirect too.
+  someone gives the hub, so a calendar link can't reach into the server or the home. It lets
+  exactly these names, and the hub's own families' addresses, lead to loopback: only over
+  `https`, only on their port (443), and the certificate must match the name. `http://` to the
+  same name, another port, any other name, or an IP address is refused as before, after a
+  redirect too.
 - **The firewall doesn't change.** The fetch arrives on `lo`, which `den_fw` already accepts;
   443 stays closed to everyone but the homes and Tailscale.
 - **Caddy** passes the watch stream (`/ics/<secret>/watch`) on as it comes: it's left out of
   compression, as `/api/v1/stream` is.
 
-`add-family` and `remove-family` rewrite both lists for every hub and restart the hubs whose
-lists changed (each family's app reconnects within a moment). With one family on the server
-there's nothing to write. A family on another server
-needs nothing from this: its address resolves to that server's public address, which the guard
-allows already, as long as that server's firewall lets this one in (its `DEN_ALLOW_EXTRA`).
+`add-family`, `remove-family` and `merge-families` rewrite both lists, and restart the hubs whose
+lists changed (each family's app reconnects within a moment); with every family on the host
+there's nothing to write. A family on another server needs nothing from this: its address
+resolves to that server's public address, which the guard allows already, as long as that
+server's firewall lets this one in (its `DEN_ALLOW_EXTRA`).
 
 #### Tailscale for several families
 
@@ -715,6 +826,12 @@ guide work with `hub-a` or `hub-b` in place of `hub`, and `backup-a` or `backup-
 request for one family's domain never reaches the other's hub. You never need to be in either
 family. A third family is another `hub-`, `backup-` and Caddyfile block like these, with the
 next port.
+
+One hub can serve both families instead, each at its own address with its own keys and data:
+`den_hub add-family --hostname den-b.example.com` on family A's running hub takes family B on and
+prints B's setup link, and both Caddyfile blocks send their address to that one hub. That is the
+private setup's way ([Several families](#several-families)), and what lets one Den app hold both
+families later.
 
 ## Everyday commands
 
@@ -1237,7 +1354,7 @@ approval of every sign-in apply either way. With setup P none of them can connec
 these paths to them: [Closed on purpose](#closed-on-purpose). The hub also fetches out (Claude's and ChatGPT's
 client documents, calendar feeds), and refuses addresses on its own machine and network unless
 `DEN_FETCH_ALLOW` admits them (or, for the other families' shared calendars on the same server,
-`DEN_PEER_HUBS` names them).
+they are families on the same host, which answers in-process, or `DEN_PEER_HUBS` names them).
 
 ## Settings
 
@@ -1259,7 +1376,8 @@ The hosted compose file sets these from `.env`; the hub reads them from its envi
 | `DEN_CSP` | Replaces the web app's Content-Security-Policy, for a web build that needs a CDN after all |
 | `DEN_ALLOWED_ORIGINS` | Extra browser origins for `/mcp` and OAuth (`https://claude.ai` is allowed already) |
 | `DEN_FETCH_ALLOW` | Private networks the hub may fetch calendar feeds from; by default only the public internet |
-| `DEN_PEER_HUBS` | The other families' addresses on this server (names or `https://` addresses), whose shared calendars this hub may fetch through the server's own reverse proxy on loopback. Only these names (and the hub's own `DEN_PUBLIC_URL`), only over `https`. The private setup's `install.sh` sets it for every hub ([Calendars shared between families on this server](#calendars-shared-between-families-on-this-server)) |
+| `DEN_HOST_RETRY` | Seconds between tries at a family of a Den host that didn't open when the hub started (30) |
+| `DEN_PEER_HUBS` | The other families' addresses on this server in hubs of their own (names or `https://` addresses), whose shared calendars this hub may fetch through the server's own reverse proxy on loopback. Only these names (and the addresses of the families this hub serves), only over `https`. Families on the same Den host need none of it. The private setup's `install.sh` sets it while any family has a container of its own ([Calendars shared between families on this server](#calendars-shared-between-families-on-this-server)) |
 
 **The public posture.** A hub whose `DEN_PUBLIC_URL` is `https` assumes strangers can reach it:
 `/health` and `/api/v1/hub/status` say almost nothing; setup works only until the hub is in a

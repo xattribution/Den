@@ -72,7 +72,8 @@ class WebPushService implements HubService, ReminderSink {
   /// Device id → its subscription: `endpoint`, `p256dh`, `auth`, `contact`, `since`.
   Map<String, Object?> get _devices => _map('devices');
 
-  /// The hub's VAPID keys, made and saved on first use.
+  /// The hub's VAPID keys, made and saved on first use, in the hub's own state: on a Den host
+  /// too, each family's key is in its own data only.
   VapidKeys get keys {
     final have = _keys;
     if (have != null) return have;
@@ -89,6 +90,15 @@ class WebPushService implements HubService, ReminderSink {
     unawaited(_save());
     return made;
   }
+
+  /// The key a browser subscribes with: this family's own, whatever address it asks at, so no
+  /// family's subscriptions are ever signed with another family's key. (One app holding several
+  /// families at one origin will need one key there; that is for the app to bring.)
+  VapidKeys _keyFor(Request request) => keys;
+
+  /// The key every push of this family's is signed with: its own, the key every subscription it
+  /// holds was made with (an adopted family's included: its key came with it).
+  VapidKeys _signerOf(Map<Object?, Object?> sub) => keys;
 
   Future<void> _save() async {
     await hub.state.save(_doc);
@@ -107,11 +117,11 @@ class WebPushService implements HubService, ReminderSink {
 
   Future<Device> _check(Request request) async => (await deviceAuth.check(request)).device!;
 
-  Response _answer(String deviceId) =>
-      jsonResponse({'key': b64url(keys.publicKey), 'subscribed': _devices.containsKey(deviceId)});
+  Response _answer(Request request, String deviceId) =>
+      jsonResponse({'key': b64url(_keyFor(request).publicKey), 'subscribed': _devices.containsKey(deviceId)});
 
   /// `GET /api/v1/push`: the hub's public key, and whether this device gets reminders.
-  Future<Response> status(Request request) async => _answer((await _check(request)).id);
+  Future<Response> status(Request request) async => _answer(request, (await _check(request)).id);
 
   /// `PUT /api/v1/push`: this device's push subscription, as the browser gives it.
   Future<Response> subscribe(Request request) async {
@@ -148,10 +158,12 @@ class WebPushService implements HubService, ReminderSink {
       'auth': auth,
       'contact': base.scheme == 'https' ? base.toString() : null,
       'since': hub.now(),
+      // The key the browser was handed at this address, which it subscribed with.
+      'vapid': b64url(_keyFor(request).publicKey),
     };
     await _save();
     hub.log.info('A device turned reminders on');
-    return _answer(device.id);
+    return _answer(request, device.id);
   }
 
   static bool _validKeys(String p256dh, String auth) {
@@ -167,7 +179,7 @@ class WebPushService implements HubService, ReminderSink {
   Future<Response> unsubscribe(Request request) async {
     final device = await _check(request);
     if (_devices.remove(device.id) != null) await _save();
-    return _answer(device.id);
+    return _answer(request, device.id);
   }
 
   /// `POST /api/v1/push/test`: one notification to this device, to see reminders work.
@@ -212,7 +224,7 @@ class WebPushService implements HubService, ReminderSink {
           .post(
             endpoint,
             headers: {
-              'authorization': keys.authorization(
+              'authorization': _signerOf(sub).authorization(
                 endpoint,
                 subject: subject,
                 expires: DateTime.now().toUtc().add(const Duration(hours: 12)),

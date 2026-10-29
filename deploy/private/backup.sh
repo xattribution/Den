@@ -1,17 +1,21 @@
 #!/bin/sh
 # Encrypted backups of every family's hub on this server: what the private setup's backup service
-# runs (compose.yaml), in the hub's image, as root, with no network. It sees the first family's
-# hub in /data and each other family's in /families/<name> (compose.families.yaml mounts them),
-# and writes into /backups, which is ./backups on the server: the first family's backups in
-# backups/, each other family's in backups/<name>/. Each keeps its newest DEN_BACKUP_KEEP (14),
-# sealed with DEN_BACKUP_PASSPHRASE. docs/hosting.md, "Several families".
+# runs (compose.yaml), in the hub's image, as root, with no network. It sees the Den host's data in
+# /data: the first family's, and each family on the host under /data/logs/, which it finds by
+# address (DEN_HOSTED_FAMILIES, "smith=den-smith.example.com ...", from compose.families.yaml);
+# and a family that keeps a hub container of its own in /families/<name> (compose.families.yaml
+# mounts them). It writes into /backups, which is ./backups on the server: the first family's
+# backups in backups/, each other family's in backups/<name>/, one family per file, wherever it
+# runs. Each keeps its newest DEN_BACKUP_KEEP (14), sealed with DEN_BACKUP_PASSPHRASE.
+# docs/hosting.md, "Several families".
 #
 #   docker compose run --rm backup                   every family (what the nightly cron runs)
 #   docker compose run --rm backup smith             one family; hub is the first family
 #   docker compose run --rm backup restore backups/den-2026-10-28-0317.denbackup
 #   docker compose run --rm backup restore backups/smith/den-2026-10-28-0317.denbackup
-#                                    into the family whose folder the backup is in, with that
-#                                    family's hub stopped first (docker compose stop hub-smith)
+#                                    into the family whose folder the backup is in, with its hub
+#                                    stopped first: docker compose stop hub, which is every family
+#                                    on the host (or hub-smith, for a container of its own)
 #   docker compose run --rm backup restore newest
 #                                    every family from its newest backup, with every hub stopped:
 #                                    for moving to a new server
@@ -22,18 +26,39 @@ usage() {
   exit 64
 }
 
-# The families here: hub (the first), then each in /families.
+# The families on the Den host: name=address, a word each.
+hosted_address() { # NAME: its address, when it is a family on the host
+  for pair in ${DEN_HOSTED_FAMILIES:-}; do
+    [ "${pair%%=*}" = "$1" ] && { echo "${pair#*=}"; return 0; }
+  done
+  return 1
+}
+
+# The families here: hub (the first), the ones on the host, then each in a container of its own.
 families() {
   echo hub
+  for pair in ${DEN_HOSTED_FAMILIES:-}; do
+    echo "${pair%%=*}"
+  done
   for d in /families/*/; do
     [ -d "$d" ] && basename "$d"
   done
   return 0
 }
-data_of() { if [ "$1" = hub ]; then echo /data; else echo "/families/$1"; fi; }
+# den_hub's --data and, for a family on the host, --family.
+data_args() {
+  if [ "$1" = hub ]; then
+    echo "--data /data"
+  elif address=$(hosted_address "$1"); then
+    echo "--data /data --family $address"
+  else
+    echo "--data /families/$1"
+  fi
+}
+owned_dir() { if [ "$1" = hub ] || hosted_address "$1" >/dev/null; then echo /data; else echo "/families/$1"; fi; }
 dir_of() { if [ "$1" = hub ]; then echo backups; else echo "backups/$1"; fi; }
-service_of() { if [ "$1" = hub ]; then echo hub; else echo "hub-$1"; fi; }
-known() { [ "$1" = hub ] || { [ -n "$1" ] && [ -d "/families/$1" ]; }; }
+service_of() { if [ "$1" = hub ] || hosted_address "$1" >/dev/null; then echo hub; else echo "hub-$1"; fi; }
+known() { [ "$1" = hub ] || hosted_address "$1" >/dev/null || { [ -n "$1" ] && [ -d "/families/$1" ]; }; }
 
 # Paths are relative to /, so what this prints (backups/smith/den-...) is what the server has
 # in den/deploy/private.
@@ -42,7 +67,8 @@ cd /
 back_up() { # FAMILY
   dir=$(dir_of "$1")
   mkdir -p "$dir"
-  /app/bin/den_hub backup --data "$(data_of "$1")" --out "$dir/den-$(date -u +%Y-%m-%d-%H%M).denbackup" \
+  # shellcheck disable=SC2046 # data_args is words on purpose
+  /app/bin/den_hub backup $(data_args "$1") --out "$dir/den-$(date -u +%Y-%m-%d-%H%M).denbackup" \
     --passphrase-env DEN_BACKUP_PASSPHRASE || return 1
   # The names sort by date and time (UTC): keep the newest.
   ls -1 "$dir"/den-*.denbackup | sort -r | tail -n "+$((${DEN_BACKUP_KEEP:-14} + 1))" | xargs -r rm -f --
@@ -50,11 +76,12 @@ back_up() { # FAMILY
 
 restore_file() { # FAMILY FILE
   echo "$(service_of "$1"): restoring $2"
-  if ! /app/bin/den_hub restore --data "$(data_of "$1")" --in "$2" --passphrase-env DEN_BACKUP_PASSPHRASE --force; then
+  # shellcheck disable=SC2046
+  if ! /app/bin/den_hub restore $(data_args "$1") --in "$2" --passphrase-env DEN_BACKUP_PASSPHRASE --force; then
     echo "Nothing changed. If $(service_of "$1") is running, stop it first: docker compose stop $(service_of "$1")" >&2
     return 1
   fi
-  chown -R den:den "$(data_of "$1")"
+  chown -R den:den "$(owned_dir "$1")"
 }
 
 newest() { # FAMILY: its newest backup, or nothing

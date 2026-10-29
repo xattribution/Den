@@ -7,11 +7,14 @@
 #                               each step looks first and changes only what isn't right yet
 #   sudo ./install.sh --check   say what it would do, check what it can, and change nothing
 #
-# More families on the same server, each with its own hub, data and address (families.sh;
-# docs/hosting.md, "Several families"):
+# More families on the same server, each with its own keys, data and address, all served by the
+# one Den host (the first family's hub) behind the same Caddy (families.sh; docs/hosting.md,
+# "Several families"):
 #   sudo ./install.sh add-family smith den-smith.example.com "home.smith.example.net"
 #   sudo ./install.sh remove-family smith [--delete-data]
-#   sudo ./install.sh families  which families, at which address, port, volume and backups
+#   sudo ./install.sh merge-families [--dry-run]   families in containers of their own (as
+#                               add-family made them before the host) move onto the host
+#   sudo ./install.sh families  which families, at which address, hub, volume and backups
 #
 # The steps, in order:
 #   1. packages: nftables, python3, unattended-upgrades; Docker from Docker's own repository;
@@ -24,7 +27,8 @@
 #   6. the firewall: table inet den_fw, den-allowlist and its timer. SSH from the internet closes
 #      only once you've said SSH over Tailscale works; until then the address you're connected
 #      from stays allowed
-#   7. Den: builds and starts the hub (and the other families' hubs), Caddy and dnsmasq
+#   7. Den: builds and starts the hub (the Den host, with every family on it, and any family's
+#      own hub container), Caddy and dnsmasq
 #   8. prints what's left to do by hand
 set -euo pipefail
 
@@ -33,9 +37,9 @@ FAMILY_COMMAND=
 case "${1:-}" in
   "") ;;
   --check) CHECK=1 ;;
-  add-family | remove-family | families) FAMILY_COMMAND=$1; shift ;;
+  add-family | remove-family | merge-families | families) FAMILY_COMMAND=$1; shift ;;
   -h | --help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
-  *) echo "Usage: sudo ./install.sh [--check | add-family NAME ADDRESS [HOMES] | remove-family NAME [--delete-data] | families]" >&2; exit 64 ;;
+  *) echo "Usage: sudo ./install.sh [--check | add-family NAME ADDRESS [HOMES] [--container] | remove-family NAME [--delete-data] | merge-families [--dry-run] | families]" >&2; exit 64 ;;
 esac
 
 cd "$(dirname "$(readlink -f "$0")")"
@@ -97,8 +101,8 @@ in_network() { # in_network ADDRESS NETWORK: is the address in it?
   python3 -c 'import ipaddress, sys; sys.exit(ipaddress.ip_address(sys.argv[1]) not in ipaddress.ip_network(sys.argv[2]))' "$1" "$2" 2>/dev/null
 }
 
-# Several families on one server: add-family, remove-family, families, and the generated files
-# (families.sh).
+# Several families on one server: add-family, remove-family, merge-families, families, and the
+# generated files (families.sh).
 . ./families.sh
 if [ -n "$FAMILY_COMMAND" ]; then
   families_command "$FAMILY_COMMAND" "$@"
@@ -484,6 +488,8 @@ else
     run docker compose up -d --build --wait --wait-timeout 1200
   fi
   docker compose ps
+  # A family on the Den host whose data didn't open is tried again; the others are served.
+  families_not_open
 fi
 
 # ---------------------------------------------------------------------------------------------
