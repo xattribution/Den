@@ -93,7 +93,8 @@ class _UndoPlan {
 }
 
 class _Draft {
-  _Draft(this.type, this.rid, this.space, this.fields, {this.hlc, this.actor, this.setsActor = false, this.ownLast = false});
+  _Draft(this.type, this.rid, this.space, this.fields,
+      {this.hlc, this.actor, this.setsActor = false, this.ownLast = false, this.refusedOk = false});
   final String type;
   final String rid;
   final String space;
@@ -105,6 +106,11 @@ class _Draft {
   /// This device removing itself as the last change of a commit: its `revokedAfter` is the
   /// counter of the change just before it in the same commit, so the commit's own changes count.
   final bool ownLast;
+
+  /// Signed and kept even though it doesn't count: a group's "we're in" by a phone its family's
+  /// invitation let in, said after another one already did, which ends the family's place
+  /// (groups.dart, GroupStarts) rather than leaving someone else as them.
+  final bool refusedOk;
 }
 
 /// The engine. One instance per device: it holds the change log, merges changes from any device,
@@ -1386,36 +1392,72 @@ class Den {
 
   /// For a family's own engine: whether the group [group] (the family's engine of it, on this
   /// device) shows something wrong with how the family began there, as the family's own log
-  /// recorded it ([GroupLink.home], [GroupLink.device], [GroupLink.closure], written when its
-  /// first parent's phone said it was in, which no other family can write). The family's
-  /// devices and its hub run it after each sync; null when all is well, or before the family
-  /// recorded how it began.
+  /// recorded it ([GroupLink.home], [GroupLink.device], [GroupLink.closure], written by its first
+  /// parent's phone as it joined and as it said the family was in, which no other family can
+  /// write). The family's devices and its hub run it after each sync; null when all is well, or
+  /// before the family recorded where it joined. What the family did itself (replacing that
+  /// phone, a phone of its own refused after it was in) raises nothing.
+  ///
+  /// The two logs travel apart, so a device can hear of one change before the other: show an
+  /// alarm once it holds after a sync of both.
   GroupAlarm? groupAlarm(GroupLink link, Den group) {
     final homeId = link.home;
     if (isGroup || homeId == null || link.group != group.familyId) return null;
     final h = group.home(homeId);
     if (h == null) return null;
     final end = group.homeEnd(homeId);
-    if (end != null && end.contested) {
-      return const GroupAlarm(GroupAlarmKind.contested, 'Two phones said they were your family in this group, so your place in it ended');
-    }
     if (end != null) {
-      return const GroupAlarm(GroupAlarmKind.disowned, 'The family that invited you said that wasn\'t you, so your place in this group ended');
+      final closers = <String>{
+        for (final id in end.closings)
+          if (group._mat.byId(id) case final c?) c.device,
+      };
+      final names = [
+        for (final a in group.windowAdmissions(homeId))
+          if (closers.contains(a.device)) a.name.isEmpty ? 'a phone' : a.name,
+      ];
+      if (end.contested) {
+        final ours = link.device != null && closers.contains(link.device);
+        return GroupAlarm(
+          GroupAlarmKind.contested,
+          ours
+              ? 'Two phones said they were your family in this group (${names.join(' and ')}), yours among them, so your place '
+                  'there ended. If both were yours, invite your family again and open the invitation on one phone only; if not, '
+                  'someone else had your invitation.'
+              : 'Two phones said they were your family in this group (${names.join(' and ')}), so your place there ended',
+          devices: names,
+          mayBeOurs: ours,
+        );
+      }
+      return GroupAlarm(GroupAlarmKind.disowned, 'The family that invited you said that wasn\'t you, so your place in this group ended',
+          devices: names);
     }
-    if (h.left && link.status != GroupLinkStatus.left) {
-      return const GroupAlarm(GroupAlarmKind.removed, 'This group says your family left it, but your family didn\'t');
+    if (h.left) {
+      return link.status == GroupLinkStatus.left
+          ? null
+          : const GroupAlarm(GroupAlarmKind.removed, 'This group says your family left it, but your family didn\'t');
     }
     if (link.status == GroupLinkStatus.left) return null;
     final w = group.closureFor(homeId);
-    if (link.closure != null && w?.id != link.closure) {
+    if (w != null && link.closure == null) {
+      return const GroupAlarm(GroupAlarmKind.unanchored, 'This group says your family joined it, but your phone never said so');
+    }
+    if (w != null && w.id != link.closure) {
       return const GroupAlarm(GroupAlarmKind.notOurs, 'This group\'s record of your family joining isn\'t the one your phone made');
     }
-    if (link.device != null && !group.deviceCounts(link.device!)) {
+    final joined = group.windowAdmissions(homeId);
+    final device = link.device;
+    if (device != null && joined.any((a) => a.device == device) && !group.deviceCounts(device) && !group._removedByOwn(device, homeId)) {
       return const GroupAlarm(GroupAlarmKind.deviceGone, 'The phone that brought your family into this group no longer counts there');
     }
-    final others = group.windowAdmissions(homeId).where((a) => a.device != link.device);
+    // Others the invitation let in before the family said it was in (or while it hasn't yet);
+    // one refused after it was in (a phone of the family's own, opened again) is harmless.
+    final others = [
+      for (final a in joined)
+        if (a.device != device && (w == null || a.joined < w.at)) a.name.isEmpty ? 'a phone' : a.name,
+    ];
     if (others.isNotEmpty) {
-      return const GroupAlarm(GroupAlarmKind.stranger, 'Another phone used your family\'s invitation to this group');
+      return GroupAlarm(GroupAlarmKind.stranger, 'Another phone used your family\'s invitation to this group (${others.join(', ')})',
+          devices: others);
     }
     if (group.unheardWindowPowers(homeId).isNotEmpty) {
       return const GroupAlarm(GroupAlarmKind.backdated, 'The family that invited you dated changes to your family before you joined');
@@ -1423,6 +1465,14 @@ class Den {
     return null;
   }
 
+  /// Whether [device], of [homeId], was removed by a device of that same family.
+  bool _removedByOwn(String device, String homeId) {
+    final e = _mat.store.at(Space.family, RecordType.device, device);
+    if (e == null || e.fields['revoked'] != true) return false;
+    final by = e.times['revoked']?.device;
+    final remover = by == null ? null : _mat.store.at(Space.family, RecordType.device, by);
+    return remover != null && homeOfDevice(_mat.store, Device(remover.rec)) == homeId;
+  }
   /// Starts a group of families on this fresh engine, which has keys and storage of its own (a
   /// device holds one engine per log, so a change signed in one can't be replayed in another).
   /// Writes the genesis as [createFamily] does, with `kind: group` and no stars; the founder's
@@ -1580,7 +1630,12 @@ class Den {
   /// first parent's phone). One change to its own device record, approved as the admission
   /// says, a device of its family in the group, with the key's proof ([requestInviteJoin]). Like
   /// any self-admission it counts once the group's log arrives.
-  Future<void> joinGroup(GroupAdmission admission, {required String deviceName, required DeviceKind kind}) async {
+  ///
+  /// With an invitation and [family] (the family's own engine on this phone), the family's own
+  /// log records where it is joining and as which phone ([GroupLink.home], [GroupLink.device]),
+  /// which no other family can write: [groupAlarm] then tells if the group shows the family in
+  /// without this phone having said so.
+  Future<void> joinGroup(GroupAdmission admission, {required String deviceName, required DeviceKind kind, Den? family}) async {
     final key = await admission.key();
     if (key.id != admission.invite) throw const InvalidInput('That admission\'s key isn\'t its invite\'s');
     final proof = await key.prove(
@@ -1598,19 +1653,55 @@ class Den {
       proof: proof,
       home: admission.home,
     );
+    if (family != null && admission.device == null) {
+      await family.writeGroupLink(
+        group: admission.group,
+        founder: admission.founder,
+        name: admission.name,
+        home: admission.home,
+        device: deviceId,
+      );
+    }
+  }
+
+  /// Whether a peer whose version vector is [peerVector] (a hub's, from a sync) holds this
+  /// device's own way into the group: what an invited family's phone waits for, then syncs once
+  /// more, before saying the family is in ([updateHome]), so it hears of any other phone the
+  /// invitation let in first.
+  bool joinHeldBy(Map<String, int> peerVector) {
+    final own = _mat.log.firstWhereOrNull(
+        (c) => c.device == deviceId && c.type == RecordType.device && c.rid == deviceId && c.fields.containsKey('invite'));
+    return own != null && (peerVector[deviceId] ?? 0) >= own.counter;
+  }
+
+  /// The home whose invitation let this device in, when one did.
+  String? get _windowHome {
+    for (final e in _mat.starts.windowJoins.entries) {
+      if (e.value.containsKey(deviceId)) return e.key;
+    }
+    return null;
   }
 
   /// Changes this device's family in the group (one of its parents, on their own device): its
   /// [name], [color], the [hubs] it syncs at, or its own log's id ([ownFamily], set once).
   ///
   /// [active] says it is in: what an invited family's first parent's phone, the one its
-  /// invitation let in, says at once. That closes the invitation's window (groups.dart,
-  /// `WindowClosure`): it names the window powers over the family (what the family that
-  /// invited it wrote to it) this device holds; from then on nothing the inviting family does to
-  /// it counts, nor anything it dates before that this device didn't hold, nor any other device
-  /// the window let in. With [family] (the family's own engine on this phone) the family's own
-  /// log records how it began ([GroupLink.device], [GroupLink.closure]), which no other family
-  /// can write, for [groupAlarm] to compare the group's log with.
+  /// invitation let in, says once a hub holds its way in ([joinHeldBy]) and it has synced again.
+  /// That closes the invitation's window (groups.dart, `WindowClosure`): it names the window
+  /// powers over the family (what the family that invited it wrote to it) this device holds;
+  /// from then on nothing the inviting family does to it counts, nor anything it dates before
+  /// that this device didn't hold, nor any other device the invitation let in. With [family]
+  /// (the family's own engine on this phone) the family's own log first records how it began
+  /// ([GroupLink.home], [GroupLink.device], [GroupLink.closure]: the change's id is known before
+  /// it is made), which no other family can write, for [groupAlarm] to compare the group's log
+  /// with.
+  ///
+  /// Two phones saying it end the family's place in the group (groups.dart, GroupStarts), so
+  /// it refuses ([InvalidInput]) when this engine knows another device the invitation let in
+  /// ([windowAdmissions]), or another phone said it already, unless [notOurs]: the parent says
+  /// those weren't theirs. Then, while the family is still invited, this phone says it and they
+  /// count for nothing; once another phone said it, this phone says so too, which ends the
+  /// family's place (it is invited again as a new home), rather than leave someone else as them.
   Future<void> updateHome({
     String? name,
     Marker? color,
@@ -1618,43 +1709,95 @@ class Den {
     String? ownFamily,
     bool active = false,
     Den? family,
-  }) async {
-    final (made, homeId) = await _locked(() async {
-      final mine = myHome;
-      final h = mine == null ? null : home(mine);
-      if (!isGroup || h == null) throw const InvalidInput('This device isn\'t in a group');
-      final store = _mat.store;
-      final activates = active && h.status == HomeStatus.invited;
-      final fields = <String, Object?>{
-        'name': ?name,
-        'color': ?color?.name,
-        'hubs': ?hubs,
-        'family': ?ownFamily,
-        if (activates) ...{
-          'status': HomeStatus.active.name,
-          'heard': [
-            for (final c in _mat.log)
-              if (!_mat.rejected.containsKey(c.id) && windowPowerOver(c, store) == h.id) c.id,
-          ]..sort(),
-        },
-      };
-      if (fields.isEmpty) return (const <Change>[], h.id);
-      return (await _commitNow([_Draft(RecordType.home, h.id, Space.family, fields)]), h.id);
-    });
-    final closure = made.where((c) => closesWindow(c)).firstOrNull;
-    if (family != null && closure != null) {
-      final link = family.groupLink(familyId!);
-      await family.writeGroupLink(
-        group: familyId!,
-        founder: founderPubkey!,
-        name: link?.name ?? this.family!.name,
-        hubs: link?.hubs,
-        home: homeId,
-        device: deviceId,
-        closure: closure.id,
-      );
-    }
+    bool notOurs = false,
+  }) =>
+      _locked(() async {
+        if (!isGroup) throw const InvalidInput('This device isn\'t in a group');
+        final window = _windowHome;
+        final mine = myHome ?? window;
+        final h = mine == null ? null : home(mine);
+        if (h == null) throw const InvalidInput('This device isn\'t in a group');
+        final store = _mat.store;
+        final others = [for (final a in windowAdmissions(h.id)) if (a.device != deviceId) a];
+        String names(Iterable<WindowAdmission> list) => list.map((a) => a.name.isEmpty ? 'another phone' : a.name).join(', ');
+        final w = closureFor(h.id);
+        if (active && window == h.id && h.status == HomeStatus.active && w?.author != deviceId) {
+          // Another phone said it already, or this one doesn't count any more: someone else may
+          // be the family.
+          if (!notOurs) {
+            final by = others.where((a) => a.saidIn);
+            throw InvalidInput('Your family is in this group already, from ${by.isEmpty ? 'another phone' : names(by)}: '
+                'if that wasn\'t yours, say so, and your family\'s place there ends');
+          }
+          final own = _mat.starts.windowJoins[h.id]![deviceId]!;
+          await _commitNow([
+            _Draft(RecordType.home, h.id, Space.family, {'status': HomeStatus.active.name, 'heard': <String>[]},
+                actor: InviteProof.parse(own.fields['invite'])?.member, setsActor: true, refusedOk: true),
+          ]);
+          return;
+        }
+        final activates = active && h.status == HomeStatus.invited;
+        if (activates && window == h.id && others.isNotEmpty && !notOurs) {
+          throw InvalidInput('Another phone or browser used this invitation (${names(others)}): say "we\'re in" from just one of them, '
+              'or, if it wasn\'t yours, say so');
+        }
+        final fields = <String, Object?>{
+          'name': ?name,
+          'color': ?color?.name,
+          'hubs': ?hubs,
+          'family': ?ownFamily,
+          if (activates) ...{
+            'status': HomeStatus.active.name,
+            'heard': [
+              for (final c in _mat.log)
+                if (!_mat.rejected.containsKey(c.id) && windowPowerOver(c, store) == h.id) c.id,
+            ]..sort(),
+          },
+        };
+        if (fields.isEmpty) return;
+        // The family's own log first: the change's id is this device's next.
+        var next = _counter + 1;
+        while (_mat.contains('$deviceId:$next')) {
+          next++;
+        }
+        Future<void> anchor(String closure) async {
+          final link = family!.groupLink(familyId!);
+          await family.writeGroupLink(
+            group: familyId!,
+            founder: founderPubkey!,
+            name: link?.name ?? this.family!.name,
+            hubs: link?.hubs,
+            home: h.id,
+            device: deviceId,
+            closure: closure,
+          );
+        }
+
+        if (activates && family != null) await anchor('$deviceId:$next');
+        final made = await _commitNow([_Draft(RecordType.home, h.id, Space.family, fields)]);
+        if (activates && family != null && made.single.id != '$deviceId:$next') await anchor(made.single.id);
+      });
+
+  /// What the people of [homeId] wrote in the group (events, their exceptions, lists, items and
+  /// categories), by its devices or as one of them, in log order, whether it counts or not:
+  /// after a family's place ended (groups.dart, HomeEnd) none of it counts for anyone, and its
+  /// devices offer to copy it into the family's own Den from here.
+  List<Change> sharedByHome(String homeId) {
+    final who = _mat.starts.ofHome(_mat.log, homeId);
+    return [
+      for (final c in _mat.log)
+        if (_sharedTypes.contains(c.type) && (who.devices.contains(c.device) || (c.actor != null && who.people.contains(c.actor)))) c,
+    ];
   }
+
+  static const Set<String> _sharedTypes = {
+    RecordType.event,
+    RecordType.eventException,
+    RecordType.list,
+    RecordType.item,
+    RecordType.category,
+  };
+
   /// Brings people of this parent's family into the group, from the group's engine on the
   /// parent's own phone, with [family] the family's own engine on the same phone. In the group:
   /// a person of this device's family for each of [people] (member ids in [family]) not in yet,
@@ -4993,7 +5136,7 @@ class Den {
           sig: '',
         );
         final rejection = _mat.check(unsigned);
-        if (rejection != null) throw rejection.toException();
+        if (rejection != null && !d.refusedOk) throw rejection.toException();
         final bytes = unsigned.signedBytes;
         final signed = Change(
           id: unsigned.id,
@@ -5007,7 +5150,7 @@ class Den {
           sig: await _keys.sign(bytes),
         );
         final invalid = _mat.add([signed]);
-        if (invalid.isNotEmpty) throw PermissionDenied(invalid.values.first);
+        if (invalid.isNotEmpty && !d.refusedOk) throw PermissionDenied(invalid.values.first);
         made.add(signed);
         if (_snapshots) _hashes[signed.id] = changeHash(signed, bytes);
       }

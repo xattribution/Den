@@ -156,6 +156,12 @@ class Materializer {
   /// let in with an invitation's key can't make every replay of the group cost more and more.
   static const int maxClosureTries = 3;
 
+  /// The most second or later tries one [replay] makes across every family: each costs passes
+  /// over the whole log. A family's first "we're in" is always tried (so nobody can use up the
+  /// tries before a real one), and one for a family whose window is already closed never is (it
+  /// can't count); past this, a later one is refused untried.
+  static const int maxClosureRetries = 8;
+
   /// Whether [c] is a group's genesis record, by its founder.
   bool _groupGenesis(Change c) {
     if (c.type != RecordType.family || c.fields['kind'] != LogKind.group) return false;
@@ -311,9 +317,10 @@ class Materializer {
   /// In a group, how each invited family began is read first, from the log alone
   /// ([GroupStarts]): a home two of its window's devices each said "we're in" for, or that the
   /// family that invited it disowned within a day, ended. A "we're in" counts only as the closure
-  /// in force ([WindowClosure]): each, in log order (at most [maxClosureTries] for one family),
-  /// is tried with itself in force and kept if it counts so, while every closure already kept
-  /// still does (one never displaces another); one that can't is refused as a whole.
+  /// in force ([WindowClosure]): each, in log order (at most [maxClosureTries] for one family,
+  /// and [maxClosureRetries] past each family's first in all; none for a family a kept one
+  /// closed), is tried with itself in force and kept if it counts so, while every closure
+  /// already kept still does (one never displaces another); one that can't is refused as a whole.
   ///
   /// The log is replayed only when one excludes something or a closure is tried. Every replica
   /// does the same from the log alone, and a late change before any of them replays from scratch
@@ -329,17 +336,21 @@ class Materializer {
     final applied = <String>[];
     final dropped = <String>{};
     final tries = <String, int>{};
+    var retries = 0;
     for (var i = 0; i < deciding.length; i++) {
       final c = deciding[i];
       if (applied.contains(c.id) || dropped.contains(c.id)) continue;
       final closure = _closes(c);
       if (closure) {
-        // A "we're in" never counts before it is tried, with itself in force.
+        // A "we're in" never counts before it is tried, with itself in force; one for a family
+        // whose window a kept one closed already can't.
         final n = tries[c.rid] ?? 0;
-        if (n >= maxClosureTries) {
+        final closed = applied.any((id) => _byId[id]!.rid == c.rid && closesWindow(_byId[id]!));
+        if (closed || n >= maxClosureTries || (n > 0 && retries >= maxClosureRetries)) {
           dropped.add(c.id);
           continue;
         }
+        if (n > 0) retries++;
         tries[c.rid] = n + 1;
       } else if (rejected.containsKey(c.id)) {
         continue;
@@ -388,8 +399,14 @@ class Materializer {
   }
 
   /// Whether [c] is a "we're in" [replay] tries: in a group, by a device its family's window let
-  /// in, for a family whose place didn't end.
-  bool _closes(Change c) => _groupLog && closesWindow(c) && _starts.saysIn(c) && !_starts.ended.containsKey(c.rid);
+  /// in, for a family whose place didn't end and whose invitation counted (its home is in the
+  /// store, made by the inviting device: a look-alike invitation from a device the group never
+  /// let in makes no home, so its "we're in"s cost nothing).
+  bool _closes(Change c) {
+    if (!_groupLog || !closesWindow(c) || !_starts.saysIn(c) || _starts.ended.containsKey(c.rid)) return false;
+    final home = store.at(Space.family, RecordType.home, c.rid);
+    return home != null && home.createdDevice == _starts.invitations[c.rid]?.inviter;
+  }
 
   /// Whether [c] has an effect [replay] settles in its second pass.
   bool _hasEffect(Change c) => _namesCutoff(c) || setsRecoveryKey(c) || retiresInviteKey(c) || _closes(c);

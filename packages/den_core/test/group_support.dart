@@ -62,12 +62,12 @@ Future<void> settle(Families f, {bool smiths = true}) async {
 }
 
 /// Lets a fresh engine into the group through [via] with [admission].
-Future<Den> admit(Families f, GroupAdmission admission, Den via, {required String name, DeviceKind kind = DeviceKind.phone}) async {
+Future<Den> admit(Families f, GroupAdmission admission, Den via, {required String name, DeviceKind kind = DeviceKind.phone, Den? family}) async {
   // A device joins after the key that lets it in was made (a fresh engine's clock knows nothing
   // of the group's yet).
   f.clock.advance(const Duration(seconds: 1));
   final engine = await openDen(f.clock);
-  await engine.joinGroup(admission, deviceName: name, kind: kind);
+  await engine.joinGroup(admission, deviceName: name, kind: kind, family: family);
   final result = await via.ingest(engine.changesSince(const {}));
   if (result.invalid.isNotEmpty) throw StateError('$name wasn\'t let in: ${result.invalid.values.first}');
   await sync(via, engine);
@@ -139,12 +139,13 @@ Future<void> inviteSmiths(Families f) async {
 /// Dana's phone lets itself in with the invitation and says the Smiths are in (writing how they
 /// began into the Smiths' own log); then Dana brings the rest of the Smith family in, the hub
 /// first, with keys of the family's own.
-Future<void> smithsJoin(Families f) async {
+Future<void> smithsJoin(Families f, {bool notOurs = false}) async {
   f.clock.advance(const Duration(seconds: 1));
-  f.dana = await admit(f, f.invitation.parent, f.kHub, name: "Dana's phone");
+  f.dana = await admit(f, f.invitation.parent, f.kHub, name: "Dana's phone", family: f.smith);
   // (A moment later: the window lasts from the invitation to Dana's "we're in".)
   f.clock.advance(const Duration(seconds: 1));
-  await f.dana.updateHome(active: true, ownFamily: f.smith.familyId, hubs: const ['https://den.smith.example/ws'], family: f.smith);
+  await f.dana.updateHome(
+      active: true, ownFamily: f.smith.familyId, hubs: const ['https://den.smith.example/ws'], family: f.smith, notOurs: notOurs);
   await f.dana.addToGroup(family: f.smith, people: [f.sDana, f.sMia]);
   f.gMia = f.smith.groupLink(f.group)!.members[f.sMia]!;
   await exchange(f.dana, f.kHub);

@@ -250,14 +250,18 @@ int inviteUsesLeft(RecordStore store, InviteKeyRecord record, {String? except}) 
 }
 
 /// Checked when a change arrives, before it is stored, like the change's own signature: an
-/// invite proof must be signed by the key it names, for the device's key. Validity then decides
-/// whether the family made that key. Changes that carry no proof pass.
+/// invite proof must be signed by the key it names, for the device's key, which the change
+/// carries beside it (`pubkey`, the key of the device that signs the change, its own record's).
+/// A change carrying a malformed proof, or none of that key, is refused just the same: only the
+/// device letting itself in writes `invite`, so a log holds no proof that a holder of the key
+/// didn't sign (groups.dart reads them to tell how an invited family began). Validity then
+/// decides whether the family made that key. Changes that carry no proof pass.
 Future<bool> inviteProofHolds(Change c, String? familyId) async {
   if (c.type != RecordType.device || !c.fields.containsKey('invite')) return true;
   final proof = InviteProof.parse(c.fields['invite']);
   final pubkey = c.fields['pubkey'];
-  // A malformed one is stored and refused by validity, the same on every replica.
-  if (proof == null || pubkey is! String || familyId == null) return true;
+  if (proof == null || pubkey is! String || c.rid != c.device || deviceIdOf(pubkey) != c.device) return false;
+  if (familyId == null) return true;
   return proof.verifies(family: familyId, devicePubkey: pubkey);
 }
 

@@ -431,11 +431,13 @@ void main() {
         expect(d.deviceCounts(impostor.deviceId), isFalse);
         expect(d.closureFor(f.smithHome), isNull);
       }
-      // What the impostor wrote as the Smiths counts for nothing, from its "we're in" on.
+      // Nothing the impostor wrote as the Smiths counts, then or now: their place is gone from
+      // the invitation on, the impostor's way in with it.
+      expect(f.kHub.history().where((h) => h.device == impostor.deviceId), isEmpty);
       final start = clock.now + 86400000;
       final fake = await forgeAs(impostor, type: RecordType.event, rid: newId(), actor: f.gDana,
           fields: {'title': 'Cancelled, don\'t come', 'start': start, 'end': start + 3600000});
-      expect(await refusal(f.kHub, fake), contains('left the group'));
+      expect(await refusal(f.kHub, fake), anyOf(contains('left the group'), contains('isn\'t part of the family')));
       // The real Smiths are invited again as a new home.
       final again = await f.alex.inviteFamily(familyName: 'Smiths', parentName: 'Dana');
       expect(again.home, isNot(f.smithHome));

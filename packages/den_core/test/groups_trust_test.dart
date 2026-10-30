@@ -524,10 +524,12 @@ void main() {
       expect((await fork.ingest(other.changesSince(const {}))).invalid, isEmpty);
       expect(fork.deviceCounts(other.deviceId), isTrue);
       expect(fork.windowAdmissions(f.smithHome).map((a) => a.device), [dana.deviceId, other.deviceId]);
-      // The real Dana says the Smiths are in: the other is gone.
+      // The real Dana's phone, knowing of the other, says the Smiths are in only once Dana says
+      // the other isn't hers: then the other is gone.
       await dana.ingest(fork.changesSince(dana.versionVector));
       clock.advance(const Duration(seconds: 1));
-      await dana.updateHome(active: true);
+      await expectLater(dana.updateHome(active: true), throwsA(isA<InvalidInput>()));
+      await dana.updateHome(active: true, notOurs: true);
       expect((await fork.ingest(dana.changesSince(fork.versionVector))).invalid, isEmpty);
       expect(fork.deviceCounts(other.deviceId), isFalse);
       expect(fork.deviceCounts(dana.deviceId), isTrue);

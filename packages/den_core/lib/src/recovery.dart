@@ -195,8 +195,10 @@ Future<bool> recoveryProofHolds(Change c, String? familyId) async {
   if (c.type != RecordType.device || !c.fields.containsKey('recovery')) return true;
   final proof = RecoveryProof.parse(c.fields['recovery']);
   final pubkey = c.fields['pubkey'];
-  // A malformed one is stored and refused by validity, the same on every replica.
-  if (proof == null || pubkey is! String || familyId == null) return true;
+  // A malformed one, or one without the device's own key beside it, is refused on arrival too:
+  // only the device letting itself in writes `recovery`.
+  if (proof == null || pubkey is! String || c.rid != c.device || deviceIdOf(pubkey) != c.device) return false;
+  if (familyId == null) return true;
   return proof.verifies(family: familyId, devicePubkey: pubkey);
 }
 

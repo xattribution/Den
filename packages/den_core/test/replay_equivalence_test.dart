@@ -759,7 +759,7 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
   // The Parks: Kim's phone lets itself in and says they're in; the Kotvases write another
   // beginning for them with the invitation's key, a device of their own saying the Parks are
   // in just before Kim did. Two "we're in"s: no beginning wins, and the Parks' place ends from
-  // the first on, in every order (GroupStarts).
+  // their invitation on, in every order (GroupStarts).
   clock.advance(const Duration(minutes: 1));
   final parks = await f.alex.inviteFamily(familyName: 'Parks', parentName: 'Kim');
   await exchange(f.alex, f.kHub);
@@ -775,7 +775,8 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
   forged.add(attack(await forge(evil, counter: 2, millis: kimIn.hlc.millis - 1, type: RecordType.home, rid: parks.home, actor: parks.member,
       fields: {'status': 'active', 'heard': kimIn.fields['heard']})));
   attacks.add(kimIn.id);
-  groupKept[seed]!.add(ownJoin(kim).id);
+  // From the Parks' invitation on, nothing of theirs counts: Kim's way in, the Kotvases' device.
+  attacks.addAll([ownJoin(kim).id, forged[forged.length - 2].id]);
   // The Ohs: Ann's phone lets itself in and says they're in; within the day, the phone that sent
   // the invitation says that wasn't them, and the Ohs' place ends.
   clock.advance(const Duration(minutes: 1));
@@ -784,7 +785,9 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
   final ann = await admit(f, ohs.parent, f.kHub, name: "Ann's phone");
   clock.advance(const Duration(seconds: 2));
   await ann.updateHome(active: true);
-  attacks.add(ann.changesSince(const {}).lastWhere((c) => c.type == RecordType.home).id);
+  attacks
+    ..add(ann.changesSince(const {}).lastWhere((c) => c.type == RecordType.home).id)
+    ..add(ownJoin(ann).id);
   await exchange(ann, f.kHub);
   await exchange(f.alex, f.kHub);
   clock.advance(Duration(hours: 1 + random.nextInt(20)));

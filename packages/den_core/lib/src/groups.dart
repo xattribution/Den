@@ -174,21 +174,35 @@ String homeIdFor(String windowKey, String device) {
 const Duration disownWindow = Duration(hours: 24);
 
 /// Why an invited family's place in a group ended before it began for good ([GroupStarts]):
-/// two devices let in with its invitation's key each said it was in (contested), or the family
-/// that invited it said "That wasn't them" within a day. Either way the home counts as left for
-/// everyone from its first "we're in" on, and nothing brings it back.
+/// two devices let in with its invitation's key each said it was in (contested), or the phone
+/// that sent the invitation said "That wasn't them" within a day of the first "we're in". Either
+/// way the home counts as left for everyone from its invitation on: nothing any device let in
+/// with that key, or anyone as one of its people, ever did in the group counts, and nothing
+/// brings it back. The family's whole shared history in the group goes with it (its own Den
+/// keeps everything): the price of joining at once, with no one to approve, so that the family
+/// that invited it can end it, but never act as it.
 class HomeEnd {
-  const HomeEnd({required this.home, required this.at, required this.contested, this.disowned, this.closings = const []});
+  const HomeEnd({
+    required this.home,
+    required this.at,
+    required this.firstIn,
+    required this.contested,
+    this.disowned,
+    this.closings = const [],
+  });
 
   final String home;
 
-  /// The clock of the first "we're in": from it on, nothing of the home counts.
+  /// The clock of its invitation: from it on, nothing of the home counts.
   final Hlc at;
+
+  /// The clock of its first "we're in" (the day for "That wasn't them" runs from it).
+  final Hlc firstIn;
 
   /// Whether two or more devices let in with the invitation's key each said the family is in.
   final bool contested;
 
-  /// The inviting family's "That wasn't them" that ended it, when one did.
+  /// The inviting phone's "That wasn't them" that ended it, when one did.
   final String? disowned;
 
   /// The "we're in" changes the log holds for the home, from devices let in with its key.
@@ -203,8 +217,10 @@ class HomeEnd {
 ///
 /// - an invitation: a `home` change naming its one key (`key`), whose id is [homeIdFor] that
 ///   key and the device that wrote it (the inviting device);
-/// - the devices let in through its window: those whose own first change carries a proof by
-///   that key for that home;
+/// - the devices let in through its window: those whose own change to their own record carries
+///   a proof by that key for that home, beside the device's own key (every replica refused,
+///   on arrival, any such proof the key didn't sign: `inviteProofHolds`), so only a holder of
+///   the invitation's key makes one;
 /// - "we're in": a change setting that home `active`, by one of those devices;
 /// - "That wasn't them": a change saying `disowned`, by the inviting device.
 ///
@@ -213,8 +229,8 @@ class HomeEnd {
 /// first "we're in". Changes from a window device, or of these shapes, decide verdicts: the
 /// materializer replays when one arrives late.
 class GroupStarts {
-  /// Home -> its invitation: its key, the device that made it, and the change.
-  final Map<String, ({String key, String inviter, String change})> invitations = {};
+  /// Home -> its invitation: its key, the device that made it, the change and its clock.
+  final Map<String, ({String key, String inviter, String change, Hlc at})> invitations = {};
 
   /// Home -> the devices let in with its key, each with its first change, in log order.
   final Map<String, Map<String, Change>> windowJoins = {};
@@ -232,7 +248,9 @@ class GroupStarts {
   static GroupStarts of(Iterable<Change> log) {
     final s = GroupStarts();
     for (final c in log) {
-      if (isInvitation(c)) s.invitations.putIfAbsent(c.rid, () => (key: c.fields['key']! as String, inviter: c.device, change: c.id));
+      if (isInvitation(c)) {
+        s.invitations.putIfAbsent(c.rid, () => (key: c.fields['key']! as String, inviter: c.device, change: c.id, at: c.hlc));
+      }
     }
     if (s.invitations.isEmpty) return s;
     for (final c in log) {
@@ -251,7 +269,8 @@ class GroupStarts {
       if (authors.length < 2 && disown == null) continue;
       s.ended[e.key] = HomeEnd(
         home: e.key,
-        at: first.hlc,
+        at: s.invitations[e.key]!.at,
+        firstIn: first.hlc,
         contested: authors.length >= 2,
         disowned: disown?.id,
         closings: [for (final c in e.value) c.id],
@@ -267,14 +286,16 @@ class GroupStarts {
     return key is String && c.fields['status'] == HomeStatus.invited.name && c.rid == homeIdFor(key, c.device);
   }
 
-  /// The home whose window [c] lets its device in through (its first change, with a proof by
-  /// that home's key), or null.
+  /// The home whose window [c] lets its device in through, or null: a change of a device to its
+  /// own record, with its own key beside it, carrying a proof by that home's key.
   String? windowJoinInto(Change c) {
     if (c.type != RecordType.device || c.rid != c.device) return null;
     final home = c.fields['home'];
     if (home is! String) return null;
     final key = invitations[home]?.key;
     if (key == null) return null;
+    final pubkey = c.fields['pubkey'];
+    if (pubkey is! String || deviceIdOf(pubkey) != c.device) return null;
     final proof = InviteProof.parse(c.fields['invite']);
     return proof != null && proof.key == key ? home : null;
   }
@@ -289,6 +310,21 @@ class GroupStarts {
   /// Whether [c] is one of the changes these facts read: the materializer replays when one
   /// arrives late.
   bool decides(Change c) => isInvitation(c) || windowJoinInto(c) != null || saysIn(c) || isDisown(c);
+
+  /// The people and devices of the invited home [home] as the log names them, whether they count
+  /// or not: the people made in it, and the devices that joined as of it or as one of them.
+  ({Set<String> people, Set<String> devices}) ofHome(Iterable<Change> log, String home) {
+    final people = <String>{}, devices = <String>{};
+    for (final c in log) {
+      if (c.type == RecordType.member && c.fields['home'] == home) people.add(c.rid);
+    }
+    for (final c in log) {
+      if (c.type != RecordType.device) continue;
+      final member = c.fields['member'];
+      if (c.fields['home'] == home || (member is String && people.contains(member))) devices.add(c.rid);
+    }
+    return (people: people, devices: devices);
+  }
 }
 
 /// An invited home's window closed by its first parent's phone saying it is in: the change
@@ -364,13 +400,17 @@ enum GroupAlarmKind {
   /// The group says the family left, and it didn't.
   removed,
 
+  /// The group says the family is in, and its phone never said so.
+  unanchored,
+
   /// The group's "we're in" for the family isn't the one its phone made.
   notOurs,
 
-  /// The phone that brought the family in no longer counts in the group.
+  /// The phone that brought the family in no longer counts in the group, and the family didn't
+  /// remove it.
   deviceGone,
 
-  /// Another phone used the family's invitation.
+  /// Another phone used the family's invitation before it said it was in.
   stranger,
 
   /// The inviting family dated changes to the family before it said it was in, which that phone
@@ -381,9 +421,18 @@ enum GroupAlarmKind {
 /// Something wrong with how a family began in a group, as its own log recorded it
 /// ([Den.groupAlarm]), for its devices to show.
 class GroupAlarm {
-  const GroupAlarm(this.kind, this.message);
+  const GroupAlarm(this.kind, this.message, {this.devices = const [], this.mayBeOurs = false});
   final GroupAlarmKind kind;
   final String message;
+
+  /// The names of the devices it is about (the phones that each said they were the family, the
+  /// others that used its invitation), for the app to show.
+  final List<String> devices;
+
+  /// For [GroupAlarmKind.contested]: the family's own phone was one of those that said it, so
+  /// the other may have been the family's too (the invitation opened twice, in a browser and in
+  /// the app, say) rather than someone else.
+  final bool mayBeOurs;
 
   @override
   String toString() => '${kind.name}: $message';
