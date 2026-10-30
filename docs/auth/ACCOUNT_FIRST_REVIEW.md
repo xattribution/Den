@@ -104,7 +104,7 @@ Strength: small and easy to reason about. Weakness: permission inputs are split 
 - Set by `Den.setSignIn` (`core/den.dart:949-964`): a member can set their own; only a parent (`manageFamily`) can set someone else's.
 - Checked by `Den.verifySignIn` (`core/den.dart:509-519`): `none` passes except for a parent on a shared display.
 - Wrong tries: `Den.noteSignInTries` (`core/den.dart:521-532`) writes a `signInTries` record (`core/schema.dart:420-424`) so parents see it in History. It is a notification only; I found no lockout in core [INF: app-side delay not re-read].
-- **Risk (high):** the salt and hash live in the replicated family space, so every family device and any backup holds them. A 4-digit PIN has 10,000 values; at 20k PBKDF2 rounds that is brute-forced offline in seconds to minutes on any laptop [INF on exact time]. A stronger KDF raises the cost but can't fix a 10^4 keyspace. The fix is to stop replicating the verifier (see section 2.1).
+- **Risk (low, accepted by Jared; see decision 7):** the salt and hash live in the replicated family space, so every family device and any backup holds them. A 4-digit PIN has 10,000 values; at 20k PBKDF2 rounds that is brute-forced offline in seconds to minutes on any laptop [INF on exact time]. A stronger KDF raises the cost but can't fix a 10^4 keyspace. Jared accepts this: Den is a scheduling app with no payments, and PINs must work offline. Hardening may raise the cost but must not move the check off the device.
 - Kids today are plain members; there is no "kid account" concept and no binding to a parent. That matches the locked decision below.
 
 ### 1.12 Risk summary
@@ -116,7 +116,7 @@ Strength: small and easy to reason about. Weakness: permission inputs are split 
 | Pending requests from leaked invite words | invites `:64-66` | Medium |
 | Admin only from a parent's phone | device_auth `:142-148` | Medium (usability) |
 | No `/auth/*` rate budget | edge `:160-184` | Medium once OIDC lands |
-| PIN verifier replicated, offline-guessable | `core/secrets.dart:6-34`, `schema.dart:373-377` | High |
+| PIN verifier replicated, offline-guessable | `core/secrets.dart:6-34`, `schema.dart:373-377` | Low, accepted (decision 7) |
 | No PIN lockout, only a notice | `core/den.dart:521-532` | Medium |
 
 ---
@@ -140,7 +140,9 @@ grant {
 ```
 
 Rules:
-- **effective(grant) = grant.perms ∩ currentPerms(grant.by)**, computed at evaluation time, never stored. Demotion or removal of `by` cascades automatically.
+- **effective(grant) = grant.perms ∩ currentPerms(grant.by)**, computed at evaluation time, never stored. Demotion of `by` narrows automatically.
+- **Cascade revoke on granter removal (decision 8):** when the account in `by` is removed from the family (or loses its binding), every grant it authorized is revoked in the same commit, and each of those devices is signed out of the server (sessions, sockets, tokens dropped). Their device keys stay in place, so the device can be re-paired by QR, not reinstalled.
+- **Re-pair:** any surviving member with parent-level perms (a parent, an adult kid or uncle with parent perms, up to the server admin via CLI) scans the signed-out device's QR and writes a new grant with themselves as `by`. Perms are capped by the new granter, as for any grant.
 - A person's own phone: `to: device, by: self, actsAs: self, perms: all of mine`.
 - A shared screen: `by: <parent>, actsAs: null`, perms the parent ticked. Labels like "kitchen" are labels only.
 - MCP/OAuth/integration/ICS: `to: connection`, `by` = approving parent. The `connection` record keeps `tokenHash` and points to its grant.
@@ -153,7 +155,21 @@ Rules:
 - A kid acts only on a device or screen that already holds a parent-issued grant. The kid unlocks it with a PIN; the device then acts with `actsAs: <kid>` and effective perms = **grant.perms ∩ kidPerms** (the fixed kid set in `core/permissions.dart:43-54`, plus any per-kid extras a parent ticks). When the PIN session ends, the device returns to its own grant.
 - Kid mode is a limited "dumb mode": no settings, no Access screen, no device list, no connections, no invites.
 - Optional conversion: a parent adds an email to the kid profile and sends a normal invite. When the kid signs in with Google/Apple under the invite rule, the hub binds the account to the **same member id**; history, chores, stars (points) and lists stay because they reference the member id. The role stays `kid` unless a parent changes it [INF: whether a converted kid keeps kid perms by default].
-- PIN storage target: the verifier is no longer replicated in the family space. Option A [INF, preferred]: the hub keeps `{salt, hash}` with a memory-hard KDF (argon2id, e.g. m=64 MiB, t=3, p=1; or scrypt N=2^15, r=8, p=1) and verifies on request, so attempts are online and rate-limited. Option B: keep a device-local verifier, sealed to authorized devices only. Either way, PINs become 6 digits minimum for new sets [INF].
+- PIN storage (decided, decision 7): each kid has one PIN. Its salted verifier is synced to every family device in the family space (as today, `core/schema.dart:416`) and verified locally, so kid sign-in works with no network. A parent sets or resets it once, and the change syncs everywhere. There is no hub-held verifier and no online check. Accepted risk: anyone with a family device or backup can brute-force a 4-digit PIN offline. Allowed hardening, as long as it keeps working offline: (a) a versioned, stronger KDF (argon2id, e.g. m=64 MiB, t=3, p=1, or scrypt N=2^15, r=8, p=1, with a 16-byte salt [INF on choice and parameters; check wall-screen CPU cost]); (b) a per-device lockout/backoff counter (not synced).
+
+### 2.2 Revoke and re-pair: today vs target
+Today:
+- `Den.removeMember` (`core/den.dart:917-937`) revokes only the devices the member **owns** (`d.member == id`, `:920-922`), retires invites they made (`:928`), and rotates the spaces those devices held (`:936`). Devices they **approved** for others (`approvedBy`) stay approved [INF: no cascade on `approvedBy` found in `removeMember`].
+- `Den.revokeDevice` (`core/den.dart:991-998`) writes `{revoked: true, revokedAfter: N}` (`:1001-1008`) and rotates space keys; changes signed after `N` count for nothing (`core/validity.dart:38-55`).
+- A revoked or removed device is refused (`core/validity.dart:162-164`) and can't ask to join again (`core/validity.dart:256`). Re-pairing today means removing it and adding it as a new device [INF: app flow not re-read]; the owner can't be changed while approved (`core/validity.dart:493-495`).
+
+Target edge cases:
+- Owner of a phone removed: its own-device grant ends; the phone is signed out.
+- Parent who set up the kitchen screen removed: the screen's grant is revoked and it is signed out; it shows its QR. Another parent-level adult scans it and re-grants.
+- Last parent-level person removed: only the server admin can re-pair (`den_hub devices` CLI, plus a QR-pair command [INF]).
+- A kid PIN session on a signed-out screen ends with the screen grant.
+- Re-pair under a new granter must not inherit the old grant's perms; the new granter ticks perms again (defaults to their own cap) [INF].
+- Offline device: it learns of the revoke when it next syncs; changes it signed after `revokedAfter` are discarded, as today.
 
 Migration: first deploy writes one grant per approved device (`by` = `approvedBy`, `actsAs` = `member`, perms = what its mode allows today). Each parent then signs in once from a device they already use to bind their account. Nothing re-pairs.
 
@@ -167,6 +183,8 @@ Migration: first deploy writes one grant per approved device (`by` = `approvedBy
 4. **Visibility and pruning.** The family creator, every parent, and the server admin (hub CLI) can see and revoke any device, screen, or connection.
 5. **Kids have no accounts by default.** A kid is a family-level sub-profile, not owned by or attached to one parent. A kid signs in only with a parent-set PIN, only on a device or screen a parent already authorized. Kid profiles get kid permissions only and can never approve connections or devices. A parent may add an email to a kid profile and convert it to a full account through the normal invite rule; that's the parent's choice.
 6. **Every connection needs parent approval.** MCP, OAuth, integrations, calendar (ICS) feeds. Kids can never approve or create one. A connection's perms are capped by the approving parent's.
+7. **One PIN per kid, synced to every family device, verified locally.** A parent sets or changes it once; it syncs everywhere through the family log (today's model), and each device checks it locally so it works offline. Any lockout is per-device. A parent reset propagates via sync. Reliability beats secrecy: Den is a scheduling app with no payments. The offline-crack risk is known and accepted (low). Only hardening that keeps offline use is allowed: a local per-device lockout/backoff and a versioned stronger KDF.
+8. **Removing an owner or authorizing account signs out every device they authorized.** Any surviving adult with parent-level perms (adult kids, uncles, etc., up to the server admin) can scan that device's QR code to re-pair it under their own account.
 
 ---
 
@@ -193,7 +211,7 @@ Tests: `iss`/`aud` exact match, nonce, PKCE, expired/forged ID token, `email_ver
 - [ ] Hub signing key always on; public half in family record.
 
 Acceptance: every existing device keeps working; every approved device has exactly one migrated grant; removing a grant's `by` drops access with no rewrite.
-Tests: migration idempotence; demote parent → screen they authorized loses parent-only perms; remove parent → their screen grants revoked by default; convergence/replay tests (`core/test/convergence_test.dart`, `replay_equivalence_test.dart`) pass with grants.
+Tests: migration idempotence; demote parent → screen they authorized loses parent-only perms; remove parent → every grant they authorized is revoked and those devices are signed out (decision 8); convergence/replay tests (`core/test/convergence_test.dart`, `replay_equivalence_test.dart`) pass with grants.
 
 ### Phase 3: grant-based flows in hub and app
 - [ ] `hub/invites.dart`: invites gain `email`; redeem = verified-email sign-in matching an active, unexpired, unused invite → hub signs account + device grants, burns invite. Remove `maxJoins` (`:66`).
@@ -201,7 +219,8 @@ Tests: migration idempotence; demote parent → screen they authorized loses par
 - [ ] `hub/device_auth.dart:142-148`: "parent's own device" becomes "holder of a grant from a parent account with the needed perm".
 - [ ] `hub/access.dart:38-45`, `hub/oauth.dart:486-533`: token → connection → grant → authorizer. Approve from a signed-in parent browser. Kids refused.
 - [ ] New `den_hub devices list|revoke` in `packages/den_hub/bin/den_hub.dart`.
-- [ ] App (`app/lib`): sign-in screen; one "Access" screen per person/device/connection with perm checkboxes; QR scan → perms sheet; devices list for creator/parents; "screens that lost their owner" list with one-tap re-grant.
+- [ ] App (`app/lib`): sign-in screen; one "Access" screen per person/device/connection with perm checkboxes; QR scan → perms sheet; devices list for creator/parents; signed-out devices show their pairing QR, and any parent-level adult can scan it to re-pair under their own account.
+- [ ] Cascade on granter removal: `removeMember` (`core/den.dart:917-937`) also revokes every grant whose `by` is that account, and the hub drops their sessions, sockets and tokens. Tests: remove parent A → A's screens and phones are signed out on the next request/socket frame; parent B re-pairs via QR → new grant `by: B`, perms ≤ B's; adult with parent perms can re-pair; kid or plain adult refused; server admin re-pairs when no parent remains; offline device's post-revoke changes discarded.
 
 Acceptance: the five locked decisions in section 3 each have a passing test. A kid account attempting to approve any connection type gets 403 and no record.
 Tests: invite single-use, 7-day expiry, revocable, lowercase match; new-device sign-in gets exactly account perms; ICS feed token creation needs parent; CLI list/revoke.
@@ -211,13 +230,13 @@ Tests: invite single-use, 7-day expiry, revocable, lowercase match; new-device s
 - [ ] `core/validity.dart`: refuse `grant`, device approval and `connection` changes with a kid actor (alongside `_connection`, `:649+`, and `_device`, `:479+`).
 - [ ] `core/permissions.dart`: `kidPerms` as a named set; effective = grant ∩ kidPerms while a kid PIN session is active.
 - [ ] `core/secrets.dart`: new KDF (argon2id or scrypt [INF on choice and library]), per-PIN 16-byte salt, versioned hash format (`v2$argon2id$...`); keep PBKDF2 verify for old hashes and rehash on next successful sign-in.
-- [ ] Hub PIN verify endpoint (new `hub/pins.dart` [INF on placement]) with an `edge.dart` budget: per device+member, 5 wrong tries then 1 min, doubling to a 1 h cap; after 20 the profile locks on that device until a parent unlocks [INF on numbers]. Existing `signInTries` notice kept.
-- [ ] Parent PIN reset: a parent sets a new PIN from their device or signed-in browser via `setSignIn` (`core/den.dart:949-964`); reset clears lockouts and writes History. Kids can't change their own PIN [INF: today `setSignIn` lets a member set their own, `:958`; restrict for kids].
+- [ ] One synced PIN per kid; the check stays local on each device (`Den.verifySignIn`, `core/den.dart:509-519`); no hub endpoint. Add an optional per-device lockout/backoff: 5 wrong tries then 1 min, doubling to a 1 h cap; after 20 the profile locks on that device until a parent unlocks [INF on numbers]. The counter is local, so it works offline. The existing `signInTries` notice (`core/den.dart:521-532`) is kept.
+- [ ] Parent PIN reset: a parent sets a new PIN from their device or signed-in browser via `setSignIn` (`core/den.dart:949-964`); the new PIN syncs to every family device, each device clears its local lockout when it receives the reset, and History records it. Kids can't change their own PIN [INF: today `setSignIn` lets a member set their own, `:958`; restrict for kids].
 - [ ] Conversion flow: parent adds email → invite → kid signs in → account bound to the existing member id; old PIN optional afterwards.
 - [ ] App: kid PIN pad on authorized devices; kid mode UI without settings/access/connections.
 
-Acceptance: a kid can use only parent-authorized devices, only with a PIN, and only with kid perms. Every kid attempt to approve a device/connection or write a grant is refused by validity on every replica. A converted kid keeps all history and stars.
-Tests: KDF params and salt uniqueness; old PBKDF2 hashes verify and are upgraded; verifier absent from replicated family records after migration; lockout timing and parent unlock; PIN reset by parent ok, by kid refused; kid actor creating grant/device/connection rejected; conversion keeps member id, points balance and History; a kid on an unauthorized device gets nothing.
+Acceptance: a kid can use only parent-authorized devices, only with a PIN that is checked offline, and only with kid perms. Every kid attempt to approve a device/connection or write a grant is refused by validity on every replica. A converted kid keeps all history and stars.
+Tests: one PIN set on device A verifies on devices B and C after sync; parent reset on A invalidates the old PIN on B after sync; lockout on A does not lock B; KDF params and salt uniqueness; old PBKDF2 hashes verify and are upgraded; PIN sign-in works in airplane mode on an authorized device; no network call during PIN verify; local lockout timing survives app restart and parent unlock clears it; PIN reset by parent ok, by kid refused; kid actor creating grant/device/connection rejected; conversion keeps member id, points balance and History; a kid on an unauthorized device gets nothing.
 
 ### Phase 4: require grants, delete folded code
 - [ ] `core/validity.dart`: require grants. Remove `_join` (`:253-271`), the self-approval dispatch for `recovery`/`invite` (`:142-149`) in favour of one "grant proof" check, and the parent-device approval branch (`:509-513`).
@@ -253,8 +272,7 @@ Acceptance: `https://den.kotvas.app` reachable only via tunnel (no open 443); si
 | `core/invite_keys.dart`, `core/recovery.dart` | fold into grant proof | 4 |
 | `hub/oidc.dart`, `hub/accounts.dart` | new | 1 |
 | `core/secrets.dart` | argon2id/scrypt, versioned hash, rehash | 3b |
-| `core/den.dart` | `setSignIn` kid restriction, parent reset, conversion bind | 3b |
-| `hub/pins.dart` [INF] | online PIN verify + lockout | 3b |
+| `core/den.dart` | `setSignIn` kid restriction, parent reset, conversion bind, local PIN lockout; `removeMember` cascade over grants `by` | 3, 3b |
 | `hub/hub.dart` | auth and grant routes | 1, 3 |
 | `hub/edge.dart` | `/auth/*` budget | 1 |
 | `hub/invites.dart` | email invites, auto-admit, drop `maxJoins` | 3 |
@@ -270,8 +288,7 @@ Acceptance: `https://den.kotvas.app` reachable only via tunnel (no open 443); si
 
 ## 5. Open questions
 1. Keep the PIN on screens for adults ("act as me on the kitchen tablet"), or require a phone tap? (Kids use PINs: decided.)
-5. PIN verifier location: hub-held (online, rate-limited) or device-local sealed? Plan prefers hub-held [INF].
 2. A grandparent without Google or Apple: email magic links, or require an account?
 3. Tunnel (setup B) or Cloudflare proxy in front of Caddy (setup A)? This plan assumes B.
 4. Dual-run length before deleting the private setup [INF: 2 weeks proposed].
-6. How long does an orphaned screen stay in the "lost their owner" list before deletion?
+5. How long does a signed-out device keep showing its QR before it wipes local data [INF: suggest 30 days]? (The "lost their owner" list is replaced by decision 8.)
