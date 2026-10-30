@@ -775,6 +775,7 @@ class Den {
         _root = TrustRoot();
         _meta = {};
         _floor.clear();
+        _refusedHeld.clear();
         _pending.clear();
         _keyring.clear();
         _pendingKeys.clear();
@@ -1395,8 +1396,10 @@ class Den {
   /// recorded it ([GroupLink.home], [GroupLink.device], [GroupLink.closure], written by its first
   /// parent's phone as it joined and as it said the family was in, which no other family can
   /// write). The family's devices and its hub run it after each sync; null when all is well, or
-  /// before the family recorded where it joined. What the family did itself (replacing that
-  /// phone, a phone of its own refused after it was in) raises nothing.
+  /// before the family recorded where it joined. Whatever ended the family's place raises one
+  /// (contested, disowned, or the family that invited it ending first), and so does a group log
+  /// with no record of the family at all. What the family did itself (replacing that phone, a
+  /// phone of its own refused after it was in) raises nothing.
   ///
   /// The two logs travel apart, so a device can hear of one change before the other: show an
   /// alarm once it holds after a sync of both.
@@ -1404,8 +1407,19 @@ class Den {
     final homeId = link.home;
     if (isGroup || homeId == null || link.group != group.familyId) return null;
     final h = group.home(homeId);
-    if (h == null) return null;
     final end = group.homeEnd(homeId);
+    if (end != null && !end.began) {
+      final by = group.home(end.invitedBy!)?.name;
+      return GroupAlarm(
+          GroupAlarmKind.inviterEnded,
+          'The family that invited you to this group${by == null || by.isEmpty ? '' : ' ($by)'} lost its place there before your '
+          'family joined, so your invitation ended: ask a family in the group to invite you again');
+    }
+    if (h == null) {
+      // Before the group's log arrives there is nothing to compare; once it has, the family
+      // should be in it.
+      return group.isGroup ? const GroupAlarm(GroupAlarmKind.missing, 'This group has no record of your family') : null;
+    }
     if (end != null) {
       final closers = <String>{
         for (final id in end.closings)
@@ -1575,6 +1589,9 @@ class Den {
       _locked(() async {
         final mine = myHome;
         if (!isGroup || mine == null) throw const InvalidInput('Only a family in a group invites another');
+        // A family whose place ended keeps what it made on record (groups.dart, endsJudgedPast),
+        // so validity alone wouldn't stop its phone inviting another: this device does.
+        if (homeLeft(_mat.store, mine)) throw const InvalidInput('Your family isn\'t in this group any more');
         if (life > inviteKeyMaxLife) throw const InvalidInput('An invitation lasts a week at most');
         final parentKey = await InviteKey.generate();
         final homeId = homeIdFor(parentKey.publicKey, deviceId), memberId = newId();
@@ -1634,8 +1651,9 @@ class Den {
   /// With an invitation and [family] (the family's own engine on this phone), the family's own
   /// log records where it is joining and as which phone ([GroupLink.home], [GroupLink.device]),
   /// which no other family can write: [groupAlarm] then tells if the group shows the family in
-  /// without this phone having said so.
-  Future<void> joinGroup(GroupAdmission admission, {required String deviceName, required DeviceKind kind, Den? family}) async {
+  /// without this phone having said so. [family] is required so that leaving it out is a choice:
+  /// null only where there is no family engine (a family's own admission, which records nothing).
+  Future<void> joinGroup(GroupAdmission admission, {required String deviceName, required DeviceKind kind, required Den? family}) async {
     final key = await admission.key();
     if (key.id != admission.invite) throw const InvalidInput('That admission\'s key isn\'t its invite\'s');
     final proof = await key.prove(
@@ -1702,13 +1720,16 @@ class Den {
   /// those weren't theirs. Then, while the family is still invited, this phone says it and they
   /// count for nothing; once another phone said it, this phone says so too, which ends the
   /// family's place (it is invited again as a new home), rather than leave someone else as them.
+  ///
+  /// [family] is required so that leaving it out is a choice: null only where there is no family
+  /// engine on this device, or for a change that doesn't say the family is in.
   Future<void> updateHome({
     String? name,
     Marker? color,
     List<String>? hubs,
     String? ownFamily,
     bool active = false,
-    Den? family,
+    required Den? family,
     bool notOurs = false,
   }) =>
       _locked(() async {
@@ -1717,6 +1738,12 @@ class Den {
         final mine = myHome ?? window;
         final h = mine == null ? null : home(mine);
         if (h == null) throw const InvalidInput('This device isn\'t in a group');
+        if (h.left) {
+          throw InvalidInput(h.ended == HomeEnd.inviterEnded
+              ? 'The family that invited yours lost its place in this group before you joined, so your invitation ended: '
+                  'ask a family in the group to invite you again'
+              : '${h.name} isn\'t in this group any more');
+        }
         final store = _mat.store;
         final others = [for (final a in windowAdmissions(h.id)) if (a.device != deviceId) a];
         String names(Iterable<WindowAdmission> list) => list.map((a) => a.name.isEmpty ? 'another phone' : a.name).join(', ');
@@ -1797,6 +1824,37 @@ class Den {
     RecordType.item,
     RecordType.category,
   };
+
+  /// What other families wrote on [homeId]'s records in the group (an item on one of its lists,
+  /// a change to one of its events or an occurrence of it, and the like), in log order, whether
+  /// it counts or not. Once the family's place ended (groups.dart, HomeEnd) its records are gone
+  /// for everyone, and these with them; each family's devices may offer to keep its own (say,
+  /// "Add 'Shin guards' to one of your lists?"). What the family itself wrote is [sharedByHome].
+  List<Change> attachedToHome(String homeId) {
+    final own = sharedByHome(homeId);
+    final ownIds = {for (final c in own) c.id};
+    // The family's own records, by type: those it made.
+    final made = <String, Set<String>>{};
+    for (final c in own) {
+      (made[c.type] ??= {}).add(c.rid);
+    }
+    final lists = made[RecordType.list] ?? const <String>{};
+    final events = made[RecordType.event] ?? const <String>{};
+    // Others' items on its lists, and their changed occurrences of its events, edited later too.
+    final onLists = <String>{}, onEvents = <String>{};
+    final out = <Change>[];
+    for (final c in _mat.log) {
+      if (!_sharedTypes.contains(c.type) || ownIds.contains(c.id)) continue;
+      final on = (made[c.type]?.contains(c.rid) ?? false) ||
+          (c.type == RecordType.item && (lists.contains(c.fields['list']) || onLists.contains(c.rid))) ||
+          (c.type == RecordType.eventException && (events.contains(c.fields['event']) || onEvents.contains(c.rid)));
+      if (!on) continue;
+      if (c.type == RecordType.item) onLists.add(c.rid);
+      if (c.type == RecordType.eventException) onEvents.add(c.rid);
+      out.add(c);
+    }
+    return out;
+  }
 
   /// Brings people of this parent's family into the group, from the group's engine on the
   /// parent's own phone, with [family] the family's own engine on the same phone. In the group:
@@ -2619,8 +2677,39 @@ class Den {
   List<Occurrence> occurrences(int start, int end) => List.of(_occurrencesIn(start, end));
 
   /// [occurrences], shared: kept until an event, an occurrence or the family's time zone changes,
-  /// and then worked out again only for the events that changed.
-  List<Occurrence> _occurrencesIn(int start, int end) =>
+  /// and then worked out again only for the events that changed. In a group, a ride's driver
+  /// whose family isn't in it (it left, or its place ended: groups.dart, HomeEnd) reads as
+  /// nobody, so that leg needs a driver again ([gaps]).
+  List<Occurrence> _occurrencesIn(int start, int end) => isGroup ? _groupOccurrencesIn(start, end) : _ownOccurrencesIn(start, end);
+
+  List<Occurrence> _groupOccurrencesIn(int start, int end) => _memo('groupOccurrences|$start|$end', const {
+        RecordType.event, RecordType.eventException, RecordType.family, RecordType.member, RecordType.home, //
+      }, () {
+        final drives = {for (final m in members) m.id};
+        return [
+          for (final o in _ownOccurrencesIn(start, end))
+            if (o.rides.every((r) => r.driver == null || drives.contains(r.driver))) o else _withoutDrivers(o, drives),
+        ];
+      });
+
+  /// [o] with only the drivers of [drives].
+  static Occurrence _withoutDrivers(Occurrence o, Set<String> drives) => Occurrence(
+        event: o.event,
+        start: o.start,
+        end: o.end,
+        title: o.title,
+        location: o.location,
+        notes: o.notes,
+        assignees: o.assignees,
+        allDay: o.allDay,
+        exceptionId: o.exceptionId,
+        seriesStart: o.seriesStart,
+        rides: [for (final r in o.rides) drives.contains(r.driver) ? r : Ride(r.leg, null)],
+        reminders: o.reminders,
+        category: o.category,
+      );
+
+  List<Occurrence> _ownOccurrencesIn(int start, int end) =>
       _memo('occurrences|$start|$end', const {RecordType.event, RecordType.eventException, RecordType.family}, () {
         final zoneName = _zone;
         final index = _eventIndex;
@@ -2975,6 +3064,10 @@ class Den {
   void _checkDriver(String id) {
     final m = member(id);
     if (m == null) throw const InvalidInput('That person isn\'t in the family');
+    // In a group, someone of a family that isn't in it any more (it left, or its place ended)
+    // drives nobody. Validity can't say so of an ended family (its end reaches back past what
+    // others named it for, groups.dart), so this device does, for what it writes.
+    if (isGroup && homeLeft(_mat.store, m.home)) throw InvalidInput('${m.name}\'s family isn\'t in this group any more');
     if (!canDrive(m)) throw InvalidInput('${m.name} can\'t drive: in Den, parents and adults drive');
   }
 
@@ -4188,18 +4281,31 @@ class Den {
     final readable = readableSpaces;
     final q = query?.trim().toLowerCase();
     final out = <HistoryEntry>[];
+    // In a group, what a family whose place ended made of itself stays on record (groups.dart,
+    // endsJudgedPast) but none of it counts, so none of it shows.
+    final ended = _mat.store.endedHomes;
     for (final a in _mat.applied.reversed) {
       final c = a.change;
       if (!readable.contains(c.space)) continue;
       if (type != null && c.type != type) continue;
       if (member != null && c.actor != member) continue;
       if (_driversEcho(c)) continue;
+      if (ended.isNotEmpty && ended.containsKey(_homeOfAuthor(c))) continue;
       final entry = _historyEntry(a);
       if (q != null && q.isNotEmpty && !_historyMatches(entry, q)) continue;
       out.add(entry);
       if (out.length >= limit) break;
     }
     return out;
+  }
+
+  /// In a group: the family of the device that wrote [c] (for a device's own first change, the
+  /// one it joins as).
+  String? _homeOfAuthor(Change c) {
+    final d = _mat.store.at(Space.family, RecordType.device, c.device);
+    if (d != null) return homeOfDevice(_mat.store, Device(d.rec));
+    final home = c.type == RecordType.device && c.rid == c.device ? c.fields['home'] : null;
+    return home is String ? home : null;
   }
 
   HistoryEntry _historyEntry(Applied a) {
@@ -4585,13 +4691,37 @@ class Den {
     for (final d in {...counters.keys, if (withFloor) ..._floor.keys}) {
       var n = withFloor ? _floor[d] ?? 0 : 0;
       final held = counters[d] ?? const <int>{};
-      while (held.contains(n + 1)) {
+      final refused = _refusedHeld[d] ?? const <int>{};
+      while (held.contains(n + 1) || refused.contains(n + 1)) {
         n++;
       }
       if (n > 0) out[d] = n;
     }
     return out;
   }
+
+  /// Device -> counters of its changes [ingest] refused for the proof they carried, though
+  /// signed by that device (a malformed `invite` or `recovery`, or one its key didn't sign):
+  /// every replica refuses them the same way, so they count as held in the vector, rather than
+  /// leave a gap its senders fill again on every sync. Never one whose signature failed: that
+  /// could be anyone's, and counting it would keep the device's real change out. Verdicts are
+  /// untouched (none of these is ever in the log). Kept in metadata, at most [maxRefusedHeld].
+  final Map<String, Set<int>> _refusedHeld = {};
+
+  /// Most changes [_refusedHeld] keeps; past it, one more is sent again on each sync.
+  static const int maxRefusedHeld = 1000;
+
+  /// Notes [c] in [_refusedHeld]; whether it was new.
+  bool _holdRefused(Change c) {
+    if (!hasFamily || c.counter < 1) return false;
+    if (_refusedHeld.values.fold(0, (n, s) => n + s.length) >= maxRefusedHeld) return false;
+    return (_refusedHeld[c.device] ??= {}).add(c.counter);
+  }
+
+  /// Whether [c] carries a recovery or invite proof, which only a device letting itself in
+  /// writes, signed for the family's id ([inviteProofHolds], [recoveryProofHolds]).
+  static bool _carriesProof(Change c) =>
+      c.type == RecordType.device && (c.fields.containsKey('invite') || c.fields.containsKey('recovery'));
 
   /// How many changes from unknown devices [ingest] keeps waiting in memory.
   static const int maxPending = 5000;
@@ -4630,6 +4760,11 @@ class Den {
         for (final c in candidates.values) {
           if (_pubkeys[c.device] == null) {
             _pending[c.id] = c;
+          } else if (!hasFamily && _carriesProof(c)) {
+            // A recovery or invite proof is signed for the family's (or group's) id, which this
+            // device learns as it joins: until then it can't be checked, so it isn't stored. It
+            // waits here, and its sender sends it again (this device's vector stops short of it).
+            _pending[c.id] = c;
           } else {
             toCheck.add(c);
           }
@@ -4641,11 +4776,15 @@ class Den {
           pubkeys: [for (final c in toCheck) _pubkeys[c.device]],
           hash: _snapshots,
         );
+        var metaMoved = false;
         for (var i = 0; i < toCheck.length; i++) {
           final c = toCheck[i], h = checked[i];
           // A recovery or invite proof is checked with the signature: signed by the key it names.
           if (h == null || !await recoveryProofHolds(c, familyId) || !await inviteProofHolds(c, familyId)) {
             rejected[c.id] = 'The signature doesn\'t verify';
+            // Signed by its own device, refused for the proof it carries: every replica refuses
+            // it the same way, so it counts as held, and isn't sent again on every sync.
+            if (h != null && _holdRefused(c)) metaMoved = true;
           } else {
             accepted.add(c);
             if (_snapshots) _hashes[c.id] = h;
@@ -4655,7 +4794,6 @@ class Den {
           _pending.remove(_pending.keys.first);
         }
         var invalid = const <String, String>{};
-        var metaMoved = false;
         if (accepted.isNotEmpty) {
           await _storage.appendChanges(accepted);
           invalid = _mat.add(accepted);
@@ -5044,12 +5182,23 @@ class Den {
         if (e.value is int) _floor['${e.key}'] = e.value as int;
       }
     }
+    final refused = _meta['refusedHeld'];
+    if (refused is Map) {
+      for (final e in refused.entries) {
+        if (e.value is List) _refusedHeld['${e.key}'] = {...(e.value as List).whereType<int>()};
+      }
+    }
     _loadKeyring(_meta['spaceKeys']);
   }
 
   Future<void> _saveMeta() async {
     _meta['counter'] = _counter;
     _meta['floor'] = Map<String, Object?>.of(_floor);
+    if (_refusedHeld.isNotEmpty) {
+      _meta['refusedHeld'] = {for (final e in _refusedHeld.entries) e.key: (e.value.toList()..sort())};
+    } else {
+      _meta.remove('refusedHeld');
+    }
     _meta['spaceKeys'] = _keyringJson();
     await _storage.saveMeta(Map.of(_meta));
   }

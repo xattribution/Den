@@ -271,6 +271,16 @@ is a malformed one, or one on a change that doesn't carry the device's own key (
 to the device that signs it, whose own record it changes) for the proof to name. The
 serving device that admits the join also refuses a proof already expired by its own clock.
 
+A proof signs the family's (or group's) id, which a device learns only as it joins, so a change
+carrying a recovery or invite proof that arrives before then (an app showing a group before it
+joins, say) isn't stored unchecked: it waits in memory with the changes whose device isn't known
+yet, and since the device's version vector stops short of it, its senders send it again until
+the device has joined and checks it. A change refused for its proof though signed by its own
+device (malformed, say) is refused the same way by every replica, so it counts as held in the
+version vector (kept in metadata, up to a thousand) rather than being sent again on every sync;
+never one whose own signature failed, which could be anyone's and would keep the device's real
+change out. Neither touches a verdict: such a change is never in the log.
+
 A device sets its own clock, so whoever still holds old words, or a hub's key after the family
 turned it off, could sign a recovery change dated before the key changed. So a change that
 replaces a key (new words, server help off or another key) lists in `kept` the devices the old
@@ -466,8 +476,18 @@ Kids in a group see everything and check off items. Editing events or lists, and
 ride leg, need the `events` or `lists` grant in the group, which only their own parents give
 (G2); validity holds it, and also holds in a group what the engine holds in a family: every
 driver a change names is someone of the group who drives (a parent or a grown-up, of a family
-still in), unless that same leg of that same occurrence already has that driver (an older
+that hadn't left), unless that same leg of that same occurrence already has that driver (an older
 version saying the whole list again). A group's log is new, so nothing older replays otherwise.
+The driver's family is judged as it stood when they were named: a family's place that ends later
+(below) reaches back to its invitation, and would otherwise take with it every other family's
+event that named one of its people. So validity keeps that event; the views drop a driver whose
+family isn't in the group any more (the calendar shows nobody on that leg, so "Nobody is
+driving" comes back), and the engine refuses to name one.
+
+A device can sync a group before it joins it (an app showing the group first). Whether a log is
+a group's is read again from every change held at each full replay, so the device reads how every
+family began as every other replica does once it has joined (it replays then); the changes
+carrying proofs wait until then (see Recovery).
 
 **Getting in, with no waiting.** A family's parent brings people in from the group's engine
 on their own phone with the family's own engine beside it (`Den.addToGroup`): a person of their
@@ -486,6 +506,8 @@ is joining and as which phone: `groupLink.home`, `.device`), waits until a hub h
 (`Den.joinHeldBy`, from the hub's version vector) and syncs once more, then says the family is
 in (`Den.updateHome(active: true, family:)`), which first writes into the family's own log the
 id of the change it is about to make (`groupLink.closure`; a device's next change id is known).
+Both take `family` as a required argument, so leaving the alarms off is a choice (`null`: a
+family's own admission, or a test), not an oversight.
 Then that parent brings the rest of the family in, its hub first, with keys of the family's own,
 as above. The invitation is for one phone: if this phone knows of another the invitation let in
 (the link opened in a browser and in the app, say), it won't say the family is in until the
@@ -527,14 +549,31 @@ counts. These are settled from the log alone before any verdict (an invitation's
 key and the inviting device), so they converge like everything else.
 
 An ended home ends **from its invitation on**: it reads as left (`Home.ended` says `contested`
-or `disowned`), nothing any device let in with its key, or anyone as one of its people, ever did
-in the group counts, then or now, the window never opens again, and the family is invited again
-as a new home. That is what keeps the inviting family from ever acting as the invited one (it
-could otherwise let a device of its own in first and write "as Dana" before contesting), and it
-is the price of joining at once: the ended family's whole shared history in the group goes with
-it (what it added to events and lists, and the families it invited there, whose invitations were
-its doing). Its own Den keeps everything, and its devices, which still hold what they wrote,
-offer to copy it into the family's own calendar and lists (`Den.sharedByHome`). A phone the
+or `disowned`), nothing any device let in with its key, or anyone as one of its people, ever
+wrote in the group counts, then or now, the window never opens again, and the family is invited
+again as a new home. That is what keeps the inviting family from ever acting as the invited one
+(it could otherwise let a device of its own in first and write "as Dana" before contesting), and
+it is the price of joining at once: the ended family's whole shared history in the group goes
+with it, and so does what other families hung on its records (an item on one of its lists, a
+change to one of its events: those records never existed, for anyone). Its own Den keeps
+everything, and its devices, which still hold what they wrote, offer to copy it into the
+family's own calendar and lists (`Den.sharedByHome`); the other families' devices can offer to
+keep what they hung on it (`Den.attachedToHome`: "Add 'Shin guards' to one of your lists?").
+
+What the ended family made of itself stays on record, judged as it was made (groups.dart,
+`endsJudgedPast`): its people, the devices that let themselves in, its keys, and its invitations
+of other families with what it did to them before they said they were in. Never a change to any
+of those once made (the inviting family, holding the invitation's key, could otherwise let in a
+device of its own and remove the first phone, and every family that phone invited with it), and
+never its calendar, lists or anything else. The family reads as left, so none of it has any
+power: none of its devices counts, none of its people shows or acts, and History shows none of
+it. What it is for: **the families it invited stand.** One that had said it was in keeps its
+place, its phones and everything it did, on its own "we're in", which already settles what the
+ended family did to it before (the window's closing). One that hadn't ends with it
+(`Home.ended`: `inviterEnded`; `HomeEnd.invitedBy` names the family): nobody of it ever
+counted, and it is invited again as a new home. That is decided from the log alone too, so it
+converges; a family whose phone still says it is in later (the engine refuses once it knows its
+inviting family ended) stands like any other. A phone the
 invitation let in that finds another phone's "we're in" in force, and wasn't theirs
 (`updateHome(active: true, notOurs: true)`), says it too, a "we're in" that doesn't count but
 ends the family's place, rather than leave someone else as them. That phone no longer counts in
@@ -545,7 +584,9 @@ whose own join carries a proof by that home's invitation key.
 (`groupLink.home`, `.device`, `.closure`). `Den.groupAlarm(link, groupEngine)`, on a family's own
 engine, compares the group's log with it, and its devices and its hub run it after each sync: it
 says when the family's place was contested (`mayBeOurs` when its own phone was one of those
-that said it: perhaps the family twice) or disowned, when the group says it left and it didn't,
+that said it: perhaps the family twice) or disowned, when its invitation ended because the family
+that invited it lost its place first (`inviterEnded`), when the group's log, once it arrived, has
+no record of the family at all (`missing`), when the group says it left and it didn't,
 when the group says it is in and its phone never said so, when the group's closure for its home
 isn't the one its phone made, when that phone no longer counts and the family didn't remove it,
 when another device used its invitation before it said it was in, and when the inviting family
@@ -568,6 +609,19 @@ of their devices, turns off none of their words, makes them no keys, and reopens
 invited family whose link leaked is ended within the day and invited again as a new home; if the
 phone that sent the invitation is lost, that day's "That wasn't them" goes with it (the family
 can still be ended with the key, by a phone that kept it).
+
+Accepted risk, from letting the families an ended family invited stand: the log can't tell an
+ended family's real phone from another that used its invitation (both hold the key, and either
+may have said "we're in" first), so the families either invited stand alike. Someone who used a
+leaked invitation and invited families of their own keeps those in the group after the place
+they took ends, and a device of the ended family that skips the engine's own check can still
+invite more (its invitations are judged as they were made, whatever their date); nobody in a
+group removes another family. Every family's devices can see that a family was
+invited by one whose place ended (`Home.invitedBy`, `Den.homeEnd`) and say so. And the inviting
+family, holding the ended family's key, can make records of that family that collide with ones
+its other people made later (a person's id, an invite key's), dated before them: a family invited
+from those other people's devices may then not stand. One invited from the phone the invitation
+let in always does, once it says it is in.
 
 A family that leaves removes its own hub in the commit, so by its own view the leaving phone has
 nobody left to sync with: `leaveGroup` returns the commit, which the app hands to its family's hub

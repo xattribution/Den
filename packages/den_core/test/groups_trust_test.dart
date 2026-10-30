@@ -459,12 +459,12 @@ void main() {
     Future<(Den, Den)> danaIn(Den fork, {bool active = true}) async {
       clock.advance(const Duration(seconds: 1));
       final dana = await openDen(clock);
-      await dana.joinGroup(f.invitation.parent, deviceName: "Dana's phone", kind: DeviceKind.phone);
+      await dana.joinGroup(f.invitation.parent, deviceName: "Dana's phone", kind: DeviceKind.phone, family: null);
       expect((await fork.ingest(dana.changesSince(const {}))).invalid, isEmpty);
       if (active) {
         await dana.ingest(fork.changesSince(dana.versionVector));
         clock.advance(const Duration(seconds: 1));
-        await dana.updateHome(active: true);
+        await dana.updateHome(active: true, family: null);
         expect((await fork.ingest(dana.changesSince(fork.versionVector))).invalid, isEmpty);
       }
       return (fork, dana);
@@ -520,7 +520,7 @@ void main() {
       clock.advance(const Duration(seconds: 5));
       // Another "Dana" with the same key, while the window is still open: it counts for now.
       final other = await openDen(clock);
-      await other.joinGroup(f.invitation.parent, deviceName: 'Another "Dana"', kind: DeviceKind.phone);
+      await other.joinGroup(f.invitation.parent, deviceName: 'Another "Dana"', kind: DeviceKind.phone, family: null);
       expect((await fork.ingest(other.changesSince(const {}))).invalid, isEmpty);
       expect(fork.deviceCounts(other.deviceId), isTrue);
       expect(fork.windowAdmissions(f.smithHome).map((a) => a.device), [dana.deviceId, other.deviceId]);
@@ -528,8 +528,8 @@ void main() {
       // the other isn't hers: then the other is gone.
       await dana.ingest(fork.changesSince(dana.versionVector));
       clock.advance(const Duration(seconds: 1));
-      await expectLater(dana.updateHome(active: true), throwsA(isA<InvalidInput>()));
-      await dana.updateHome(active: true, notOurs: true);
+      await expectLater(dana.updateHome(active: true, family: null), throwsA(isA<InvalidInput>()));
+      await dana.updateHome(active: true, notOurs: true, family: null);
       expect((await fork.ingest(dana.changesSince(fork.versionVector))).invalid, isEmpty);
       expect(fork.deviceCounts(other.deviceId), isFalse);
       expect(fork.deviceCounts(dana.deviceId), isTrue);
@@ -537,7 +537,7 @@ void main() {
       // And the key lets nobody in after.
       clock.advance(const Duration(seconds: 5));
       final third = await openDen(clock);
-      await third.joinGroup(f.invitation.parent, deviceName: 'A third "Dana"', kind: DeviceKind.phone);
+      await third.joinGroup(f.invitation.parent, deviceName: 'A third "Dana"', kind: DeviceKind.phone, family: null);
       expect((await fork.ingest(third.changesSince(const {}))).invalid.values.single, contains('in the group already'));
     });
 
@@ -551,6 +551,7 @@ void main() {
           GroupAdmission(group: p.group, founder: p.founder, name: p.name, home: p.home, member: null, mode: mode, invite: p.invite, seed: p.seed, expires: p.expires),
           deviceName: 'Hub?',
           kind: mode == DeviceMode.hub ? DeviceKind.hub : DeviceKind.display,
+          family: null,
         );
         return (await (await fork.fork()).ingest(d.changesSince(const {}))).invalid.values.firstOrNull;
       }
@@ -569,6 +570,7 @@ void main() {
             invite: hubKey.id, seed: await hubKey.seed(), expires: clock.now + 30 * minute),
         deviceName: 'Smith hub',
         kind: DeviceKind.hub,
+        family: null,
       );
       expect((await fork.ingest(hub.changesSince(const {}))).invalid, isEmpty);
       expect(fork.deviceCounts(hub.deviceId), isTrue);

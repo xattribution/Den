@@ -111,12 +111,15 @@ class Validator {
   bool prechecking = false;
 
   Rejection? check(Change c) {
-    // A group's home that ended later reads as it was when [c] was made (groups.dart, homeAt).
+    // A group's home that ended later reads as it was when [c] was made (groups.dart, homeAt),
+    // and an ended family's own records as they were made (endsJudgedPast).
     store.judging = c.hlc;
+    store.pastEnds = endsJudgedPast(c, store);
     try {
       return _check(c);
     } finally {
       store.judging = null;
+      store.pastEnds = null;
     }
   }
 

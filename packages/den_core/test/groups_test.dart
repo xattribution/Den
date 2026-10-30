@@ -397,7 +397,7 @@ void main() {
       await exchange(f.alex, f.kHub);
       // Whoever it was can't say they're in now.
       await impostor.ingest(f.kHub.changesSince(impostor.versionVector));
-      await impostor.updateHome(active: true);
+      await expectLater(impostor.updateHome(active: true, family: null), throwsA(isA<InvalidInput>()));
       expect(impostor.home(f.smithHome)!.left, isTrue);
       expect(impostor.changesSince(const {}).where((c) => c.device == impostor.deviceId && c.type == RecordType.home), isEmpty);
       // A new invitation, a new home.
@@ -413,7 +413,7 @@ void main() {
       await inviteSmiths(f);
       // Someone who saw the link lets themselves in and says they're the Smiths.
       final impostor = await admit(f, f.invitation.parent, f.kHub, name: "Dana's phone");
-      await impostor.updateHome(active: true);
+      await impostor.updateHome(active: true, family: null);
       await exchange(impostor, f.kHub);
       await exchange(f.alex, f.kHub);
       expect(f.alex.home(f.smithHome)!.status, HomeStatus.active);
@@ -542,7 +542,7 @@ void main() {
       await exchange(f.alex, f.kHub);
       clock.advance(const Duration(seconds: 1));
       final late = await openDen(clock);
-      await late.joinGroup(f.invitation.parent, deviceName: "Dana's phone", kind: DeviceKind.phone);
+      await late.joinGroup(f.invitation.parent, deviceName: "Dana's phone", kind: DeviceKind.phone, family: null);
       expect((await f.kHub.ingest(late.changesSince(const {}))).invalid.values.single, contains('left the group'));
     });
   });

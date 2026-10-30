@@ -143,7 +143,8 @@ class Materializer {
   }
 
   /// Whether the log is a group of families' (groups.dart): its founder's genesis said so, which
-  /// never changes. Read from the changes held, before any is applied.
+  /// never changes. Read from the changes held, before any is applied, and again at each full
+  /// replay ([_settleStarts]).
   bool _groupLog = false;
 
   /// How each invited family began, read from the log alone at each full replay (groups.dart).
@@ -392,8 +393,11 @@ class Materializer {
   }
 
   /// Reads how each invited family of a group began from the log ([GroupStarts]), and marks the
-  /// homes that ended in the store.
+  /// homes that ended in the store. Whether the log is a group's is read again first, from every
+  /// change held: one taken before this device knew its trust root (it synced before it joined)
+  /// is a group's all the same once it does.
   void _settleStarts() {
+    _groupLog = _byId.values.any(_groupGenesis);
     _starts = _groupLog ? GroupStarts.of(_log) : GroupStarts();
     store.endedHomes = {for (final e in _starts.ended.entries) e.key: e.value.mark};
   }

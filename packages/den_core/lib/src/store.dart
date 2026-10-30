@@ -111,12 +111,18 @@ class RecordStore {
   final Map<String, Map<String, int>> _versions = {};
 
   /// In a group: the homes whose place ended (groups.dart, `HomeEnd`), from when, why
-  /// (`contested` or `disowned`) and, when disowned, by which change. Settled by the
-  /// materializer from the log alone; kept through [clear], which a replay does.
+  /// (`contested`, `disowned`, or `inviterEnded`: the family that invited it ended before it
+  /// said it was in) and, when disowned, by which change. Settled by the materializer from the
+  /// log alone; kept through [clear], which a replay does.
   Map<String, ({Hlc at, String why, String? by})> endedHomes = const {};
 
   /// While validity judges a change: its clock, so a home that ended later reads as it was then.
   Hlc? judging;
+
+  /// While validity judges a change: the ended homes it is judged past, as they were before
+  /// they ended (groups.dart, `endsJudgedPast`): what an ended family made of itself, which the
+  /// families it invited stand on.
+  Set<String>? pastEnds;
 
   /// A number that changes whenever a record of one of [types] in one of [spaces] does; equal
   /// numbers within one [epoch] mean nothing those views read has changed.

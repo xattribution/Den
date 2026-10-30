@@ -399,13 +399,26 @@ void main() {
         await exchange(f.alex, f.kHub);
         final phone = await admit(f, inv.parent, f.kHub, name: "$parent's phone");
         clock.advance(const Duration(seconds: 2));
-        await phone.updateHome(active: true);
+        await phone.updateHome(active: true, family: null);
         await exchange(phone, f.kHub);
         return (inv, phone);
       }
 
       final (parks, kim) = await invited('Parks', 'Kim');
       final (ohs, ann) = await invited('Ohs', 'Ann');
+      // The cascade: the Parks invite the Ries, who say they're in (and stand), and the Tans,
+      // who never do (and end with the Parks).
+      clock.advance(const Duration(minutes: 1));
+      final ries = await kim.inviteFamily(familyName: 'Ries', parentName: 'Rae');
+      final tans = await kim.inviteFamily(familyName: 'Tans', parentName: 'Tam');
+      await exchange(kim, f.kHub);
+      final rae = await admit(f, ries.parent, f.kHub, name: "Rae's phone");
+      final tam = await admit(f, tans.parent, f.kHub, name: "Tam's phone");
+      clock.advance(const Duration(seconds: 2));
+      await rae.updateHome(active: true, family: null);
+      final barbecue = await rae.addEvent(title: 'Ries barbecue', start: clock.now + 86400000, end: clock.now + 90000000);
+      await exchange(rae, f.kHub);
+      await exchange(tam, f.kHub);
       final evil = await DeviceKeys.generate();
       final proof = await (await parks.parent.key()).prove(family: f.group, member: parks.member, devicePubkey: evil.pubkey, expires: clock.now + 600000);
       final join = await forge(evil, counter: 1, millis: clock.now - 3000 + random.nextInt(6000), type: RecordType.device, rid: await evil.deviceId(), fields: {
@@ -428,7 +441,7 @@ void main() {
 
       final engines = [...f.kotvasDevices, ...f.smithDevices];
       final pool = {
-        for (final d in [...engines, kim, ann])
+        for (final d in [...engines, kim, ann, rae, tam])
           for (final c in d.changesSince({})) c.id: c,
         join.id: join,
         fakeIn.id: fakeIn,
@@ -448,6 +461,13 @@ void main() {
         }
         expect(d.lists.where((l) => l.list.title == 'Park snacks' || l.list.title == 'Oh snacks'), isEmpty, reason: name);
         expect(d.home(f.smithHome)!.status, HomeStatus.active, reason: name);
+        // The family the Parks invited that said it was in stands; the one that hadn't ended.
+        expect(d.home(ries.home)!.status, HomeStatus.active, reason: name);
+        expect(d.deviceCounts(rae.deviceId), isTrue, reason: name);
+        expect(d.event(barbecue), isNotNull, reason: name);
+        expect(d.home(tans.home)!.ended, HomeEnd.inviterEnded, reason: name);
+        expect(d.homeEnd(tans.home)!.invitedBy, parks.home, reason: name);
+        expect(d.deviceCounts(tam.deviceId), isFalse, reason: name);
       }
     });
   }

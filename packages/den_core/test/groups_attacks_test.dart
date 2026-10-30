@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:den_core/den_core.dart';
-import 'package:den_core/src/groups.dart' show GroupStarts;
+import 'package:den_core/src/groups.dart' show GroupStarts, deviceOutOfGroup;
 import 'package:den_core/src/materializer.dart';
 import 'package:den_core/src/snapshot.dart';
 import 'package:den_core/src/validity.dart';
@@ -297,9 +297,11 @@ void main() {
       ]) {
         expect((await (await fork.fork()).ingest([c])).invalid[c.id], isNotNull, reason: c.type);
       }
-      // Nor does the invitation let anyone in again.
+      // Nor does the invitation let anyone in again (an ended family's own records are judged
+      // as they were made, so this one is refused as any expired join is).
       final (_, again) = await joinWith(f, f.invitation.parent, clock.now + 5);
-      expect((await fork.ingest([again])).invalid[again.id], anyOf(contains('left the group'), contains('isn\'t an invite the family made')));
+      expect((await fork.ingest([again])).invalid[again.id], isNotNull);
+      expect(fork.deviceCounts(again.device), isFalse);
       // Every family's devices can tell, and the Smiths' own log says it wasn't them.
       expect(f.smith.groupAlarm(f.smith.groupLink(f.group)!, fork)?.kind, GroupAlarmKind.contested);
     });
@@ -521,8 +523,14 @@ void main() {
     expect(end.firstIn, activation(f.dana, f.smithHome).hlc);
     expect(end.at, f.kHub.home(f.smithHome)!.rec.created);
     expect(once.rejected.containsKey(activation(f.dana, f.smithHome).id), isTrue);
-    expect(once.rejected.containsKey(ownJoin(f.dana).id), isTrue, reason: 'nothing let in with the invitation counts, then or now');
-    expect(once.rejected.containsKey(p.id), isTrue);
+    // Nothing let in with the invitation counts, then or now: the phones stay on record, as a
+    // family's that left (endsJudgedPast), and none of what they wrote counts.
+    for (final d in [f.dana.deviceId, p.device]) {
+      final e = once.store.at(Space.family, RecordType.device, d);
+      expect(e, isNotNull, reason: 'on record');
+      expect(deviceOutOfGroup(once.store, Device(e!.rec)), isTrue);
+    }
+    expect([for (final c in base) if (c.device == f.dana.deviceId && c.type == RecordType.event) c].every((c) => once.rejected.containsKey(c.id)), isTrue);
     final want = (once.rejected.keys.toList()..sort()).join(',');
     for (final seed in [1, 2, 3, 4]) {
       final random = Random(seed);
@@ -659,7 +667,7 @@ void main() {
               mode: DeviceMode.personal, invite: k.id, seed: await k.seed(), expires: clock.now + 30 * minute),
           f.kHub,
           name: "Dana's tablet");
-      await expectLater(tablet.updateHome(active: true), throwsA(isA<PermissionDenied>()));
+      await expectLater(tablet.updateHome(active: true, family: null), throwsA(isA<PermissionDenied>()));
       final forged = await forgeAs(tablet, type: RecordType.home, rid: f.smithHome, actor: f.gDana, fields: {'status': 'active', 'heard': <String>[]});
       expect(await refusal(f.kHub, forged), contains('invitation let in'));
       expect(f.kHub.home(f.smithHome)!.status, HomeStatus.invited);
@@ -684,7 +692,7 @@ void main() {
       clock.advance(const Duration(seconds: 1));
       // Someone who saw the invitation link.
       final imp = await admit(f, f.invitation.parent, f.kHub, name: "Dana's phone");
-      await imp.updateHome(active: true);
+      await imp.updateHome(active: true, family: null);
       await exchange(imp, f.kHub);
       await exchange(f.alex, f.kHub);
       clock.advance(const Duration(hours: 3));
@@ -692,11 +700,15 @@ void main() {
       await exchange(f.alex, f.kHub);
       expect(f.kHub.deviceCounts(imp.deviceId), isFalse);
       expect(f.kHub.home(f.smithHome)!.ended, 'disowned');
-      // The real Dana, with the same link, is refused: the Smiths are invited again, as a new home.
+      // The real Dana, with the same link, gets nowhere (her phone stays on record with the ended
+      // home, which counts for nothing): the Smiths are invited again, as a new home.
       clock.advance(const Duration(minutes: 5));
       final real = await openDen(clock);
-      await real.joinGroup(f.invitation.parent, deviceName: "Dana's phone", kind: DeviceKind.phone);
-      expect((await (await f.kHub.fork()).ingest(real.changesSince(const {}))).invalid, isNotEmpty);
+      await real.joinGroup(f.invitation.parent, deviceName: "Dana's phone", kind: DeviceKind.phone, family: null);
+      final seen = await f.kHub.fork();
+      await seen.ingest(real.changesSince(const {}));
+      expect(seen.deviceCounts(real.deviceId), isFalse);
+      expect(seen.home(f.smithHome)!.left, isTrue);
       final again = await f.alex.inviteFamily(familyName: 'Smiths', parentName: 'Dana');
       await exchange(f.alex, f.kHub);
       final dana = await admit(f, again.parent, f.kHub, name: "Dana's phone");
@@ -871,7 +883,7 @@ void main() {
       expect(g.smith.groupLink(g.group)!.home, g.smithHome, reason: 'joining wrote where, and as which phone');
       expect(g.smith.groupAlarm(g.smith.groupLink(g.group)!, g.kHub), isNull);
       clock.advance(const Duration(seconds: 1));
-      await g.dana.updateHome(active: true);
+      await g.dana.updateHome(active: true, family: null);
       await exchange(g.dana, g.kHub);
       expect(g.smith.groupAlarm(g.smith.groupLink(g.group)!, g.kHub)?.kind, GroupAlarmKind.unanchored);
     });
@@ -1003,7 +1015,7 @@ void main() {
       await exchange(safari, g.kHub);
       clock.advance(const Duration(seconds: 1));
       await expectLater(safari.updateHome(active: true, family: g.smith), throwsA(isA<InvalidInput>()));
-      await expectLater(homeScreen.updateHome(active: true), throwsA(isA<InvalidInput>()));
+      await expectLater(homeScreen.updateHome(active: true, family: null), throwsA(isA<InvalidInput>()));
       // Dana says which is hers: that one says it, the other is gone, nothing is contested.
       await safari.updateHome(active: true, family: g.smith, notOurs: true);
       await exchange(safari, g.kHub);
@@ -1013,7 +1025,7 @@ void main() {
       expect(g.kHub.deviceCounts(homeScreen.deviceId), isFalse);
       // The other, hearing of it, can't say it now either, short of saying it wasn't Dana.
       await homeScreen.ingest(g.kHub.changesSince(homeScreen.versionVector));
-      await expectLater(homeScreen.updateHome(active: true), throwsA(isA<InvalidInput>()));
+      await expectLater(homeScreen.updateHome(active: true, family: null), throwsA(isA<InvalidInput>()));
     });
 
     test('X3: two phones saying it before either hears of the other: contested, with a hint it may have been the family twice', () async {
@@ -1022,11 +1034,11 @@ void main() {
       await inviteSmiths(g);
       final one = await admit(g, g.invitation.parent, g.kHub, name: "Dana's phone", family: g.smith);
       final two = await openDen(clock);
-      await two.joinGroup(g.invitation.parent, deviceName: "Dana's tablet", kind: DeviceKind.tablet);
+      await two.joinGroup(g.invitation.parent, deviceName: "Dana's tablet", kind: DeviceKind.tablet, family: null);
       await two.ingest(one.changesSince(const {}).where((c) => c.device != one.deviceId));
       clock.advance(const Duration(seconds: 1));
       await one.updateHome(active: true, family: g.smith);
-      await two.updateHome(active: true);
+      await two.updateHome(active: true, family: null);
       await g.kHub.ingest(two.changesSince(const {}));
       await exchange(one, g.kHub);
       expect(g.kHub.homeContested(g.smithHome), isTrue);
@@ -1094,6 +1106,346 @@ void main() {
       // ignore: avoid_print
       print('passes per full replay: $plain without, $attacked with 30 look-alike families (91 changes)');
       expect(attacked, plain);
+    });
+  });
+
+  /// The fourth review of feat/groups-core (f63463b): Y2-Y5 and Y7, the reviewer's proofs with
+  /// their assertions flipped where they showed bugs.
+  group('the fourth review (Y2-Y5, Y7)', () {
+    /// Both ways, each sending what the other lacks, without vouching for spaces (`through`): how
+    /// a device syncs before the hub knows it (den_net sends `through` only to a peer whose
+    /// spaces it knows).
+    Future<void> swap(Den a, Den b) async {
+      for (var round = 0; round < 2; round++) {
+        await b.ingest(a.changesSince(b.versionVector));
+        await a.ingest(b.changesSince(a.versionVector));
+      }
+    }
+
+    /// A's contest of the Smiths, with the key it made: a device of its own let in as Dana just
+    /// before her phone, saying the Smiths are in now.
+    Future<List<Change>> contest(Families f, int now) async {
+      final (evil, j) = await joinWith(f, f.invitation.parent, ownJoin(f.dana).hlc.millis - 100);
+      return [j, await sayIn(evil, f.smithHome, f.gDana, now)];
+    }
+
+    group('ending the Smiths', () {
+      final clock = TestClock.at(DateTime.utc(2026, 10, 29, 15));
+      late Families f;
+      late Den kim, kimFamily, tam, tamFamily, jun;
+      late GroupInvitation parks, tans, lees;
+      late String kimEvent, junEvent;
+      late int start;
+      setUpAll(() async {
+        f = await bothFamilies(clock);
+        start = clock.now + 7 * day;
+        // The Parks, invited by the Smiths (Dana), with their own anchor; Kim adds an event.
+        await exchange(f.dana, f.kHub);
+        clock.advance(const Duration(seconds: 1));
+        parks = await f.dana.inviteFamily(familyName: 'Parks', parentName: 'Kim');
+        await f.kHub.ingest(f.dana.changesSince(f.kHub.versionVector));
+        kimFamily = await foundFamily(clock, name: 'Kim');
+        clock.advance(const Duration(seconds: 1));
+        kim = await openDen(clock);
+        await kim.joinGroup(parks.parent, deviceName: "Kim's phone", kind: DeviceKind.phone, family: kimFamily);
+        await f.kHub.ingest(kim.changesSince(const {}));
+        await sync(f.kHub, kim);
+        clock.advance(const Duration(seconds: 1));
+        await kim.updateHome(active: true, family: kimFamily);
+        kimEvent = await kim.addEvent(title: 'Park picnic', start: start, end: start + hour);
+        await exchange(kim, f.kHub);
+        // The Tans, invited by the Smiths too: Tam's phone lets itself in, and hasn't said they're in.
+        clock.advance(const Duration(seconds: 1));
+        tans = await f.dana.inviteFamily(familyName: 'Tans', parentName: 'Tam');
+        await f.kHub.ingest(f.dana.changesSince(f.kHub.versionVector));
+        tamFamily = await foundFamily(clock, name: 'Tam');
+        tam = await admit(f, tans.parent, f.kHub, name: "Tam's phone", family: tamFamily);
+        // The Lees, invited by the Kotvases; Jun names Dana as a driver on a Lee event.
+        clock.advance(const Duration(seconds: 1));
+        lees = await f.alex.inviteFamily(familyName: 'Lees', parentName: 'Jun');
+        await exchange(f.alex, f.kHub);
+        jun = await admit(f, lees.parent, f.kHub, name: "Jun's phone");
+        clock.advance(const Duration(seconds: 1));
+        await jun.updateHome(active: true, family: null);
+        await exchange(jun, f.kHub);
+        junEvent = newId();
+        final ev = await forgeAs(jun, type: RecordType.event, rid: junEvent, actor: lees.member,
+            fields: {'title': 'Lee party (Dana drives)', 'start': start, 'end': start + hour, 'drivers': {'to': f.gDana, 'from': null}});
+        expect((await f.kHub.ingest([ev])).invalid, isEmpty);
+        await exchange(kim, f.kHub);
+        await exchange(tam, f.kHub);
+        await settle(f);
+        clock.advance(const Duration(days: 30));
+      });
+
+      test('Y2: a family the Smiths invited that said it was in (the Parks) stands: its place, its phone, its event; its alarm says nothing', () async {
+        final fork = await f.kHub.fork();
+        final link = kimFamily.groupLink(f.group)!;
+        expect(link.home, parks.home);
+        expect(kimFamily.groupAlarm(link, kim), isNull);
+        final attack = await contest(f, clock.now);
+        await fork.ingest(attack);
+        expect(fork.homeContested(f.smithHome), isTrue);
+        smithsEnded(f, fork);
+        expect(fork.deviceCounts(kim.deviceId), isTrue, reason: 'the Parks were never contested');
+        expect(fork.event(kimEvent), isNotNull);
+        expect(fork.home(parks.home)!.status, HomeStatus.active);
+        expect(fork.homeEnd(parks.home), isNull);
+        expect(fork.closureFor(parks.home)!.author, kim.deviceId);
+        // On Kim's own phone, once it hears: all is well.
+        final kimView = await kim.fork();
+        await kimView.ingest(fork.changesSince(kimView.versionVector));
+        expect(kimView.deviceCounts(kim.deviceId), isTrue);
+        expect(kimFamily.groupAlarm(link, kimView), isNull);
+        // The Smiths' phones stay on record with their ended place; none of it shows or counts.
+        expect(fork.history().where((h) => h.device == f.dana.deviceId), isEmpty);
+        expect(fork.members.where((m) => m.home == f.smithHome), isEmpty);
+      });
+
+      test('Y2: a family the Smiths invited that hadn\'t said it was in (the Tans) ends with them, and its own alarm says why', () async {
+        final fork = await f.kHub.fork();
+        expect(fork.home(tans.home)!.status, HomeStatus.invited);
+        final link = tamFamily.groupLink(f.group)!;
+        expect(tamFamily.groupAlarm(link, tam), isNull);
+        await fork.ingest(await contest(f, clock.now));
+        final end = fork.homeEnd(tans.home)!;
+        expect(end.began, isFalse);
+        expect(end.invitedBy, f.smithHome);
+        expect(end.at, fork.home(tans.home)!.rec.created);
+        expect(fork.home(tans.home)!.ended, HomeEnd.inviterEnded);
+        expect(fork.deviceCounts(tam.deviceId), isFalse);
+        expect(fork.invitationOpen(tans.home), isFalse);
+        // Tam's phone hears, and the Tans' own log tells it why.
+        final tamView = await tam.fork();
+        await tamView.ingest(fork.changesSince(tamView.versionVector));
+        final alarm = tamFamily.groupAlarm(link, tamView)!;
+        expect(alarm.kind, GroupAlarmKind.inviterEnded);
+        expect(alarm.message, contains('Smiths'));
+        await expectLater(tamView.updateHome(active: true, family: tamFamily), throwsA(isA<InvalidInput>()));
+      });
+
+      test('Y2: a device A let in with the Smiths\' key can\'t take the Parks down: removing Dana\'s phone, dated before she invited them, counts for nothing', () async {
+        final fork = await f.kHub.fork();
+        final (evil, j) = await joinWith(f, f.invitation.parent, ownJoin(f.dana).hlc.millis - 100);
+        final parksAt = fork.home(parks.home)!.rec.created.millis;
+        final removal = await forge(evil, counter: 2, millis: parksAt - 10, type: RecordType.device, rid: f.dana.deviceId, actor: f.gDana,
+            fields: {'revoked': true, 'revokedAfter': ownJoin(f.dana).counter});
+        final made = await forge(evil, counter: 3, millis: parksAt - 5, type: RecordType.member, rid: f.gDana, actor: f.gDana, fields: {'role': 'kid'});
+        final r = await fork.ingest([j, removal, made, await sayIn(evil, f.smithHome, f.gDana, clock.now, counter: 4)]);
+        expect(fork.homeContested(f.smithHome), isTrue);
+        expect(r.invalid.keys, containsAll([removal.id, made.id]), reason: 'an ended family\'s records stay as they were made');
+        expect(fork.deviceCounts(kim.deviceId), isTrue);
+        expect(fork.event(kimEvent), isNotNull);
+      });
+
+      test('Y3: a third family\'s event that named Dana as a driver (the Lees\') stands; views drop her, and the leg needs a driver again', () async {
+        final fork = await f.kHub.fork();
+        Occurrence party(Den d) => d.occurrences(start - hour, start + 2 * hour).firstWhere((o) => o.event.id == junEvent);
+        bool noDriver(Den d) => d.gaps(start - day, start + day).any((g) => g.kind == GapKind.noDriver && g.leg == 'to' && g.occurrences.single.event.id == junEvent);
+        expect(party(fork).rides.firstWhere((r) => r.leg == 'to').driver, f.gDana);
+        expect(noDriver(fork), isFalse);
+        await fork.ingest(await contest(f, clock.now));
+        expect(fork.deviceCounts(jun.deviceId), isTrue, reason: 'the Lees themselves are fine');
+        expect(fork.event(junEvent), isNotNull, reason: 'and so is their event, for everyone');
+        expect(party(fork).rides.firstWhere((r) => r.leg == 'to').driver, isNull, reason: 'the Smiths aren\'t in the group: Dana drives nobody');
+        expect(noDriver(fork), isTrue);
+        // Named once the Smiths are gone, she isn't someone of the group who drives (the engine
+        // says so before it signs: the Smiths read as left).
+        final junView = await jun.fork();
+        await junView.ingest(fork.changesSince(junView.versionVector));
+        await expectLater(junView.claimRide(junEvent, occurrence: start, leg: 'from', driver: f.gDana), throwsA(isA<InvalidInput>()));
+      });
+
+      test('Y4: an item the Lees added to a Smith list goes with the Smiths; attachedToHome lists it for the Lees to keep', () async {
+        final list = await f.dana.addList(title: 'Snacks', kind: ListKind.shopping);
+        await exchange(f.dana, f.kHub);
+        await sync(f.kHub, jun);
+        final item = await jun.addItem(list, text: 'Juice boxes (from the Lees)');
+        await jun.setItemChecked(item, true);
+        await exchange(jun, f.kHub);
+        final fork = await f.kHub.fork();
+        expect(fork.list(list)!.items.map((i) => i.id), contains(item));
+        await fork.ingest(await contest(f, clock.now));
+        expect(fork.list(list), isNull, reason: 'what hangs on the Smiths\' records goes with them');
+        expect(fork.deviceCounts(jun.deviceId), isTrue);
+        final attached = fork.attachedToHome(f.smithHome);
+        expect(attached.where((c) => c.rid == item), hasLength(2), reason: 'the item, and checking it');
+        expect(attached.every((c) => c.device != f.dana.deviceId), isTrue);
+        expect(fork.sharedByHome(f.smithHome).map((c) => c.rid), contains(list));
+        expect(fork.sharedByHome(f.smithHome).map((c) => c.rid), isNot(contains(item)));
+      });
+
+      test('a family\'s anchor to a home the group has no record of raises "missing", once the group\'s log is there', () async {
+        final other = await foundFamily(clock, name: 'Pat');
+        await other.writeGroupLink(group: f.group, founder: f.alex.founderPubkey!, name: 'Cousins soccer', home: 'NOSUCHHOME', device: 'x');
+        final link = other.groupLink(f.group)!;
+        expect(other.groupAlarm(link, f.kHub)?.kind, GroupAlarmKind.missing);
+        expect(other.groupAlarm(link, await openDen(clock)), isNull, reason: 'before the group\'s log arrives there is nothing to compare');
+      });
+    });
+
+    test('Y5: a device that took the group\'s changes before it joined reads them as every other replica does, then and after reopening', () async {
+      final clock = TestClock.at(DateTime.utc(2026, 10, 29, 15));
+      final f = await bothFamilies(clock);
+      // A new Kotvas tablet: the app shows the group before it joins (it syncs first).
+      final storage = MemoryStorage();
+      final keys = await DeviceKeys.generate();
+      final tablet = await openDen(clock, storage: storage, keys: keys);
+      final early = await tablet.ingest(f.kHub.changesSince(const {}));
+      expect(early.pending, greaterThan(0), reason: 'the proofs wait for the group\'s id (Y5b)');
+      final k = await InviteKey.generate();
+      await f.alex.createInviteKey(member: f.gAlex, publicKey: k.publicKey, expires: clock.now + hour);
+      await exchange(f.alex, f.kHub);
+      clock.advance(const Duration(seconds: 1));
+      await tablet.joinGroup(
+          GroupAdmission(group: f.group, founder: f.alex.founderPubkey!, name: 'x', home: f.kotvasHome, member: f.gAlex,
+              mode: DeviceMode.personal, invite: k.id, seed: await k.seed(), expires: clock.now + 30 * minute),
+          deviceName: 'Tablet',
+          kind: DeviceKind.tablet,
+          family: null);
+      expect(tablet.isGroup, isTrue);
+      await swap(tablet, f.kHub);
+      expect(f.kHub.home(f.smithHome)!.status, HomeStatus.active);
+      expect(tablet.closureFor(f.smithHome)?.id, f.kHub.closureFor(f.smithHome)!.id);
+      expect(tablet.home(f.smithHome)!.status, HomeStatus.active);
+      for (final d in [...f.kotvasDevices, ...f.smithDevices, tablet]) {
+        expect(tablet.deviceCounts(d.deviceId), f.kHub.deviceCounts(d.deviceId), reason: d.deviceId);
+      }
+      expect(jsonEncode(tablet.exportJson()), jsonEncode(f.kHub.exportJson()));
+      // Reopened, and as a replica that took everything at once after a root.
+      final reopened = await openDen(clock, storage: storage, keys: keys);
+      expect(jsonEncode(reopened.exportJson()), jsonEncode(f.kHub.exportJson()));
+      TrustRoot root() => TrustRoot(familyId: f.group, founderPubkey: f.alex.founderPubkey);
+      final fresh = Materializer(root)..add(f.kHub.changesSince(const {}));
+      expect(fresh.starts.ended, isEmpty);
+      expect(fresh.validator.retiredRecoveryKeys.closures.map((w) => w.id), contains(f.kHub.closureFor(f.smithHome)!.id));
+    });
+
+    test('Y5b: a proof that arrives before this device knows the group is held back, not stored unchecked; after joining and reopening it sees what every replica sees', () async {
+      final clock = TestClock.at(DateTime.utc(2026, 10, 29, 15));
+      final f = await bothFamilies(clock);
+      clock.advance(const Duration(days: 1));
+      // An outsider's junk-signed "join" with the Smiths' invitation key, and its "we're in".
+      final out = await DeviceKeys.generate();
+      final outId = await out.deviceId();
+      final key = f.kHub.home(f.smithHome)!.key!;
+      final junk = await forge(out, counter: 1, millis: clock.now, type: RecordType.device, rid: outId, fields: {
+        'name': 'X', 'kind': 'phone', 'pubkey': out.pubkey, 'member': f.gDana, 'mode': 'personal', 'approved': true, 'home': f.smithHome, //
+        'invite': {'invite': f.invitation.parent.invite, 'member': f.gDana, 'mode': 'personal', 'key': key, 'nonce': 'AAAAAAAAAAAAAAAAAAAAAA', 'expires': clock.now + hour, 'sig': 'AAAA'},
+      });
+      final saysIn = await forge(out, counter: 2, millis: clock.now + 1, type: RecordType.home, rid: f.smithHome, actor: f.gDana,
+          fields: {'status': 'active', 'heard': <String>[]});
+      expect((await (await f.kHub.fork()).ingest([junk, saysIn])).rejected, contains(junk.id), reason: 'a replica with a root refuses it');
+      // A new Kotvas tablet syncs the group (and these) before it joins.
+      final storage = MemoryStorage();
+      final keys = await DeviceKeys.generate();
+      final tablet = await openDen(clock, storage: storage, keys: keys);
+      final r = await tablet.ingest([...f.kHub.changesSince(const {}), junk, saysIn]);
+      expect(r.rejected, isEmpty);
+      expect(r.pending, greaterThan(0), reason: 'held back until it knows the group');
+      expect((await storage.loadChanges()).map((c) => c.id), isNot(contains(junk.id)), reason: 'never stored unchecked');
+      final k = await InviteKey.generate();
+      await f.alex.createInviteKey(member: f.gAlex, publicKey: k.publicKey, expires: clock.now + hour);
+      await exchange(f.alex, f.kHub);
+      clock.advance(const Duration(seconds: 1));
+      await tablet.ingest(f.kHub.changesSince(tablet.versionVector));
+      await tablet.joinGroup(
+          GroupAdmission(group: f.group, founder: f.alex.founderPubkey!, name: 'x', home: f.kotvasHome, member: f.gAlex,
+              mode: DeviceMode.personal, invite: k.id, seed: await k.seed(), expires: clock.now + 30 * 60000),
+          deviceName: 'Tablet',
+          kind: DeviceKind.tablet,
+          family: null);
+      await swap(tablet, f.kHub);
+      expect((await storage.loadChanges()).map((c) => c.id), isNot(contains(junk.id)), reason: 'checked once it knew the group: refused');
+      final reopened = await openDen(clock, storage: storage, keys: keys);
+      expect(reopened.homeContested(f.smithHome), isFalse);
+      expect(f.kHub.homeContested(f.smithHome), isFalse);
+      expect(jsonEncode(reopened.exportJson()), jsonEncode(f.kHub.exportJson()));
+    });
+
+    test('a change refused on arrival for the proof it carries counts as held, so it isn\'t sent again; one whose own signature fails never does', () async {
+      final clock = TestClock.at(DateTime.utc(2026, 10, 29, 15));
+      final f = await bothFamilies(clock);
+      final fork = await f.kHub.fork();
+      final out = await DeviceKeys.generate();
+      final outId = await out.deviceId();
+      final junk = await forge(out, counter: 1, millis: clock.now, type: RecordType.device, rid: outId, fields: {
+        'name': 'X', 'kind': 'phone', 'pubkey': out.pubkey, 'member': f.gDana, 'mode': 'personal', 'approved': true, 'home': f.smithHome, //
+        'invite': {'invite': f.invitation.parent.invite, 'member': f.gDana, 'mode': 'personal', 'key': f.kHub.home(f.smithHome)!.key, 'nonce': 'AAAAAAAAAAAAAAAAAAAAAA', 'expires': clock.now + hour, 'sig': 'AAAA'},
+      });
+      final next = await forge(out, counter: 2, millis: clock.now + 1, type: RecordType.device, rid: outId, fields: {'name': 'Y'});
+      final r = await fork.ingest([junk, next]);
+      expect(r.rejected.keys, [junk.id]);
+      expect(fork.versionVector[outId], 2, reason: 'the refused one counts as held: its senders don\'t send it again');
+      expect(fork.changesSince(const {}).map((c) => c.id), isNot(contains(junk.id)), reason: 'verdicts untouched: it is never in the log');
+      // One whose signature fails could be anyone's: counting it would keep the real one out.
+      final real = await forgeAs(f.alex, type: RecordType.event, rid: newId(), actor: f.gAlex,
+          fields: {'title': 'Real', 'start': clock.now + day, 'end': clock.now + day + hour});
+      final fake = Change(id: real.id, space: real.space, hlc: real.hlc, type: real.type, rid: real.rid, fields: {...real.fields, 'title': 'Fake'},
+          device: real.device, actor: real.actor, sig: real.sig);
+      final before = fork.versionVector[f.alex.deviceId];
+      expect((await fork.ingest([fake])).rejected.keys, [fake.id]);
+      expect(fork.versionVector[f.alex.deviceId], before);
+      expect((await fork.ingest([real])).added, 1);
+    });
+
+    test('Y7: contested endings, and the family they invited that stands, converge through shuffles, snapshots and remove()', () async {
+      final clock = TestClock.at(DateTime.utc(2026, 10, 29, 15));
+      final f = await bothFamilies(clock);
+      final parks = await f.dana.inviteFamily(familyName: 'Parks', parentName: 'Kim');
+      await exchange(f.dana, f.kHub);
+      final kim = await admit(f, parks.parent, f.kHub, name: "Kim's phone");
+      clock.advance(const Duration(seconds: 1));
+      await kim.updateHome(active: true, family: null);
+      await exchange(kim, f.kHub);
+      clock.advance(const Duration(days: 30));
+      final base = f.kHub.changesSince(const {}).toList();
+      final danaAt = ownJoin(f.dana).hlc.millis;
+      final (evil, j) = await joinWith(f, f.invitation.parent, danaAt - 300);
+      final start = clock.now + day;
+      // A writes as Dana inside the window (X1), then contests.
+      final w = await forge(evil, counter: 2, millis: danaAt - 200, type: RecordType.event, rid: 'asdana', actor: f.gDana,
+          fields: {'title': 'Forged', 'start': start, 'end': start + hour});
+      final s = await sayIn(evil, f.smithHome, f.gDana, clock.now, counter: 3);
+      final pool = [...base, j, w, s];
+      TrustRoot root() => TrustRoot(familyId: f.group, founderPubkey: f.alex.founderPubkey);
+      String digest(Materializer m) => jsonEncode({
+            'rejected': (m.rejected.keys.toList()..sort()),
+            'ended': {for (final e in m.store.endedHomes.entries) e.key: '${e.value.at} ${e.value.why}'},
+            'forged': m.store.liveAt(Space.family, RecordType.event, 'asdana') != null,
+            'parks': m.store.at(Space.family, RecordType.home, parks.home)?.fields['status'],
+            'closures': [for (final c in m.validator.retiredRecoveryKeys.closures) c.id]..sort(),
+          });
+      final want = digest(Materializer(root)..add(pool));
+      expect(want, contains('contested'));
+      expect(want, contains('"forged":false'));
+      expect(want, contains('"parks":"active"'));
+      for (final seed in [1, 2, 3, 4]) {
+        final random = Random(seed);
+        final shuffled = [...pool]..shuffle(random);
+        final m = Materializer(root);
+        var i = 0;
+        while (i < shuffled.length) {
+          final n = 1 + random.nextInt(9);
+          m.add(shuffled.sublist(i, min(i + n, shuffled.length)));
+          i += n;
+        }
+        expect(digest(m), want, reason: 'seed $seed');
+        // A snapshot taken part way, reopened, then the rest.
+        final cut = shuffled.length ~/ 2;
+        final first = Materializer(root)..add(shuffled.sublist(0, cut));
+        final text = await first.capture(root: root(), windowFrom: clock.now - 40 * day, digest: const [0]).encode(breathe: () async {});
+        final re = Materializer(root);
+        final rest = re.restore(SnapshotHeader.parse(text)!, shuffled.sublist(0, cut), root: root());
+        re.add([...?rest, ...shuffled.sublist(cut)]);
+        expect(digest(re), want, reason: 'snapshot seed $seed');
+      }
+      // remove(): taking A's "we're in" back gives what a log without it gives.
+      final without = Materializer(root)..add([...base, j, w]);
+      final m = Materializer(root)..add(pool);
+      m.remove([s.id]);
+      expect(digest(m), digest(without));
+      expect(m.store.endedHomes, isEmpty);
     });
   });
 }
