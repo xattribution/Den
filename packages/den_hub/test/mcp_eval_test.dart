@@ -110,7 +110,7 @@ void main() {
     });
     expect(failed(moved), isFalse, reason: text(moved));
     expect(f.hubDen.events.where((e) => e.title == 'Soccer practice'), hasLength(2));
-    final ride = await tool(token, 'set_ride', {'event': 'Soccer practice', 'occurrence': later(28), 'leg': 'to', 'driver': 'me'});
+    final ride = await tool(token, 'set_ride', {'event': 'Soccer practice', 'occurrence': soccerDay(28), 'leg': 'to', 'driver': 'me'});
     expect(failed(ride), isFalse, reason: text(ride));
     expect(text(ride), contains('Alex is driving Leo to Soccer practice'));
     expect(text(ride), contains('4:30 PM'));
