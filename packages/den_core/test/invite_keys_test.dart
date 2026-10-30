@@ -305,6 +305,32 @@ void main() {
       final backdated = await joinChange(await DeviceKeys.generate(), key, id, millis: before);
       expect((await hub.ingest([backdated])).invalid.values.single, contains('withdrawn before this device joined'));
     });
+
+    test('their device removing itself takes its invites away first, and that counts', () async {
+      // The revocation names the change just before it in the same commit, the invite taken
+      // away, so that one is among the device's changes that count (Den._Draft.ownLast).
+      final samPhone = await joinDevice(parent, clock, member: sam, name: "Sam's phone", kind: DeviceKind.phone);
+      await sync(parent, samPhone);
+      final (key, id) = await invite(by: samPhone);
+      await sync(hub, samPhone);
+      final before = clock.now + 1000;
+      clock.advance(const Duration(minutes: 1));
+      await samPhone.revokeDevice(samPhone.deviceId);
+      final mine = [for (final c in samPhone.changesSince(const {})) if (c.device == samPhone.deviceId) c];
+      final withdrawal = mine.lastWhere((c) => c.type == RecordType.inviteKey && c.rid == id);
+      final revocation = mine.last;
+      expect(revocation.type, RecordType.device);
+      expect(revocation.fields['revokedAfter'], withdrawal.counter);
+      expect(revocation.counter, withdrawal.counter + 1);
+      final result = await hub.ingest(samPhone.changesSince(hub.versionVector));
+      expect(result.invalid, isEmpty);
+      expect(hub.device(samPhone.deviceId)!.revoked, isTrue);
+      expect(hub.inviteKey(id)!.key, isNull, reason: 'the withdrawal in the same commit counts');
+      final (_, now) = await join(key, id);
+      expect(now.invalid, isNotEmpty);
+      final backdated = await joinChange(await DeviceKeys.generate(), key, id, millis: before);
+      expect((await hub.ingest([backdated])).invalid.values.single, contains('withdrawn before this device joined'));
+    });
   });
 
   group('who may make one', () {

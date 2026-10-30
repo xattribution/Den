@@ -26,6 +26,7 @@
 library;
 
 import 'change.dart';
+import 'hlc.dart';
 import 'invite_keys.dart';
 import 'model.dart';
 import 'permissions.dart';
@@ -104,18 +105,23 @@ Iterable<Device> devicesOfHome(RecordStore store, String homeId) => [
           if (homeOfDevice(store, Device(e.rec)) == homeId) Device(e.rec),
     ];
 
-/// Whether the invited home [homeId] is in its window: none of its parents is in yet (no parent
-/// of it has a device in the group). While it is, the home that invited it may add its first
-/// parent and the one-use keys that let that parent's phone and the family's hub in (G2).
-bool inviteWindowOpen(RecordStore store, String homeId) {
-  final h = homeAt(store, homeId);
-  if (h == null || h.status != HomeStatus.invited) return false;
+/// Whether the invited home [homeId] is in its window: it is still `invited`, so none of its own
+/// parents has said it is in. While it is, the home that invited it stands in for it (G2): it adds
+/// its first parent and the keys that let that parent's phone and its hub in, and may take the
+/// invitation back or say "That wasn't them". The invited family's own parent closes the window
+/// when they say it is in ([WindowClosure]), and nothing the inviting family does after, or
+/// dates before without the invited family having held it, counts.
+bool inviteWindowOpen(RecordStore store, String homeId) => homeAt(store, homeId)?.status == HomeStatus.invited;
+
+/// Whether a parent of the home [homeId] has a phone of their own in the group: after that, the
+/// inviting family makes no more keys or people for it.
+bool firstParentIn(RecordStore store, String homeId) {
   for (final d in devicesOfHome(store, homeId)) {
     if (d.mode != DeviceMode.personal || d.member == null) continue;
     final owner = store.liveAt(Space.family, RecordType.member, d.member!);
-    if (owner != null && Member(owner.rec).isParent) return false;
+    if (owner != null && Member(owner.rec).isParent) return true;
   }
-  return true;
+  return false;
 }
 
 /// Whether the invite key [key] is a window key: one the home that invited its home made, for
@@ -126,19 +132,146 @@ bool isWindowKey(RecordStore store, InviteKeyRecord key) {
   return home != null && maker != null && maker != home;
 }
 
+/// An invited home's window closed by its own parent saying it is in: the change setting its
+/// `status` from `invited` to `active`, which names in `closed` the last change it held from each
+/// device of the inviting home and in `kept` the devices let in through the window it keeps (its
+/// own, and its family's hub). Like a revocation's cutoff, it is settled from the log alone, so a
+/// device's own clock can't get around it:
+///
+/// - a window power of the inviting home over this one (a person or key made for it, a key taken
+///   back, a device removed, recovery words turned off, the invitation taken back) dated before
+///   it counts for nothing unless it is one the closing device held: its device is in `closed`
+///   and it is numbered no later;
+/// - a device let in through the window (an invite key the inviting home made) dated before it
+///   counts for nothing unless it is in `kept`.
+///
+/// After it, the window is shut: none of those count, whatever they claim.
+class WindowClosure {
+  const WindowClosure(this.home, this.at, this.closed, this.kept);
+
+  /// The home whose window it closes.
+  final String home;
+
+  /// The clock of the change that closed it.
+  final Hlc at;
+
+  /// Device of the inviting home -> the last of its changes the closing device held.
+  final Map<String, int> closed;
+
+  /// Devices let in through the window that count.
+  final Set<String> kept;
+
+  /// As a snapshot keeps it, beside the replaced keys (recovery.dart).
+  List<Object?> toJson() => [
+        'window',
+        home,
+        at.toString(),
+        kept.toList()..sort(),
+        {for (final k in closed.keys.toList()..sort()) k: closed[k]},
+      ];
+
+  /// Reads [toJson]'s output.
+  static WindowClosure fromJson(List<Object?> row) => WindowClosure(
+        row[1]! as String,
+        Hlc.parse(row[2]! as String),
+        {for (final e in (row[4]! as Map).entries) e.key as String: e.value as int},
+        (row[3]! as List).cast<String>().toSet(),
+      );
+}
+
+/// Whether [c] closes a home's window (a change to a `home` naming `closed`, which validity takes
+/// only from that home's own parent saying it is in). The materializer settles these with the
+/// revocation cutoffs and replaced keys.
+bool closesWindow(Change c) => c.type == RecordType.home && c.fields.containsKey('closed');
+
+/// The closure [c] makes, when it makes one.
+WindowClosure? windowClosureOf(Change c) {
+  if (!closesWindow(c)) return null;
+  final closed = c.fields['closed'], kept = c.fields['kept'];
+  return WindowClosure(
+    c.rid,
+    c.hlc,
+    {if (closed is Map) for (final e in closed.entries) if (e.value is int) '${e.key}': e.value as int},
+    {if (kept is List) ...kept.whereType<String>()},
+  );
+}
+
+/// The home whose window [c] is a window power over (see [WindowClosure]), or null: a change to
+/// one of that home's people, devices, keys or its record, by a person of the home that invited
+/// it. Read from what never changes once written (a person's, device's and key's family, a home's
+/// inviter), so it reads the same at any point after those records exist.
+String? _windowPowerOver(Change c, RecordStore store) {
+  final actorHome = c.actor == null ? null : homeOfMember(store, c.actor);
+  if (actorHome == null) return null;
+  Object? target;
+  switch (c.type) {
+    case RecordType.home:
+      target = c.rid;
+    case RecordType.member:
+      target = c.fields['home'] ?? store.at(Space.family, RecordType.member, c.rid)?.fields['home'];
+    case RecordType.device:
+      if (c.rid == c.device) return null;
+      final d = store.at(Space.family, RecordType.device, c.rid);
+      target = d == null ? null : d.fields['home'] ?? homeOfMember(store, d.fields['member']);
+    case RecordType.inviteKey:
+      target = c.fields['home'] ?? store.at(Space.family, RecordType.inviteKey, c.rid)?.fields['home'];
+    default:
+      return null;
+  }
+  if (target is! String || target == actorHome) return null;
+  return homeAt(store, target)?.invitedBy == actorHome ? target : null;
+}
+
+/// The home [c] lets a device into through its window (with a key the inviting home made), or
+/// null.
+String? _windowAdmissionInto(Change c, RecordStore store) {
+  if (c.type != RecordType.device || c.rid != c.device) return null;
+  final proof = InviteProof.parse(c.fields['invite']);
+  final key = proof == null ? null : store.at(Space.family, RecordType.inviteKey, proof.invite);
+  if (key == null) return null;
+  final home = key.fields['home'];
+  final maker = homeOfMember(store, key.fields['by']);
+  return home is String && maker != null && maker != home ? home : null;
+}
+
+/// Whether one of [closures] makes [c] count for nothing ([WindowClosure]).
+bool windowClosedOut(Change c, RecordStore store, Iterable<WindowClosure> closures) {
+  if (closures.isEmpty) return false;
+  final admitted = _windowAdmissionInto(c, store);
+  final power = admitted == null ? _windowPowerOver(c, store) : null;
+  if (admitted == null && power == null) return false;
+  for (final w in closures) {
+    if (!(c.hlc < w.at)) continue;
+    if (admitted == w.home && !w.kept.contains(c.rid)) return true;
+    if (power == w.home) {
+      final held = w.closed[c.device];
+      if (held == null || c.counter > held) return true;
+    }
+  }
+  return false;
+}
+
 /// Validity's one hook for groups (G1-G8), called for every change after its schema checks.
 /// A rejection stands; null lets the family's rules decide, which still apply in a group, so
 /// the rules here only ever narrow them, except where validity.dart asks [isGroupLog] (a group's
 /// genesis writes its founder's home; a device joining a group writes its home).
 ///
 /// In a family's log it refuses what only a group holds, so a family behaves as it did.
-Rejection? checkGroupRules(Change c, Entry? existing, RecordStore store, TrustRoot trust, {required bool group}) {
+/// [closures] are the windows closed so far ([WindowClosure]), settled by the materializer.
+Rejection? checkGroupRules(Change c, Entry? existing, RecordStore store, TrustRoot trust,
+    {required bool group, Iterable<WindowClosure> closures = const []}) {
   if (!group) return _familyRefusesGroupThings(c);
+  if (windowClosedOut(c, store, closures)) {
+    return _trust('That family said it was in before this, without having heard of it');
+  }
   return _GroupCheck(c, existing, store, trust).check();
 }
 
 Rejection? _familyRefusesGroupThings(Change c) {
   switch (c.type) {
+    case RecordType.family:
+      // A group's very first record: what a group never carries, from the start too.
+      if (c.fields['kind'] == LogKind.group) return _groupRecordFields(c.fields);
     case RecordType.home:
       return _schema('Only a group of families has families in it');
     case RecordType.member:
@@ -148,6 +281,20 @@ Rejection? _familyRefusesGroupThings(Change c) {
     case RecordType.device:
       if (c.fields.containsKey('home')) return _schema('Only a device in a group of families has a family named on it');
   }
+  return null;
+}
+
+/// What a group's own record never carries (G7), at genesis too: each family decides these for
+/// itself.
+Rejection? _groupRecordFields(Map<String, Object?> f) {
+  for (final k in f.keys) {
+    if (k == 'oversight' || k.startsWith('oversight.')) {
+      return _schema('Each family keeps its own privacy settings: a group has none');
+    }
+    if (k == 'assistant') return _schema('Each family decides about the assistant: a group doesn\'t');
+    if (k == 'recovery') return _schema('A group has no server help: a parent gets back in with their recovery words');
+  }
+  if (f['pointsEnabled'] == true) return _schema('Stars stay in each family\'s own Den');
   return null;
 }
 
@@ -192,6 +339,11 @@ class _GroupCheck {
   Rejection? check() {
     // G7: what stays in each family's own log.
     if (groupRefusedTypes.contains(c.type)) return _schema('A group of families doesn\'t hold ${_typeName(c.type)}');
+    // G5: a group has no one's own space. Every member family's hub holds the whole group, so
+    // "Just me" things go in the person's own family's Den.
+    if (Space.isMember(c.space)) {
+      return _schema('A group has no one\'s own space: "Just me" things go in your family\'s own Den');
+    }
     final fieldError = _refusedFields();
     if (fieldError != null) return fieldError;
 
@@ -245,13 +397,6 @@ class _GroupCheck {
     if (actor != null && author.mode == DeviceMode.personal && actorHome != authorHome) {
       return _trust('This device belongs to another family');
     }
-    // G5: someone's own space in a group is theirs alone: no parent of any family writes there.
-    final owner = Space.memberOf(c.space);
-    if (owner != null) {
-      final o = liveMember(owner);
-      if (o != null && homeLeft(store, o.home)) return _deny('${homeName(o.home)} left the group');
-      if (o != null && c.actor != owner) return _deny('That belongs to ${o.name} alone');
-    }
     switch (c.type) {
       case RecordType.home:
         return _home();
@@ -276,14 +421,7 @@ class _GroupCheck {
     switch (c.type) {
       case RecordType.family:
         if (f.containsKey('_deleted')) return _deny('A group stays until its last family leaves');
-        for (final k in f.keys) {
-          if (k == 'oversight' || k.startsWith('oversight.')) {
-            return _schema('Each family keeps its own privacy settings: a group has none');
-          }
-          if (k == 'assistant') return _schema('Each family decides about the assistant: a group doesn\'t');
-          if (k == 'recovery') return _schema('A group has no server help: a parent gets back in with their recovery words');
-        }
-        if (f['pointsEnabled'] == true) return _schema('Stars stay in each family\'s own Den');
+        return _groupRecordFields(f);
       case RecordType.member:
         final signIn = f['signIn'];
         if (signIn is Map && signIn['kind'] != 'none') {
@@ -338,7 +476,10 @@ class _GroupCheck {
 
   /// G6, invite keys: a key of the device's own home lets it in as that home's (and, for a
   /// personal device, as someone of that home). A window key ([isWindowKey]) lets in the invited
-  /// home's first parent while its window is open, and its hub while it has none.
+  /// home's first parent or its hub while its window is open, and never once it is shut. Within
+  /// the window one such key isn't used up by another device: a join dated earlier with the
+  /// inviting family's copy of the key can't push out the real one, and the invited family's
+  /// own parent keeps the devices it knows when it closes the window ([WindowClosure]).
   Rejection? _inviteJoin() {
     final proof = InviteProof.parse(c.fields['invite']);
     if (proof == null) return null;
@@ -357,17 +498,9 @@ class _GroupCheck {
     if (makerHome == null || homeLeft(store, makerHome)) return _trust('The family that made that invite left the group');
     if (makerHome == keyHome) return null;
     if (home.invitedBy != makerHome) return _trust('Only a family\'s own parents, or the family that invited it, let it in');
-    switch (proof.mode) {
-      case DeviceMode.personal:
-        if (!inviteWindowOpen(store, keyHome)) {
-          return _trust('${home.name} is in the group already: their own parents let their people in now');
-        }
-      case DeviceMode.hub:
-        if (devicesOfHome(store, keyHome).any((d) => d.mode == DeviceMode.hub)) {
-          return _trust('${home.name} has its hub in the group already');
-        }
-      case DeviceMode.shared:
-        return _trust('An invitation lets in a family\'s first parent and its hub only');
+    if (proof.mode == DeviceMode.shared) return _trust('An invitation lets in a family\'s first parent and its hub only');
+    if (!inviteWindowOpen(store, keyHome)) {
+      return _trust('${home.name} is in the group already: their own parents let their people in now');
     }
     return null;
   }
@@ -407,17 +540,30 @@ class _GroupCheck {
       return _schema('A family that is in can\'t go back to invited');
     }
     if (actorHome != c.rid) {
-      // The family that sent an invitation takes it back, while nobody of the other is in.
+      // The family that sent an invitation takes it back, while the other hasn't said it's in.
       final takeBack = h.status == HomeStatus.invited &&
           h.invitedBy == actorHome &&
           status == HomeStatus.left.name &&
-          only({'status'}) &&
-          inviteWindowOpen(store, c.rid);
+          only({'status'});
       if (takeBack && parentHere) return null;
       return _deny('Only ${h.name}\'s own parents can change their family in the group');
     }
     if (a == null || !a.isParent) return _deny('Only parents can change their family in the group');
     if (!ownDevice) return _deny(_ownDeviceOnly);
+    // Saying an invited family is in closes its window ([WindowClosure]): it names the last
+    // change it held from each device of the inviting family, and the devices let in through the
+    // window it keeps, itself among them. Nothing else ever names them.
+    final activates = h.status == HomeStatus.invited && status == HomeStatus.active.name;
+    final closed = c.fields['closed'], kept = c.fields['kept'];
+    if (activates) {
+      if (h.invitedBy == null) return _schema('Only an invited family closes its invitation');
+      if (closed is! Map || kept is! List) {
+        return _schema('Saying the family is in names what it heard from the family that invited it');
+      }
+      if (!kept.contains(c.device)) return _schema('Saying the family is in keeps the device that says it');
+    } else if (c.fields.containsKey('closed') || c.fields.containsKey('kept')) {
+      return _schema('Only saying an invited family is in closes its invitation');
+    }
     return null;
   }
 
@@ -439,7 +585,7 @@ class _GroupCheck {
     if (actorHome != homeId) {
       // The window: the family that invited this one adds its first parent.
       if (creating) {
-        if (h.status != HomeStatus.invited || h.invitedBy != actorHome || !inviteWindowOpen(store, homeId)) {
+        if (!inviteWindowOpen(store, homeId) || h.invitedBy != actorHome || firstParentIn(store, homeId)) {
           return _deny('Only ${h.name}\'s own parents add their people');
         }
         if (c.fields['role'] != Role.parent.name) return _deny('The first person of an invited family is a parent');
@@ -450,10 +596,16 @@ class _GroupCheck {
         return null;
       }
       // "That wasn't them": the inviting family takes away the recovery words of the parent its
-      // invitation let in, so whoever used the invitation can't come back with words of theirs.
+      // invitation let in, so whoever used the invitation can't come back with words of theirs;
+      // only until that family says it is in.
       final recovery = c.fields['recovery'];
       final made = homeOfMember(store, existing!.createdBy);
-      if (only({'recovery'}) && recovery is Map && recovery['key'] == null && made == actorHome && h.invitedBy == actorHome) {
+      if (only({'recovery'}) &&
+          recovery is Map &&
+          recovery['key'] == null &&
+          made == actorHome &&
+          h.invitedBy == actorHome &&
+          inviteWindowOpen(store, homeId)) {
         return parentHere ? null : _deny(_ownDeviceOnly);
       }
       return _deny('Only ${h.name}\'s own parents can change their people');
@@ -494,10 +646,12 @@ class _GroupCheck {
     }
     if (c.rid == c.device) return null;
     // "That wasn't them": the family that invited this one removes the device its invitation
-    // let in, and nothing more.
+    // let in, and nothing more; only until that family says it is in. How far back it reaches:
+    // the device's own changes, all made before that ([WindowClosure] voids one dated earlier
+    // without the invited family having heard of it).
     final proof = inviteOf(target);
     final keyEntry = proof == null ? null : store.at(Space.family, RecordType.inviteKey, proof.invite);
-    if (keyEntry != null && actorHome != after) {
+    if (keyEntry != null && actorHome != after && after is String && inviteWindowOpen(store, after)) {
       final key = InviteKeyRecord(keyEntry.rec);
       final removal = c.fields['revoked'] == true && only({'revoked', 'revokedAfter'});
       if (removal && isWindowKey(store, key) && homeOfMember(store, key.by) == actorHome) {
@@ -514,10 +668,12 @@ class _GroupCheck {
   Rejection? _inviteKey() {
     final e = existing;
     if (e != null) {
-      // Taking it away: that family's parents, or the family that made it (its invitation).
+      // Taking it away: that family's parents, or the family that made it (its invitation) until
+      // that family says it is in.
       final keyHome = e.fields['home'];
       final makerHome = homeOfMember(store, e.fields['by']);
-      if (actorHome != keyHome && actorHome != makerHome) {
+      if (actorHome == keyHome) return null;
+      if (actorHome != makerHome || keyHome is! String || !inviteWindowOpen(store, keyHome)) {
         return _deny('Only ${homeName(keyHome)}\'s own parents, or the family that invited it, can take that invite back');
       }
       return null;
@@ -532,8 +688,9 @@ class _GroupCheck {
       if (member is String && homeOfMember(store, member) != homeId) return _schema('That person is in another family');
       return null;
     }
-    // The window: one-use keys for the invited family's first parent and its hub.
-    if (h.status != HomeStatus.invited || h.invitedBy != actorHome || !inviteWindowOpen(store, homeId)) {
+    // The window: one-use keys for the invited family's first parent and its hub, until that
+    // parent's phone is in.
+    if (!inviteWindowOpen(store, homeId) || h.invitedBy != actorHome || firstParentIn(store, homeId)) {
       return _deny('Only ${h.name}\'s own parents can invite their people');
     }
     if ((c.fields['uses'] ?? 1) != 1) return _deny('An invitation to another family lets in one device per key');
@@ -562,19 +719,25 @@ class _GroupCheck {
   }
 
   /// Who drives: in a group, validity holds what the engine holds in a family (`canDrive`):
-  /// every driver a change newly names is someone of the group who drives, a parent or a
-  /// grown-up of a family still in it. A group's log is new, so nothing older replays otherwise.
+  /// every driver a change names is someone of the group who drives, a parent or a grown-up of a
+  /// family still in it, unless that same leg of that same occurrence already has that same
+  /// driver (a whole `rides` list, written for older versions, says every leg again). A group's
+  /// log is new, so nothing older replays otherwise.
   Rejection? _drivers() {
-    final named = _driversIn(c.fields);
+    final named = _legDrivers(c.fields);
     if (named.isEmpty) return null;
-    final before = <String>{...?existing == null ? null : _driversIn(existing!.fields)};
-    if (c.type == RecordType.eventException) {
-      final event = c.fields['event'] ?? existing?.fields['event'];
-      final series = event is String ? store.at(c.space, RecordType.event, event) : null;
-      if (series != null) before.addAll(_driversIn(series.fields));
+    final List<Ride> now;
+    if (c.type == RecordType.event) {
+      now = existing == null ? const [] : Event(existing!.rec).rides;
+    } else {
+      final eventId = c.fields['event'] ?? existing?.fields['event'];
+      final series = eventId is String ? store.at(c.space, RecordType.event, eventId) : null;
+      final seriesRides = series == null ? const <Ride>[] : Event(series.rec).rides;
+      now = existing == null ? seriesRides : EventException(existing!.rec).rides(seriesRides);
     }
-    for (final id in named) {
-      if (before.contains(id)) continue;
+    final held = {for (final r in now) r.leg: r.driver};
+    for (final (leg, id) in named) {
+      if (held[leg] == id) continue;
       final m = liveMember(id);
       if (m == null) return _schema('That driver isn\'t in the group');
       if (homeLeft(store, m.home)) return _deny('${homeName(m.home)} left the group');
@@ -583,28 +746,35 @@ class _GroupCheck {
     return null;
   }
 
-  static Set<String> _driversIn(Map<String, Object?> fields) {
-    final out = <String>{};
-    void one(Object? v) {
-      if (v is String && v.isNotEmpty) out.add(v);
+  /// Each (leg, driver) [fields] names, nobody left out.
+  static List<(String, String)> _legDrivers(Map<String, Object?> fields) {
+    final out = <(String, String)>[];
+    void one(Object? leg, Object? v) {
+      if (leg is String && v is String && v.isNotEmpty) out.add((leg, v));
     }
 
     void list(Object? v) {
       if (v is! List) return;
       for (final r in v) {
-        if (r is Map) one(r['driver']);
+        if (r is Map) one(r['leg'], r['driver']);
       }
     }
 
     for (final e in fields.entries) {
       final k = e.key, v = e.value;
-      if (k == 'drivers' && v is Map) v.values.forEach(one);
-      if (k.startsWith('drivers.') || k.startsWith('patch.drivers.')) one(v);
+      if (k == 'drivers' && v is Map) {
+        for (final d in v.entries) {
+          one('${d.key}', d.value);
+        }
+      }
+      if (k.startsWith('drivers.')) one(k.substring(8), v);
+      if (k.startsWith('patch.drivers.')) one(k.substring(14), v);
       if (k == 'rides' || k == 'patch.rides') list(v);
       if (k == 'patch' && v is Map) {
         for (final p in v.entries) {
-          if ('${p.key}'.startsWith('drivers.')) one(p.value);
-          if (p.key == 'rides') list(p.value);
+          final key = '${p.key}';
+          if (key.startsWith('drivers.')) one(key.substring(8), p.value);
+          if (key == 'rides') list(p.value);
         }
       }
     }

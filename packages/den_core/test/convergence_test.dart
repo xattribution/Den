@@ -295,6 +295,46 @@ void main() {
         await forgeAs(f.dana, type: RecordType.member, rid: f.gLeo, fields: {'grants': <String>[]}, actor: f.gDana),
         await forgeAs(f.leo, type: RecordType.event, rid: soccer, fields: {'drivers.to': f.gLeo}, actor: f.gLeo),
       ];
+      // And the Kotvases turning on the Smiths, now or dated inside the Smiths' window (the
+      // review's R1-R6b): the window keys taken back, "That wasn't them", the invitation taken
+      // back, devices let in with the invitation's keys, a stale phone's "Cancel invitation".
+      Change ownJoin(Den d) =>
+          d.changesSince(const {}).firstWhere((c) => c.device == d.deviceId && c.type == RecordType.device && c.rid == d.deviceId);
+      final invitedAt = f.kHub.home(f.smithHome)!.rec.created.millis;
+      final danaJoin = ownJoin(f.dana);
+      final inWindow = danaJoin.hlc.millis + 1 + random.nextInt(200);
+      var skip = 0;
+      Future<Change> byAlex(String type, String rid, Map<String, Object?> fields, {int? millis}) =>
+          forgeAs(f.alex, type: type, rid: rid, fields: fields, actor: f.gAlex, millis: millis, skip: skip++);
+      Future<Change> joinWith(GroupAdmission admission, int millis) async {
+        final device = await DeviceKeys.generate();
+        final proof = await (await admission.key())
+            .prove(family: f.group, member: admission.member, mode: admission.mode, devicePubkey: device.pubkey, expires: millis + 600000);
+        return forge(device, counter: 1, millis: millis, type: RecordType.device, rid: await device.deviceId(), fields: {
+          'name': 'Evil',
+          'kind': admission.mode == DeviceMode.hub ? 'hub' : 'phone',
+          'pubkey': device.pubkey,
+          'member': admission.member,
+          'mode': admission.mode.name,
+          'approved': true,
+          'home': admission.home,
+          'invite': proof.toJson(),
+        });
+      }
+
+      final attacks = [
+        for (final millis in [null, inWindow]) ...[
+          await byAlex(RecordType.inviteKey, f.invitation.parent.invite, {'key': null, 'kept': <String>[]}, millis: millis),
+          await byAlex(RecordType.inviteKey, f.invitation.hub.invite, {'key': null, 'kept': <String>[]}, millis: millis == null ? null : millis + 1),
+          await byAlex(RecordType.device, f.dana.deviceId, {'revoked': true, 'revokedAfter': danaJoin.counter},
+              millis: millis == null ? null : millis + 2),
+        ],
+        await byAlex(RecordType.home, f.smithHome, {'status': 'left'}, millis: invitedAt + 500),
+        await joinWith(f.invitation.parent, danaJoin.hlc.millis - 100),
+        await joinWith(f.invitation.hub, ownJoin(f.sHub).hlc.millis - 100),
+        await forgeAs(f.priya, type: RecordType.home, rid: f.smithHome, fields: {'status': 'left'}, actor: f.gPriya),
+      ];
+      overreach.addAll(attacks);
 
       final engines = [...f.kotvasDevices, ...f.smithDevices];
       final pool = {
@@ -330,6 +370,16 @@ void main() {
       expect(f.alex.list(snacks)!.items.firstWhere((i) => i.text == 'Oranges').checked, isTrue);
       for (final c in overreach) {
         expect(f.kHub.history().any((h) => h.change == c.id), isFalse);
+      }
+      // The Smiths are as they were, on every replica of either family.
+      for (final d in engines) {
+        expect(d.home(f.smithHome)!.status, HomeStatus.active, reason: d.thisDevice!.name);
+        expect(d.deviceCounts(f.dana.deviceId), isTrue, reason: d.thisDevice!.name);
+        expect(d.deviceCounts(f.sHub.deviceId), isTrue, reason: d.thisDevice!.name);
+        expect(d.invitationOpen(f.smithHome), isFalse, reason: d.thisDevice!.name);
+      }
+      for (final c in attacks.where((c) => c.type == RecordType.device && c.rid == c.device)) {
+        expect(f.kHub.deviceCounts(c.rid), isFalse);
       }
     });
   }

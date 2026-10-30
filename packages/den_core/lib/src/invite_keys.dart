@@ -341,7 +341,11 @@ Rejection? checkInviteKeyWrite(Change c, Entry? existing, RecordStore store,
 /// [excluded] says whether a later change took the key away without knowing of this device
 /// (recovery.dart's `RetiredRecoveryKeys.excludes`). In a group ([group]) the device also writes
 /// the family it joins as one of (`home`), which groups.dart checks against the key.
-Rejection? checkInviteJoin(Change c, RecordStore store, TrustRoot trust, {required bool excluded, bool group = false}) {
+///
+/// A group's window key ([window], groups.dart) isn't used up by another device's join: the
+/// invited family's own parent keeps the devices it knows when it says it is in.
+Rejection? checkInviteJoin(Change c, RecordStore store, TrustRoot trust,
+    {required bool excluded, bool group = false, bool window = false}) {
   if (c.rid != c.device) return _trust('An invite lets in only the device that asks');
   if (c.actor != null) return _trust('A device asking to join can\'t act for anyone');
   final own = store.at(Space.family, RecordType.device, c.rid);
@@ -389,7 +393,7 @@ Rejection? checkInviteJoin(Change c, RecordStore store, TrustRoot trust, {requir
     if (e.id == c.rid) continue;
     if (InviteProof.parse(e.fields['invite'])?.nonce == proof.nonce) return _trust('That invite was used already');
   }
-  if (inviteUsesLeft(store, invite, except: c.rid) <= 0) return _trust('That invite was used already');
+  if (!window && inviteUsesLeft(store, invite, except: c.rid) <= 0) return _trust('That invite was used already');
   if (excluded) return _trust('That invite was withdrawn before this device joined');
   return null;
 }

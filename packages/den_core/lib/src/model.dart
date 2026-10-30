@@ -343,7 +343,9 @@ class Family extends RecordView {
   int get weekStart => rec.integer('weekStart');
   String get founderDevice => rec.str('founderDevice');
   bool get captureNeedsReview => rec.str('capture', 'direct') == 'review';
-  bool get pointsEnabled => rec.flag('pointsEnabled', true);
+
+  /// Whether the family keeps stars; never a group (its record carries none, groups.dart).
+  bool get pointsEnabled => !isGroup && rec.flag('pointsEnabled', true);
 
   /// The shades of people's colors everyone in the family sees; [ColorPack.bright] until a
   /// parent picks another.

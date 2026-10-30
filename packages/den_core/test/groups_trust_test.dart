@@ -220,7 +220,9 @@ void main() {
         expect(await refused(f.kHub, RecordType.device, f.kHub.deviceId, {'name': 'X', '_via': 'Claude'}, actor: f.gAlex),
             contains('own device'));
         expect(await refused(f.kHub, RecordType.list, newId(), {'title': 'Leo\'s', '_via': 'Claude'}, actor: f.gAlex, space: Space.member(f.gLeo)),
-            anyOf(contains('alone'), contains('can\'t see')));
+            contains('no one\'s own space'));
+        expect(await refused(f.kHub, RecordType.list, newId(), {'title': 'Alex\'s', '_via': 'Claude'}, actor: f.gAlex, space: Space.member(f.gAlex)),
+            contains('no one\'s own space'));
       });
 
       test('a shared screen only shows a group: no check-off, for nobody or anyone', () async {
@@ -230,12 +232,19 @@ void main() {
       });
     });
 
-    group('G5: someone\'s own space in a group is theirs alone', () {
-      test('no parent of any family writes there, the person\'s own included', () async {
+    group('G5: a group has no one\'s own space', () {
+      test('nobody writes into one, the person themself included', () async {
+        // "Just me" things stay in each family's own Den: a group's people are seen by other
+        // families' parents and hubs, so a group holds none (review finding 5).
         expect(await refused(f.dana, RecordType.list, newId(), {'title': 'For Leo'}, actor: f.gDana, space: Space.member(f.gLeo)),
-            contains('Leo alone'));
+            contains('no one\'s own space'));
         expect(await refused(f.alex, RecordType.list, newId(), {'title': 'For Leo'}, actor: f.gAlex, space: Space.member(f.gLeo)),
-            contains('Leo alone'));
+            contains('no one\'s own space'));
+        expect(await refused(f.alex, RecordType.list, newId(), {'title': 'Mine'}, actor: f.gAlex, space: Space.member(f.gAlex)),
+            contains('no one\'s own space'));
+        expect(await refused(f.dana, RecordType.event, newId(), {'title': 'Mine', 'start': clock.now, 'end': clock.now + hour}, actor: f.gDana,
+                space: Space.member(f.gDana)),
+            contains('no one\'s own space'));
       });
 
       test('a kid never writes into the parents\' space', () async {
@@ -434,57 +443,134 @@ void main() {
       expect(await refusal(f.kHub, await key(f.alex, f.gAlex, modes: ['shared'])), contains('first parent and its hub only'));
     });
 
-    test('once the first parent is in, the window closes', () async {
-      final fork = await f.kHub.fork();
+    /// Dana's phone, let in on a fork of the Kotvas hub with the invitation, and then saying the
+    /// Smiths are in (which shuts the window): the fork, her engine, and her "we're in".
+    Future<(Den, Den)> danaIn(Den fork, {bool active = true}) async {
       final dana = await openDen(clock);
       await dana.joinGroup(f.invitation.parent, deviceName: "Dana's phone", kind: DeviceKind.phone);
       expect((await fork.ingest(dana.changesSince(const {}))).invalid, isEmpty);
-      expect(fork.invitationOpen(f.smithHome), isFalse);
-      Future<String?> later(Change c) async => (await (await fork.fork()).ingest([c])).invalid[c.id];
-      expect(await later(await key(f.alex, f.gAlex, member: f.gDana)), contains('Smiths\'s own parents'));
-      expect(
-          await later(await forgeAs(f.alex, type: RecordType.home, rid: f.smithHome, actor: f.gAlex, fields: {'status': 'left'})),
-          contains('Smiths\'s own parents'));
-    });
+      if (active) {
+        await dana.ingest(fork.changesSince(dana.versionVector));
+        clock.advance(const Duration(seconds: 1));
+        await dana.updateHome(active: true);
+        expect((await fork.ingest(dana.changesSince(fork.versionVector))).invalid, isEmpty);
+      }
+      return (fork, dana);
+    }
 
-    test('a second key for the first parent made in the window lets nobody in once they are', () async {
-      final fork = await f.kHub.fork();
-      final spare = await InviteKey.generate();
-      await f.alex.fork().then((a) async {
-        await a.createInviteKey(member: f.gDana, publicKey: spare.publicKey, expires: clock.now + hour, home: f.smithHome);
-        await fork.ingest(a.changesSince(fork.versionVector));
-      });
-      clock.advance(const Duration(seconds: 5));
-      final dana = await openDen(clock);
-      await dana.joinGroup(f.invitation.parent, deviceName: "Dana's phone", kind: DeviceKind.phone);
-      expect((await fork.ingest(dana.changesSince(const {}))).invalid, isEmpty);
-      clock.advance(const Duration(seconds: 5));
-      final other = await openDen(clock);
-      await other.joinGroup(
-        GroupAdmission(
+    Future<GroupAdmission> spareAdmission(InviteKey spare, {String? member, DeviceMode mode = DeviceMode.personal}) async => GroupAdmission(
           group: f.group,
           founder: f.alex.founderPubkey!,
           name: 'Cousins soccer',
           home: f.smithHome,
-          member: f.gDana,
-          mode: DeviceMode.personal,
+          member: member,
+          mode: mode,
           invite: spare.id,
           seed: await spare.seed(),
           expires: clock.now + 30 * minute,
-        ),
-        deviceName: 'Another "Dana"',
-        kind: DeviceKind.phone,
-      );
-      final result = await fork.ingest(other.changesSince(const {}));
-      expect(result.invalid.values.single, contains('in the group already'));
+        );
+
+    test('once the first parent is in, the inviting family adds nobody else; once they say they\'re in, the window shuts', () async {
+      final (fork, _) = await danaIn(await f.kHub.fork(), active: false);
+      Future<String?> later(Change c) async => (await (await fork.fork()).ingest([c])).invalid[c.id];
+      // Dana's phone is in: the invitation has done its job, and the Kotvases make no more of it.
+      expect(fork.invitationOpen(f.smithHome), isTrue, reason: 'until Dana says the Smiths are in');
+      expect(await later(await key(f.alex, f.gAlex, member: f.gDana)), contains('Smiths\'s own parents'));
+      expect(
+          await later(await forgeAs(f.alex, type: RecordType.member, rid: newId(), actor: f.gAlex, fields: {
+            'name': 'Second',
+            'role': 'parent',
+            'home': f.smithHome,
+          })),
+          contains('Smiths\'s own parents'));
+      // Still theirs to take back, until the Smiths say they're in.
+      expect(await later(await forgeAs(f.alex, type: RecordType.home, rid: f.smithHome, actor: f.gAlex, fields: {'status': 'left'})), isNull);
+
+      final (shut, dana) = await danaIn(await f.kHub.fork());
+      expect(shut.invitationOpen(f.smithHome), isFalse);
+      expect(shut.home(f.smithHome)!.status, HomeStatus.active);
+      Future<String?> after(Change c) async => (await (await shut.fork()).ingest([c])).invalid[c.id];
+      expect(await after(await key(f.alex, f.gAlex, member: f.gDana)), contains('Smiths\'s own parents'));
+      expect(
+          await after(await forgeAs(f.alex, type: RecordType.home, rid: f.smithHome, actor: f.gAlex, fields: {'status': 'left'})),
+          contains('Smiths\'s own parents'));
+      expect(
+          await after(await forgeAs(f.alex, type: RecordType.device, rid: dana.deviceId, actor: f.gAlex,
+              fields: {'revoked': true, 'revokedAfter': 1})),
+          contains('Smiths\'s own parents'));
     });
 
-    test('the hub\'s key lets in one hub of the family, after its first parent too', () async {
+    test('saying "we\'re in" names what it heard of the inviting family, and is said once, by the family itself', () async {
+      final (fork, dana) = await danaIn(await f.kHub.fork(), active: false);
+      await dana.ingest(fork.changesSince(dana.versionVector));
+      Future<String?> judged(Change c) async => (await (await fork.fork()).ingest([c])).invalid[c.id];
+      final bare = await forgeAs(dana, type: RecordType.home, rid: f.smithHome, actor: f.gDana, fields: {'status': 'active'});
+      expect(await judged(bare), contains('names what it heard'));
+      final other = await forgeAs(dana, type: RecordType.home, rid: f.smithHome, actor: f.gDana, fields: {
+        'status': 'active',
+        'closed': <String, Object?>{},
+        'kept': [f.kHub.deviceId],
+      });
+      expect(await judged(other), contains('keeps the device that says it'));
+      // Nobody else names a window's closing: the inviting family least of all.
+      final byAlex = await forgeAs(f.alex, type: RecordType.home, rid: f.smithHome, actor: f.gAlex, fields: {
+        'status': 'active',
+        'closed': <String, Object?>{},
+        'kept': [f.alex.deviceId],
+      });
+      expect(await judged(byAlex), contains('Smiths\'s own parents'));
+      final onKotvas = await forgeAs(f.alex, type: RecordType.home, rid: f.kotvasHome, actor: f.gAlex, fields: {
+        'name': 'Kotvas',
+        'closed': <String, Object?>{},
+        'kept': [f.alex.deviceId],
+      });
+      expect(await judged(onKotvas), contains('Only saying an invited family is in'));
+    });
+
+    test('a second key for the first parent made in the window counts only until the family says it\'s in', () async {
+      final fork = await f.kHub.fork();
+      final spare = await InviteKey.generate();
+      final made = await forgeAs(f.alex, type: RecordType.inviteKey, rid: spare.id, actor: f.gAlex, millis: clock.now - 500, fields: {
+        'member': f.gDana,
+        'home': f.smithHome,
+        'key': spare.publicKey,
+        'by': f.gAlex,
+        'device': f.alex.deviceId,
+        'expires': clock.now + hour,
+      });
+      expect((await fork.ingest([made])).invalid, isEmpty);
+      clock.advance(const Duration(seconds: 5));
+      final dana = await openDen(clock);
+      await dana.joinGroup(f.invitation.parent, deviceName: "Dana's phone", kind: DeviceKind.phone);
+      expect((await fork.ingest(dana.changesSince(const {}))).invalid, isEmpty);
+      clock.advance(const Duration(seconds: 5));
+      // Another "Dana" with the spare key, while the window is still open: it counts for now.
+      final other = await openDen(clock);
+      await other.joinGroup(await spareAdmission(spare, member: f.gDana), deviceName: 'Another "Dana"', kind: DeviceKind.phone);
+      final joined = other.changesSince(const {});
+      expect((await fork.ingest(joined)).invalid, isEmpty);
+      expect(fork.deviceCounts(other.deviceId), isTrue);
+      // The real Dana says the Smiths are in, keeping only her own phone: it's gone.
+      await dana.ingest(fork.changesSince(dana.versionVector));
+      clock.advance(const Duration(seconds: 1));
+      await dana.updateHome(active: true, keep: const []);
+      expect((await fork.ingest(dana.changesSince(fork.versionVector))).invalid, isEmpty);
+      expect(fork.deviceCounts(other.deviceId), isFalse);
+      expect(fork.deviceCounts(dana.deviceId), isTrue);
+      // And the key lets nobody in after.
+      clock.advance(const Duration(seconds: 5));
+      final third = await openDen(clock);
+      await third.joinGroup(await spareAdmission(spare, member: f.gDana), deviceName: 'A third "Dana"', kind: DeviceKind.phone);
+      final r = await fork.ingest(third.changesSince(const {}));
+      expect(r.invalid.values.single, contains('in the group already'));
+    });
+
+    test('the hub\'s key lets in the family\'s hub until it says it\'s in, and Dana keeps the one it let in', () async {
       final fork = await f.kHub.fork();
       final hub = await openDen(clock);
       await hub.joinGroup(f.invitation.hub, deviceName: 'Smith hub', kind: DeviceKind.hub);
       expect((await fork.ingest(hub.changesSince(const {}))).invalid, isEmpty);
-      // A second hub key the inviting family made in the window: the family has its hub now.
+      // A second hub key the inviting family made in the window, and a hub let in with it.
       final spare = await InviteKey.generate();
       final made = await forgeAs(f.alex, type: RecordType.inviteKey, rid: spare.id, actor: f.gAlex, millis: clock.now - 500, fields: {
         'member': null,
@@ -498,22 +584,22 @@ void main() {
       expect((await fork.ingest([made])).invalid, isEmpty);
       clock.advance(const Duration(seconds: 5));
       final second = await openDen(clock);
-      await second.joinGroup(
-        GroupAdmission(
-          group: f.group,
-          founder: f.alex.founderPubkey!,
-          name: 'Cousins soccer',
-          home: f.smithHome,
-          member: null,
-          mode: DeviceMode.hub,
-          invite: spare.id,
-          seed: await spare.seed(),
-          expires: clock.now + 30 * minute,
-        ),
-        deviceName: 'Another hub',
-        kind: DeviceKind.hub,
-      );
-      expect((await fork.ingest(second.changesSince(const {}))).invalid.values.single, contains('has its hub in the group already'));
+      await second.joinGroup(await spareAdmission(spare, mode: DeviceMode.hub), deviceName: 'Another hub', kind: DeviceKind.hub);
+      expect((await fork.ingest(second.changesSince(const {}))).invalid, isEmpty);
+      expect(fork.deviceCounts(second.deviceId), isTrue, reason: 'the window is open');
+      // Dana, in, says the Smiths are in, keeping the hub she knows is theirs: the other is gone.
+      final (_, dana) = await danaIn(fork, active: false);
+      await dana.ingest(fork.changesSince(dana.versionVector));
+      clock.advance(const Duration(seconds: 1));
+      await dana.updateHome(active: true, keep: [hub.deviceId]);
+      expect((await fork.ingest(dana.changesSince(fork.versionVector))).invalid, isEmpty);
+      expect(fork.deviceCounts(hub.deviceId), isTrue);
+      expect(fork.deviceCounts(second.deviceId), isFalse);
+      // And no hub key of the window lets anything in after.
+      clock.advance(const Duration(seconds: 5));
+      final third = await openDen(clock);
+      await third.joinGroup(await spareAdmission(spare, mode: DeviceMode.hub), deviceName: 'A third hub', kind: DeviceKind.hub);
+      expect((await fork.ingest(third.changesSince(const {}))).invalid.values.single, contains('in the group already'));
     });
 
     test('"That wasn\'t them" is the inviting family\'s alone, and reaches only what its invitation let in', () async {

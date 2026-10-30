@@ -487,6 +487,11 @@ final Map<String, TypeSpec> typeSpecs = {
     'family': id(nullable: true),
     'status': names(HomeStatus.values),
     'invitedBy': id(nullable: true),
+    // Written once, by its own parent saying an invited family is in (groups.dart,
+    // WindowClosure): the last change it held from each device of the inviting family, and the
+    // devices let in through the invitation it keeps.
+    'closed': dict(number(min: 0), maxKeys: 200),
+    'kept': listOf(id(), max: 20, unique: true),
   }, required: {'name', 'status'}, space: Space.family),
   // A group the family is in (groups.dart).
   RecordType.groupLink: TypeSpec({

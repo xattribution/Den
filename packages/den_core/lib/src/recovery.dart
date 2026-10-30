@@ -19,6 +19,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 
 import 'change.dart';
+import 'groups.dart' show WindowClosure;
 import 'hlc.dart';
 import 'ids.dart';
 import 'invite_keys.dart' show InviteProof, retiredInviteKey;
@@ -222,15 +223,27 @@ class _Retired {
 class RetiredRecoveryKeys {
   final List<_Retired> _retired = [];
 
-  bool get isEmpty => _retired.isEmpty;
+  /// Windows of invited families in groups closed by their own parents (groups.dart), settled
+  /// with these and kept with them.
+  final List<WindowClosure> closures = [];
 
-  void clear() => _retired.clear();
+  bool get isEmpty => _retired.isEmpty && closures.isEmpty;
 
-  void addAll(RetiredRecoveryKeys other) => _retired.addAll(other._retired);
+  void clear() {
+    _retired.clear();
+    closures.clear();
+  }
 
-  /// As a snapshot keeps them: `[[scope, key, clock, [kept...]], ...]`.
+  void addAll(RetiredRecoveryKeys other) {
+    _retired.addAll(other._retired);
+    closures.addAll(other.closures);
+  }
+
+  /// As a snapshot keeps them: `[[scope, key, clock, [kept...]], ...]`, then each closed window
+  /// as `["window", home, clock, [kept...], {device: counter}]`.
   List<Object?> toJson() => [
         for (final r in _retired) [r.scope, r.key, r.at.toString(), r.kept.toList()..sort()],
+        for (final w in closures) w.toJson(),
       ];
 
   /// Reads [toJson]'s output.
@@ -238,6 +251,10 @@ class RetiredRecoveryKeys {
     final out = RetiredRecoveryKeys();
     for (final row in json) {
       final r = row! as List;
+      if (r.length == 5 && r[0] == 'window') {
+        out.closures.add(WindowClosure.fromJson(r));
+        continue;
+      }
       out._retired.add(_Retired(r[0]! as String, r[1]! as String, Hlc.parse(r[2]! as String), (r[3]! as List).cast<String>().toSet()));
     }
     return out;

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'change.dart';
+import 'groups.dart' show closesWindow, windowClosureOf;
 import 'hlc.dart';
 import 'model.dart';
 import 'invite_keys.dart' show retiresInviteKey;
@@ -277,34 +278,62 @@ class Materializer {
     final dropped = <String>{};
     for (var i = 0; i < deciding.length; i++) {
       final c = deciding[i];
-      if (applied.contains(c.id) || dropped.contains(c.id) || rejected.containsKey(c.id)) continue;
+      if (applied.contains(c.id) || dropped.contains(c.id)) continue;
+      // A group's window closed by the invited family's own parent may not count only because
+      // of what it voids: the inviting family dated something before the invited family's own
+      // first change (groups.dart, WindowClosure). It is tried once with itself in force, the
+      // others it voids dropped as usual, and kept when it counts so.
+      final speculative = rejected.containsKey(c.id);
+      final closure = closesWindow(c);
+      if (speculative && !closure) continue;
+      final was = List.of(applied);
       applied.add(c.id);
       _applyEffects(applied);
       // Nothing that counts now is cut: the state is already what a replay would give.
-      if (!_applied.any((a) => _excluded(a.change))) continue;
-      var shrank = false;
+      if (!speculative && !_applied.any((a) => _excluded(a.change))) continue;
+      final gone = <String>[];
+      var conflict = false;
       while (true) {
         _replayOnce();
-        final gone = [for (final id in applied) if (rejected.containsKey(id)) id];
-        if (gone.isEmpty) break;
-        applied.removeWhere(gone.contains);
-        dropped.addAll(gone);
-        shrank = true;
+        final now = [for (final id in applied) if (rejected.containsKey(id) && !(speculative && id == c.id)) id];
+        if (now.isEmpty) break;
+        // A window once closed stays closed: one closure never displaces another, or whoever
+        // wrote the last would win.
+        if (closure && now.any((id) => id != c.id && closesWindow(_byId[id]!))) {
+          conflict = true;
+          break;
+        }
+        applied.removeWhere(now.contains);
+        gone.addAll(now);
         _applyEffects(applied);
       }
-      if (shrank) i = -1;
+      if (conflict || (speculative && rejected.containsKey(c.id))) {
+        // As if it had never been tried.
+        applied
+          ..clear()
+          ..addAll(was);
+        dropped.add(c.id);
+        _applyEffects(applied);
+        _replayOnce();
+        continue;
+      }
+      dropped.addAll(gone);
+      if (gone.isNotEmpty) i = -1;
     }
   }
 
-  /// Whether the validator's cutoffs or replaced recovery keys make [c] count for nothing.
+  /// Whether the validator's cutoffs, replaced recovery keys or closed windows make [c] count for
+  /// nothing.
   bool _excluded(Change c) {
     final n = _counterIn(c.id);
     return (n != null && (validator.cutoffs[c.device]?.any((k) => k.excludes(n, c.hlc)) ?? false)) ||
-        validator.retiredRecoveryKeys.excludes(c);
+        validator.retiredRecoveryKeys.excludes(c) ||
+        validator.closedOut(c);
   }
 
   /// Sets the validator's cutoffs and replaced recovery keys to those of [ids], each of which
-  /// counts in the state as it stands.
+  /// counts in the state as it stands, and the closed windows to those of [ids] (one being tried
+  /// with itself in force included).
   void _applyEffects(List<String> ids) {
     final chosen = {...ids};
     final effects = [
@@ -318,7 +347,11 @@ class Materializer {
     }
     validator.retiredRecoveryKeys
       ..clear()
-      ..addAll(RetiredRecoveryKeys.of(effects));
+      ..addAll(RetiredRecoveryKeys.of(effects))
+      ..closures.addAll([
+        for (final id in ids)
+          if (_byId[id] case final c?) ?windowClosureOf(c),
+      ]);
   }
 
   /// The counter of [device]'s own change that made its record, clocked [created]: nearly
@@ -410,7 +443,7 @@ class Materializer {
 
   /// Whether [c] can make changes before it count for nothing on a second pass: a revocation
   /// naming a cutoff, a replaced recovery key or an invite key taken away ([RetiredRecoveryKeys]).
-  static bool _decidesVerdicts(Change c) => _namesCutoff(c) || setsRecoveryKey(c) || retiresInviteKey(c);
+  static bool _decidesVerdicts(Change c) => _namesCutoff(c) || setsRecoveryKey(c) || retiresInviteKey(c) || closesWindow(c);
 
   static int? _counterIn(String id) {
     final colon = id.lastIndexOf(':');

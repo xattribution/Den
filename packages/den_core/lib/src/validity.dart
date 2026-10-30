@@ -93,8 +93,12 @@ class Validator {
   /// earlier clock.
   final Map<String, List<Cutoff>> cutoffs = {};
 
-  /// Recovery keys replaced later in the log; the materializer fills this like [cutoffs].
+  /// Recovery keys replaced later in the log, and groups' closed windows; the materializer fills
+  /// this like [cutoffs].
   final RetiredRecoveryKeys retiredRecoveryKeys = RetiredRecoveryKeys();
+
+  /// Whether a group's closed window ([WindowClosure]) makes [c] count for nothing.
+  bool closedOut(Change c) => windowClosedOut(c, store, retiredRecoveryKeys.closures);
 
   /// The counter of the change by [device] that made its record (its join request, its
   /// recovery change, or the founder's genesis), whose clock is [created]; null when unknown.
@@ -142,7 +146,7 @@ class Validator {
     // A group of families (groups.dart): its rules G1-G8 narrow the family's below. A family's
     // log refuses what only a group holds.
     final group = isGroupLog(store, trust);
-    final groupRejection = checkGroupRules(c, existing, store, trust, group: group);
+    final groupRejection = checkGroupRules(c, existing, store, trust, group: group, closures: retiredRecoveryKeys.closures);
     if (groupRejection != null) return groupRejection;
 
     final authorEntry = store.at(Space.family, RecordType.device, c.device);
@@ -152,7 +156,10 @@ class Validator {
     }
     // Or as someone's own, with a proof from an invite key a parent made (invite_keys.dart).
     if (c.type == RecordType.device && c.fields.containsKey('invite')) {
-      return checkInviteJoin(c, store, trust, excluded: retiredRecoveryKeys.excludes(c), group: group);
+      final key = InviteProof.parse(c.fields['invite']);
+      final record = key == null ? null : store.at(Space.family, RecordType.inviteKey, key.invite);
+      final window = group && record != null && isWindowKey(store, InviteKeyRecord(record.rec));
+      return checkInviteJoin(c, store, trust, excluded: retiredRecoveryKeys.excludes(c), group: group, window: window);
     }
     if (c.device == trust.founderDevice && authorEntry == null) {
       return _genesis(c, existing, trust);

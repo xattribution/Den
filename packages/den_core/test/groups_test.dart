@@ -164,10 +164,22 @@ void main() {
       expect(f.dana.isApproved, isTrue);
       expect(f.dana.owner?.id, f.gDana);
       expect(f.dana.myHome, f.smithHome);
-      expect(f.kHub.invitationOpen(f.smithHome), isFalse);
+      // In, but the window stays open until Dana says the Smiths are in: the hub's key still works.
+      expect(f.kHub.invitationOpen(f.smithHome), isTrue);
       f.sHub = await admit(f, f.invitation.hub, f.kHub, name: 'Smith hub', kind: DeviceKind.hub);
       expect(f.sHub.isApproved, isTrue);
       expect(f.sHub.thisDevice!.home, f.smithHome);
+      // Dana says they're in: that shuts the window, keeping her phone and the hub it let in.
+      await exchange(f.dana, f.kHub);
+      await f.dana.updateHome(active: true);
+      final said = f.dana.changesSince(const {}).lastWhere((c) => c.type == RecordType.home);
+      expect(said.fields['kept'], unorderedEquals([f.dana.deviceId, f.sHub.deviceId]));
+      expect((said.fields['closed'] as Map).keys, containsAll([f.alex.deviceId, f.kHub.deviceId]));
+      await exchange(f.dana, f.kHub);
+      expect(f.kHub.invitationOpen(f.smithHome), isFalse);
+      expect(f.kHub.home(f.smithHome)!.status, HomeStatus.active);
+      expect(f.kHub.deviceCounts(f.sHub.deviceId), isTrue);
+      expect(f.kHub.deviceCounts(f.dana.deviceId), isTrue);
       // History tells the inviting family who joined, and how.
       await exchange(f.alex, f.kHub);
       final joined = f.alex.history(type: RecordType.device).firstWhere((h) => h.rid == f.dana.deviceId);
@@ -202,36 +214,41 @@ void main() {
   });
 
   group('G5: who reads what', () {
-    test('f is everyone\'s, p every family\'s parents\', m:X X\'s alone; hubs hold the whole group', () async {
+    test('f is everyone\'s, p every family\'s parents\'; nobody has a space of their own; hubs hold the whole group', () async {
       final f = await bothFamilies(clock);
       final g = f.alex;
       final alex = g.member(f.gAlex)!, dana = g.member(f.gDana)!, leo = g.member(f.gLeo)!;
       final fam = g.family;
       expect(canRead(dana, Space.parents, fam), isTrue);
       expect(canRead(leo, Space.parents, fam), isFalse);
-      expect(canRead(leo, Space.member(f.gLeo), fam), isTrue);
-      expect(canRead(alex, Space.member(f.gLeo), fam), isFalse, reason: 'no oversight in a group, even of one\'s own kid');
+      // A group has no "Just me" (review finding 5): nobody reads one, the person included.
+      expect(canRead(leo, Space.member(f.gLeo), fam), isFalse);
+      expect(canRead(alex, Space.member(f.gLeo), fam), isFalse);
       expect(canRead(dana, Space.member(f.gLeo), fam), isFalse);
-      expect(f.alex.spacesForDevice(f.alex.deviceId), {Space.family, Space.parents, Space.member(f.gAlex)});
-      expect(f.alex.spacesForDevice(f.leo.deviceId), {Space.family, Space.member(f.gLeo)});
-      expect(f.alex.spacesForDevice(f.dana.deviceId), {Space.family, Space.parents, Space.member(f.gDana)});
-      expect(f.alex.spacesForDevice(f.sHub.deviceId), containsAll([Space.family, Space.parents, Space.member(f.gLeo), Space.member(f.gMia)]));
-      expect(f.dana.readableSpaces, {Space.family, Space.parents, Space.member(f.gDana)});
+      expect(f.alex.spacesForDevice(f.alex.deviceId), {Space.family, Space.parents});
+      expect(f.alex.spacesForDevice(f.leo.deviceId), {Space.family});
+      expect(f.alex.spacesForDevice(f.dana.deviceId), {Space.family, Space.parents});
+      expect(f.alex.spacesForDevice(f.sHub.deviceId), {Space.family, Space.parents});
+      expect(f.alex.spacesForDevice(f.kHub.deviceId), {Space.family, Space.parents});
+      expect(f.dana.readableSpaces, {Space.family, Space.parents});
       // In a family's own log, parents still see their kids' "Just me" by default.
       expect(canRead(f.kotvas.member(f.kAlex)!, Space.member(f.kLeo), f.kotvas.family), isTrue);
+      expect(canRead(f.kotvas.member(f.kLeo)!, Space.member(f.kLeo), f.kotvas.family), isTrue);
     });
 
-    test('someone\'s own things in the group reach their devices and the hubs, nobody else\'s', () async {
+    test('"Just me" stays in each family\'s own Den: a group refuses it', () async {
       final f = await bothFamilies(clock);
-      await f.priya.addList(title: 'My secret list', audience: Audience.justMe);
-      await settle(f);
-      expect(f.priya.lists.any((l) => l.list.title == 'My secret list'), isTrue);
-      final mine = Space.member(f.gPriya);
-      expect(f.kHub.changesSince(const {}).any((c) => c.space == mine), isTrue);
-      expect(f.sHub.changesSince(const {}).any((c) => c.space == mine), isTrue);
-      for (final d in [f.alex, f.leo, f.dana, f.mia]) {
-        expect(d.changesSince(const {}).any((c) => c.space == mine), isFalse, reason: d.thisDevice!.name);
+      await expectLater(f.priya.addList(title: 'My secret list', audience: Audience.justMe), throwsA(isA<InvalidInput>()));
+      final start = clock.now + 86400000;
+      await expectLater(f.dana.addEvent(title: 'Dentist', start: start, end: start + 3600000, audience: Audience.justMe),
+          throwsA(isA<InvalidInput>()));
+      // Nor does a group key any space of one person.
+      for (final d in [f.alex, f.priya, f.leo, f.kHub, f.dana, f.mia, f.sHub]) {
+        expect(d.changesSince(const {}).where((c) => Space.isMember(c.space)), isEmpty, reason: d.thisDevice!.name);
       }
+      // In the family's own Den it's as it was.
+      final mine = await f.priyaF.addList(title: 'My secret list', audience: Audience.justMe);
+      expect(f.priyaF.list(mine), isNotNull);
     });
   });
 
@@ -359,7 +376,8 @@ void main() {
       await impostor.setRecoveryKey(f.gDana, words.publicKey);
       await exchange(impostor, f.kHub);
       await exchange(f.alex, f.kHub);
-      expect(f.alex.invitationOpen(f.smithHome), isFalse);
+      // Whoever it was hasn't said the Smiths are in (and once a Smith has, it's theirs alone).
+      expect(f.alex.invitationOpen(f.smithHome), isTrue);
       final disowned = await f.alex.disownInvite(impostor.deviceId);
       expect(disowned.member, f.gDana);
       expect(f.alex.device(impostor.deviceId)!.revoked, isTrue);

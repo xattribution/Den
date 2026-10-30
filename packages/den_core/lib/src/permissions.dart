@@ -74,20 +74,21 @@ bool canChangePicture(Member? actor, Member target, Family? family) {
 /// Whether [member] may read records in [space], given the family's oversight policy.
 /// Shared displays read only the family space; hubs read everything (callers check device mode).
 ///
-/// In a group of families (groups.dart, G5) `f` is everyone's, `p` every family's parents' and
-/// `m:X` X's alone: a group has no parental oversight across families, nor within one.
+/// In a group of families (groups.dart, G5) `f` is everyone's and `p` every family's parents'.
+/// A group has no one's own space (`m:X`): every member family's hub holds the whole group, so
+/// "Just me" things stay in each family's own log.
 bool canRead(Member member, String space, Family? family) {
   if (space == Space.family) return true;
   if (space == Space.parents) return member.role == Role.parent;
   final owner = Space.memberOf(space);
   if (owner == null) return false;
-  if (owner == member.id) return true;
   if (family?.isGroup ?? false) return false;
+  if (owner == member.id) return true;
   return member.role == Role.parent && (family?.parentsSeePrivate(owner) ?? true);
 }
 
 /// The spaces a device should hold, given its owner and mode. A hub holds every space; in a
-/// group every member family's hub holds a whole replica, someone's own space in it included.
+/// group, which has no one's own space, every member family's hub holds `f` and `p`.
 Set<String> spacesFor({
   required Device device,
   required Member? owner,
@@ -95,6 +96,7 @@ Set<String> spacesFor({
   required Iterable<Member> members,
 }) {
   if (device.mode == DeviceMode.hub) {
+    if (family?.isGroup ?? false) return {Space.family, Space.parents};
     return {Space.family, Space.parents, for (final m in members) Space.member(m.id)};
   }
   if (device.mode == DeviceMode.shared || owner == null) return {Space.family};
