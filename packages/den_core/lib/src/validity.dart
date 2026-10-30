@@ -2,6 +2,7 @@ import 'package:collection/collection.dart';
 
 import 'change.dart';
 import 'chores.dart';
+import 'groups.dart';
 import 'hlc.dart';
 import 'invite_keys.dart';
 import 'model.dart';
@@ -138,14 +139,20 @@ class Validator {
       }
     }
 
+    // A group of families (groups.dart): its rules G1-G8 narrow the family's below. A family's
+    // log refuses what only a group holds.
+    final group = isGroupLog(store, trust);
+    final groupRejection = checkGroupRules(c, existing, store, trust, group: group);
+    if (groupRejection != null) return groupRejection;
+
     final authorEntry = store.at(Space.family, RecordType.device, c.device);
     // The one way a device approves itself: as an existing parent's, with a recovery proof.
     if (c.type == RecordType.device && c.fields.containsKey('recovery')) {
-      return checkRecovery(c, store, trust, retiredRecoveryKeys);
+      return checkRecovery(c, store, trust, retiredRecoveryKeys, group: group);
     }
     // Or as someone's own, with a proof from an invite key a parent made (invite_keys.dart).
     if (c.type == RecordType.device && c.fields.containsKey('invite')) {
-      return checkInviteJoin(c, store, trust, excluded: retiredRecoveryKeys.excludes(c));
+      return checkInviteJoin(c, store, trust, excluded: retiredRecoveryKeys.excludes(c), group: group);
     }
     if (c.device == trust.founderDevice && authorEntry == null) {
       return _genesis(c, existing, trust);
@@ -177,6 +184,10 @@ class Validator {
     if (c.fields.containsKey('_via') && !hub) {
       return _schema('Only the hub records which connection made a change');
     }
+    // In a group a hub acting for anyone but its owner says which connection it acts for (G4).
+    if (group && hub && actor != null && actor.id != author.member && !c.fields.containsKey('_via')) {
+      return _deny('A hub records which connection it acts for');
+    }
     final familyEntry = store.liveAt(Space.family, RecordType.family, trust.familyId!);
     final family = familyEntry == null ? null : Family(familyEntry.rec);
     final x = _Ctx(
@@ -187,6 +198,7 @@ class Validator {
       openCheckoff: author.mode == DeviceMode.shared && actor == null && author.openCheckoff,
       family: family,
       existing: existing,
+      group: group,
     );
 
     if (c.space == Space.parents && !(hub || (actor?.isParent ?? false))) {
@@ -244,6 +256,10 @@ class Validator {
         if (owner == null || !Member(owner.rec).isParent) {
           return _trust('The founder\'s device must belong to a parent');
         }
+        return null;
+      case RecordType.home:
+        // A group's founder's own family (groups.dart decides the rest).
+        if (!familyExists) return _trust('The family isn\'t set up yet');
         return null;
       default:
         return _trust('The family isn\'t set up yet');
@@ -320,7 +336,7 @@ class Validator {
   }
 
   static const Map<String, Set<String>> _immutable = {
-    RecordType.family: {'founderDevice'},
+    RecordType.family: {'founderDevice', 'kind'},
     RecordType.device: {'pubkey'},
     RecordType.eventException: {'event', 'occurrence'},
     RecordType.completion: {'chore', 'date'},
@@ -328,7 +344,11 @@ class Validator {
     RecordType.redemption: {'reward', 'member', 'cost'},
     RecordType.connection: {'kind'},
     RecordType.photo: {'member', 'mime', 'data'},
+    RecordType.member: {'home'},
     RecordType.inviteKey: {'member', 'home', 'modes', 'uses', 'by', 'device', 'expires'},
+    RecordType.home: {'invitedBy'},
+    RecordType.groupLink: {'group', 'founder'},
+    RecordType.groupInvite: {'group', 'device'},
   };
 
   Rejection? _permit(_Ctx x, TrustRoot trust) {
@@ -438,7 +458,14 @@ class Validator {
         }
         return null;
       case RecordType.inviteKey:
-        return checkInviteKeyWrite(c, x.existing, store, ownDevice: x.ownDevice, actor: x.actor);
+        return checkInviteKeyWrite(c, x.existing, store, ownDevice: x.ownDevice, actor: x.actor, group: x.group);
+      case RecordType.home:
+        // Only a group holds these, and groups.dart decided.
+        return null;
+      case RecordType.groupLink:
+        return checkGroupLinkWrite(c, x.existing, ownDevice: x.ownDevice, actor: x.actor);
+      case RecordType.groupInvite:
+        return checkGroupInviteWrite(c, x.existing, store, ownDevice: x.ownDevice, actor: x.actor);
       case RecordType.photo:
         final member = c.fields['member'] ?? x.existing?.fields['member'];
         if (member is! String || store.liveAt(Space.family, RecordType.member, member) == null) {
@@ -691,6 +718,7 @@ class _Ctx {
     required this.openCheckoff,
     required this.family,
     required this.existing,
+    required this.group,
   });
 
   final Change c;
@@ -700,6 +728,9 @@ class _Ctx {
   final bool openCheckoff;
   final Family? family;
   final Entry? existing;
+
+  /// Whether the log is a group of families (groups.dart).
+  final bool group;
 
   bool get creating => existing == null;
 

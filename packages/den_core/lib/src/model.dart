@@ -25,10 +25,27 @@ abstract final class RecordType {
   static const signInTries = 'signInTries';
   static const inviteKey = 'inviteKey';
 
+  /// One family in a group (groups.dart); only a group's log holds them.
+  static const home = 'home';
+
+  /// A group the family is in, and who of the family is in it; only a family's log holds them.
+  static const groupLink = 'groupLink';
+
+  /// One device's admission into a group, sealed to that device; only a family's log holds them.
+  static const groupInvite = 'groupInvite';
+
   static const all = {
     family, member, device, category, event, eventException, chore, completion, adjustment,
     goal, reward, redemption, list, item, subscription, connection, photo, signInTries, inviteKey,
+    home, groupLink, groupInvite,
   };
+}
+
+/// What a log is: a family's own, or a group of families (`family.kind`, set at genesis and never
+/// changed; a family's record from before groups has none). See ARCHITECTURE.md, "Groups".
+abstract final class LogKind {
+  static const family = 'family';
+  static const group = 'group';
 }
 
 /// The pictogram keys records use for icons. The app maps each to a drawing; other clients may
@@ -316,6 +333,12 @@ abstract class RecordView {
 class Family extends RecordView {
   const Family(super.rec);
   String get name => rec.str('name');
+
+  /// [LogKind.family] or [LogKind.group].
+  String get kind => rec.str('kind', LogKind.family);
+
+  /// Whether this log is a group of families (groups.dart) rather than one family's own.
+  bool get isGroup => kind == LogKind.group;
   String get timezone => rec.str('timezone', 'UTC');
   int get weekStart => rec.integer('weekStart');
   String get founderDevice => rec.str('founderDevice');
@@ -487,6 +510,14 @@ class Member extends RecordView {
   int get order => rec.integer('order');
   bool get isParent => role == Role.parent;
   bool get isKid => role == Role.kid;
+
+  /// In a group: the [Home] (family) the person belongs to. Set when they are added, never
+  /// changed; null in a family's own log.
+  String? get home => rec.strOrNull('home');
+
+  /// In a group: the person's member id in their own family's log, so that family's devices draw
+  /// them with the family's look. Informational; nothing checks it against the other log.
+  String? get link => rec.strOrNull('link');
 }
 
 /// A shared screen saying that someone got a person's PIN or picture pattern wrong [tries] times
@@ -525,6 +556,83 @@ class Device extends RecordView {
       _enum(DisplayLayout.values, rec.map('display')['layout']) ?? DisplayLayout.today;
   bool get openCheckoff => rec.map('display')['openCheckoff'] as bool? ?? false;
   bool get isShared => mode != DeviceMode.personal;
+
+  /// In a group: the [Home] the device belongs to (a personal device's is its owner's). Null in
+  /// a family's own log.
+  String? get home => rec.strOrNull('home');
+}
+
+/// Where a [Home] is in a group: invited (no parent of it is in yet), in, or gone for good.
+enum HomeStatus { invited, active, left }
+
+/// One family in a group (a `home` record in the group's space `f`). See ARCHITECTURE.md,
+/// "Groups".
+class Home extends RecordView {
+  const Home(super.rec);
+
+  /// The family's name, as the group shows it ("Smiths").
+  String get name => rec.str('name');
+
+  /// The color the group draws the family with; null for none chosen.
+  Marker? get color => Marker.parse(rec.fields['color']);
+
+  /// Where the family's hub syncs the group (up to 4 URLs; relay `/connect/` URLs too).
+  List<String> get hubs => rec.strings('hubs');
+
+  /// The family's own log id, for display and to tell two invites of one family apart; null
+  /// until one of its parents says.
+  String? get family => rec.strOrNull('family');
+
+  HomeStatus get status => _enum(HomeStatus.values, rec.fields['status']) ?? HomeStatus.active;
+
+  /// The home whose parent invited this one; null for the founder's.
+  String? get invitedBy => rec.strOrNull('invitedBy');
+
+  bool get left => status == HomeStatus.left;
+}
+
+enum GroupLinkStatus { active, left }
+
+/// A group the family is in (a `groupLink` record in the family's space `f`, its id the group's
+/// id): where it lives, and which of the family's people are in it.
+class GroupLink extends RecordView {
+  const GroupLink(super.rec);
+
+  /// The group's log id.
+  String get group => rec.str('group');
+
+  /// The group's founder key (base64url Ed25519), which roots its trust.
+  String get founder => rec.str('founder');
+  String get name => rec.str('name');
+
+  /// The group's hubs, as the family last heard.
+  List<String> get hubs => rec.strings('hubs');
+
+  /// The family's member id -> that person's member id in the group.
+  Map<String, String> get members => {
+        for (final e in rec.map('members').entries)
+          if (e.value is String) e.key: e.value! as String,
+      };
+
+  /// Whether the family's shared screens show the group.
+  bool get displays => rec.flag('displays', true);
+  GroupLinkStatus get status => _enum(GroupLinkStatus.values, rec.fields['status']) ?? GroupLinkStatus.active;
+}
+
+/// One device's admission into a group (a `groupInvite` record in the family's space `f`, id
+/// `<group>@<device>`): the invite key that lets it in, sealed to that device's `xpub` by a
+/// parent's own device, so only that device can open it.
+class GroupInvite extends RecordView {
+  const GroupInvite(super.rec);
+  String get group => rec.str('group');
+  String get device => rec.str('device');
+  Map<String, Object?> get sealed => rec.map('sealed');
+
+  /// The invite key's record id in the group, which names no secret: the group device it let in
+  /// is `usedInvite(invite)` there, for a parent removing it when the family device goes.
+  String? get invite => rec.strOrNull('invite');
+
+  static String idFor(String group, String device) => '$group@$device';
 }
 
 class EventCategory extends RecordView {

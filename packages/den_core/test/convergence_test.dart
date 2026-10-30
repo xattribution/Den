@@ -6,6 +6,7 @@ import 'package:den_core/src/materializer.dart';
 import 'package:den_core/src/validity.dart';
 import 'package:test/test.dart';
 
+import 'group_support.dart';
 import 'support.dart';
 
 /// Delivers every change [to] lacks from [pool] in a shuffled order, in random chunks, with some
@@ -253,6 +254,85 @@ void main() {
     final again = parent.changesSince(tablet.versionVector, spaces: parent.spacesForDevice(tablet.deviceId));
     expect(again, isEmpty);
   });
+
+  for (final seed in [41, 42, 43]) {
+    test('two families\' devices editing a group at once converge, every replica in any order (seed $seed)', () async {
+      final random = Random(seed);
+      final clock = TestClock.at(DateTime.utc(2026, 6, 1, 15));
+      final f = await bothFamilies(clock);
+      final start = DateTime.utc(2026, 6, 6, 21).millisecondsSinceEpoch;
+      final soccer = await f.alex.addEvent(
+        title: 'Soccer',
+        start: start,
+        end: start + 3600000,
+        rrule: 'FREQ=WEEKLY',
+        rides: const [Ride('to', null), Ride('from', null)],
+      );
+      final snacks = await f.dana.addList(title: 'Snacks', kind: ListKind.shopping);
+      final oranges = await f.dana.addItem(snacks, text: 'Oranges');
+      await settle(f);
+
+      // Nobody hears from anybody while both families edit, the hubs too.
+      clock.advance(const Duration(seconds: 30));
+      await f.alex.updateEvent(soccer, {'title': 'Soccer practice'});
+      await f.dana.updateEvent(soccer, {'location': 'Field 4'});
+      await f.dana.claimRide(soccer, occurrence: start, leg: 'to', driver: f.gDana);
+      await f.priya.claimRide(soccer, occurrence: start, leg: 'from', driver: f.gPriya);
+      await f.dana.updateEvent(soccer, {'title': 'Soccer, early'}, scope: EditScope.one, occurrence: start);
+      await f.leo.setItemChecked(oranges, true);
+      await f.mia.addItem(snacks, text: 'Juice').then((_) => null, onError: (Object _) => null);
+      await f.priya.addItem(snacks, text: 'Water');
+      await f.dana.updateMember(f.gMia, {'grants': [Grant.lists]});
+      await f.priya.updateMember(f.gLeo, {'grants': [Grant.events]});
+      f.kHub.actAs(f.gAlex, via: 'Claude');
+      await f.kHub.addEvent(title: 'Team photo', start: start + 86400000, end: start + 90000000);
+      f.kHub.actAs(null);
+      f.sHub.actAs(f.gDana, via: 'Calendar feed');
+      await f.sHub.updateList(snacks, {'title': 'Snacks for Saturday'});
+      f.sHub.actAs(null);
+      // Another family's parent and a kid overreaching, signed past their engines' checks.
+      final overreach = [
+        await forgeAs(f.dana, type: RecordType.member, rid: f.gLeo, fields: {'grants': <String>[]}, actor: f.gDana),
+        await forgeAs(f.leo, type: RecordType.event, rid: soccer, fields: {'drivers.to': f.gLeo}, actor: f.gLeo),
+      ];
+
+      final engines = [...f.kotvasDevices, ...f.smithDevices];
+      final pool = {
+        for (final d in engines)
+          for (final c in d.changesSince({})) c.id: c,
+        for (final c in overreach) c.id: c,
+      }.values.toList();
+      // Each hub takes everything, in its own shuffled order; then the devices sync as usual.
+      for (final hub in [f.kHub, f.sHub]..shuffle(random)) {
+        await deliver(hub, pool, random);
+      }
+      await settle(f);
+
+      expect(jsonEncode(f.sHub.exportJson()), jsonEncode(f.kHub.exportJson()), reason: 'both families\' replicas agree');
+      expect(f.sHub.history().length, f.kHub.history().length);
+      // Every device sees the same shared things, whichever family it is of.
+      String shared(Den d) {
+        final records = (d.exportJson()['records']! as Map).map((type, byId) => MapEntry(type, {
+              for (final e in (byId as Map).entries)
+                if ((e.value as Map)['space'] == Space.family) e.key: e.value,
+            }));
+        return jsonEncode(records);
+      }
+
+      for (final d in engines) {
+        expect(shared(d), shared(f.kHub), reason: d.thisDevice!.name);
+      }
+      final occ = f.mia.occurrences(start, start + 1).single;
+      expect(occ.title, 'Soccer, early');
+      expect({for (final r in occ.rides) r.leg: r.driver}, {'to': f.gDana, 'from': f.gPriya}, reason: 'each family\'s claim of a leg counts');
+      expect(f.alex.member(f.gLeo)!.grants, {Grant.events}, reason: 'another family\'s parent took nothing away');
+      expect(f.alex.list(snacks)!.list.title, 'Snacks for Saturday');
+      expect(f.alex.list(snacks)!.items.firstWhere((i) => i.text == 'Oranges').checked, isTrue);
+      for (final c in overreach) {
+        expect(f.kHub.history().any((h) => h.change == c.id), isFalse);
+      }
+    });
+  }
 
   test('changes from a device whose record hasn\'t arrived wait, then apply', () async {
     final clock = TestClock.at(DateTime.utc(2026, 5, 4, 15));

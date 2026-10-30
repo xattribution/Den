@@ -299,8 +299,9 @@ Rejection _deny(String m) => Rejection(RejectionKind.permission, m);
 
 /// Validity for a change that writes `recovery` to a device record: the device letting itself
 /// in as an existing parent's own device with a proof from that parent's recovery key or the
-/// hub's key the family opted in to. [retired] holds the keys later changes replaced.
-Rejection? checkRecovery(Change c, RecordStore store, TrustRoot trust, RetiredRecoveryKeys retired) {
+/// hub's key the family opted in to. [retired] holds the keys later changes replaced. In a group
+/// ([group]) the device also writes the family it joins as one of (`home`; groups.dart).
+Rejection? checkRecovery(Change c, RecordStore store, TrustRoot trust, RetiredRecoveryKeys retired, {bool group = false}) {
   if (c.rid != c.device) return _trust('Recovery lets in only the device that asks');
   if (c.actor != null) return _trust('A device asking to join can\'t act for anyone');
   final own = store.at(Space.family, RecordType.device, c.rid);
@@ -312,7 +313,7 @@ Rejection? checkRecovery(Change c, RecordStore store, TrustRoot trust, RetiredRe
   final proof = RecoveryProof.parse(c.fields['recovery']);
   if (proof == null) return _trust('That isn\'t a recovery proof');
   final f = c.fields;
-  if (f.keys.any((k) => !recoveryChangeFields.contains(k))) {
+  if (f.keys.any((k) => !recoveryChangeFields.contains(k) && !(group && k == 'home'))) {
     return _trust('A device let in by recovery sets only its own name, kind and keys');
   }
   if (f['approved'] != true || f['mode'] != DeviceMode.personal.name || f['revoked'] == true) {

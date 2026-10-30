@@ -73,16 +73,21 @@ bool canChangePicture(Member? actor, Member target, Family? family) {
 
 /// Whether [member] may read records in [space], given the family's oversight policy.
 /// Shared displays read only the family space; hubs read everything (callers check device mode).
+///
+/// In a group of families (groups.dart, G5) `f` is everyone's, `p` every family's parents' and
+/// `m:X` X's alone: a group has no parental oversight across families, nor within one.
 bool canRead(Member member, String space, Family? family) {
   if (space == Space.family) return true;
   if (space == Space.parents) return member.role == Role.parent;
   final owner = Space.memberOf(space);
   if (owner == null) return false;
   if (owner == member.id) return true;
+  if (family?.isGroup ?? false) return false;
   return member.role == Role.parent && (family?.parentsSeePrivate(owner) ?? true);
 }
 
-/// The spaces a device should hold, given its owner and mode.
+/// The spaces a device should hold, given its owner and mode. A hub holds every space; in a
+/// group every member family's hub holds a whole replica, someone's own space in it included.
 Set<String> spacesFor({
   required Device device,
   required Member? owner,

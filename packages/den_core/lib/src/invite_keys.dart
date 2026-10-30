@@ -262,8 +262,10 @@ Future<bool> inviteProofHolds(Change c, String? familyId) async {
 }
 
 /// Whether [c] takes an invite key away, which can make earlier joins with it count for nothing
-/// (recovery.dart's `RetiredRecoveryKeys` keeps these too).
-bool retiresInviteKey(Change c) => c.type == RecordType.inviteKey && c.fields.containsKey('key');
+/// (recovery.dart's `RetiredRecoveryKeys` keeps these too). Making one never does: a late change
+/// before a new key only rewinds, which matters where every device gets a key (a group's).
+bool retiresInviteKey(Change c) =>
+    c.type == RecordType.inviteKey && c.fields.containsKey('key') && c.fields['key'] == null;
 
 /// The key a valid change [a] took away, when it took one: `(key, kept)`.
 (String key, Set<String> kept)? retiredInviteKey(Applied a) {
@@ -294,7 +296,10 @@ Rejection _schema(String m) => Rejection(RejectionKind.schema, m);
 /// only change after that takes its key away (`key: null` with `kept`), by a parent on their
 /// own device; nothing brings a key back, and nothing removes the record. `home` is for groups
 /// (a family within a group of families), which a family log refuses.
-Rejection? checkInviteKeyWrite(Change c, Entry? existing, RecordStore store, {required bool ownDevice, required Member? actor}) {
+///
+/// In a group ([group]) the key names its home, and groups.dart decides whose it may be.
+Rejection? checkInviteKeyWrite(Change c, Entry? existing, RecordStore store,
+    {required bool ownDevice, required Member? actor, bool group = false}) {
   const ownOnly = 'Only a parent on their own device can do that, not a shared screen or an app acting through the hub';
   if (!ownDevice) return _deny(ownOnly);
   if (actor == null || !actor.isParent) return _deny('Only a parent can invite someone in');
@@ -306,7 +311,7 @@ Rejection? checkInviteKeyWrite(Change c, Entry? existing, RecordStore store, {re
     final key = f['key'];
     if (key is! String) return _schema('A new invite needs its key');
     if (inviteKeyIdOf(key) != c.rid) return _schema('An invite is named for its key');
-    if (f['home'] != null) return _schema('Only a group\'s invite names a home');
+    if (f['home'] != null && !group) return _schema('Only a group\'s invite names a home');
     final member = f['member'];
     final modes = {for (final m in (f['modes'] as List?) ?? const ['personal']) m as String};
     if (member != null) {
@@ -334,8 +339,9 @@ Rejection? checkInviteKeyWrite(Change c, Entry? existing, RecordStore store, {re
 /// Validity for a change that writes `invite` to a device record: the device letting itself in,
 /// as the mode and person an invite key the family made allows, with that key's proof.
 /// [excluded] says whether a later change took the key away without knowing of this device
-/// (recovery.dart's `RetiredRecoveryKeys.excludes`).
-Rejection? checkInviteJoin(Change c, RecordStore store, TrustRoot trust, {required bool excluded}) {
+/// (recovery.dart's `RetiredRecoveryKeys.excludes`). In a group ([group]) the device also writes
+/// the family it joins as one of (`home`), which groups.dart checks against the key.
+Rejection? checkInviteJoin(Change c, RecordStore store, TrustRoot trust, {required bool excluded, bool group = false}) {
   if (c.rid != c.device) return _trust('An invite lets in only the device that asks');
   if (c.actor != null) return _trust('A device asking to join can\'t act for anyone');
   final own = store.at(Space.family, RecordType.device, c.rid);
@@ -347,7 +353,7 @@ Rejection? checkInviteJoin(Change c, RecordStore store, TrustRoot trust, {requir
   final proof = InviteProof.parse(c.fields['invite']);
   if (proof == null) return _trust('That isn\'t an invite');
   final f = c.fields;
-  if (f.keys.any((k) => !inviteJoinFields.contains(k))) {
+  if (f.keys.any((k) => !inviteJoinFields.contains(k) && !(group && k == 'home'))) {
     return _trust('A device let in by an invite sets only its own name, kind and keys');
   }
   if (f['approved'] != true || f['revoked'] == true) return _trust('An invite lets a device in, approved');

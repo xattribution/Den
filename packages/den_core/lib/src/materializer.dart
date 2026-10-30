@@ -674,6 +674,10 @@ String verbFor(Change c, Map<String, Object?> before, bool created) {
       if (created && f['approved'] == false) return 'requested';
     case RecordType.signInTries:
       return 'counted';
+    case RecordType.home:
+      if (f['status'] == HomeStatus.left.name) return 'left';
+      if (created && f['status'] == HomeStatus.invited.name) return 'invited';
+      if (f['status'] == HomeStatus.active.name && before['status'] == HomeStatus.invited.name) return 'joined';
     case RecordType.connection:
       if (f['status'] == ConnectionStatus.revoked.name) return 'removed';
       if (created && f['status'] == ConnectionStatus.pending.name) return 'requested';
@@ -690,7 +694,12 @@ String titleOf(Entry e, RecordStore store) {
     case RecordType.member:
     case RecordType.device:
     case RecordType.category:
+    case RecordType.home:
+    case RecordType.groupLink:
       return field(e, 'name');
+    case RecordType.groupInvite:
+      final device = e.fields['device'];
+      return device is String ? field(store.at(Space.family, RecordType.device, device), 'name') : '';
     case RecordType.item:
       return field(e, 'text');
     case RecordType.completion:

@@ -383,9 +383,34 @@ String? _checker(String label, Object? v) => v == null || (v is String && (v.isE
     ? null
     : '$label is not a member';
 
+/// A URL a hub syncs at: `http(s)` or `ws(s)` with a host, a relay's `/connect/<hub>` too.
+String? _hubUrl(String label, Object? v) {
+  if (v is! String || v.length > 500) return '$label is not a hub address';
+  final uri = Uri.tryParse(v);
+  if (uri == null || !const {'https', 'wss', 'http', 'ws'}.contains(uri.scheme) || uri.host.isEmpty) {
+    return '$label is not a hub address';
+  }
+  return null;
+}
+
+final FieldCheck _hubs = listOf(_hubUrl, max: 4, unique: true);
+
+/// A device's sealed envelope (seal.dart): `{v, from, to, eph, nonce, ct, sig}`.
+final FieldCheck _sealed = shape({
+  'v': number(min: 1, max: 1),
+  'from': id(),
+  'to': id(),
+  'eph': keyText(),
+  'nonce': keyText(),
+  'ct': text(min: 1, max: 4000),
+  'sig': keyText(),
+}, required: {'v', 'from', 'to', 'eph', 'nonce', 'ct', 'sig'});
+
 final Map<String, TypeSpec> typeSpecs = {
   RecordType.family: TypeSpec({
     'name': text(min: 1, max: maxName),
+    // Set at genesis, never changed: a family's own log, or a group of families (groups.dart).
+    'kind': oneOf(const [LogKind.family, LogKind.group]),
     'timezone': zoneName(),
     'weekStart': number(min: 0, max: 6),
     'founderDevice': id(),
@@ -416,6 +441,9 @@ final Map<String, TypeSpec> typeSpecs = {
     'signIn': _signIn,
     'order': number(),
     'recovery': _recoveryKey('key'),
+    // In a group only (groups.dart): the person's family there, and their id in that family's log.
+    'home': id(),
+    'link': id(nullable: true),
   }, required: {'name', 'role'}, space: Space.family),
   RecordType.signInTries: TypeSpec({
     'device': id(),
@@ -448,7 +476,37 @@ final Map<String, TypeSpec> typeSpecs = {
     'display': shape({'layout': names(DisplayLayout.values), 'openCheckoff': flag()}),
     'recovery': _recoveryProof,
     'invite': _inviteProof,
+    // In a group only (groups.dart): the family the device belongs to.
+    'home': id(),
   }, required: {'name', 'kind', 'pubkey', 'mode'}, space: Space.family),
+  // One family in a group (groups.dart).
+  RecordType.home: TypeSpec({
+    'name': text(min: 1, max: maxName),
+    'color': oneOf(Marker.allNames, nullable: true),
+    'hubs': _hubs,
+    'family': id(nullable: true),
+    'status': names(HomeStatus.values),
+    'invitedBy': id(nullable: true),
+  }, required: {'name', 'status'}, space: Space.family),
+  // A group the family is in (groups.dart).
+  RecordType.groupLink: TypeSpec({
+    'group': id(),
+    'founder': keyText(),
+    'name': text(min: 1, max: maxName),
+    'hubs': _hubs,
+    'members': dict(id(), maxKeys: 50),
+    'displays': flag(),
+    'status': names(GroupLinkStatus.values),
+  }, required: {'group', 'founder', 'name', 'status'}, space: Space.family),
+  // One device's admission into a group, sealed to it (groups.dart).
+  RecordType.groupInvite: TypeSpec({
+    'group': id(),
+    'device': id(),
+    'sealed': _sealed,
+    // The invite key's record id in the group (the hash of its public half, no secret), so a
+    // parent finds the group device it let in when the family device goes.
+    'invite': id(nullable: true),
+  }, required: {'group', 'device', 'sealed'}, space: Space.family),
   RecordType.category: TypeSpec({
     'name': text(min: 1, max: maxName),
     'icon': text(max: 40),

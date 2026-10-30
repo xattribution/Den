@@ -9,6 +9,7 @@ import 'package:den_core/src/snapshot.dart';
 import 'package:den_core/src/validity.dart';
 import 'package:test/test.dart';
 
+import 'group_support.dart';
 import 'support.dart';
 
 /// A family's log with what makes replays hard: four devices editing with skewed clocks,
@@ -484,6 +485,175 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildRevocationPool(int seed) as
   return (TrustRoot(familyId: a.familyId, founderPubkey: a.founderPubkey), pool, before);
 }
 
+/// A group of families' log (groups.dart) with what makes its scoped rules hard to replay: two
+/// families' devices editing at once, out of touch with each other; a kid whose edits count only
+/// after their own parent's grant; another family's parent, the other family's hub and a kid
+/// overreaching; an invited family's window (a second key for its first parent, used before or
+/// after the first, which counts only while the window is open); "That wasn't them" by the
+/// inviting family; and a family leaving while one of its devices keeps writing, unaware.
+Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
+  final random = Random(seed);
+  final clock = TestClock.at(DateTime.utc(2026, 6, 1, 15));
+  final f = await bothFamilies(clock);
+  final people = {f.alex: f.gAlex, f.priya: f.gPriya, f.leo: f.gLeo, f.dana: f.gDana, f.mia: f.gMia};
+  final phones = [f.alex, f.priya, f.leo, f.dana, f.mia];
+  final forged = <Change>[];
+  var forgedCounter = 7000;
+  final start = DateTime.utc(2026, 6, 6, 15).millisecondsSinceEpoch;
+
+  Future<void> op(Den x) async {
+    clock.advance(Duration(seconds: 1 + random.nextInt(300)));
+    final me = people[x];
+    final drivers = [f.gAlex, f.gPriya, f.gDana, f.gLeo, null];
+    try {
+      switch (random.nextInt(12)) {
+        case 0:
+          await x.addEvent(
+            title: 'Game ${random.nextInt(99)}',
+            start: start + random.nextInt(9) * 86400000,
+            end: start + random.nextInt(9) * 86400000 + 86400000,
+            rides: const [Ride('to', null), Ride('from', null)],
+          );
+        case 1:
+        case 2:
+          final events = x.events;
+          if (events.isEmpty) return;
+          final e = events[random.nextInt(events.length)];
+          await x.claimRide(e.id, occurrence: e.start, leg: random.nextBool() ? 'to' : 'from', driver: drivers[random.nextInt(drivers.length)]);
+        case 3:
+          final events = x.events;
+          if (events.isNotEmpty) await x.updateEvent(events[random.nextInt(events.length)].id, {'location': 'Field ${random.nextInt(9)}'});
+        case 4:
+          await x.addList(title: 'List ${random.nextInt(99)}', kind: ListKind.packing);
+        case 5:
+          final lists = x.lists;
+          if (lists.isNotEmpty) await x.addItem(lists[random.nextInt(lists.length)].list.id, text: 'Item ${random.nextInt(99)}');
+        case 6:
+        case 7:
+          final items = [for (final l in x.lists) ...l.items];
+          if (items.isNotEmpty) await x.setItemChecked(items[random.nextInt(items.length)].id, random.nextBool());
+        case 8:
+          final items = [for (final l in x.lists) ...l.items];
+          if (items.isNotEmpty) await x.updateItem(items[random.nextInt(items.length)].id, {'text': 'Renamed ${random.nextInt(99)}'});
+        case 9:
+          // A hub acting for one of its family's people, through a connection.
+          final hub = random.nextBool() ? f.kHub : f.sHub;
+          final who = hub == f.kHub ? f.gPriya : f.gDana;
+          hub.actAs(who, via: 'Claude');
+          try {
+            await hub.addEvent(title: 'From Claude ${random.nextInt(99)}', start: start, end: start + 3600000);
+          } finally {
+            hub.actAs(null);
+          }
+        case 10:
+          // Overreach, signed past the engine's checks: refused wherever it lands.
+          final which = random.nextInt(4);
+          forged.add(await switch (which) {
+            0 => forge(f.dana.keys, counter: forgedCounter++, millis: clock.now, type: RecordType.member, rid: f.gLeo, fields: {'grants': ['events']}, actor: f.gDana),
+            1 => forge(f.sHub.keys, counter: forgedCounter++, millis: clock.now, type: RecordType.list, rid: newId(), fields: {'title': 'For Alex', '_via': 'Claude'}, actor: f.gAlex),
+            2 => forge(f.leo.keys, counter: forgedCounter++, millis: clock.now, type: RecordType.list, rid: newId(), space: Space.parents, fields: {'title': 'Parents'}, actor: f.gLeo),
+            _ => forge(f.alex.keys, counter: forgedCounter++, millis: clock.now, type: RecordType.member, rid: f.gMia, fields: {'role': 'adult'}, actor: f.gAlex),
+          });
+        default:
+          if (me != null) await x.addCategory(name: 'Category ${random.nextInt(99)}');
+      }
+    } on PermissionDenied {
+      // Not theirs to make (a kid without a grant), or out by now.
+    } on InvalidInput {
+      // Gone by now, or a kid named to drive.
+    }
+  }
+
+  Future<void> rounds(int n, List<Den> who) async {
+    for (var i = 0; i < n; i++) {
+      await op(who[random.nextInt(who.length)]);
+      if (random.nextInt(4) == 0) await settle(f);
+    }
+  }
+
+  final snacks = await f.dana.addList(title: 'Snacks', kind: ListKind.shopping);
+  final oranges = await f.dana.addItem(snacks, text: 'Oranges');
+  final game = await f.alex.addEvent(title: 'Opening game', start: start, end: start + 3600000, rides: const [Ride('to', null)]);
+  await settle(f);
+  await rounds(40, phones);
+  await settle(f);
+  // Overreach of each kind, at random times among the rest: refused wherever it lands.
+  for (final which in [0, 1, 2, 3]..shuffle(random)) {
+    final millis = clock.now - random.nextInt(3600000);
+    forged.add(await switch (which) {
+      0 => forge(f.dana.keys, counter: forgedCounter++, millis: millis, type: RecordType.member, rid: f.gLeo, fields: {'grants': ['events']}, actor: f.gDana),
+      1 => forge(f.sHub.keys, counter: forgedCounter++, millis: millis, type: RecordType.list, rid: newId(), fields: {'title': 'For Alex', '_via': 'Claude'}, actor: f.gAlex),
+      2 => forge(f.alex.keys, counter: forgedCounter++, millis: millis, type: RecordType.event, rid: game, fields: {'drivers.to': f.gLeo}, actor: f.gAlex),
+      _ => forge(f.alex.keys, counter: forgedCounter++, millis: millis, type: RecordType.member, rid: f.gMia, fields: {'role': 'adult'}, actor: f.gAlex),
+    });
+  }
+  final before = {
+    for (final x in [...f.kotvasDevices, ...f.smithDevices])
+      for (final ch in x.changesSince(const {})) ch.id: ch,
+  }.values.toList();
+
+  // Leo's own parent grants him events: his edit clocked just before doesn't count, just after
+  // does, whichever arrives first.
+  clock.advance(const Duration(minutes: 1));
+  final grantAt = clock.now;
+  await f.priya.updateMember(f.gLeo, {'grants': [Grant.events]});
+  for (final (offset, title) in [(-2000, 'Too early'), (2000, 'Just after')]) {
+    forged.add(await forge(f.leo.keys, counter: forgedCounter++, millis: grantAt + offset, type: RecordType.event, rid: game, fields: {'title': title}, actor: f.gLeo));
+  }
+  await rounds(6, [f.leo, f.alex, f.dana]);
+  await settle(f);
+  await rounds(6, [f.leo, f.mia]);
+
+  // Alex invites the Lees with a second key for Jun made in the window; Jun joins with the
+  // first, and someone else with the second, clocked before or after Jun.
+  final lees = await f.alex.inviteFamily(familyName: 'Lees', parentName: 'Jun');
+  final spare = await InviteKey.generate();
+  await f.alex.createInviteKey(member: lees.member, publicKey: spare.publicKey, expires: clock.now + 3600000, home: lees.home);
+  final spareAt = clock.now;
+  await exchange(f.alex, f.kHub);
+  final jun = await admit(f, lees.parent, f.kHub, name: "Jun's phone");
+  final other = await DeviceKeys.generate();
+  final at = random.nextBool() ? spareAt + 100 + random.nextInt(800) : clock.now + 500 + random.nextInt(1500);
+  final proof = await spare.prove(family: f.group, member: lees.member, devicePubkey: other.pubkey, expires: at + 600000);
+  forged.add(await forge(other, counter: 1, millis: at, type: RecordType.device, rid: await other.deviceId(), fields: {
+    'name': 'Not Jun',
+    'kind': 'phone',
+    'pubkey': other.pubkey,
+    'member': lees.member,
+    'mode': 'personal',
+    'approved': true,
+    'home': lees.home,
+    'invite': proof.toJson(),
+  }));
+  await jun.addList(title: 'Lee snacks');
+  await exchange(jun, f.kHub);
+  await settle(f);
+  // "That wasn't them": Alex removes Jun's phone and takes the Lees' invitation keys away.
+  clock.advance(const Duration(minutes: 2));
+  await f.alex.disownInvite(jun.deviceId);
+  await settle(f);
+
+  // Dana copies her words in; then the Smiths leave, while Mia's tablet keeps writing, unaware.
+  await f.dana.setRecoveryKey(f.gDana, (await RecoveryKey.generate()).publicKey);
+  await rounds(8, phones);
+  await settle(f);
+  clock.advance(const Duration(minutes: 5));
+  await f.sHub.ingest(await f.dana.leaveGroup(family: f.smith));
+  clock.advance(const Duration(seconds: 30));
+  await f.mia.setItemChecked(oranges, true);
+  await rounds(4, [f.mia]);
+  await settle(f);
+  await rounds(10, [f.alex, f.priya, f.leo]);
+  await settle(f);
+
+  final pool = {
+    for (final x in [...f.kotvasDevices, ...f.smithDevices, jun])
+      for (final ch in x.changesSince(const {})) ch.id: ch,
+    for (final ch in forged) ch.id: ch,
+  }.values.toList();
+  return (TrustRoot(familyId: f.group, founderPubkey: f.alex.founderPubkey), pool, before);
+}
+
 /// Everything a materializer holds, as text: the log's order, every record as stored (and the
 /// order the store keeps them in), what didn't count and why, how each valid change applied,
 /// and the revocation cutoffs.
@@ -531,8 +701,13 @@ Future<String> snapshotOf(Materializer m, TrustRoot root, int windowFrom) =>
     m.capture(root: root, windowFrom: windowFrom, digest: const [0]).encode(breathe: () async {});
 
 void main() {
-  for (final (name, seed) in [for (final s in [11, 12, 13]) ('pool', s), for (final s in [21, 22, 23, 24]) ('revocation pool', s)]) {
+  for (final (name, seed) in [
+    for (final s in [11, 12, 13]) ('pool', s),
+    for (final s in [21, 22, 23, 24]) ('revocation pool', s),
+    for (final s in [31, 32, 33]) ('group pool', s),
+  ]) {
     final revocations = name == 'revocation pool';
+    final groups = name == 'group pool';
     group('$name $seed', () {
       late TrustRoot root;
       late List<Change> pool, beforeRevocation;
@@ -540,13 +715,27 @@ void main() {
       late List<int> clocks;
 
       setUpAll(() async {
-        (root, pool, beforeRevocation) = await (revocations ? buildRevocationPool(seed) : buildPool(seed));
+        (root, pool, beforeRevocation) =
+            await (revocations ? buildRevocationPool(seed) : (groups ? buildGroupPool(seed) : buildPool(seed)));
         final reference = Materializer(() => root)..add(pool);
         reference.replay();
         expected = stateOf(reference);
         clocks = [for (final c in pool) c.hlc.millis]..sort();
         expect(reference.rejected, isNotEmpty, reason: 'the pool has changes that don\'t count');
         expect(reference.validator.cutoffs, isNotEmpty, reason: 'the pool has a revocation with a cutoff');
+        if (groups) {
+          final reasons = reference.rejected.values;
+          expect(reasons.where((r) => r.contains('own parents')), isNotEmpty, reason: 'another family\'s parent overreaching');
+          expect(reasons.where((r) => r.contains('its own family\'s people')), isNotEmpty, reason: 'a hub acting for another family');
+          expect(reasons.where((r) => r.contains('can\'t drive')), isNotEmpty, reason: 'a kid named to drive');
+          expect(reasons.where((r) => r.contains('can\'t add or change events')), isNotEmpty, reason: 'a kid before their grant');
+          expect(reasons.where((r) => r.contains('removed')), isNotEmpty, reason: 'a device writing after its family left');
+          expect(reference.store.liveOfType(RecordType.event).any((e) => e.fields['title'] == 'Just after'), isTrue);
+          expect(reference.validator.retiredRecoveryKeys.isEmpty, isFalse, reason: 'invitation keys taken away');
+          final homes = [for (final e in reference.store.ofType(RecordType.home)) Home(e.rec)];
+          expect(homes.where((h) => h.left), hasLength(1), reason: 'the Smiths left');
+          return;
+        }
         if (revocations) {
           final founder = deviceIdOf(root.founderPubkey!)!;
           final reasons = reference.rejected.values;

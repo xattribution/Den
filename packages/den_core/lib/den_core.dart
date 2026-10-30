@@ -5,6 +5,7 @@ library;
 export 'src/change.dart';
 export 'src/den.dart';
 export 'src/family_controls.dart';
+export 'src/groups.dart' show GroupAdmission, GroupInvitation, groupRefusedTypes;
 export 'src/hlc.dart';
 export 'src/ids.dart' show newId, base32, randomBytes;
 export 'src/invite_keys.dart'
@@ -31,6 +32,7 @@ export 'src/recovery.dart'
         serverRecoveryKeyOf;
 export 'src/rrule.dart' show RecurrenceRule, Frequency, WeekdayNum, UntilKind;
 export 'src/schema.dart' show checkFields, photoFormat;
+export 'src/seal.dart' show SealException, openSealed, sealToDevice, sealedSender;
 export 'src/secrets.dart' show hashToken;
 export 'src/space_keys.dart';
 export 'src/storage.dart';

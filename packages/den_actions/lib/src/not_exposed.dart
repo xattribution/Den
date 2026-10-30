@@ -56,6 +56,28 @@ const Map<String, String> notExposed = {
       'acting for the family holds that key',
   'disownInvite': '$_trust: "That wasn\'t Dad" removes a device an invite let in and takes the invite\'s key away, '
       'from a parent\'s own phone',
+  // Groups of families (den_core's groups.dart): which families share a group, who of each is in
+  // it, and which devices get in are each family's trust decisions, made on a parent's own phone
+  // with an engine of the group's own. Never an assistant's or MCP client's, whoever it acts for:
+  // a connection writes into a group only as its own family's person (G4).
+  'createGroup': 'A group is started on a parent\'s own phone, on an engine of its own with keys of its own',
+  'inviteFamily': '$_trust: an invitation carries keys that let another family\'s parent and hub in, so only a '
+      'parent\'s own phone makes one, and its secrets go only into the invitation they send',
+  'cancelInvitation': '$_trust: taking back an invitation to another family is the inviting family\'s call, made '
+      'on a parent\'s own phone',
+  'joinGroup': 'A new engine lets itself into a group with an admission sealed to its device, or an invitation\'s '
+      'key; nothing acting for the family holds either',
+  'updateHome': '$_trust: where a family\'s hub syncs a group, and that the family is in, are its parents\' to say, '
+      'on their own phones',
+  'addToGroup': '$_trust: who of a family is in a group, and the keys that let their devices in, are its parents\' '
+      'decisions, made on their own phones',
+  'leaveGroup': '$_trust: taking the family out of a group removes its devices and people there, in one commit '
+      'from a parent\'s own phone',
+  'writeAdmissions': '$_trust: admissions into a group are sealed to each device by a parent\'s own phone',
+  'openGroupInvite': 'Only the device an admission is sealed to can open it, for itself',
+  'writeGroupLink': '$_trust: which groups the family is in, and who of it, is a parent\'s to say on their own phone',
+  'forgetGroup': '$_trust: what a family keeps of a group it left is cleaned up on the parent\'s own phone that took '
+      'it out',
   'requestOAuthConnection': 'Written by the hub\'s OAuth server when an app asks to connect; a parent approves it',
   'setConnectionToken': 'Written by the hub\'s OAuth server, which clears the token hash an older hub recorded',
   // The hub's and the runner's own bookkeeping.
