@@ -4,7 +4,9 @@ import 'package:flutter/widgets.dart';
 
 /// How much room a screen has, by available width rather than device type.
 enum DenWidth {
-  /// Under 700 pt (iPhone, iPad Slide Over): a bottom tab bar with Add in the middle, one column.
+  /// Under 700 pt wide (iPhone, iPad Slide Over, a folding phone's outer screen), or under 480
+  /// pt tall (a phone on its side, half of a screen split top and bottom): a bottom tab bar with
+  /// Add in the middle, one column.
   compact,
 
   /// 700 to 1100 pt (iPad portrait, split view): a 248 pt sidebar, up to two content columns.
@@ -37,6 +39,13 @@ enum DenWidth {
 abstract final class DenLayout {
   /// Below this width a screen is [DenWidth.compact].
   static const double compactMax = 700;
+
+  /// Below this height a window is [DenWidth.compact] however wide it is: every iPhone on its
+  /// side (375 to 440 tall), a folding phone's outer screen on its side, half of a screen split
+  /// top and bottom. That's where Apple calls the height compact and where Material's window
+  /// classes draw the same line. Taller windows keep the sidebar, which scrolls when they're
+  /// still too short for all of it.
+  static const double compactHeightMax = 480;
 
   /// From this width on a screen is [DenWidth.wide].
   static const double wideMin = 1100;
@@ -74,9 +83,31 @@ abstract final class DenLayout {
           ? DenWidth.regular
           : DenWidth.wide;
 
-  /// The width class of the whole window. Prefer [DenLayoutBuilder] inside split layouts, where
-  /// the available width is what counts.
-  static DenWidth of(BuildContext context) => forWidth(MediaQuery.sizeOf(context).width);
+  /// The class of a whole window of [size]: [forWidth], except that a window under
+  /// [compactHeightMax] tall is [DenWidth.compact] however wide.
+  static DenWidth forWindow(Size size) => size.height < compactHeightMax ? DenWidth.compact : forWidth(size.width);
+
+  /// The class of the whole window ([forWindow] of [DenWindow.sizeOf]): the app's frame (tab bar
+  /// or sidebar), sheets, and what a page shows because of it. Prefer [DenLayoutBuilder] inside
+  /// split layouts, where the available width is what counts.
+  static DenWidth of(BuildContext context) => forWindow(DenWindow.sizeOf(context));
+}
+
+/// The window's size for choosing its layout ([DenLayout.of]): [MediaQuery]'s, or where the web
+/// app knows better (`WebSafeArea`), the page's height, which no keyboard changes. Flutter's own
+/// can shrink by the keyboard's height while one is up (Android), and that mustn't swap the
+/// sidebar for a tab bar mid-word.
+class DenWindow extends InheritedWidget {
+  const DenWindow({super.key, required this.size, required super.child});
+
+  final Size size;
+
+  /// The nearest [DenWindow]'s size, or [MediaQuery]'s where there is none.
+  static Size sizeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<DenWindow>()?.size ?? MediaQuery.sizeOf(context);
+
+  @override
+  bool updateShouldNotify(DenWindow oldWidget) => oldWidget.size != size;
 }
 
 /// Builds for the width class of the space it is given (not the device), so a screen in split

@@ -23,6 +23,8 @@ x-hub: &hub
   build:
     context: ../..
     dockerfile: deploy/hub/Dockerfile
+    args:
+      DEN_COMMIT: ${DEN_COMMIT:-}
   image: ${DEN_IMAGE:-den-hub}
   restart: unless-stopped
   networks: [den]

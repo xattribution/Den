@@ -305,14 +305,28 @@ No shadow on anything that scrolls, no shadow stacked with a border and a tint, 
 
 ## Layout: phone, iPad, the counter
 
-Breakpoints by available width, not device (`DenLayout.forWidth`, `DenLayoutBuilder`):
+Breakpoints by available room, not device (`DenLayout.forWidth`, `DenLayoutBuilder`). The
+window as a whole (`DenLayout.of`: the frame, sheets, what Today carries) is also `compact` when
+it is under 480 pt tall, whatever its width (`DenLayout.forWindow`):
 
-| `DenWidth` | Width | Layout |
+| `DenWidth` | Window | Layout |
 | --- | --- | --- |
-| `compact` | under 700 pt | iPhone, iPad Slide Over: bottom tab bar with Add in the middle, one column |
-| `regular` | 700 to 1100 pt | iPad portrait, split view: a 248 pt sidebar with Add at the top and the five sections, up to two content columns |
+| `compact` | under 700 pt wide, or under 480 pt tall | iPhone (on its side too), iPad Slide Over, a folding phone shut, half of a split screen: bottom tab bar with Add in the middle, one column |
+| `regular` | 700 to 1100 pt wide | iPad portrait, split view, a folding phone open (Galaxy Z Fold): a 248 pt sidebar with Add at the top and the five sections, up to two content columns |
 | `wide` | 1100 pt and up | iPad landscape, Mac, the counter: sidebar plus two columns on Today; Calendar opens on the family week |
 
+- Why 480 tall: every iPhone on its side is 375 to 440 tall and wider than 700, and a 248 pt
+  sidebar there runs the person off the bottom. Apple calls that height compact; Material's
+  window classes draw the line at 480 too. A folding phone open (about 750 to 840 each way) or a
+  short desktop window keeps the sidebar.
+- The height that counts is the page's (`DenWindow`, from `WebSafeArea`), which no keyboard
+  changes: a keyboard never swaps the sidebar for a tab bar.
+- The sidebar never cuts anything off: in a window too short for all of it, the name, Add and
+  the places scroll and the person stays at the bottom with a hairline over it; shorter still
+  (large text), the person scrolls with the rest.
+- On a phone on its side the tab bar's tabs, bottom sheets and pages stay between the safe
+  areas (the notch or Dynamic Island at one end, the rounded corners); bottom sheets are at most
+  680 wide. Ask opens as a sheet there, not the side panel.
 - Sheets become centered form sheets at most 560 wide (`DenSheetRoute` does this).
 - Text columns never pass 680 (`ReadableWidth`); grids reflow.
 - Kid mode tiles: 2, 3 or 4 across (`DenWidth.kidColumns`), 72 pt targets.
@@ -390,7 +404,8 @@ interface.
   Lists. Selected tab: ink icon and a bold label; others `ink3`. The bar is `bar` with a `line`
   top edge. Family and settings open from the person's own avatar at the top right of Today.
 - **iPad**: the 248 pt sidebar: the family's name, an ink Add pill, then Today, Calendar,
-  Chores, Lists and Family (the current one on `fill`, bold), and the person at the bottom.
+  Chores, Lists and Family (the current one on `fill`, bold), and the person at the bottom,
+  always in reach (the places scroll above them when the window is short).
 - Each screen has its large title and at most one icon action. Re-tapping the current tab
   scrolls to the top.
 
@@ -654,7 +669,7 @@ on phones); the whole tile is the button. The star landing is the one celebratio
 spring scale with a light haptic. Leaving kid mode asks for the parent's PIN, and says whose and
 why.
 
-## The web app on iPhone
+## The web app on iPhone, iPad and Android
 
 - `apple-mobile-web-app-title` "Den"; an opaque 180 x 180 `apple-touch-icon`; manifest
   `background_color` and `theme_color` `#F2F2F2` (and `#000000` under dark).
@@ -662,11 +677,19 @@ why.
 - Safe areas: the title starts below the top inset; the tab bar is its height plus the bottom
   inset; nothing tappable in the inset; sheets pad their bottom by the inset.
 - Every editable field is 17 or larger at every text size (iOS zooms into smaller ones).
-- The page never scrolls: `html` and `body` are pinned to the screen (`index.html`), and
-  `den_web.js` puts the page back at the top whenever Safari moves it for the keyboard, then has
-  Flutter measure again. The keyboard's height comes from the page (`WebSafeArea`), so a
-  keyboard closed with its own button rather than Return leaves nothing lifted. A sheet rises
-  over the keyboard once; what's inside it lays out as if there were none.
+- The page never scrolls: `html` and `body` are pinned to the screen (`index.html`), the
+  engine takes every touch (`touch-action: none`), so the browser never scrolls, refreshes or
+  hides its bars under the app, and `den_web.js` puts the page back at the top whenever the
+  browser moves it for the keyboard, then has Flutter measure again.
+- A keyboard closed with its own button (Android's down arrow on the keyboard or the navigation
+  bar, an iPad's close key) ends the editing as Return would: the field lets go, what was typed
+  stays, and a tap on the field brings the keyboard back. Nothing stays lifted or drawn short
+  (`den_web.js` explains how Flutter 3.38.5 got that wrong on Android). On iOS the keyboard's
+  height comes from the page (`WebSafeArea`). A sheet rises over the keyboard once; what's
+  inside it lays out as if there were none.
+- Settings, Advanced, Show screen info draws the screen's numbers and the last few viewport
+  events over the app, for a screenshot when something looks wrong; Settings, About says which
+  build this is and which the hub serves.
 - Getting in: [onboarding](docs/design/onboarding.md). A link opens the step it is for; Safari
   shows the Home Screen steps with a picture of where Share is, and Copy invite above them; the
   welcome screen has Paste an invite.

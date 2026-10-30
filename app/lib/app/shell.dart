@@ -124,7 +124,10 @@ class AppShell extends StatelessWidget {
                       onTap: () => showPersonMenu(context),
                     ),
             ),
-            Expanded(child: SafeArea(left: false, child: navigationShell)),
+            // The page in a semantics container of its own: its navigator's modal barrier
+            // blocks what was painted before it in the same container, and without one that
+            // was the whole sidebar, out of reach of VoiceOver and TalkBack.
+            Expanded(child: Semantics(container: true, child: SafeArea(left: false, child: navigationShell))),
           ],
         ),
       );

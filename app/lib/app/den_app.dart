@@ -13,6 +13,7 @@ import 'app_state.dart';
 import 'family_colors.dart';
 import 'household.dart';
 import 'log_scope.dart';
+import 'screen_info.dart';
 import '../platform/capabilities.dart';
 import '../platform/sync/pairing.dart';
 import '../platform/web/web_app.dart';
@@ -131,8 +132,14 @@ class _DenAppState extends State<DenApp> {
             title: 'Den',
             debugShowCheckedModeBanner: false,
             routerConfig: _router,
-            builder: (context, child) =>
-                FamilyColors(child: DenTextScale(size: _prefs.textSize, child: WebSafeArea(child: child))),
+            builder: (context, child) => FamilyColors(
+              child: DenTextScale(
+                size: _prefs.textSize,
+                child: WebSafeArea(
+                  child: ScreenInfoOverlay(enabled: _prefs.screenInfo, child: child ?? const SizedBox.shrink()),
+                ),
+              ),
+            ),
             theme: denTheme(DenColors.day, typeScale: scale),
             darkTheme: denTheme(DenColors.night, typeScale: scale),
             themeMode: switch (_prefs.theme) {

@@ -33,4 +33,10 @@ String? viewport() => null;
 
 void onViewport(void Function(String json) onChange) {}
 
+void diagnose(bool on) {}
+
+String? screenInfo() => null;
+
+Future<String?> fetchFresh(String path) async => null;
+
 void reload() {}

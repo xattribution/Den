@@ -34,6 +34,9 @@ services:
     build:
       context: ../..
       dockerfile: deploy/hub/Dockerfile
+      # The commit, for Settings, About in the app (install.sh sets it).
+      args:
+        DEN_COMMIT: ${DEN_COMMIT:-}
     # Built from this checkout by default; DEN_IMAGE in .env names a published release instead.
     image: ${DEN_IMAGE:-den-hub}
     restart: unless-stopped

@@ -42,8 +42,9 @@ abstract final class Changes {
 }
 
 /// How this device looks and runs, whichever family it shows: Day, Night or Auto, the text
-/// size, how the calendar looks, and whether it is a wall display. Every family's [AppState] on
-/// the device shares one, so a change in one family's Settings is the device's.
+/// size, how the calendar looks, whether it is a wall display, and whether it shows the screen
+/// info over the app. Every family's [AppState] on the device shares one, so a change in one
+/// family's Settings is the device's.
 class DevicePrefs extends ChangeNotifier {
   DevicePrefs({
     bool wall = false,
@@ -51,17 +52,20 @@ class DevicePrefs extends ChangeNotifier {
     TextSize textSize = TextSize.standard,
     CalendarDays calendarDays = CalendarDays.dots,
     bool calendarLight = false,
+    bool screenInfo = false,
   })  : _wall = wall,
         _theme = theme,
         _textSize = textSize,
         _calendarDays = calendarDays,
-        _calendarLight = calendarLight;
+        _calendarLight = calendarLight,
+        _screenInfo = screenInfo;
 
   static const _wallKey = 'den.wall';
   static const _themeKey = 'den.theme';
   static const _textSizeKey = 'den.textSize';
   static const _calendarDaysKey = 'den.calendarDays';
   static const _calendarLightKey = 'den.calendarLight';
+  static const _screenInfoKey = 'den.screenInfo';
 
   /// The saved preferences.
   static Future<DevicePrefs> load() async {
@@ -72,6 +76,7 @@ class DevicePrefs extends ChangeNotifier {
       textSize: TextSize.values.asNameMap()[prefs.getString(_textSizeKey)] ?? TextSize.standard,
       calendarDays: CalendarDays.values.asNameMap()[prefs.getString(_calendarDaysKey)] ?? CalendarDays.dots,
       calendarLight: prefs.getBool(_calendarLightKey) ?? false,
+      screenInfo: prefs.getBool(_screenInfoKey) ?? false,
     );
   }
 
@@ -117,6 +122,17 @@ class DevicePrefs extends ChangeNotifier {
     _calendarLight = value;
     notifyListeners();
     AppState._save((p) => p.setBool(_calendarLightKey, value));
+  }
+
+  /// Settings → Advanced → Show screen info: the screen's sizes, the keyboard and the last few
+  /// viewport events over the app, for reporting a problem with a screenshot. Off by default.
+  bool _screenInfo;
+  bool get screenInfo => _screenInfo;
+  set screenInfo(bool value) {
+    if (value == _screenInfo) return;
+    _screenInfo = value;
+    notifyListeners();
+    AppState._save((p) => p.setBool(_screenInfoKey, value));
   }
 }
 

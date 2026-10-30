@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FLUTTER_VERSION: '3.38.5'
+  FLUTTER_VERSION: '3.38.10'
 
 jobs:
   # Decide which jobs a change needs, so a fix to one package doesn't rebuild everything.
