@@ -96,7 +96,18 @@ Strength: small and easy to reason about. Weakness: permission inputs are split 
 - Wrong-guess counters for short codes (`:187+`).
 - Gap: no budget for `/auth/*` (doesn't exist yet). Behind Cloudflare Tunnel, the trusted proxy is cloudflared on the compose network (`deploy/hosted/compose.yaml:39-40`); verify clientKey still resolves the real client [INF: cloudflared sets `X-Forwarded-For`; confirm in a test].
 
-### 1.11 Risk summary
+### 1.11 Kids, roles and PINs today
+- Roles: `enum Role { parent, adult, kid, guest }` at `core/model.dart:80`.
+- Kid permissions in `can()`, `core/permissions.dart:43-54`: kids may check items, complete their own chores, swap chores and request rewards; editing events/chores/lists and managing points only through `member.grants`; `completeAnyChore` and `manageFamily` always false (`:53`).
+- Member sign-in for shared screens: `member.signIn {kind: pin|pattern|none, salt, hash}` (`core/schema.dart:373-377`, field at `:416`).
+- Hashing: PBKDF2-HMAC-SHA256, 20,000 iterations, 16-byte random salt, 256-bit output (`core/secrets.dart:6-8`, `:22-34`); constant-time compare (`:36-45`). PIN is exactly 4 digits, pattern 4 animals 0-8 (`:10-21`).
+- Set by `Den.setSignIn` (`core/den.dart:949-964`): a member can set their own; only a parent (`manageFamily`) can set someone else's.
+- Checked by `Den.verifySignIn` (`core/den.dart:509-519`): `none` passes except for a parent on a shared display.
+- Wrong tries: `Den.noteSignInTries` (`core/den.dart:521-532`) writes a `signInTries` record (`core/schema.dart:420-424`) so parents see it in History. It is a notification only; I found no lockout in core [INF: app-side delay not re-read].
+- **Risk (high):** the salt and hash live in the replicated family space, so every family device and any backup holds them. A 4-digit PIN has 10,000 values; at 20k PBKDF2 rounds that is brute-forced offline in seconds to minutes on any laptop [INF on exact time]. A stronger KDF raises the cost but can't fix a 10^4 keyspace. The fix is to stop replicating the verifier (see section 2.1).
+- Kids today are plain members; there is no "kid account" concept and no binding to a parent. That matches the locked decision below.
+
+### 1.12 Risk summary
 | Risk | Where | Severity [INF] |
 | --- | --- | --- |
 | Losing all devices = losing identity | 1.1, 1.7 | High (support burden) |
@@ -105,6 +116,8 @@ Strength: small and easy to reason about. Weakness: permission inputs are split 
 | Pending requests from leaked invite words | invites `:64-66` | Medium |
 | Admin only from a parent's phone | device_auth `:142-148` | Medium (usability) |
 | No `/auth/*` rate budget | edge `:160-184` | Medium once OIDC lands |
+| PIN verifier replicated, offline-guessable | `core/secrets.dart:6-34`, `schema.dart:373-377` | High |
+| No PIN lockout, only a notice | `core/den.dart:521-532` | Medium |
 
 ---
 
@@ -134,6 +147,14 @@ Rules:
 - Device keys and the signed log stay. Validity, at the change's place in the log, checks: (1) device named by a live grant; (2) grant's `by` is a live member with a bound account; (3) the action is in effective perms.
 - Who signs a grant: a parent's device, or the **hub signing key** (in `<data>/hub/`, owner-only), public half in the family record, reusing the `family.recovery.serverKey` slot (`ARCHITECTURE.md:242+`). The current opt-in recovery key (`hub/recovery.dart:76-86`) becomes this key and is always on.
 
+### 2.1 Kid profiles (family-level principals)
+- A **kid profile** is a `member` with `role: kid` and no `account`. It belongs to the family, not to any parent: no `owner`/`parent` field, and it survives any one parent leaving.
+- A kid profile is never a grant `by`. It can't issue, approve, or widen a grant, device, or connection. Validity refuses any `grant`, `device` approval, or `connection` change whose actor is a kid, whatever the perms say.
+- A kid acts only on a device or screen that already holds a parent-issued grant. The kid unlocks it with a PIN; the device then acts with `actsAs: <kid>` and effective perms = **grant.perms ∩ kidPerms** (the fixed kid set in `core/permissions.dart:43-54`, plus any per-kid extras a parent ticks). When the PIN session ends, the device returns to its own grant.
+- Kid mode is a limited "dumb mode": no settings, no Access screen, no device list, no connections, no invites.
+- Optional conversion: a parent adds an email to the kid profile and sends a normal invite. When the kid signs in with Google/Apple under the invite rule, the hub binds the account to the **same member id**; history, chores, stars (points) and lists stay because they reference the member id. The role stays `kid` unless a parent changes it [INF: whether a converted kid keeps kid perms by default].
+- PIN storage target: the verifier is no longer replicated in the family space. Option A [INF, preferred]: the hub keeps `{salt, hash}` with a memory-hard KDF (argon2id, e.g. m=64 MiB, t=3, p=1; or scrypt N=2^15, r=8, p=1) and verifies on request, so attempts are online and rate-limited. Option B: keep a device-local verifier, sealed to authorized devices only. Either way, PINs become 6 digits minimum for new sets [INF].
+
 Migration: first deploy writes one grant per approved device (`by` = `approvedBy`, `actsAs` = `member`, perms = what its mode allows today). Each parent then signs in once from a device they already use to bind their account. Nothing re-pairs.
 
 ---
@@ -144,7 +165,8 @@ Migration: first deploy writes one grant per approved device (`by` = `approvedBy
 2. **Apple sign-in requires Share My Email.** A Hide-My-Email relay address (`privaterelay.appleid.com`) is refused and never matched.
 3. **Any device gets exactly the account's perms.** A bound account signing in on a new device gets a device grant equal to that account's perms. No tap.
 4. **Visibility and pruning.** The family creator, every parent, and the server admin (hub CLI) can see and revoke any device, screen, or connection.
-5. **Every connection needs parent approval.** MCP, OAuth, integrations, calendar (ICS) feeds. Kids can never approve or create one. A connection's perms are capped by the approving parent's.
+5. **Kids have no accounts by default.** A kid is a family-level sub-profile, not owned by or attached to one parent. A kid signs in only with a parent-set PIN, only on a device or screen a parent already authorized. Kid profiles get kid permissions only and can never approve connections or devices. A parent may add an email to a kid profile and convert it to a full account through the normal invite rule; that's the parent's choice.
+6. **Every connection needs parent approval.** MCP, OAuth, integrations, calendar (ICS) feeds. Kids can never approve or create one. A connection's perms are capped by the approving parent's.
 
 ---
 
@@ -184,6 +206,19 @@ Tests: migration idempotence; demote parent → screen they authorized loses par
 Acceptance: the five locked decisions in section 3 each have a passing test. A kid account attempting to approve any connection type gets 403 and no record.
 Tests: invite single-use, 7-day expiry, revocable, lowercase match; new-device sign-in gets exactly account perms; ICS feed token creation needs parent; CLI list/revoke.
 
+### Phase 3b: kid profiles and PINs
+- [ ] `core/schema.dart`: mark kid profiles (role `kid`, no `account`); add `member.email` (optional, parent-set) for conversion.
+- [ ] `core/validity.dart`: refuse `grant`, device approval and `connection` changes with a kid actor (alongside `_connection`, `:649+`, and `_device`, `:479+`).
+- [ ] `core/permissions.dart`: `kidPerms` as a named set; effective = grant ∩ kidPerms while a kid PIN session is active.
+- [ ] `core/secrets.dart`: new KDF (argon2id or scrypt [INF on choice and library]), per-PIN 16-byte salt, versioned hash format (`v2$argon2id$...`); keep PBKDF2 verify for old hashes and rehash on next successful sign-in.
+- [ ] Hub PIN verify endpoint (new `hub/pins.dart` [INF on placement]) with an `edge.dart` budget: per device+member, 5 wrong tries then 1 min, doubling to a 1 h cap; after 20 the profile locks on that device until a parent unlocks [INF on numbers]. Existing `signInTries` notice kept.
+- [ ] Parent PIN reset: a parent sets a new PIN from their device or signed-in browser via `setSignIn` (`core/den.dart:949-964`); reset clears lockouts and writes History. Kids can't change their own PIN [INF: today `setSignIn` lets a member set their own, `:958`; restrict for kids].
+- [ ] Conversion flow: parent adds email → invite → kid signs in → account bound to the existing member id; old PIN optional afterwards.
+- [ ] App: kid PIN pad on authorized devices; kid mode UI without settings/access/connections.
+
+Acceptance: a kid can use only parent-authorized devices, only with a PIN, and only with kid perms. Every kid attempt to approve a device/connection or write a grant is refused by validity on every replica. A converted kid keeps all history and stars.
+Tests: KDF params and salt uniqueness; old PBKDF2 hashes verify and are upgraded; verifier absent from replicated family records after migration; lockout timing and parent unlock; PIN reset by parent ok, by kid refused; kid actor creating grant/device/connection rejected; conversion keeps member id, points balance and History; a kid on an unauthorized device gets nothing.
+
 ### Phase 4: require grants, delete folded code
 - [ ] `core/validity.dart`: require grants. Remove `_join` (`:253-271`), the self-approval dispatch for `recovery`/`invite` (`:142-149`) in favour of one "grant proof" check, and the parent-device approval branch (`:509-513`).
 - [ ] Recovery words remain, as a key that can sign a self-grant for a parent.
@@ -217,6 +252,9 @@ Acceptance: `https://den.kotvas.app` reachable only via tunnel (no open 443); si
 | `core/permissions.dart` | effective perms; `spacesFor` from `read:*` | 2 |
 | `core/invite_keys.dart`, `core/recovery.dart` | fold into grant proof | 4 |
 | `hub/oidc.dart`, `hub/accounts.dart` | new | 1 |
+| `core/secrets.dart` | argon2id/scrypt, versioned hash, rehash | 3b |
+| `core/den.dart` | `setSignIn` kid restriction, parent reset, conversion bind | 3b |
+| `hub/pins.dart` [INF] | online PIN verify + lockout | 3b |
 | `hub/hub.dart` | auth and grant routes | 1, 3 |
 | `hub/edge.dart` | `/auth/*` budget | 1 |
 | `hub/invites.dart` | email invites, auto-admit, drop `maxJoins` | 3 |
@@ -231,9 +269,9 @@ Acceptance: `https://den.kotvas.app` reachable only via tunnel (no open 443); si
 ---
 
 ## 5. Open questions
-1. Keep the PIN on screens ("act as me on the kitchen tablet"), or require a phone tap?
+1. Keep the PIN on screens for adults ("act as me on the kitchen tablet"), or require a phone tap? (Kids use PINs: decided.)
+5. PIN verifier location: hub-held (online, rate-limited) or device-local sealed? Plan prefers hub-held [INF].
 2. A grandparent without Google or Apple: email magic links, or require an account?
 3. Tunnel (setup B) or Cloudflare proxy in front of Caddy (setup A)? This plan assumes B.
 4. Dual-run length before deleting the private setup [INF: 2 weeks proposed].
-5. Should a kid with an account be able to sign in on a new device without a parent, given decision 3? Current reading: yes, with exactly their perms.
 6. How long does an orphaned screen stay in the "lost their owner" list before deletion?
