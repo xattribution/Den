@@ -1,0 +1,239 @@
+# Den auth review and account-first plan (for Claude to implement)
+
+Status: design and review only. No code is changed by this document.
+Base: `family-ready` at `7248c3c868225255d42cfd7131aa6c08a65c8e09`. Every `path:line` below was checked against that commit.
+Source plan: `den-auth-concept/PLAN.md` v3.2 (kept outside the repo). Where this document and the code disagree, the code wins; report the mismatch.
+Inferences are marked **[INF]**. Path shorthand: `core/` = `packages/den_core/lib/src/`, `hub/` = `packages/den_hub/lib/src/`.
+
+---
+
+## 1. Current auth review
+
+### 1.1 Device keys and the signed log
+What it does: every change is signed by a device key and checked by every replica in `core/validity.dart`. Sessions and transport live in `packages/den_net/lib/src/session.dart` (see `ARCHITECTURE.md`, "Sessions").
+
+- Strength: integrity does not depend on the hub. A tampered or forged change is rejected on every device, offline too.
+- Strength: the relay can carry end-to-end traffic because trust is in the log, not the server.
+- Weakness: the device key *is* the identity. A person with no surviving device has no identity left except recovery words or the operator (`hub/recovery.dart:76-86`).
+- Keep: this layer stays. Only *what makes a device trusted* changes (section 2).
+
+### 1.2 `core/validity.dart`
+Entry dispatch, `core/validity.dart:140-160`:
+- `:142-145` a device change carrying `recovery` goes to `checkRecovery`.
+- `:146-149` a device change carrying `invite` goes to `checkInviteJoin`.
+- `:150-152` the founder device with no record goes to `_genesis`.
+- `:153-158` a device writing its own record while not approved goes to `_join` (pending request).
+- `:160` anything else from an unknown device: "This device isn't part of the family".
+
+`_join`, `core/validity.dart:253-271`:
+- `:259-261` a joining device can never set `approved`, `approvedBy`, or `revoked: false`.
+- `:263-264` a new join record must say `approved: false`.
+- `:266-270` while waiting, only `name, kind, xpub, revoked, revokedAfter, approved` may change.
+
+`_device`, `core/validity.dart:479-515`:
+- `:481` devices are never created by others; they join themselves.
+- `:484` a hub acting for a connection (`_via`) can't touch device records.
+- `:493-495` an approved device's `member` can't change ("Remove it and add it again").
+- `:496-508` a device editing itself can't approve itself or change owner; only a parent may change `mode`.
+- `:509-513` approval requires `manageFamily`, a parent actor, and the parent's own device.
+
+`_connection`, `core/validity.dart:649-680` (approx.): only a parent on their own device creates/approves; the hub may create a pending OAuth connection (`:657-659`), revoke (`:669-670`), and set `tokenHash`/`expires` only on an active connection (`:674-676`).
+
+Strengths:
+- Self-approval is closed off in three separate places (`:259-261`, `:500-504`, and recovery/invite proofs being the only exceptions).
+- Owner pinning (`:493-495`) prevents moving a device's held data to someone else.
+- Connections can't escalate through the hub (`:484`).
+
+Weaknesses:
+- Four entry paths (genesis, join+approval, recovery proof, invite proof), each with separate rules and tests.
+- Trust is a stored flag (`approved`, `approvedBy`), so a parent losing parent status does not automatically narrow what devices they approved can do [INF: verify by test; `access.dart:38-44` handles this for connections only].
+- The pending state is attack surface: anyone with an invite's words can put up to 3 requests in front of a parent (`hub/invites.dart:64-66`).
+
+### 1.3 `core/permissions.dart`
+- `can()` at `core/permissions.dart:31` decides from `member.role`, `member.grants`, and `openCheckoff` for an anonymous shared display (`:32-37`).
+- `spacesFor()` at `core/permissions.dart:86-101` derives readable spaces from device mode and owner: hub mode reads everything (`:92-94`), shared or ownerless reads only `family` (`:95`).
+
+Strength: small and easy to reason about. Weakness: permission inputs are split across role, `member.grants` (`core/schema.dart:415`, max 4 values), device `mode`, `display.openCheckoff` (`core/schema.dart:448`), PIN `signIn` (`core/schema.dart:373`, `:416`), and connection scopes. No single "why can this device do X" answer.
+
+### 1.4 `hub/device_auth.dart`
+- `parentOf()` at `hub/device_auth.dart:142-148`: a parent-only hub call must come from a non-shared device whose `member` is the acting parent.
+- Strength: correctly refuses a hub-mode device naming another member (doc comment `:136-141`).
+- Weakness: "parent's own phone" is the only admin credential. A parent signed in from a browser with no device record can't do admin work.
+
+### 1.5 `hub/invites.dart` (four-word message invites)
+- Doc at `hub/invites.dart:15-37`; routes `POST /api/v1/invites` and `/api/v1/invites/redeem` at `:80-81`.
+- Words stored as a stretched slot; wrong guesses limited per client and globally (`:23-26`, `hub/edge.dart:186+`).
+- `maxJoins = 3` at `hub/invites.dart:66`: up to 3 devices may wait per invite.
+- Strengths: invites expire within a week; hub doesn't learn app-picked words.
+- Weaknesses: 44-bit codes are guessable in principle and rely on rate limits; a leaked code still creates pending requests; "a parent still approves the device that asks" (`:23`) means a live tap is still needed unless an invite key is attached.
+
+### 1.6 `core/invite_keys.dart`
+- Doc `core/invite_keys.dart:1-17`: a parent's device writes an `inviteKey` record; the key signs an `InviteProof` that lets a device self-approve with `approved: true`.
+- Strength: revocation is thought through (`:12-17`, `kept` list).
+- Weakness: a second proof format and a second self-approval exception (validity `:146-149`). 389 lines for what a grant would express as one record.
+
+### 1.7 Recovery (`core/recovery.dart`, `hub/recovery.dart`)
+- Hub side doc `hub/recovery.dart:76-86`: opt-in Ed25519 server recovery key in `hub/recovery.json`, public half in `family.recovery.serverKey`; operator mints a one-time code with `den_hub recover --person NAME`.
+- Recovery words (BIP-39, 12 words) described in `ARCHITECTURE.md:278-280`.
+- Strength: works without the server (words) or with it (key), and every device sees how someone got in.
+- Weakness: a third proof format and third self-approval branch (validity `:142-145`). The opt-in hub key is already the shape the account-first design needs, but it's off by default.
+
+### 1.8 Setup and the "Add a device" window (`hub/setup.dart`)
+- `SetupStage` at `hub/setup.dart:62-80` includes `waitingForApproval` (`:69-70`).
+- `setup()` at `hub/setup.dart:279-285` returns 409 "This hub is already part of a family." (`:280`). This is expected on reruns because `deploy/private/install.sh:533-537` always asks for a setup link.
+- `LinkSlots` at `hub/setup.dart:417-470`: in public posture a browser may request a slot only while a parent's device has opened the 10-minute window (`:433`, `:443-455`) or the operator wrote `hub/link-open` (`:441-450`). Window opened by `openWindow` signed via `auth.parent` (`:459-460`).
+- Strength: no code harvesting from the internet. Weakness: requires a parent's device in hand; a signed-in parent browser can't open it.
+
+### 1.9 Access tokens, OAuth, MCP (`hub/access.dart`, `hub/oauth.dart`)
+- `accessForToken` at `hub/access.dart:45`; doc `:38-44`: a connection acts as its named member, or as the approving parent while they remain a parent. If the parent leaves or is demoted, it reads nothing.
+- OAuth: PKCE S256 required (`hub/oauth.dart:236`, `:397-399`); https/loopback redirect URIs only (`:266-268`); connection requests listed and decided only by a parent's own device (`:486-487`, `:494-499`).
+- Strength: the "capped by approver's current status" rule already exists here. It is the model the grant design generalises.
+- Weakness: the cap is role-level (parent or not), not per-permission. A connection's scope can't be narrower than "acts as member X".
+
+### 1.10 `hub/edge.dart` rate limits
+- `Limits` at `hub/edge.dart:160-184`: anonymous 600/min, failures 30/5 min, pairing 20/10 min, OAuth register 10/h, authorize 10/15 min, token 60/5 min, sockets 120/min, 64 open sockets.
+- Client key from right-most untrusted `X-Forwarded-For` hop (`:77-90`, `:125-135`), trusted proxies from `DEN_TRUSTED_PROXIES`.
+- Wrong-guess counters for short codes (`:187+`).
+- Gap: no budget for `/auth/*` (doesn't exist yet). Behind Cloudflare Tunnel, the trusted proxy is cloudflared on the compose network (`deploy/hosted/compose.yaml:39-40`); verify clientKey still resolves the real client [INF: cloudflared sets `X-Forwarded-For`; confirm in a test].
+
+### 1.11 Risk summary
+| Risk | Where | Severity [INF] |
+| --- | --- | --- |
+| Losing all devices = losing identity | 1.1, 1.7 | High (support burden) |
+| Four entry paths, four rule sets to keep correct | validity `:142-158` | High (bug surface) |
+| Stored approval doesn't follow demotion | validity `:509-513` | Medium |
+| Pending requests from leaked invite words | invites `:64-66` | Medium |
+| Admin only from a parent's phone | device_auth `:142-148` | Medium (usability) |
+| No `/auth/*` rate budget | edge `:160-184` | Medium once OIDC lands |
+
+---
+
+## 2. Target design: accounts plus one grant model
+
+Principals:
+- **Account**: a person signed in with Google or Apple. Invite-only. Bound to one family member (`member.account = {provider, sub}` hash).
+- **Device**: phone, tablet, wall screen, MCP client. Has no authority of its own, only what a grant gives it.
+
+One replicated record in the family space:
+```
+grant {
+  id,
+  to:      device:<id> | account:<id> | connection:<id>,
+  by:      <accountId>,          # who authorized it
+  actsAs:  <memberId> | null,    # null = "the screen", acts for nobody
+  perms:   ["read:f", "read:m:<kid>", "events.write", "chores.complete:anyone", "lists.write", "points.manage", ...],
+  expires, revoked
+}
+```
+
+Rules:
+- **effective(grant) = grant.perms ∩ currentPerms(grant.by)**, computed at evaluation time, never stored. Demotion or removal of `by` cascades automatically.
+- A person's own phone: `to: device, by: self, actsAs: self, perms: all of mine`.
+- A shared screen: `by: <parent>, actsAs: null`, perms the parent ticked. Labels like "kitchen" are labels only.
+- MCP/OAuth/integration/ICS: `to: connection`, `by` = approving parent. The `connection` record keeps `tokenHash` and points to its grant.
+- Device keys and the signed log stay. Validity, at the change's place in the log, checks: (1) device named by a live grant; (2) grant's `by` is a live member with a bound account; (3) the action is in effective perms.
+- Who signs a grant: a parent's device, or the **hub signing key** (in `<data>/hub/`, owner-only), public half in the family record, reusing the `family.recovery.serverKey` slot (`ARCHITECTURE.md:242+`). The current opt-in recovery key (`hub/recovery.dart:76-86`) becomes this key and is always on.
+
+Migration: first deploy writes one grant per approved device (`by` = `approvedBy`, `actsAs` = `member`, perms = what its mode allows today). Each parent then signs in once from a device they already use to bind their account. Nothing re-pairs.
+
+---
+
+## 3. Jared's locked decisions (do not re-open)
+
+1. **The invite is the approval.** Verified email + active invite for this family = hub signs the account grant and first device grant at once, burns the invite. Otherwise nothing: no request, no pending state. The reply is the same generic "no invite found" whether or not an invite or family exists.
+2. **Apple sign-in requires Share My Email.** A Hide-My-Email relay address (`privaterelay.appleid.com`) is refused and never matched.
+3. **Any device gets exactly the account's perms.** A bound account signing in on a new device gets a device grant equal to that account's perms. No tap.
+4. **Visibility and pruning.** The family creator, every parent, and the server admin (hub CLI) can see and revoke any device, screen, or connection.
+5. **Every connection needs parent approval.** MCP, OAuth, integrations, calendar (ICS) feeds. Kids can never approve or create one. A connection's perms are capped by the approving parent's.
+
+---
+
+## 4. Phased next steps
+
+General rules for every phase: run the full existing test suite (`dart test` in each of `packages/den_core`, `packages/den_hub`, `packages/den_net`, `packages/den_actions`, plus app tests) before and after. No phase may break an existing test without an explanation in the PR. Don't touch `deploy/` before phase 5.
+
+### Phase 1: OIDC sign-in and account binding
+- [ ] New `hub/oidc.dart`: Google and Apple discovery, JWKS fetch/cache via `hub/net_guard.dart`, Apple client-secret JWT (ES256 from `.p8`).
+- [ ] New `hub/accounts.dart`: callbacks, `__Host-` session cookie (Secure, HttpOnly, SameSite=Lax), Origin check on state-changing POSTs, account→member binding.
+- [ ] `core/schema.dart`: add `member.account` (`{provider, sub}` hash).
+- [ ] `hub/hub.dart` (routes near `:251-279`): `/auth/oidc/{google,apple}/{start,callback}`, `/auth/logout`, `/api/v1/me`.
+- [ ] `hub/edge.dart:160-184`: add `Limits.auth` budget for `/auth/*`.
+- [ ] Binding: a signed-in parent's existing device binds their account to their member. No new admission path yet.
+
+Acceptance: an existing parent can sign in with Google and Apple and `/api/v1/me` returns their member. A sign-in with no binding returns the generic reply and creates nothing. Nothing else about devices changes.
+Tests: `iss`/`aud` exact match, nonce, PKCE, expired/forged ID token, `email_verified=false` rejected, Apple relay email rejected, `sub` binding (not email), cookie flags, rate limit on `/auth/*`, identical response body/status/timing class for "no invite" vs "no family".
+
+### Phase 2: `grant` record, dual-write
+- [ ] `core/schema.dart`: `RecordType.grant` with the fields in section 2.
+- [ ] `core/permissions.dart`: `effectivePerms(grant, store)` = perms ∩ authorizer's current perms; `spacesFor` derives from `read:*`.
+- [ ] `core/validity.dart`: accept a device if *either* the old approval or a live grant authorizes it.
+- [ ] Migration: write one grant per approved device on first start (idempotent).
+- [ ] Hub signing key always on; public half in family record.
+
+Acceptance: every existing device keeps working; every approved device has exactly one migrated grant; removing a grant's `by` drops access with no rewrite.
+Tests: migration idempotence; demote parent → screen they authorized loses parent-only perms; remove parent → their screen grants revoked by default; convergence/replay tests (`core/test/convergence_test.dart`, `replay_equivalence_test.dart`) pass with grants.
+
+### Phase 3: grant-based flows in hub and app
+- [ ] `hub/invites.dart`: invites gain `email`; redeem = verified-email sign-in matching an active, unexpired, unused invite → hub signs account + device grants, burns invite. Remove `maxJoins` (`:66`).
+- [ ] `hub/setup.dart:417-470`: link grant posts a full grant (perms + label); a signed-in parent session may open the window.
+- [ ] `hub/device_auth.dart:142-148`: "parent's own device" becomes "holder of a grant from a parent account with the needed perm".
+- [ ] `hub/access.dart:38-45`, `hub/oauth.dart:486-533`: token → connection → grant → authorizer. Approve from a signed-in parent browser. Kids refused.
+- [ ] New `den_hub devices list|revoke` in `packages/den_hub/bin/den_hub.dart`.
+- [ ] App (`app/lib`): sign-in screen; one "Access" screen per person/device/connection with perm checkboxes; QR scan → perms sheet; devices list for creator/parents; "screens that lost their owner" list with one-tap re-grant.
+
+Acceptance: the five locked decisions in section 3 each have a passing test. A kid account attempting to approve any connection type gets 403 and no record.
+Tests: invite single-use, 7-day expiry, revocable, lowercase match; new-device sign-in gets exactly account perms; ICS feed token creation needs parent; CLI list/revoke.
+
+### Phase 4: require grants, delete folded code
+- [ ] `core/validity.dart`: require grants. Remove `_join` (`:253-271`), the self-approval dispatch for `recovery`/`invite` (`:142-149`) in favour of one "grant proof" check, and the parent-device approval branch (`:509-513`).
+- [ ] Recovery words remain, as a key that can sign a self-grant for a parent.
+- [ ] Old `approved/approvedBy` fields become read-only, then ignored.
+
+Acceptance: test suites green with old paths removed; `invite_keys_test.dart` and `recovery_test.dart` rewritten against grant proofs, covering the same revocation cases (`core/invite_keys.dart:12-17`).
+
+Deletions in this phase:
+- `core/invite_keys.dart` (folded into grant proof) [INF: keep a thin compatibility reader for one release].
+- `SetupStage.waitingForApproval` (`hub/setup.dart:69-70`) and the app's approve-a-new-device flow and pending prompts in "Needs you" [INF: app file paths not re-read].
+- Four-word code path for account invites (`hub/invites.dart`) [INF: keep only for screens, if at all].
+- `device.approved/approvedBy`, `member.grants`, `display.openCheckoff` combinations replaced by perms; `DeviceMode` personal/shared split collapses to "has `actsAs`". PIN `signIn` stays only if Q2 says so.
+
+### Phase 5: deploy move to Cloudflare Tunnel
+Do not start until phases 1-4 are merged and live.
+- [ ] Use `deploy/hosted/compose.yaml` with the `tunnel` profile (`:75-87`, `TUNNEL_TOKEN`), `DEN_PUBLIC_URL` (`:37`) and `DEN_TRUSTED_PROXIES` (`:40`). This is setup B in `docs/hosting.md:35`.
+- [ ] Env: `DEN_GOOGLE_CLIENT_ID/SECRET`, `DEN_APPLE_SERVICES_ID/TEAM_ID/KEY_ID/KEY_FILE`, `TUNNEL_TOKEN`, `COMPOSE_PROFILES=tunnel`. Redirects: `https://den.kotvas.app/auth/oidc/google/callback`, `.../auth/oidc/apple/callback` (form_post).
+- [ ] Cloudflare WAF rules on `/auth/*`, `/api/v1/invites/redeem`, `/api/v1/recovery/redeem`, `/api/v1/hub/setup*`.
+- [ ] Same domain, same data volume, so no device re-pairs [INF: confirm with `docker volume ls` on the server].
+- [ ] **Dual-run**: run the tunnel alongside the private setup for an agreed period [INF: suggest 2 weeks]; every family device must have connected through the tunnel at least once before removal.
+- [ ] After dual-run, remove: dnsmasq (`deploy/private/compose.yaml:92+`, `dnsmasq.conf`); Tailscale split-DNS step (`deploy/private/install.sh:507-521`); 443 allowlist (`deploy/private/nftables/den_fw.nft` home sets `:30-37` and their rules, `den-allowlist`, `systemd/den-allowlist.{service,timer}`, installed by `install.sh:427-432`); DDNS homes (`deploy/private/env.example:15-26`); Caddy DNS-01 (`deploy/private/Caddyfile:20+`, `caddy.Dockerfile`).
+- [ ] Keep Tailscale for admin SSH only (`deploy/private/tailscale-acl.hujson`) [INF]. Keep backups (`deploy/private/backup.sh`). Rotate shared ICS tokens.
+
+Acceptance: `https://den.kotvas.app` reachable only via tunnel (no open 443); sign-in works from off-network; edge rate limits key on the real client IP through cloudflared; backups restore.
+
+### Per-file change list (summary)
+| File | Change | Phase |
+| --- | --- | --- |
+| `core/schema.dart` | `member.account`, `RecordType.grant`; later drop approval fields | 1, 2, 4 |
+| `core/validity.dart` | grant check; delete `_join`, proof branches, device approval | 2, 4 |
+| `core/permissions.dart` | effective perms; `spacesFor` from `read:*` | 2 |
+| `core/invite_keys.dart`, `core/recovery.dart` | fold into grant proof | 4 |
+| `hub/oidc.dart`, `hub/accounts.dart` | new | 1 |
+| `hub/hub.dart` | auth and grant routes | 1, 3 |
+| `hub/edge.dart` | `/auth/*` budget | 1 |
+| `hub/invites.dart` | email invites, auto-admit, drop `maxJoins` | 3 |
+| `hub/setup.dart` | full grant in link flow; browser-session window; drop `waitingForApproval` | 3, 4 |
+| `hub/device_auth.dart` | grant-based parent check | 3 |
+| `hub/access.dart`, `hub/oauth.dart` | token → grant → authorizer | 3 |
+| `hub/recovery.dart` | key becomes always-on hub signing key; `den_hub recover` stays | 2 |
+| `packages/den_hub/bin/den_hub.dart` | `devices list|revoke` | 3 |
+| `app/lib` | sign-in, Access screen, devices list, orphaned screens | 3 |
+| `deploy/*` | tunnel; remove private-network pieces after dual-run | 5 |
+
+---
+
+## 5. Open questions
+1. Keep the PIN on screens ("act as me on the kitchen tablet"), or require a phone tap?
+2. A grandparent without Google or Apple: email magic links, or require an account?
+3. Tunnel (setup B) or Cloudflare proxy in front of Caddy (setup A)? This plan assumes B.
+4. Dual-run length before deleting the private setup [INF: 2 weeks proposed].
+5. Should a kid with an account be able to sign in on a new device without a parent, given decision 3? Current reading: yes, with exactly their perms.
+6. How long does an orphaned screen stay in the "lost their owner" list before deletion?
