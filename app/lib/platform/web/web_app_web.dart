@@ -136,6 +136,49 @@ void onViewport(void Function(String json) onChange) {
   web.callMethod<JSAny?>('onViewport'.toJS, ((String json) => onChange(json)).toJS);
 }
 
+// Newer still: Show screen info.
+
+void diagnose(bool on) {
+  final web = _denWeb;
+  if (web == null || !web.has('diagnose')) return;
+  web.callMethod<JSAny?>('diagnose'.toJS, on.toJS);
+}
+
+String? screenInfo() {
+  final web = _denWeb;
+  if (web == null || !web.has('screenInfo')) return null;
+  try {
+    return web.callMethod<JSString>('screenInfo'.toJS).toDart;
+  } on Object {
+    return null;
+  }
+}
+
+/// Fetches [path] from the page's own server, past the service worker and any cache: the text,
+/// or null when it can't be had.
+Future<String?> fetchFresh(String path) async {
+  try {
+    final url = '$path${path.contains('?') ? '&' : '?'}den-check=${DateTime.now().millisecondsSinceEpoch}';
+    final response = await _fetch(url.toJS, _FetchOptions(cache: 'no-store')).toDart;
+    if (!response.ok) return null;
+    return (await response.text().toDart).toDart;
+  } on Object {
+    return null;
+  }
+}
+
+@JS('fetch')
+external JSPromise<_Response> _fetch(JSString url, _FetchOptions options);
+
+extension type _FetchOptions._(JSObject _) implements JSObject {
+  external factory _FetchOptions({String cache});
+}
+
+extension type _Response._(JSObject _) implements JSObject {
+  external bool get ok;
+  external JSPromise<JSString> text();
+}
+
 List<double> insets() {
   final web = _denWeb;
   if (web == null) return const [0, 0, 0, 0];

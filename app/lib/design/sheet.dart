@@ -247,7 +247,8 @@ class _DenSheetPageState<T> extends State<_DenSheetPage<T>> with TickerProviderS
   Widget build(BuildContext context) {
     final c = context.colors;
     final media = MediaQuery.of(context);
-    _centered = DenLayout.forWidth(media.size.width).centersSheets;
+    // The window's class, so a phone on its side keeps its sheets at the bottom.
+    _centered = DenLayout.of(context).centersSheets;
     // Over the keyboard too, a sheet stops short of the status bar.
     final maxHeight = _centered
         ? media.size.height * 0.86
@@ -259,7 +260,9 @@ class _DenSheetPageState<T> extends State<_DenSheetPage<T>> with TickerProviderS
     final sheet = ConstrainedBox(
       constraints: BoxConstraints(
         maxHeight: maxHeight,
-        maxWidth: _centered ? DenLayout.sheetMaxWidth : double.infinity,
+        // From the bottom on a phone on its side: no wider than a page's text, between the
+        // notch and the rounded corners.
+        maxWidth: _centered ? DenLayout.sheetMaxWidth : DenLayout.readableWidth,
       ),
       child: Material(
         color: c.bg,
@@ -299,6 +302,8 @@ class _DenSheetPageState<T> extends State<_DenSheetPage<T>> with TickerProviderS
         ),
         Padding(
           padding: EdgeInsets.only(
+            left: media.padding.left,
+            right: media.padding.right,
             top: _centered ? Sp.xl : 0,
             bottom: media.viewInsets.bottom + (_centered ? Sp.xl : 0),
           ),

@@ -1081,9 +1081,12 @@ A build that ran out of memory stops with `Target dart2js failed: ... exit code 
 image to the server:
 
 ```sh
-docker build -f deploy/hub/Dockerfile -t den-hub .
+docker build --build-arg DEN_COMMIT=$(git rev-parse --short HEAD) -f deploy/hub/Dockerfile -t den-hub .
 docker save den-hub | gzip | ssh root@den.example.com docker load
 ```
+
+The commit (and the time of the build, always) show in the app under Settings, About, so you
+can tell which build a phone is on and which the hub serves; `install.sh` passes it by itself.
 
 On a Mac with Apple silicon, for an x86 server, build with `--platform linux/amd64`. The
 compose file runs the image called `den-hub` as it finds it, so on the server start it without

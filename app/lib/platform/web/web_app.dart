@@ -363,6 +363,28 @@ abstract final class WebApp {
         }
       });
 
+  /// Starts (or stops) the page keeping its last few viewport and focus events for
+  /// [screenInfo]. Off until Show screen info turns it on.
+  static void diagnose(bool on) => impl.diagnose(on);
+
+  /// What the page knows about the screen, the keyboard, the focus and its last few viewport
+  /// events (web/den_web.js `screenInfo`); null off the web or without den_web.js.
+  static Map<String, Object?>? screenInfo() {
+    final text = impl.screenInfo();
+    if (text == null) return null;
+    try {
+      final json = jsonDecode(text);
+      return json is Map ? Map<String, Object?>.from(json) : null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// [path] fetched fresh from the server the app came from (past the service worker and any
+  /// cache), relative to the page: the hub's `build.json` or `health`. Null off the web, or when
+  /// it can't be had.
+  static Future<String?> fetchFresh(String path) => impl.fetchFresh(path);
+
   /// Loads the page again, as when Den opens.
   static void reload() => impl.reload();
 }

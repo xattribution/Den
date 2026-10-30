@@ -44,6 +44,10 @@ esac
 
 cd "$(dirname "$(readlink -f "$0")")"
 HERE=$PWD
+# The commit this checkout is at, which the app shows in Settings, About (compose.yaml hands it
+# to the build). Run as root over a checkout someone else owns, git needs it marked safe.
+DEN_COMMIT=$(git -c safe.directory='*' -C "$HERE" rev-parse --short HEAD 2>/dev/null || true)
+export DEN_COMMIT
 INTERACTIVE=0
 [ -t 0 ] && [ "$CHECK" = 0 ] && INTERACTIVE=1
 LATER=()   # things to tell the owner at the end

@@ -5,7 +5,9 @@
 # Compiling the web app is the heavy part: about 1.5 GB of memory at its peak (docs/hosting.md,
 # "Building on a small server").
 
-FROM ghcr.io/cirruslabs/flutter:3.38.5 AS web
+# 3.38.6 and later keep the app's size while a keyboard is up on Android (flutter/flutter#175074);
+# 3.38.5 left the app a keyboard short after the keyboard's down arrow.
+FROM ghcr.io/cirruslabs/flutter:3.38.10 AS web
 WORKDIR /src
 COPY packages packages
 COPY app app
@@ -17,9 +19,18 @@ WORKDIR /src/app
 # emoji and symbols (build/web/fonts/fallback/). DEN_FALLBACK_FONTS=. ships every script's.
 # --no-wasm-dry-run: the hub serves the JavaScript build, and the WebAssembly compile Flutter
 # would otherwise run alongside it only to print warnings takes more memory than the build itself.
+# Which build this is, for Settings, About in the app: DEN_COMMIT is the commit it's built from
+# (docker build --build-arg DEN_COMMIT=<short commit>; install.sh and the compose files pass
+# it), DEN_BUILT when (the time of this step by default). build.json tells the app what the hub
+# serves now.
 ARG DEN_FALLBACK_FONTS=
-RUN flutter pub get \
+ARG DEN_COMMIT=
+ARG DEN_BUILT=
+RUN built="${DEN_BUILT:-$(date -u +%Y-%m-%dT%H:%MZ)}" \
+ && flutter pub get \
  && flutter build web --release --csp --no-wasm-dry-run --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ \
+      --dart-define=DEN_COMMIT="$DEN_COMMIT" --dart-define=DEN_BUILT="$built" \
+ && printf '{"commit":"%s","built":"%s"}\n' "$DEN_COMMIT" "$built" > build/web/build.json \
  && sh /usr/local/bin/fallback_fonts.sh build/web "$DEN_FALLBACK_FONTS"
 
 FROM dart:3.10 AS hub

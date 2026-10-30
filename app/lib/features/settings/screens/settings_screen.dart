@@ -6,6 +6,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../app/app_state.dart';
+import '../../../app/build_info.dart';
 import '../../../app/family_label.dart';
 import '../../../app/household.dart';
 import '../../../design/layout.dart';
@@ -14,6 +15,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/notifications/reminder_scheduler.dart';
+import '../../../platform/web/web_app.dart';
 import '../../advanced/advanced.dart';
 import '../../family/family.dart' show ConfirmPanel, MembershipActions, pasteAnotherFamily;
 import '../../onboarding/onboarding.dart';
@@ -23,15 +25,19 @@ import 'web_reminders.dart';
 
 /// Settings: how this device syncs in one line; for parents the family's settings, calendars
 /// and the AI helper; Day, Night or Auto, the text size and how the calendar looks; reminders on
-/// this device; Advanced for parents; and About.
+/// this device; Advanced for parents; and About: the version, the build (its commit and when it
+/// was built) and, in a browser, the build the hub serves now.
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, this.version, this.web});
+  const SettingsScreen({super.key, this.version, this.web, this.hub});
 
   /// Overrides the version read from the platform, for tests.
   final String? version;
 
   /// Shows what a browser shows, for tests; by default only on the web.
   final bool? web;
+
+  /// What the hub serves, for tests; by default its `build.json` and `/health`, in a browser.
+  final Future<HubBuild?> Function()? hub;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -40,6 +46,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool? _reminders;
   String? _version;
+  HubBuild? _hub;
   String? _remindersError;
   String? _pasteError;
   bool _leaving = false;
@@ -85,6 +92,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           })
           .catchError((Object _) {});
     }
+    if (widget.hub != null || (widget.web ?? Capabilities.web)) {
+      (widget.hub ?? _hubBuild)()
+          .then((hub) {
+            if (mounted) setState(() => _hub = hub);
+          })
+          .catchError((Object _) {});
+    }
     SharedPreferences.getInstance()
         .then((prefs) {
           if (mounted) setState(() => _reminders = prefs.getBool(remindersPrefKey) ?? true);
@@ -92,6 +106,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .catchError((Object _) {
           if (mounted) setState(() => _reminders = true);
         });
+  }
+
+  /// What the hub this page came from serves now: the build its Dockerfile wrote down and the
+  /// version its health check reports.
+  static Future<HubBuild?> _hubBuild() async {
+    final answers = await Future.wait([WebApp.fetchFresh('build.json'), WebApp.fetchFresh('health')]);
+    return HubBuild.parse(build: answers[0], health: answers[1]);
   }
 
   Future<void> _setReminders(bool on) async {
@@ -207,6 +228,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             children: ruled([
               _Fact(label: 'Version', value: _version ?? ''),
+              _Fact(label: 'Build', value: DenBuild.label),
+              if (_hub case final hub?)
+                _Fact(
+                  label: 'On the hub',
+                  value: hub.label,
+                  note: hub.differsFrom(DenBuild.commit)
+                      ? 'A newer Den is waiting. It opens the next time Den starts: close Den and open it again.'
+                      : null,
+                ),
               NavRow(
                 label: 'Licenses',
                 onTap: () => showLicensePage(context: context, applicationName: 'Den', applicationVersion: _version),
@@ -293,12 +323,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
-/// A fact about this device, read-only: its label and value.
+/// A fact about this device, read-only: its label and value (wrapping at the end when long),
+/// and a [note] under them.
 class _Fact extends StatelessWidget {
-  const _Fact({required this.label, required this.value});
+  const _Fact({required this.label, required this.value, this.note});
 
   final String label;
   final String value;
+  final String? note;
 
   @override
   Widget build(BuildContext context) {
@@ -307,11 +339,26 @@ class _Fact extends StatelessWidget {
     return MergeSemantics(
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 56),
-        child: Row(
-          children: [
-            Expanded(child: Text(label, style: t.body(c.ink))),
-            Text(value, style: t.meta(c.ink2)),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: Sp.s),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: t.body(c.ink)),
+                  const SizedBox(width: Sp.m),
+                  Expanded(child: Text(value, style: t.meta(c.ink2), textAlign: TextAlign.end)),
+                ],
+              ),
+              if (note != null) ...[
+                const SizedBox(height: Sp.xs),
+                Text(note!, style: t.meta(c.ink2)),
+              ],
+            ],
+          ),
         ),
       ),
     );

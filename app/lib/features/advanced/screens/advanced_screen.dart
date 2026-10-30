@@ -1,21 +1,30 @@
+import 'dart:convert';
+
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
+import '../../../app/build_info.dart';
 import '../../../design/widgets.dart';
+import '../../../platform/capabilities.dart';
+import '../../../platform/web/web_app.dart';
 import '../../family/family.dart';
 
 /// Settings → Advanced, for parents: what someone sets up once and the family never sees in
 /// daily use. The hub and sync, shared displays, assistants and automations, Home Assistant,
-/// and the family's data.
+/// and the family's data; and Show screen info, for reporting a problem with the screen.
 class AdvancedScreen extends StatelessWidget {
-  const AdvancedScreen({super.key});
+  const AdvancedScreen({super.key, this.web});
+
+  /// Shows what a browser shows, for tests; by default only on the web.
+  final bool? web;
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch(const {RecordType.connection});
+    final app = context.watch(const {RecordType.connection, Changes.prefs});
+    final web = this.web ?? Capabilities.web;
     final den = app.den;
     if (!app.allows(DenAction.manageFamily)) {
       return const DenPage(title: 'Advanced', children: [EmptyState(message: 'Only parents can open Advanced.')]);
@@ -66,7 +75,35 @@ class AdvancedScreen extends StatelessWidget {
             ], indent: 36),
           ),
         ),
+        DenSection(
+          title: 'When something looks wrong',
+          child: Column(
+            children: ruled([
+              SwitchLine(
+                label: 'Show screen info',
+                detail: 'Sizes, the keyboard and the last few screen events, over the app. Take a screenshot when '
+                    'something looks wrong.',
+                value: app.device.screenInfo,
+                onChanged: (on) => app.device.screenInfo = on,
+              ),
+              if (web && app.device.screenInfo)
+                NavRow(
+                  icon: PhosphorIconsRegular.copy,
+                  label: 'Copy screen info',
+                  detail: 'To paste into a message',
+                  chevron: false,
+                  onTap: () => WebApp.copy(screenInfoText()),
+                ),
+            ], indent: 36),
+          ),
+        ),
       ],
     );
   }
 }
+
+/// What Copy screen info copies: this build and what the page says about the screen, as JSON.
+String screenInfoText() => const JsonEncoder.withIndent(' ').convert({
+      'build': DenBuild.label,
+      ...?WebApp.screenInfo(),
+    });

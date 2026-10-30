@@ -77,7 +77,9 @@ for t in "${targets[@]}"; do
       if [ -n "${CHROME_EXECUTABLE:-}" ]; then
         step "web chrome tests" app flutter test --platform chrome test/web
       else echo "SKIP  web chrome tests (no Chrome; set CHROME_EXECUTABLE)"; fi
-      step "web build (csp)" app flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/
+      # The build says which it is in Settings, About (lib/app/build_info.dart), as the hub's does.
+      step "web build (csp)" app flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ \
+        --dart-define=DEN_COMMIT="$(git rev-parse --short HEAD)" --dart-define=DEN_BUILT="$(date -u +%Y-%m-%dT%H:%MZ)"
       ;;
     images)
       step "image hub" . docker build -q -f deploy/hub/Dockerfile .

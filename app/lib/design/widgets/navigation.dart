@@ -32,11 +32,14 @@ class DenTabBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final half = (places.length / 2).ceil();
-    final bottom = MediaQuery.paddingOf(context).bottom;
+    // A phone on its side has the notch or Dynamic Island at one end and rounded corners at
+    // both: the tabs stay between the safe areas, the bar's color goes to the edges.
+    final safe = MediaQuery.paddingOf(context);
+    final bottom = safe.bottom;
     return DecoratedBox(
       decoration: BoxDecoration(color: c.bar, border: Border(top: BorderSide(color: c.line))),
       child: Padding(
-        padding: EdgeInsets.fromLTRB(Sp.s, 6, Sp.s, bottom > 0 ? bottom : Sp.s),
+        padding: EdgeInsets.fromLTRB(Sp.s + safe.left, 6, Sp.s + safe.right, bottom > 0 ? bottom : Sp.s),
         child: MediaQuery.withClampedTextScaling(
           maxScaleFactor: 1.35,
           child: Row(
@@ -86,7 +89,10 @@ class _Tab extends StatelessWidget {
 }
 
 /// The iPad's sidebar ([DenWidth.regular] and up), 248 wide: the family's name, Add as an ink
-/// pill, the places, and at the bottom who is using the device (their menu).
+/// pill, the places, and at the bottom who is using the device (their menu). In a window too
+/// short for all of it (a tablet under the browser's bars, a short desktop window, large text)
+/// the name, Add and the places scroll and the person stays at the bottom, within the safe
+/// areas; in one too short even for that, the person scrolls with the rest.
 class DenSidebar extends StatelessWidget {
   const DenSidebar({
     super.key,
@@ -113,39 +119,108 @@ class DenSidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final t = context.text;
+    final top = [
+      Padding(
+        padding: EdgeInsets.fromLTRB(Sp.m, 0, Sp.m, heading == null ? Sp.l : Sp.s),
+        child: heading ??
+            Semantics(header: true, child: Text(title, style: t.sheetTitle(c.ink).copyWith(fontSize: 22 * t.scale))),
+      ),
+      FilledButton.icon(
+        onPressed: onAdd,
+        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+        icon: const Icon(PhosphorIconsBold.plus, size: 20),
+        label: Text(addLabel),
+      ),
+      const SizedBox(height: 14),
+      for (final p in places) ...[_SideItem(p), const SizedBox(height: 6)],
+    ];
     return DecoratedBox(
       decoration: BoxDecoration(color: c.sidebar, border: Border(right: BorderSide(color: c.line))),
       child: SizedBox(
         width: DenLayout.sidebarWidth,
         child: SafeArea(
           right: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(Sp.l, Sp.xxl, Sp.l, Sp.xl),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: EdgeInsets.fromLTRB(Sp.m, 0, Sp.m, heading == null ? Sp.l : Sp.s),
-                  child: heading ??
-                      Semantics(header: true, child: Text(title, style: t.sheetTitle(c.ink).copyWith(fontSize: 22 * t.scale))),
-                ),
-                FilledButton.icon(
-                  onPressed: onAdd,
-                  style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-                  icon: const Icon(PhosphorIconsBold.plus, size: 20),
-                  label: Text(addLabel),
-                ),
-                const SizedBox(height: 14),
-                for (final p in places) ...[_SideItem(p), const SizedBox(height: 6)],
-                const Spacer(),
-                ?footer,
-              ],
-            ),
+          child: LayoutBuilder(
+            builder: (context, box) {
+              final footer = this.footer;
+              // The person stays put below the rest while that leaves the rest some room; in a
+              // shorter window they scroll with it, so nothing is ever out of reach.
+              final pinned = footer != null && box.maxHeight >= _pinnedFooterMin(context);
+              final scrolling = CustomScrollView(
+                primary: false,
+                slivers: [
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(Sp.l, Sp.xxl, Sp.l, pinned || footer == null ? Sp.l : 0),
+                    sliver: SliverList.list(children: top),
+                  ),
+                  if (!pinned && footer != null)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(Sp.l, 0, Sp.l, Sp.xl),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [const Spacer(), footer],
+                        ),
+                      ),
+                    ),
+                ],
+              );
+              if (!pinned) return scrolling;
+              return _PinnedFooter(scrolling: scrolling, footer: footer);
+            },
           ),
         ),
       ),
     );
   }
+
+  /// The least height in which the person stays pinned at the bottom: room for them and for
+  /// a couple of places above them, at the text size in use.
+  static double _pinnedFooterMin(BuildContext context) => MediaQuery.textScalerOf(context).scale(1) * 160 + 120;
+}
+
+/// The sidebar's scrolling part over the person, with a hairline between them while there's
+/// more to scroll to: the places that don't fit go under it instead of running into the face.
+class _PinnedFooter extends StatefulWidget {
+  const _PinnedFooter({required this.scrolling, required this.footer});
+
+  final Widget scrolling;
+  final Widget footer;
+
+  @override
+  State<_PinnedFooter> createState() => _PinnedFooterState();
+}
+
+class _PinnedFooterState extends State<_PinnedFooter> {
+  bool _more = false;
+
+  bool _measure(Notification n) {
+    final metrics = switch (n) {
+      ScrollMetricsNotification(:final metrics) => metrics,
+      ScrollNotification(:final metrics) => metrics,
+      _ => null,
+    };
+    if (metrics != null && metrics.axis == Axis.vertical) {
+      final more = metrics.extentAfter > 0.5;
+      if (more != _more) setState(() => _more = more);
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: NotificationListener<Notification>(onNotification: _measure, child: widget.scrolling)),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: _more ? context.colors.line : const Color(0x00000000))),
+            ),
+            child: Padding(padding: const EdgeInsets.fromLTRB(Sp.l, Sp.s, Sp.l, Sp.xl), child: widget.footer),
+          ),
+        ],
+      );
 }
 
 class _SideItem extends StatelessWidget {

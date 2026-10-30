@@ -11,8 +11,10 @@
 // - Sharing text with the share sheet, or copying it where there is none.
 // - One engine per browser: tabs share the family's IndexedDB, so only one may write it.
 // - The screen's safe areas (the home indicator, the notch), which Flutter doesn't report.
-// - The page stays put around the keyboard, and the app learns how much of the screen the
-//   keyboard really covers.
+// - The page stays put around the keyboard, a keyboard closed with its own button ends the
+//   editing, and the app learns how much of the screen the keyboard really covers.
+// - What Settings, Advanced, Show screen info shows: the page's sizes, the keyboard, the focus
+//   and the last few viewport events.
 (function () {
   'use strict';
 
@@ -398,46 +400,91 @@
 
   // ------------------------------------------------------------------ the keyboard
   //
-  // Flutter paints the whole app into one canvas pinned to the top of the page, and on iOS it
-  // takes the page's own size as the screen's (documentElement.clientHeight), with the keyboard
-  // as an inset it reads from the visual viewport. Safari doesn't know any of that. When a
-  // field gets the keyboard, Safari scrolls the page and pans the visual viewport to show the
-  // field; when the keyboard goes away through Return the field closes and Safari scrolls back,
-  // but when it goes away through the keyboard's own close button Safari can leave the page
-  // scrolled, or (iOS 26) the visual viewport panned with nothing scrolled and its height a
-  // little short. The canvas stays at the top, so the screen shows the empty page below it,
-  // black at night, and since Flutter takes every touch (touch-action: none) no swipe can
-  // scroll the page back. Taps still reach the app where it thinks things are.
+  // Flutter paints the whole app into one canvas pinned to the top of the page and hears about
+  // the keyboard only through the visual viewport's resize event (FullPageDimensionsProvider and
+  // EngineFlutterView in its web engine). While a field is being edited on a phone or tablet it
+  // keeps its size and takes what the visual viewport lost as the keyboard; otherwise it takes
+  // the visual viewport (Android) or the page (iOS) as its size. A keyboard closed with its own
+  // button (the down arrow on Android's keyboard and navigation bar, the close key on an iPad's)
+  // goes away without taking the focus from the field, and three things go wrong:
   //
-  // So: the page can't scroll (index.html pins html and body), whatever scrolls it anyway is
-  // put back at the top as soon as the viewport moves and again once the keyboard has finished
-  // moving, Flutter is asked to measure again afterwards, and the app gets the keyboard's real
-  // height (lib/platform/web/web_insets.dart) instead of trusting a stale one.
+  // - Android, Flutter 3.38.5: each frame drawn while the keyboard is up resets the size Flutter
+  //   keeps to the visual viewport's, the part above the keyboard (fixed in 3.38.6, flutter/
+  //   flutter#175074). The keyboard then closes with the field still being edited, so the app
+  //   stays that small with a negative keyboard inset: an empty, keyboard-shaped band under it
+  //   that nothing can be done with until a field is edited and let go of again.
+  // - Flutter ignores "show the keyboard" for a field it is still editing, so a tap on the
+  //   field doesn't bring the keyboard back.
+  // - iOS: Safari scrolls the page and pans the visual viewport to show the field, and after the
+  //   close button it can leave the page scrolled, or (iOS 26) the visual viewport panned with
+  //   nothing scrolled and its height a little short. The canvas stays at the top, so the screen
+  //   shows the empty page below it, black at night, and since Flutter takes every touch
+  //   (touch-action: none) no swipe can scroll the page back.
+  //
+  // So a keyboard that closes while a field still has the focus ends the editing, as Return or a
+  // tap elsewhere would: the field lets go, what was typed stays, and a tap on it brings the
+  // keyboard back. This page's visual viewport listener runs before Flutter's, so Flutter hears
+  // the keyboard close with nothing being edited and takes the whole screen. An app drawn
+  // shorter than the screen with no keyboard to account for it, however it got there, is
+  // measured again (and a field still holding the focus lets go). The page can't scroll
+  // (index.html pins html and body); whatever scrolls it anyway is put back at the top as soon as
+  // the viewport moves and again once the keyboard has finished moving; Flutter is asked to
+  // measure again afterwards; and on iOS the app takes the keyboard's height from here
+  // (lib/platform/web/web_insets.dart) instead of trusting a stale one.
 
   var vv = window.visualViewport || null;
 
-  /** Below this, what the visual viewport lost isn't a keyboard (iOS 26 leaves 24 px). */
+  /** Below this, what the visual viewport lost isn't a keyboard (iOS 26 leaves 24 px, a
+   * browser's own toolbar coming back about 56). */
   var MIN_KEYBOARD = 60;
+
+  /** A keyboard counts as having come up for a field once it covered this much. */
+  var SEEN_KEYBOARD = 120;
+
+  /** A keyboard that seems to close this soon after its field got the focus is a field change. */
+  var SETTLING_MS = 300;
 
   /** Corrections allowed per burst of viewport events, so a page that won't settle can't loop. */
   var BUDGET = 8;
   var budget = BUDGET;
   var queued = false;
   var poking = false;
+  var watching = false;
   var lastReport = '';
   var viewportListener = null;
+
+  // The field with the focus, when it got it, the page's width then, and whether a keyboard came
+  // up for it.
+  var field = { el: null, since: 0, width: 0, seen: false };
+  // The visual viewport's height the last time no field had the focus, at that width: the whole
+  // screen, also where a browser makes the page itself smaller around the keyboard.
+  var baseline = { width: 0, height: 0 };
+  // Since when the app has been drawn shorter than the screen, or 0.
+  var shortSince = 0;
 
   function frame(callback) {
     if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(callback);
     else setTimeout(callback, 16);
   }
 
-  /** A text field has the browser's focus, so a keyboard may be up. */
-  function editing() {
-    var el = document.activeElement;
+  function now() {
+    return Date.now();
+  }
+
+  /** Where Flutter keeps its size around the keyboard (its isMobile): iOS and Android. */
+  function mobile() {
+    return isIos() || /Android/.test(ua());
+  }
+
+  function editable(el) {
     if (!el || el === document.body || el === document.documentElement) return false;
     var tag = (el.tagName || '').toUpperCase();
     return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable === true;
+  }
+
+  /** A text field has the browser's focus, so a keyboard may be up. */
+  function editing() {
+    return editable(document.activeElement);
   }
 
   /** Someone zoomed in (Zoom in Accessibility, a pinch Flutter didn't take): leave it alone. */
@@ -454,6 +501,24 @@
     };
   }
 
+  /** What can be seen of the page, in its own pixels. */
+  function visible() {
+    return vv === null ? layout().height : vv.height * (vv.scale || 1);
+  }
+
+  /** The screen's height with no keyboard. */
+  function fullHeight() {
+    var size = layout();
+    return baseline.width === size.width ? Math.max(size.height, baseline.height) : size.height;
+  }
+
+  /** How tall Flutter drew the app, from the size it gave its view; 0 before it has. */
+  function drawn() {
+    var view = typeof document.querySelector === 'function' ? document.querySelector('flutter-view') : null;
+    if (!view || typeof view.getBoundingClientRect !== 'function') return 0;
+    return view.getBoundingClientRect().height || 0;
+  }
+
   function scrolledBy() {
     var se = document.scrollingElement || document.documentElement;
     var body = document.body;
@@ -463,10 +528,10 @@
     };
   }
 
-  /** How much of the layout viewport the keyboard covers, in CSS pixels; 0 when it's down. */
+  /** How much of the screen the keyboard covers, in CSS pixels; 0 when it's down. */
   function keyboard() {
     if (vv === null || !editing()) return 0;
-    var covered = layout().height - vv.height * (vv.scale || 1);
+    var covered = fullHeight() - visible();
     return covered >= MIN_KEYBOARD ? Math.round(covered) : 0;
   }
 
@@ -484,6 +549,86 @@
     });
   }
 
+  // What the screen did lately, for Settings → Advanced → Show screen info; null while that's off.
+  var started = now();
+  var events = null;
+
+  function describe(el) {
+    if (!el) return '';
+    if (el === document.body) return 'body';
+    var tag = (el.tagName || '?').toLowerCase();
+    var cls = typeof el.className === 'string' && el.className ? '.' + el.className.split(/\s+/)[0] : '';
+    return tag + cls;
+  }
+
+  function note(what) {
+    if (events === null) return;
+    events.push({
+      t: now() - started,
+      what: what,
+      visual: vv === null ? null : Math.round(vv.height),
+      top: vv === null ? null : Math.round(vv.offsetTop || 0),
+      inner: window.innerHeight || 0,
+      drawn: Math.round(drawn()),
+      keyboard: keyboard(),
+      focus: describe(document.activeElement),
+    });
+    if (events.length > 12) events.shift();
+  }
+
+  /** Keeps [field] and [baseline] up to date with the focus and the viewport. */
+  function track() {
+    var el = document.activeElement;
+    var width = layout().width;
+    if (!editable(el)) {
+      field = { el: null, since: 0, width: 0, seen: false };
+      if (vv !== null) baseline = { width: width, height: visible() };
+      return;
+    }
+    if (el !== field.el) field = { el: el, since: now(), width: width, seen: false };
+    if (width !== field.width) {
+      // Turned or folded: what the viewport does now is the new screen, not the keyboard.
+      field.width = width;
+      field.seen = false;
+    }
+    if (fullHeight() - visible() >= SEEN_KEYBOARD) field.seen = true;
+  }
+
+  /** Ends the editing in [el]: Flutter hears a blur, as from a tap elsewhere, and lets go. */
+  function letGo(el, why) {
+    note('let go: ' + why);
+    field.seen = false;
+    try {
+      el.blur();
+    } catch (e) {
+      // Nothing to let go of.
+    }
+  }
+
+  /** The keyboard came up for the field with the focus and has gone while it still has it. */
+  function closedUnderField() {
+    var el = document.activeElement;
+    if (!mobile() || vv === null || zoomed() || !editable(el)) return false;
+    if (el !== field.el || !field.seen || layout().width !== field.width) return false;
+    if (now() - field.since < SETTLING_MS) return false;
+    return fullHeight() - visible() < MIN_KEYBOARD;
+  }
+
+  /** The app has been drawn shorter than the screen, by a keyboard's worth, for a while. */
+  function drawnShort() {
+    var h = drawn();
+    if (!mobile() || vv === null || zoomed() || !h || h >= visible() - MIN_KEYBOARD) {
+      shortSince = 0;
+      return false;
+    }
+    if (!shortSince) {
+      shortSince = now();
+      note('drawn short');
+      return false;
+    }
+    return now() - shortSince >= 100;
+  }
+
   /** Puts the page back at the top if anything moved it; true when something had. */
   function pin() {
     if (zoomed() || budget <= 0) return false;
@@ -491,6 +636,7 @@
     var panned = vv !== null && (Math.abs(vv.offsetTop || 0) > 0.5 || Math.abs(vv.offsetLeft || 0) > 0.5);
     if (by.x < 0.5 && by.y < 0.5 && !panned) return false;
     budget--;
+    note('back to the top');
     var se = document.scrollingElement;
     if (se) {
       se.scrollTop = 0;
@@ -520,12 +666,26 @@
   }
 
   function settle() {
+    track();
     var moved = pin();
-    var now = viewport();
-    var changed = now !== lastReport;
-    lastReport = now;
+    if (closedUnderField()) {
+      letGo(document.activeElement, 'keyboard gone');
+      moved = true;
+    }
+    if (budget > 0 && drawnShort()) {
+      budget--;
+      shortSince = 0;
+      if (editing()) letGo(document.activeElement, 'drawn short');
+      else note('measure again: drawn short');
+      moved = true;
+    }
+    track();
+    var report = viewport();
+    var changed = report !== lastReport;
+    lastReport = report;
     if (moved || changed) poke();
-    if (changed && viewportListener) viewportListener(now);
+    if (changed && viewportListener) viewportListener(report);
+    watch();
   }
 
   function schedule() {
@@ -544,30 +704,126 @@
     [120, 360, 720].forEach(function (ms) { setTimeout(schedule, ms); });
   }
 
+  /** While a field has the focus on a phone or tablet, looks again now and then: a keyboard can
+   * go without a word to the page. */
+  function watch() {
+    if (watching || !mobile() || !editing()) return;
+    watching = true;
+    setTimeout(function () {
+      watching = false;
+      if (editing()) schedule();
+    }, 600);
+  }
+
   function onViewportResize() {
     if (poking) return;
+    track();
+    // Before Flutter hears this resize, so it measures with nothing being edited.
+    if (closedUnderField()) letGo(document.activeElement, 'keyboard closed');
+    note('viewport resize');
     scheduleBurst();
+  }
+
+  function onEvent(what, burst) {
+    return function () {
+      note(what);
+      if (burst) scheduleBurst();
+      else schedule();
+    };
   }
 
   if (vv !== null && typeof vv.addEventListener === 'function') {
     vv.addEventListener('resize', onViewportResize);
-    vv.addEventListener('scroll', schedule);
+    vv.addEventListener('scroll', onEvent('viewport scroll', false));
   }
-  window.addEventListener('scroll', schedule, { passive: true });
-  window.addEventListener('resize', scheduleBurst);
-  window.addEventListener('orientationchange', scheduleBurst);
+  window.addEventListener('scroll', onEvent('page scroll', false), { passive: true });
+  window.addEventListener('resize', onEvent('window resize', true));
+  window.addEventListener('orientationchange', onEvent('turned', true));
   window.addEventListener('pageshow', scheduleBurst);
-  document.addEventListener('focusin', scheduleBurst, true);
-  document.addEventListener('focusout', scheduleBurst, true);
+  document.addEventListener('focusin', onEvent('focus in', true), true);
+  document.addEventListener('focusout', onEvent('focus out', true), true);
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible') scheduleBurst();
+    if (document.visibilityState === 'visible') onEvent('shown', true)();
   });
+  // The next touch on an app left drawn short puts it right.
+  document.addEventListener('pointerdown', function () {
+    if (!mobile()) return;
+    var h = drawn();
+    if (shortSince || (h && h < visible() - MIN_KEYBOARD)) scheduleBurst();
+  }, true);
+  // Chromium's VirtualKeyboard API, where there is one, says when the keyboard moves.
+  if (nav.virtualKeyboard && typeof nav.virtualKeyboard.addEventListener === 'function') {
+    nav.virtualKeyboard.addEventListener('geometrychange', onEvent('keyboard moved', true));
+  }
 
   /** Calls [callback] with [viewport]'s answer now and whenever it changes. */
   function onViewport(callback) {
     viewportListener = callback;
     lastReport = viewport();
     callback(lastReport);
+  }
+
+  /** Starts (or stops) keeping the last few viewport events for [screenInfo]. */
+  function diagnose(on) {
+    events = on ? events || [] : null;
+    if (on) note('screen info on');
+  }
+
+  /** Everything about the screen, the keyboard and the focus, for Show screen info, as JSON. */
+  function screenInfo() {
+    var size = layout();
+    var by = scrolledBy();
+    var view = typeof document.querySelector === 'function' ? document.querySelector('flutter-view') : null;
+    var rect = view && typeof view.getBoundingClientRect === 'function' ? view.getBoundingClientRect() : null;
+    var vk = nav.virtualKeyboard && nav.virtualKeyboard.boundingRect;
+    var scr = window.screen || null;
+    var display = nav.standalone === true ? 'standalone' : 'browser';
+    try {
+      ['fullscreen', 'standalone', 'minimal-ui'].some(function (mode) {
+        if (!window.matchMedia('(display-mode: ' + mode + ')').matches) return false;
+        display = mode;
+        return true;
+      });
+    } catch (e) {
+      // No display modes to ask about.
+    }
+    function round(n) {
+      return Math.round((n || 0) * 10) / 10;
+    }
+    var safe = null;
+    try {
+      safe = JSON.parse(insets());
+    } catch (e) {
+      // A page that can't be measured that way.
+    }
+    return JSON.stringify({
+      ua: ua(),
+      display: display,
+      dpr: window.devicePixelRatio || 1,
+      screen: scr ? [scr.width, scr.height] : null,
+      orientation: scr && scr.orientation ? scr.orientation.type : '',
+      inner: [window.innerWidth || 0, window.innerHeight || 0],
+      client: [size.width, size.height],
+      visual: vv === null ? null : {
+        width: round(vv.width),
+        height: round(vv.height),
+        offsetTop: round(vv.offsetTop),
+        pageTop: round(vv.pageTop),
+        scale: round(vv.scale),
+      },
+      scroll: {
+        window: round(window.scrollY || window.pageYOffset),
+        root: round(by.y),
+        body: document.body ? round(document.body.scrollTop) : 0,
+      },
+      view: rect ? [round(rect.left), round(rect.top), round(rect.width), round(rect.height)] : null,
+      keyboard: keyboard(),
+      full: fullHeight(),
+      virtualKeyboard: vk ? [round(vk.x), round(vk.y), round(vk.width), round(vk.height)] : null,
+      focus: describe(document.activeElement),
+      safe: safe,
+      events: events === null ? [] : events.slice(),
+    });
   }
 
   // ------------------------------------------------------------------ photos
@@ -687,6 +943,8 @@
     insets: insets,
     viewport: viewport,
     onViewport: onViewport,
+    diagnose: diagnose,
+    screenInfo: screenInfo,
     reload: function () { window.location.reload(); },
   };
 })();
