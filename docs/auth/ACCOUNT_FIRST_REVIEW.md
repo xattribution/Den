@@ -141,7 +141,7 @@ grant {
 
 Rules:
 - **effective(grant) = grant.perms ∩ currentPerms(grant.by)**, computed at evaluation time, never stored. Demotion of `by` narrows automatically.
-- **Cascade revoke on granter removal (decision 8):** when the account in `by` is removed from the family (or loses its binding), every grant it authorized is revoked in the same commit, and each of those devices is signed out of the server (sessions, sockets, tokens dropped). Their device keys stay in place, so the device can be re-paired by QR, not reinstalled.
+- **Cascade revoke on granter removal (decision 8):** when the account in `by` is removed from the family (or loses its binding), every grant it authorized is revoked in the same commit, and each of those devices is signed out of the server (sessions, sockets, tokens dropped). At its next server sync the device wipes its local family data and returns to the sign-in/QR screen (decision 9). It can then be re-paired by QR or signed in with another account without a reinstall [INF: whether the device key is kept or regenerated at the wipe; regenerating is simpler and safer].
 - **Re-pair:** any surviving member with parent-level perms (a parent, an adult kid or uncle with parent perms, up to the server admin via CLI) scans the signed-out device's QR and writes a new grant with themselves as `by`. Perms are capped by the new granter, as for any grant.
 - A person's own phone: `to: device, by: self, actsAs: self, perms: all of mine`.
 - A shared screen: `by: <parent>, actsAs: null`, perms the parent ticked. Labels like "kitchen" are labels only.
@@ -167,9 +167,11 @@ Target edge cases:
 - Owner of a phone removed: its own-device grant ends; the phone is signed out.
 - Parent who set up the kitchen screen removed: the screen's grant is revoked and it is signed out; it shows its QR. Another parent-level adult scans it and re-grants.
 - Last parent-level person removed: only the server admin can re-pair (`den_hub devices` CLI, plus a QR-pair command [INF]).
-- A kid PIN session on a signed-out screen ends with the screen grant.
+- A kid PIN session on a signed-out screen ends at the wipe; the screen shows the sign-in/QR screen.
 - Re-pair under a new granter must not inherit the old grant's perms; the new granter ticks perms again (defaults to their own cap) [INF].
-- Offline device: it learns of the revoke when it next syncs; changes it signed after `revokedAfter` are discarded, as today.
+- Offline device: it keeps working on local data until its next server sync, then wipes (decision 9). Unsynced local changes are discarded: changes signed after `revokedAfter` count for nothing (`core/validity.dart:38-55`), and the wipe removes them locally [INF: the device shows no warning before discarding; consider a one-line notice after the wipe].
+- Wipe scope: the local log, materialized store, space keys, cached photos and the kid PIN verifiers [INF: exact storage locations in `app/lib` and `den_net` not re-read]. Nothing of the family's remains on the device.
+- After the wipe, a re-pair or a new sign-in starts from empty and re-syncs from the server like a new device.
 
 Migration: first deploy writes one grant per approved device (`by` = `approvedBy`, `actsAs` = `member`, perms = what its mode allows today). Each parent then signs in once from a device they already use to bind their account. Nothing re-pairs.
 
@@ -185,6 +187,7 @@ Migration: first deploy writes one grant per approved device (`by` = `approvedBy
 6. **Every connection needs parent approval.** MCP, OAuth, integrations, calendar (ICS) feeds. Kids can never approve or create one. A connection's perms are capped by the approving parent's.
 7. **One PIN per kid, synced to every family device, verified locally.** A parent sets or changes it once; it syncs everywhere through the family log (today's model), and each device checks it locally so it works offline. Any lockout is per-device. A parent reset propagates via sync. Reliability beats secrecy: Den is a scheduling app with no payments. The offline-crack risk is known and accepted (low). Only hardening that keeps offline use is allowed: a local per-device lockout/backoff and a versioned stronger KDF.
 8. **Removing an owner or authorizing account signs out every device they authorized.** Any surviving adult with parent-level perms (adult kids, uncles, etc., up to the server admin) can scan that device's QR code to re-pair it under their own account.
+9. **No grace period.** At its next server sync, a signed-out device wipes its local family data and returns to the sign-in/QR screen. There, anyone can sign in with a different account, or a surviving parent-level adult can re-pair it by QR, which re-syncs family data from the server.
 
 ---
 
@@ -220,7 +223,7 @@ Tests: migration idempotence; demote parent → screen they authorized loses par
 - [ ] `hub/access.dart:38-45`, `hub/oauth.dart:486-533`: token → connection → grant → authorizer. Approve from a signed-in parent browser. Kids refused.
 - [ ] New `den_hub devices list|revoke` in `packages/den_hub/bin/den_hub.dart`.
 - [ ] App (`app/lib`): sign-in screen; one "Access" screen per person/device/connection with perm checkboxes; QR scan → perms sheet; devices list for creator/parents; signed-out devices show their pairing QR, and any parent-level adult can scan it to re-pair under their own account.
-- [ ] Cascade on granter removal: `removeMember` (`core/den.dart:917-937`) also revokes every grant whose `by` is that account, and the hub drops their sessions, sockets and tokens. Tests: remove parent A → A's screens and phones are signed out on the next request/socket frame; parent B re-pairs via QR → new grant `by: B`, perms ≤ B's; adult with parent perms can re-pair; kid or plain adult refused; server admin re-pairs when no parent remains; offline device's post-revoke changes discarded.
+- [ ] Cascade on granter removal: `removeMember` (`core/den.dart:917-937`) also revokes every grant whose `by` is that account, and the hub drops their sessions, sockets and tokens. Tests: remove parent A → A's screens and phones are signed out on the next request/socket frame; parent B re-pairs via QR → new grant `by: B`, perms ≤ B's; adult with parent perms can re-pair; kid or plain adult refused; server admin re-pairs when no parent remains; offline device's post-revoke changes discarded. Wipe: the device wipes on the first server sync after the revoke, not before and not later; after the wipe no family data remains (log, store, keys, photos, PIN verifiers; check storage directly); the sign-in/QR screen is shown; a QR re-pair restores the family data from the server; sign-in with a different account works on the wiped device.
 
 Acceptance: the five locked decisions in section 3 each have a passing test. A kid account attempting to approve any connection type gets 403 and no record.
 Tests: invite single-use, 7-day expiry, revocable, lowercase match; new-device sign-in gets exactly account perms; ICS feed token creation needs parent; CLI list/revoke.
@@ -291,4 +294,3 @@ Acceptance: `https://den.kotvas.app` reachable only via tunnel (no open 443); si
 2. A grandparent without Google or Apple: email magic links, or require an account?
 3. Tunnel (setup B) or Cloudflare proxy in front of Caddy (setup A)? This plan assumes B.
 4. Dual-run length before deleting the private setup [INF: 2 weeks proposed].
-5. How long does a signed-out device keep showing its QR before it wipes local data [INF: suggest 30 days]? (The "lost their owner" list is replaced by decision 8.)
