@@ -596,11 +596,17 @@ class Home extends RecordView {
   bool get left => status == HomeStatus.left;
 
   /// Why the family's place ended before it began for good, when it did (it then reads as
-  /// left): `contested` (two phones let in with its invitation each said it was in),
-  /// `disowned` (the family that invited it said "That wasn't them"), or `inviterEnded` (the
-  /// family that invited it lost its place before this one said it was in). See groups.dart,
-  /// HomeEnd.
+  /// left): `contested` (two phones let in with its invitation each said it was in) or
+  /// `disowned` (the family that invited it said "That wasn't them"). See groups.dart, HomeEnd.
   String? get ended => rec.strOrNull('ended');
+
+  /// Whether the family waits to be kept (it then reads as left): the family that invited it
+  /// lost its place, or waits itself, and no family in the group has kept it yet. Nobody removed
+  /// it; see groups.dart, `suspended`, and `Den.keepHome`.
+  bool get suspended => rec.flag('suspended');
+
+  /// The family in the group that kept this one, once it waited ([suspended]).
+  String? get keptBy => rec.strOrNull('keptBy');
 }
 
 enum GroupLinkStatus { active, left }

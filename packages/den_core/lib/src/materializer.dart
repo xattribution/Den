@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'change.dart';
-import 'groups.dart' show GroupStarts, closesWindow, windowClosureOf;
+import 'groups.dart' show GroupStarts, closesWindow, isKeep, windowClosureOf;
 import 'hlc.dart';
 import 'model.dart';
 import 'invite_keys.dart' show retiresInviteKey;
@@ -208,6 +208,8 @@ class Materializer {
         _log.addAll(fresh);
       }
       _applyFrom(at);
+      // A keep that stopped counting (or started) turns around what its family did: everything.
+      if (_keptMoved) replay();
     } else {
       _log
         ..addAll(fresh)
@@ -245,11 +247,24 @@ class Materializer {
         ..length = at
         ..addAll(tail);
       _applyFrom(at);
+      if (_keptMoved) replay();
     } else {
       _log.removeWhere((c) => drop.contains(c.id));
       replay();
     }
   }
+
+  /// In a group: the waiting homes a family kept, as the state stands now (groups.dart,
+  /// `suspended`).
+  Set<String> _keptNow() => {
+        for (final home in store.waitingHomes.keys)
+          if (store.at(Space.family, RecordType.home, home)?.fields['keptBy'] is String) home,
+      };
+
+  /// Whether the waiting homes kept now aren't those the family's own changes were judged by.
+  bool get _keptMoved => _groupLog && store.waitingHomes.isNotEmpty && !_sameSet(_keptNow(), store.keptFinal);
+
+  static bool _sameSet(Set<String> a, Set<String> b) => a.length == b.length && a.containsAll(b);
 
   /// Becomes a copy of [other], which holds the same log: for an engine that tries changes out
   /// (a preview). It keeps nothing to rewind with, so a late change to it replays from scratch.
@@ -291,7 +306,10 @@ class Materializer {
     _windowStart = _log.length;
     _groupLog = other._groupLog;
     _starts = other._starts;
-    store.endedHomes = other.store.endedHomes;
+    store
+      ..endedHomes = other.store.endedHomes
+      ..waitingHomes = other.store.waitingHomes
+      ..keptFinal = other.store.keptFinal;
   }
 
   /// Forgets every change.
@@ -326,12 +344,25 @@ class Materializer {
   /// The log is replayed only when one excludes something or a closure is tried. Every replica
   /// does the same from the log alone, and a late change before any of them replays from scratch
   /// ([add]).
+  ///
+  /// Then, in a group, which families that wait were kept (groups.dart, `suspended`): what those
+  /// families did is judged by whether they are kept as the log stands, which only a replay
+  /// tells, so it replays again with that, once at most (a keep, and everything a keep is judged
+  /// by, never turns on what a family that waits wrote).
   void replay() {
     replays++;
     fullReplays++;
+    _settleStarts();
+    for (var round = 0; round < 3; round++) {
+      _replayRound();
+      if (!_keptMoved) break;
+      store.keptFinal = _keptNow();
+    }
+  }
+
+  void _replayRound() {
     validator.cutoffs.clear();
     validator.retiredRecoveryKeys.clear();
-    _settleStarts();
     _replayOnce();
     final deciding = [for (final c in _log) if (_hasEffect(c)) c];
     final applied = <String>[];
@@ -399,7 +430,10 @@ class Materializer {
   void _settleStarts() {
     _groupLog = _byId.values.any(_groupGenesis);
     _starts = _groupLog ? GroupStarts.of(_log) : GroupStarts();
-    store.endedHomes = {for (final e in _starts.ended.entries) e.key: e.value.mark};
+    store
+      ..endedHomes = {for (final e in _starts.ended.entries) e.key: e.value.mark}
+      ..waitingHomes = Map.unmodifiable(_starts.waiting)
+      ..keptFinal = {for (final h in store.keptFinal) if (_starts.waiting.containsKey(h)) h};
   }
 
   /// Whether [c] is a "we're in" [replay] tries: in a group, by a device its family's window let
@@ -540,7 +574,7 @@ class Materializer {
   /// tells how an invited family began ([GroupStarts]). Only in a group's log, and only from
   /// those devices, so refused look-alikes cost no replays.
   bool _decidesVerdicts(Change c) =>
-      _hasEffect(c) || (_groupLog && (GroupStarts.isInvitation(c) || _starts.decides(c)));
+      _hasEffect(c) || (_groupLog && (GroupStarts.isInvitation(c) || _starts.decides(c) || isKeep(c)));
 
   static int? _counterIn(String id) {
     final colon = id.lastIndexOf(':');
@@ -701,8 +735,10 @@ class Materializer {
       ];
     }
     _log.addAll(covered);
-    // Read from the log alone, as a replay would (groups.dart).
+    // Read from the log alone, as a replay would (groups.dart); the families kept, from the state
+    // the snapshot recorded, which a replay settled with them.
     _settleStarts();
+    store.keptFinal = _keptNow();
     _steps.addAll(List<Object?>.filled(w, null));
     _windowStart = w;
     final window = state['window']! as List;

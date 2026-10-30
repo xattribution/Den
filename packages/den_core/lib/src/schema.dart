@@ -497,6 +497,10 @@ final Map<String, TypeSpec> typeSpecs = {
     // "That wasn't them", by the phone that sent the invitation, within a day of the family
     // saying it was in: its place in the group ends (groups.dart, GroupStarts).
     'disowned': flag(),
+    // A family that waits (the family that invited it lost its place) kept by another family in
+    // the group, by one of that family's parents: names the family that keeps it (groups.dart,
+    // `suspended`).
+    'keptBy': id(),
   }, required: {'name', 'status'}, space: Space.family),
   // A group the family is in (groups.dart).
   RecordType.groupLink: TypeSpec({

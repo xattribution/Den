@@ -406,8 +406,8 @@ void main() {
 
       final (parks, kim) = await invited('Parks', 'Kim');
       final (ohs, ann) = await invited('Ohs', 'Ann');
-      // The cascade: the Parks invite the Ries, who say they're in (and stand), and the Tans,
-      // who never do (and end with the Parks).
+      // The cascade: the Parks invite the Ries, who say they're in, and the Tans, who never do.
+      // Once the Parks' place ends both wait; Alex keeps the Ries.
       clock.advance(const Duration(minutes: 1));
       final ries = await kim.inviteFamily(familyName: 'Ries', parentName: 'Rae');
       final tans = await kim.inviteFamily(familyName: 'Tans', parentName: 'Tam');
@@ -434,6 +434,8 @@ void main() {
       final fakeIn = await forge(evil, counter: 2, millis: join.hlc.millis + 10, type: RecordType.home, rid: parks.home, actor: parks.member,
           fields: {'status': 'active', 'heard': <String>[]});
       await exchange(f.alex, f.kHub);
+      await f.alex.ingest([join, fakeIn]);
+      await f.alex.keepHome(ries.home);
       clock.advance(Duration(hours: 1 + random.nextInt(20)));
       await f.alex.disownInvite(ann.deviceId);
       await kim.addList(title: 'Park snacks');
@@ -461,13 +463,15 @@ void main() {
         }
         expect(d.lists.where((l) => l.list.title == 'Park snacks' || l.list.title == 'Oh snacks'), isEmpty, reason: name);
         expect(d.home(f.smithHome)!.status, HomeStatus.active, reason: name);
-        // The family the Parks invited that said it was in stands; the one that hadn't ended.
+        // The family the Parks invited that Alex kept counts, all it did with it; the other waits.
         expect(d.home(ries.home)!.status, HomeStatus.active, reason: name);
+        expect(d.home(ries.home)!.keptBy, f.kotvasHome, reason: name);
         expect(d.deviceCounts(rae.deviceId), isTrue, reason: name);
         expect(d.event(barbecue), isNotNull, reason: name);
-        expect(d.home(tans.home)!.ended, HomeEnd.inviterEnded, reason: name);
-        expect(d.homeEnd(tans.home)!.invitedBy, parks.home, reason: name);
+        expect(d.home(tans.home)!.suspended, isTrue, reason: name);
+        expect(d.home(tans.home)!.ended, isNull, reason: name);
         expect(d.deviceCounts(tam.deviceId), isFalse, reason: name);
+        expect(d.suspendedHomes().map((h) => h.id), [tans.home], reason: name);
       }
     });
   }

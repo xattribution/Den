@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:den_core/den_core.dart';
-import 'package:den_core/src/groups.dart' show GroupStarts, deviceOutOfGroup;
+import 'package:den_core/src/groups.dart' show GroupStarts, deviceOutOfGroup, homeAt, isKeep;
 import 'package:den_core/src/materializer.dart';
 import 'package:den_core/src/snapshot.dart';
 import 'package:den_core/src/validity.dart';
@@ -1178,53 +1178,148 @@ void main() {
         clock.advance(const Duration(days: 30));
       });
 
-      test('Y2: a family the Smiths invited that said it was in (the Parks) stands: its place, its phone, its event; its alarm says nothing', () async {
+      /// [view] (an engine of the group) caught up with [from].
+      Future<Den> caughtUp(Den view, Den from) async {
+        final v = await view.fork();
+        await v.ingest(from.changesSince(v.versionVector));
+        return v;
+      }
+
+      test('Y2: the families the Smiths invited wait to be kept, whether they said they were in (the Parks) or not (the Tans): nothing of theirs counts or shows', () async {
         final fork = await f.kHub.fork();
-        final link = kimFamily.groupLink(f.group)!;
-        expect(link.home, parks.home);
-        expect(kimFamily.groupAlarm(link, kim), isNull);
-        final attack = await contest(f, clock.now);
-        await fork.ingest(attack);
+        final kimLink = kimFamily.groupLink(f.group)!, tamLink = tamFamily.groupLink(f.group)!;
+        expect(kimFamily.groupAlarm(kimLink, kim), isNull);
+        expect(tamFamily.groupAlarm(tamLink, tam), isNull);
+        await fork.ingest(await contest(f, clock.now));
         expect(fork.homeContested(f.smithHome), isTrue);
         smithsEnded(f, fork);
-        expect(fork.deviceCounts(kim.deviceId), isTrue, reason: 'the Parks were never contested');
-        expect(fork.event(kimEvent), isNotNull);
-        expect(fork.home(parks.home)!.status, HomeStatus.active);
-        expect(fork.homeEnd(parks.home), isNull);
+        expect(fork.suspendedHomes().map((h) => h.id), unorderedEquals([parks.home, tans.home]));
+        for (final (home, phone) in [(parks.home, kim), (tans.home, tam)]) {
+          final h = fork.home(home)!;
+          expect(h.suspended, isTrue);
+          expect(h.left, isTrue, reason: 'it counts for nothing meanwhile');
+          expect(h.ended, isNull, reason: 'nobody removed it');
+          expect(fork.homeEnd(home), isNull);
+          expect(fork.deviceCounts(phone.deviceId), isFalse);
+          expect(fork.spacesForDevice(phone.deviceId), isEmpty, reason: 'its devices don\'t sync the group');
+          expect(fork.members.where((m) => m.home == home), isEmpty);
+          expect(fork.history().where((x) => x.device == phone.deviceId), isEmpty);
+        }
+        expect(fork.event(kimEvent), isNull);
+        // The Parks' own "we're in" still stands, and still keeps out what the Smiths did to them
+        // that Kim's phone hadn't heard of.
         expect(fork.closureFor(parks.home)!.author, kim.deviceId);
-        // On Kim's own phone, once it hears: all is well.
-        final kimView = await kim.fork();
-        await kimView.ingest(fork.changesSince(kimView.versionVector));
-        expect(kimView.deviceCounts(kim.deviceId), isTrue);
-        expect(kimFamily.groupAlarm(link, kimView), isNull);
-        // The Smiths' phones stay on record with their ended place; none of it shows or counts.
-        expect(fork.history().where((h) => h.device == f.dana.deviceId), isEmpty);
-        expect(fork.members.where((m) => m.home == f.smithHome), isEmpty);
+        // Their phones hear, and their own logs say they wait: nobody removed them.
+        final kimView = await caughtUp(kim, fork), tamView = await caughtUp(tam, fork);
+        for (final (family, link, view) in [(kimFamily, kimLink, kimView), (tamFamily, tamLink, tamView)]) {
+          final alarm = family.groupAlarm(link, view)!;
+          expect(alarm.kind, GroupAlarmKind.inviterEnded);
+          expect(alarm.message, allOf(contains('Smiths'), contains('waiting'), contains('Nobody removed you')));
+        }
+        // A family that waits invites nobody, and keeps nobody.
+        await expectLater(kimView.inviteFamily(familyName: 'Oaks', parentName: 'Ola'), throwsA(isA<InvalidInput>()));
+        await expectLater(kimView.keepHome(tans.home), throwsA(isA<InvalidInput>()));
       });
 
-      test('Y2: a family the Smiths invited that hadn\'t said it was in (the Tans) ends with them, and its own alarm says why', () async {
+      test('Y2: a parent of a family that is in keeps the Parks: everything they did is back, as they did it; the Tans still wait, and the Smiths stay ended', () async {
         final fork = await f.kHub.fork();
-        expect(fork.home(tans.home)!.status, HomeStatus.invited);
-        final link = tamFamily.groupLink(f.group)!;
-        expect(tamFamily.groupAlarm(link, tam), isNull);
         await fork.ingest(await contest(f, clock.now));
-        final end = fork.homeEnd(tans.home)!;
-        expect(end.began, isFalse);
-        expect(end.invitedBy, f.smithHome);
-        expect(end.at, fork.home(tans.home)!.rec.created);
-        expect(fork.home(tans.home)!.ended, HomeEnd.inviterEnded);
-        expect(fork.deviceCounts(tam.deviceId), isFalse);
-        expect(fork.invitationOpen(tans.home), isFalse);
-        // Tam's phone hears, and the Tans' own log tells it why.
-        final tamView = await tam.fork();
-        await tamView.ingest(fork.changesSince(tamView.versionVector));
-        final alarm = tamFamily.groupAlarm(link, tamView)!;
-        expect(alarm.kind, GroupAlarmKind.inviterEnded);
-        expect(alarm.message, contains('Smiths'));
-        await expectLater(tamView.updateHome(active: true, family: tamFamily), throwsA(isA<InvalidInput>()));
+        final alexView = await caughtUp(f.alex, fork);
+        await expectLater(alexView.keepHome(f.smithHome), throwsA(isA<InvalidInput>()), reason: 'a keep never brings back an ended family');
+        await alexView.keepHome(parks.home);
+        await fork.ingest(alexView.changesSince(fork.versionVector));
+        final h = fork.home(parks.home)!;
+        expect(h.suspended, isFalse);
+        expect(h.status, HomeStatus.active);
+        expect(h.keptBy, f.kotvasHome);
+        expect(fork.deviceCounts(kim.deviceId), isTrue);
+        expect(fork.spacesForDevice(kim.deviceId), isNotEmpty);
+        expect(fork.event(kimEvent), isNotNull, reason: 'what it did before is back');
+        expect(fork.suspendedHomes().map((h) => h.id), [tans.home]);
+        smithsEnded(f, fork);
+        // Kim's phone hears: all is well, and the Parks decide about themselves again.
+        final kimView = await caughtUp(kim, fork);
+        expect(kimFamily.groupAlarm(kimFamily.groupLink(f.group)!, kimView), isNull);
+        final picnic2 = await kimView.addEvent(title: 'Second picnic', start: clock.now + day, end: clock.now + day + hour);
+        await fork.ingest(kimView.changesSince(fork.versionVector));
+        expect(fork.event(picnic2), isNotNull);
+        // A keep for the Smiths, signed past the engine's checks, counts for nothing.
+        final forged = await forgeAs(alexView, type: RecordType.home, rid: f.smithHome, actor: f.gAlex, fields: {'keptBy': f.kotvasHome});
+        expect(await refusal(fork, forged), isNotNull);
       });
 
-      test('Y2: a device A let in with the Smiths\' key can\'t take the Parks down: removing Dana\'s phone, dated before she invited them, counts for nothing', () async {
+      test('Y2: a keep from a family that waits, or whose place ended, counts for nothing: families that wait can\'t keep each other or themselves', () async {
+        final fork = await f.kHub.fork();
+        final (evil, j) = await joinWith(f, f.invitation.parent, ownJoin(f.dana).hlc.millis - 100);
+        await fork.ingest([j, await sayIn(evil, f.smithHome, f.gDana, clock.now)]);
+        final kimView = await caughtUp(kim, fork), tamView = await caughtUp(tam, fork);
+        final attempts = {
+          'the Parks keep the Tans': await forgeAs(kimView, type: RecordType.home, rid: tans.home, actor: parks.member, fields: {'keptBy': parks.home}),
+          'the Tans keep the Parks': await forgeAs(tamView, type: RecordType.home, rid: parks.home, actor: tans.member, fields: {'keptBy': tans.home}),
+          'the Parks keep themselves': await forgeAs(kimView, type: RecordType.home, rid: parks.home, actor: parks.member, fields: {'keptBy': parks.home}),
+          'Dana keeps the Parks': await forgeAs(f.dana, type: RecordType.home, rid: parks.home, actor: f.gDana, fields: {'keptBy': f.smithHome}),
+          'A\'s device let in as Dana keeps the Parks': await forge(evil, counter: 3, millis: clock.now + 5, type: RecordType.home, rid: parks.home,
+              actor: f.gDana, fields: {'keptBy': f.smithHome}),
+        };
+        for (final e in attempts.entries) {
+          expect(await refusal(fork, e.value), isNotNull, reason: e.key);
+        }
+        // Each other's, together: still nothing.
+        final both = await fork.fork();
+        await both.ingest([attempts['the Parks keep the Tans']!, attempts['the Tans keep the Parks']!]);
+        expect(both.suspendedHomes().map((h) => h.id), unorderedEquals([parks.home, tans.home]));
+        // A keep by a family that is in, dated before that family could act (the Lees, before
+        // Jun's phone said they were in), counts for nothing either.
+        final leesIn = jun.changesSince(const {}).firstWhere((c) => c.type == RecordType.home && c.fields.containsKey('heard'));
+        final early = await forgeAs(jun, type: RecordType.home, rid: parks.home, actor: lees.member, millis: leesIn.hlc.millis - 1, skip: 5,
+            fields: {'keptBy': lees.home});
+        final inTime = await forgeAs(jun, type: RecordType.home, rid: parks.home, actor: lees.member, skip: 5, fields: {'keptBy': lees.home});
+        expect(await refusal(fork, inTime), isNull, reason: 'the same keep, once the Lees were in, counts');
+        expect(await refusal(fork, early), isNotNull);
+      });
+
+      test('Y2: an ended family\'s device can still date a new invitation before its end; the family it brings in waits, is kept by nobody, and never reads anything', () async {
+        final fork = await f.kHub.fork();
+        final (evil, j) = await joinWith(f, f.invitation.parent, ownJoin(f.dana).hlc.millis - 100);
+        final evilId = await evil.deviceId();
+        final at = ownJoin(f.dana).hlc.millis + 1000;
+        // The invitation, as the Smiths' first parent, from A's device let in with their key.
+        final k = await InviteKey.generate();
+        final home = homeIdFor(k.publicKey, evilId);
+        final member = newId();
+        final invitation = [
+          await forge(evil, counter: 2, millis: at, type: RecordType.home, rid: home, actor: f.gDana,
+              fields: {'name': 'Strangers', 'status': 'invited', 'invitedBy': f.smithHome, 'key': k.publicKey}),
+          await forge(evil, counter: 3, millis: at + 1, type: RecordType.member, rid: member, actor: f.gDana, fields: {
+            'name': 'Stranger', 'role': 'parent', 'marker': 'grass', 'picture': 'initial', 'grants': <String>[], 'order': 0, 'home': home, //
+          }),
+          await forge(evil, counter: 4, millis: at + 2, type: RecordType.inviteKey, rid: k.id, actor: f.gDana,
+              fields: {'member': member, 'key': k.publicKey, 'by': f.gDana, 'device': evilId, 'expires': at + hour, 'home': home}),
+        ];
+        // The stranger's phone lets itself in, says they're in, and writes.
+        final phone = await DeviceKeys.generate();
+        final phoneId = await phone.deviceId();
+        final proof = await k.prove(family: f.group, member: member, devicePubkey: phone.pubkey, expires: at + hour);
+        final theirs = [
+          await forge(phone, counter: 1, millis: at + 10, type: RecordType.device, rid: phoneId, fields: {
+            'name': "Stranger's phone", 'kind': 'phone', 'pubkey': phone.pubkey, 'xpub': phone.xpub, 'member': member, 'mode': 'personal', //
+            'approved': true, 'home': home, 'invite': proof.toJson(),
+          }),
+          await sayIn(phone, home, member, at + 20, heard: [for (final c in invitation) c.id]..sort()),
+          await forge(phone, counter: 3, millis: at + 30, type: RecordType.event, rid: 'strangers', actor: member,
+              fields: {'title': 'Strangers\' party', 'start': clock.now + day, 'end': clock.now + day + hour}),
+        ];
+        await fork.ingest([j, ...invitation, ...theirs, await sayIn(evil, f.smithHome, f.gDana, clock.now, counter: 5)]);
+        expect(fork.homeContested(f.smithHome), isTrue);
+        expect(fork.home(home), isNotNull, reason: 'on record, as it was made');
+        expect(fork.home(home)!.suspended, isTrue);
+        expect(fork.deviceCounts(phoneId), isFalse);
+        expect(fork.spacesForDevice(phoneId), isEmpty, reason: 'it reads nothing: no hub serves it');
+        expect(fork.event('strangers'), isNull);
+        expect(fork.suspendedHomes().map((h) => h.id), contains(home));
+      });
+
+      test('Y2: a device A let in with the Smiths\' key can\'t take the Parks down: removing Dana\'s phone, dated before she invited them, counts for nothing, and a keep brings the Parks back whole', () async {
         final fork = await f.kHub.fork();
         final (evil, j) = await joinWith(f, f.invitation.parent, ownJoin(f.dana).hlc.millis - 100);
         final parksAt = fork.home(parks.home)!.rec.created.millis;
@@ -1234,6 +1329,9 @@ void main() {
         final r = await fork.ingest([j, removal, made, await sayIn(evil, f.smithHome, f.gDana, clock.now, counter: 4)]);
         expect(fork.homeContested(f.smithHome), isTrue);
         expect(r.invalid.keys, containsAll([removal.id, made.id]), reason: 'an ended family\'s records stay as they were made');
+        final alexView = await caughtUp(f.alex, fork);
+        await alexView.keepHome(parks.home);
+        await fork.ingest(alexView.changesSince(fork.versionVector));
         expect(fork.deviceCounts(kim.deviceId), isTrue);
         expect(fork.event(kimEvent), isNotNull);
       });
@@ -1389,7 +1487,55 @@ void main() {
       expect((await fork.ingest([real])).added, 1);
     });
 
-    test('Y7: contested endings, and the family they invited that stands, converge through shuffles, snapshots and remove()', () async {
+    test('Y2: a cascade several families deep waits, and comes back from where it is kept', () async {
+      final clock = TestClock.at(DateTime.utc(2026, 10, 29, 15));
+      final f = await bothFamilies(clock);
+      await exchange(f.dana, f.kHub);
+      final days = <String, String>{};
+      Future<(GroupInvitation, Den)> invite(Den by, String family, String parent) async {
+        clock.advance(const Duration(seconds: 1));
+        final inv = await by.inviteFamily(familyName: family, parentName: parent);
+        await exchange(by, f.kHub);
+        final phone = await admit(f, inv.parent, f.kHub, name: "$parent's phone");
+        clock.advance(const Duration(seconds: 1));
+        await phone.updateHome(active: true, family: null);
+        days[family] = await phone.addEvent(title: '$family day', start: clock.now + day, end: clock.now + day + hour);
+        await exchange(phone, f.kHub);
+        return (inv, phone);
+      }
+
+      // The Smiths invite the Parks, who invite the Ries, who invite the Uts.
+      final (parks, kim) = await invite(f.dana, 'Parks', 'Kim');
+      final (ries, rae) = await invite(kim, 'Ries', 'Rae');
+      final (uts, ute) = await invite(rae, 'Uts', 'Ute');
+      final fork = await f.kHub.fork();
+      final (evil, j) = await joinWith(f, f.invitation.parent, ownJoin(f.dana).hlc.millis - 100);
+      await fork.ingest([j, await sayIn(evil, f.smithHome, f.gDana, clock.now)]);
+      void counts(Map<String, bool> want) {
+        for (final (name, inv, phone) in [('Parks', parks, kim), ('Ries', ries, rae), ('Uts', uts, ute)]) {
+          final w = want[name]!;
+          expect(fork.home(inv.home)!.suspended, !w, reason: name);
+          expect(fork.deviceCounts(phone.deviceId), w, reason: name);
+          expect(fork.event(days[name]!) != null, w, reason: name);
+        }
+      }
+
+      counts({'Parks': false, 'Ries': false, 'Uts': false});
+      // A Kotvas parent keeps the Ries: they and the Uts they invited are back; the Parks wait.
+      final alexView = await f.alex.fork();
+      await alexView.ingest(fork.changesSince(alexView.versionVector));
+      await alexView.keepHome(ries.home);
+      await fork.ingest(alexView.changesSince(fork.versionVector));
+      counts({'Parks': false, 'Ries': true, 'Uts': true});
+      // The Ries, back, could keep the Parks themselves; here the Kotvases do.
+      await alexView.keepHome(parks.home);
+      await fork.ingest(alexView.changesSince(fork.versionVector));
+      counts({'Parks': true, 'Ries': true, 'Uts': true});
+      expect(fork.suspendedHomes(), isEmpty);
+      expect(fork.home(f.smithHome)!.ended, 'contested');
+    });
+
+    test('Y7: contested endings, the families they invited waiting and kept, converge through shuffles, snapshots and remove() of the keep and of the ending', () async {
       final clock = TestClock.at(DateTime.utc(2026, 10, 29, 15));
       final f = await bothFamilies(clock);
       final parks = await f.dana.inviteFamily(familyName: 'Parks', parentName: 'Kim');
@@ -1397,29 +1543,42 @@ void main() {
       final kim = await admit(f, parks.parent, f.kHub, name: "Kim's phone");
       clock.advance(const Duration(seconds: 1));
       await kim.updateHome(active: true, family: null);
+      final picnic = await kim.addEvent(title: 'Park picnic', start: clock.now + day, end: clock.now + day + hour);
       await exchange(kim, f.kHub);
       clock.advance(const Duration(days: 30));
       final base = f.kHub.changesSince(const {}).toList();
       final danaAt = ownJoin(f.dana).hlc.millis;
       final (evil, j) = await joinWith(f, f.invitation.parent, danaAt - 300);
       final start = clock.now + day;
-      // A writes as Dana inside the window (X1), then contests.
+      // A writes as Dana inside the window (X1), then contests; then Alex keeps the Parks.
       final w = await forge(evil, counter: 2, millis: danaAt - 200, type: RecordType.event, rid: 'asdana', actor: f.gDana,
           fields: {'title': 'Forged', 'start': start, 'end': start + hour});
       final s = await sayIn(evil, f.smithHome, f.gDana, clock.now, counter: 3);
-      final pool = [...base, j, w, s];
+      final alexView = await f.alex.fork();
+      await alexView.ingest(f.kHub.changesSince(alexView.versionVector));
+      await alexView.ingest([j, w, s]);
+      await alexView.keepHome(parks.home);
+      final keep = alexView.changesSince(const {}).lastWhere((c) => isKeep(c));
+      final pool = [...base, j, w, s, keep];
       TrustRoot root() => TrustRoot(familyId: f.group, founderPubkey: f.alex.founderPubkey);
       String digest(Materializer m) => jsonEncode({
             'rejected': (m.rejected.keys.toList()..sort()),
             'ended': {for (final e in m.store.endedHomes.entries) e.key: '${e.value.at} ${e.value.why}'},
+            'waiting': m.store.waitingHomes,
+            'kept': m.store.keptFinal.toList()..sort(),
             'forged': m.store.liveAt(Space.family, RecordType.event, 'asdana') != null,
-            'parks': m.store.at(Space.family, RecordType.home, parks.home)?.fields['status'],
+            'picnic': m.store.liveAt(Space.family, RecordType.event, picnic) != null,
+            'parks': homeAt(m.store, parks.home)?.suspended,
             'closures': [for (final c in m.validator.retiredRecoveryKeys.closures) c.id]..sort(),
           });
       final want = digest(Materializer(root)..add(pool));
       expect(want, contains('contested'));
       expect(want, contains('"forged":false'));
-      expect(want, contains('"parks":"active"'));
+      expect(want, contains('"picnic":true'));
+      expect(want, contains('"parks":false'));
+      final waitingOnly = digest(Materializer(root)..add([...base, j, w, s]));
+      expect(waitingOnly, contains('"picnic":false'));
+      expect(waitingOnly, contains('"parks":true'));
       for (final seed in [1, 2, 3, 4]) {
         final random = Random(seed);
         final shuffled = [...pool]..shuffle(random);
@@ -1439,13 +1598,23 @@ void main() {
         final rest = re.restore(SnapshotHeader.parse(text)!, shuffled.sublist(0, cut), root: root());
         re.add([...?rest, ...shuffled.sublist(cut)]);
         expect(digest(re), want, reason: 'snapshot seed $seed');
+        // And a snapshot of the whole, reopened.
+        final all = Materializer(root)..add(shuffled);
+        final whole = await all.capture(root: root(), windowFrom: clock.now - 40 * day, digest: const [0]).encode(breathe: () async {});
+        final back = Materializer(root);
+        back.add([...?back.restore(SnapshotHeader.parse(whole)!, shuffled, root: root())]);
+        expect(digest(back), want, reason: 'whole snapshot seed $seed');
       }
-      // remove(): taking A's "we're in" back gives what a log without it gives.
-      final without = Materializer(root)..add([...base, j, w]);
+      // remove(): taking the keep back gives what a log without it gives: the Parks wait again.
+      final unkept = Materializer(root)..add(pool);
+      unkept.remove([keep.id]);
+      expect(digest(unkept), waitingOnly);
+      // Taking A's "we're in" back: nothing ended, nobody waits, and the keep counts for nothing.
       final m = Materializer(root)..add(pool);
       m.remove([s.id]);
-      expect(digest(m), digest(without));
+      expect(digest(m), digest(Materializer(root)..add([...base, j, w, keep])));
       expect(m.store.endedHomes, isEmpty);
+      expect(m.rejected.containsKey(keep.id), isTrue);
     });
   });
 }

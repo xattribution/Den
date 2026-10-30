@@ -82,59 +82,102 @@ bool isGroupLog(RecordStore store, TrustRoot trust) {
 /// The home [id], removed or not; null when the group has none. A home whose place ended
 /// ([HomeEnd]) reads as left from its end on: while validity judges a change clocked before
 /// that, or one of the ended family's own records as it was made ([endsJudgedPast]), as it was.
+/// A home waiting to be kept ([suspended]) reads as left too, with `suspended` set, except
+/// while validity judges one of its own records as it was made.
 Home? homeAt(RecordStore store, Object? id) {
   if (id is! String) return null;
   final e = store.at(Space.family, RecordType.home, id);
   if (e == null) return null;
+  final past = store.pastEnds?.contains(id) ?? false;
   final end = store.endedHomes[id];
   final judging = store.judging;
-  if (end == null || (judging != null && judging < end.at) || (store.pastEnds?.contains(id) ?? false)) return Home(e.rec);
-  final r = e.rec;
-  return Home(Rec(
-    type: r.type,
-    id: r.id,
-    space: r.space,
-    fields: {...r.fields, 'status': HomeStatus.left.name, 'ended': end.why},
-    created: r.created,
-    updated: r.updated,
-    createdBy: r.createdBy,
-    updatedBy: r.updatedBy,
-    fieldTimes: r.fieldTimes,
-  ));
+  if (end != null) {
+    if ((judging != null && judging < end.at) || past) return Home(e.rec);
+    return _readsAs(e.rec, {'status': HomeStatus.left.name, 'ended': end.why});
+  }
+  if (!past && suspended(store, id)) return _readsAs(e.rec, {'status': HomeStatus.left.name, 'suspended': true});
+  return Home(e.rec);
+}
+
+Home _readsAs(Rec r, Map<String, Object?> over) => Home(Rec(
+      type: r.type,
+      id: r.id,
+      space: r.space,
+      fields: {...r.fields, ...over},
+      created: r.created,
+      updated: r.updated,
+      createdBy: r.createdBy,
+      updatedBy: r.updatedBy,
+      fieldTimes: r.fieldTimes,
+    ));
+
+/// Whether the home [id] waits to be kept: a family invited by one whose place ended ([HomeEnd]),
+/// or by one that itself waits, and that no family in the group has kept (`keptBy` on its record:
+/// `Den.keepHome`). It counts for nothing meanwhile: its devices don't count, its people and what
+/// they wrote don't show, and it acts on nothing. What it made of itself stays on record, as it
+/// made it ([endsJudgedPast]), so all of it is back once it is kept.
+///
+/// [positional]: as of the change validity judges, kept only by a keep before it (what a keep
+/// itself is judged by: a family that waits at that point keeps nobody, so families that wait
+/// can't keep each other, and a keep counts from where it is on). Otherwise as the log stands
+/// once settled ([RecordStore.keptFinal]), which is what the family's own changes are judged by:
+/// once kept, all of what it did counts, as it did it.
+bool suspended(RecordStore store, String id, {bool positional = false}) {
+  var home = id;
+  for (var depth = 0; depth < 64; depth++) {
+    final inviter = store.waitingHomes[home];
+    if (inviter == null) return false;
+    final kept = positional ? store.at(Space.family, RecordType.home, home)?.fields['keptBy'] is String : store.keptFinal.contains(home);
+    if (kept) return false;
+    if (store.endedHomes.containsKey(inviter)) return true;
+    home = inviter;
+  }
+  return true;
 }
 
 /// Whether the home [id] left the group (or never was in it).
 bool homeLeft(RecordStore store, Object? id) => homeAt(store, id)?.left ?? true;
 
 /// Whether the home [id] left the group by its own parents' say (or never was in it), an end of
-/// its place ([HomeEnd]) aside: how a family read when someone named one of its people as they
-/// stood then (a ride's driver), which an end found later doesn't take back.
+/// its place ([HomeEnd]) or a wait to be kept aside: how a family read when someone named one of
+/// its people as they stood then (a ride's driver), which an end found later doesn't take back.
 bool homeLeftOfItsOwn(RecordStore store, Object? id) {
   if (id is! String) return true;
   final e = store.at(Space.family, RecordType.home, id);
   return e == null || Home(e.rec).left;
 }
 
+/// Whether the home [id] can vouch for another family at the point validity judges: it said it is
+/// in (or started the group), its place didn't end, and it doesn't wait to be kept there
+/// ([suspended], positional).
+bool homeActiveAt(RecordStore store, String id) {
+  final e = store.at(Space.family, RecordType.home, id);
+  return e != null &&
+      Home(e.rec).status == HomeStatus.active &&
+      !store.endedHomes.containsKey(id) &&
+      !suspended(store, id, positional: true);
+}
+
 /// Record types that say who is in a group and what they may do: its families, their people,
 /// devices and keys. What an ended family made of these stays on record ([endsJudgedPast]).
 const Set<String> _trustTypes = {RecordType.home, RecordType.member, RecordType.device, RecordType.inviteKey};
 
-/// The ended homes ([HomeEnd]) validity judges [c] past, as they were before they ended (null
-/// for none). An end reaches back to the family's invitation, so without this nothing the
-/// family made would stand, and nor would any family it invited. So:
+/// The homes validity judges [c] past, as they were before they ended or began to wait (null for
+/// none). An end reaches back to the family's invitation, so without this nothing the family made
+/// would stand, and nor would any family it invited. So:
 ///
-/// - a family that began (it said it was in, and then its place ended: `contested` or
-///   `disowned`) keeps the records it made, as it made them: its people, the devices that let
-///   themselves in, its keys, its invitations of other families, and what it did to those
-///   families before they said they were in (which their "we're in" settles: [WindowClosure]).
-///   Never a change to its own record, or to its people, devices or keys once made (its
-///   inviting family, holding its invitation's key, could otherwise remove its first phone and
-///   with it every family that phone invited), and never anything else it wrote: its calendar,
-///   lists and the rest count for nothing. The family reads as left all the same, so none of
-///   it gives anyone any power in the group;
-/// - a family invited by one whose place ended, that never said it was in (`inviterEnded`),
-///   keeps what the family that invited it made of it (its home, first parent and key), and
-///   nothing of its own.
+/// - a family that began (it said it was in) and whose place ended (`contested` or `disowned`)
+///   keeps the records it made, as it made them: its people, the devices that let themselves
+///   in, its keys, its invitations of other families, and what it did to those families before
+///   they said they were in (which their "we're in" settles: [WindowClosure]). Never a change to
+///   its own record, or to its people, devices or keys once made (its inviting family, holding
+///   its invitation's key, could otherwise remove its first phone), and never anything else it
+///   wrote: its calendar, lists and the rest count for nothing. The family reads as left all
+///   the same, so none of it gives anyone any power in the group, and nothing brings it back;
+/// - a family that waits to be kept ([suspended]) keeps everything it decides about itself,
+///   as it decided it (its people, devices, keys, its own record, its "we're in", and its
+///   invitations of others, which wait with it): the records a keep brings back. What else it
+///   wrote waits for that keep (validity reads it as left until then).
 Set<String>? endsJudgedPast(Change c, RecordStore store) {
   final ended = store.endedHomes;
   if (ended.isEmpty || !_trustTypes.contains(c.type)) return null;
@@ -147,11 +190,10 @@ Set<String>? endsJudgedPast(Change c, RecordStore store) {
     final home = e.key;
     // A home's own record reads as it is: ended.
     if (c.type == RecordType.home && c.rid == home) continue;
-    if (e.value.why == HomeEnd.inviterEnded) {
-      if (by != home) (out ??= {}).add(home);
-      continue;
-    }
     if (by == home && store.at(c.space, c.type, c.rid) != null && windowPowerOver(c, store) == null) continue;
+    (out ??= {}).add(home);
+  }
+  for (final home in store.waitingHomes.keys) {
     (out ??= {}).add(home);
   }
   return out;
@@ -233,10 +275,8 @@ const Duration disownWindow = Duration(hours: 24);
 /// keeps everything): the price of joining at once, with no one to approve, so that the family
 /// that invited it can end it, but never act as it. What it made of itself (its people, devices,
 /// keys, and its invitations of other families) stays on record as it was made, with no power
-/// ([endsJudgedPast]), so a family it invited that said it was in stands.
-///
-/// A family invited by one whose place ended, that hadn't said it was in, ends with it
-/// ([inviterEnded]): nobody of it ever counted.
+/// ([endsJudgedPast]); the families it invited wait until a family in the group keeps them
+/// ([suspended]).
 class HomeEnd {
   const HomeEnd({
     required this.home,
@@ -244,21 +284,16 @@ class HomeEnd {
     required this.firstIn,
     required this.contested,
     this.disowned,
-    this.invitedBy,
     this.closings = const [],
   });
-
-  /// [mark]'s `why` for a family whose inviting family ended before it said it was in.
-  static const String inviterEnded = 'inviterEnded';
 
   final String home;
 
   /// The clock of its invitation: from it on, nothing of the home counts.
   final Hlc at;
 
-  /// The clock of its first "we're in" (the day for "That wasn't them" runs from it); null when
-  /// it never said it was in ([invitedBy]).
-  final Hlc? firstIn;
+  /// The clock of its first "we're in" (the day for "That wasn't them" runs from it).
+  final Hlc firstIn;
 
   /// Whether two or more devices let in with the invitation's key each said the family is in.
   final bool contested;
@@ -266,18 +301,11 @@ class HomeEnd {
   /// The inviting phone's "That wasn't them" that ended it, when one did.
   final String? disowned;
 
-  /// When it ended because the family that invited it ended before it said it was in: that
-  /// family.
-  final String? invitedBy;
-
   /// The "we're in" changes the log holds for the home, from devices let in with its key.
   final List<String> closings;
 
-  /// Whether it had said it was in: what it made of itself stays on record ([endsJudgedPast]).
-  bool get began => invitedBy == null;
-
-  /// Why, as [RecordStore.endedHomes] keeps it: `contested`, `disowned` or [inviterEnded].
-  String get why => contested ? 'contested' : (disowned != null ? 'disowned' : inviterEnded);
+  /// Why, as [RecordStore.endedHomes] keeps it: `contested` or `disowned`.
+  String get why => contested ? 'contested' : 'disowned';
 
   /// What [RecordStore.endedHomes] keeps of it.
   ({Hlc at, String why, String? by}) get mark => (at: at, why: why, by: disowned);
@@ -297,9 +325,9 @@ class HomeEnd {
 ///
 /// A home two of those devices each said "we're in" for is contested: no beginning wins, and the
 /// home ends ([HomeEnd]). So does one the inviting device disowned within [disownWindow] of its
-/// first "we're in", and, with either, every family it invited (as its invitation says) that
-/// hadn't said it was in, and so on. Changes from a window device, or of these shapes, decide
-/// verdicts: the materializer replays when one arrives late.
+/// first "we're in". Every family an ended one invited (as its invitation says), and every family
+/// those invited, and so on, waits to be kept ([waiting], [suspended]). Changes from a window
+/// device, or of these shapes, decide verdicts: the materializer replays when one arrives late.
 class GroupStarts {
   /// Home -> its invitation: its key, the device that made it, the family it says invited it,
   /// the change and its clock.
@@ -316,6 +344,11 @@ class GroupStarts {
 
   /// Homes whose place ended.
   final Map<String, HomeEnd> ended = {};
+
+  /// Homes invited by one whose place ended, or by one of these, and so on (none of them ended
+  /// itself) -> the family that invited it: they wait until a family in the group keeps them, or
+  /// the family that invited them ([suspended]).
+  final Map<String, String> waiting = {};
 
   /// Reads [log], in log order.
   static GroupStarts of(Iterable<Change> log) {
@@ -351,15 +384,15 @@ class GroupStarts {
         closings: [for (final c in e.value) c.id],
       );
     }
-    // The families an ended family invited that hadn't said they were in end with it, and so
-    // on down: nobody of theirs ever counted. One that had said it was in stands.
+    // The families an ended family invited, and those they invited, and so on, wait to be kept.
     var more = s.ended.isNotEmpty;
     while (more) {
       more = false;
       for (final e in s.invitations.entries) {
         final by = e.value.invitedBy;
-        if (by == null || !s.ended.containsKey(by) || s.ended.containsKey(e.key) || s.closings.containsKey(e.key)) continue;
-        s.ended[e.key] = HomeEnd(home: e.key, at: e.value.at, firstIn: null, contested: false, invitedBy: by);
+        if (by == null || s.ended.containsKey(e.key) || s.waiting.containsKey(e.key)) continue;
+        if (!s.ended.containsKey(by) && !s.waiting.containsKey(by)) continue;
+        s.waiting[e.key] = by;
         more = true;
       }
     }
@@ -484,8 +517,8 @@ enum GroupAlarmKind {
   /// The family that invited it said "That wasn't them": its place ended.
   disowned,
 
-  /// The family that invited it lost its place before this family said it was in, so its
-  /// invitation ended with it.
+  /// The family that invited it lost its place (or itself waits to be kept), so this family waits
+  /// for a family in the group to keep it ([suspended]): nobody removed it.
   inviterEnded,
 
   /// The group's log, once it arrived, holds no record of the family at all.
@@ -531,6 +564,11 @@ class GroupAlarm {
   @override
   String toString() => '${kind.name}: $message';
 }
+
+/// Whether [c] keeps a family that waits ([suspended]): `keptBy` on its home, by a parent of
+/// another family. Whether it counts can turn what that family did around, so the materializer
+/// replays when one arrives.
+bool isKeep(Change c) => c.type == RecordType.home && c.fields.containsKey('keptBy');
 
 /// Whether [c] is shaped like a "we're in": a change setting a home `active` and naming what it
 /// heard. In a group, the materializer tries the ones by devices let in through that home's
@@ -679,6 +717,11 @@ class _GroupCheck {
     return h == null || h.name.isEmpty ? 'That family' : h.name;
   }
 
+  /// Why nothing of the family [id] counts here.
+  String _notIn(Object? id) => (homeAt(store, id)?.suspended ?? false)
+      ? '${homeName(id)} is waiting for a family in the group to keep it'
+      : '${homeName(id)} left the group';
+
   Member? liveMember(Object? id) {
     if (id is! String) return null;
     final e = store.liveAt(Space.family, RecordType.member, id);
@@ -720,15 +763,15 @@ class _GroupCheck {
         only({'revoked', 'revokedAfter'});
     if (!selfRemoval) {
       if (authorHome == null) return _trust('This device belongs to no family in the group');
-      // G8: nothing of a family that left counts.
-      if (homeLeft(store, authorHome)) return _trust('${homeName(authorHome)} left the group');
+      // G8: nothing of a family that left counts (nor, until it is kept, of one that waits).
+      if (homeLeft(store, authorHome)) return _trust(_notIn(authorHome));
     }
     if (c.actor != null) {
       actor = liveMember(c.actor);
       // The family's rules refuse an actor who isn't in the group.
       if (actor == null) return null;
       actorHome = actor!.home;
-      if (!selfRemoval && homeLeft(store, actorHome)) return _trust('${homeName(actorHome)} left the group');
+      if (!selfRemoval && homeLeft(store, actorHome)) return _trust(_notIn(actorHome));
     }
     // G4: shared screens only show a group; hubs act only for their own family's people.
     if (author.mode == DeviceMode.shared && !(c.type == RecordType.device && c.rid == c.device)) {
@@ -886,7 +929,22 @@ class _GroupCheck {
       if (c.fields['family'] != null || c.fields['hubs'] != null) {
         return _schema('A family says where its Den is itself, once it\'s in');
       }
-      if (c.fields.containsKey('heard') || c.fields.containsKey('disowned')) return _schema('A family is invited first');
+      if (c.fields.containsKey('heard') || c.fields.containsKey('disowned') || c.fields.containsKey('keptBy')) {
+        return _schema('A family is invited first');
+      }
+      return null;
+    }
+    // Keeping a family that waits (its inviting family's place ended): a parent, on their own
+    // device, of a family that can act at this point in the log names their own family. Never the
+    // family itself, one whose place ended, or one that waits there too (so families that wait
+    // can't keep each other); a keep dated before the keeper's own family could act is refused.
+    if (c.fields.containsKey('keptBy')) {
+      if (!only({'keptBy'})) return _schema('Keeping a family says only who keeps it');
+      if (a == null || !parentHere) return _deny('Only a parent on their own device keeps a family in the group');
+      if (c.fields['keptBy'] != actorHome) return _schema('A keep names the family that keeps');
+      if (actorHome == c.rid) return _deny('A family that waits can\'t keep itself');
+      if (!homeActiveAt(store, actorHome!)) return _deny('Only a family that is in the group, and not waiting itself, keeps another');
+      if (!suspended(store, c.rid, positional: true)) return _deny('${homeName(c.rid)} isn\'t waiting to be kept');
       return null;
     }
     // "That wasn't them" after the invited family said it was in: it counts as the change that

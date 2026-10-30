@@ -1364,6 +1364,31 @@ class Den {
   /// beginning won, and its place ended. Every family's devices may show it.
   bool homeContested(String homeId) => homeEnd(homeId)?.contested ?? false;
 
+  /// The families in the group waiting to be kept (groups.dart, `suspended`): invited by one
+  /// whose place ended (or by one that waits itself), and kept by nobody yet. They count for
+  /// nothing meanwhile; what they made stays on record. Every family's devices may ask "Keep
+  /// them in the group?" ([keepHome]); if no family that can act is left in the group, they
+  /// wait for good.
+  List<Home> suspendedHomes() => [for (final h in homes) if (h.suspended) h];
+
+  /// Keeps the family [homeId], which waits ([suspendedHomes]), in the group: a parent on their
+  /// own device, of a family that is in and doesn't wait itself, vouches for it ("The Smiths'
+  /// place ended. They had invited the Parks. Keep the Parks in the group?"). From then on it
+  /// counts: everything it did is back, as it did it, and it decides about itself; the families it
+  /// invited wait no more, unless their own inviting family's place ended. It never brings back
+  /// a family whose place ended. A keep counts only if the keeping family could act at that point
+  /// in the log, so families that wait can't keep each other.
+  Future<void> keepHome(String homeId) => _locked(() async {
+        final mine = myHome;
+        final h = home(homeId);
+        if (!isGroup || mine == null) throw const InvalidInput('This device isn\'t in a group');
+        if (h == null || !h.suspended) throw const InvalidInput('That family isn\'t waiting to be kept');
+        if (homeLeft(_mat.store, mine)) {
+          throw const InvalidInput('Only a family that is in the group, and not waiting itself, keeps another');
+        }
+        await _commitNow([_Draft(RecordType.home, homeId, Space.family, {'keptBy': mine})]);
+      });
+
   /// The devices that let themselves in with [homeId]'s invitation, in log order, whether they
   /// count or not (one the family's "we're in" didn't keep doesn't): an invitation lets in one
   /// phone, so more than one is a sign someone else had it.
@@ -1408,12 +1433,14 @@ class Den {
     if (isGroup || homeId == null || link.group != group.familyId) return null;
     final h = group.home(homeId);
     final end = group.homeEnd(homeId);
-    if (end != null && !end.began) {
-      final by = group.home(end.invitedBy!)?.name;
+    if (h != null && h.suspended) {
+      final inviter = h.invitedBy == null ? null : group.home(h.invitedBy!);
+      final by = inviter == null || inviter.name.isEmpty ? 'The family that invited yours' : inviter.name;
+      final why = inviter?.suspended ?? false ? 'is waiting to be kept itself' : 'lost its place there';
       return GroupAlarm(
           GroupAlarmKind.inviterEnded,
-          'The family that invited you to this group${by == null || by.isEmpty ? '' : ' ($by)'} lost its place there before your '
-          'family joined, so your invitation ended: ask a family in the group to invite you again');
+          '$by $why, so your family is waiting for a family in this group to keep it. Nobody removed you: until then '
+          'nothing of yours shows there, and once a family keeps yours, all of it is back.');
     }
     if (h == null) {
       // Before the group's log arrives there is nothing to compare; once it has, the family
@@ -1589,8 +1616,12 @@ class Den {
       _locked(() async {
         final mine = myHome;
         if (!isGroup || mine == null) throw const InvalidInput('Only a family in a group invites another');
-        // A family whose place ended keeps what it made on record (groups.dart, endsJudgedPast),
-        // so validity alone wouldn't stop its phone inviting another: this device does.
+        // A family whose place ended keeps what it made on record, and one that waits decides about
+        // itself (groups.dart, endsJudgedPast), so validity alone wouldn't stop its phone inviting
+        // another (who would wait with it): this device does.
+        if (home(mine)?.suspended ?? false) {
+          throw const InvalidInput('Your family is waiting for a family in this group to keep it: it invites nobody until then');
+        }
         if (homeLeft(_mat.store, mine)) throw const InvalidInput('Your family isn\'t in this group any more');
         if (life > inviteKeyMaxLife) throw const InvalidInput('An invitation lasts a week at most');
         final parentKey = await InviteKey.generate();
@@ -1736,15 +1767,13 @@ class Den {
         if (!isGroup) throw const InvalidInput('This device isn\'t in a group');
         final window = _windowHome;
         final mine = myHome ?? window;
-        final h = mine == null ? null : home(mine);
-        if (h == null) throw const InvalidInput('This device isn\'t in a group');
-        if (h.left) {
-          throw InvalidInput(h.ended == HomeEnd.inviterEnded
-              ? 'The family that invited yours lost its place in this group before you joined, so your invitation ended: '
-                  'ask a family in the group to invite you again'
-              : '${h.name} isn\'t in this group any more');
-        }
+        final seen = mine == null ? null : home(mine);
+        if (seen == null) throw const InvalidInput('This device isn\'t in a group');
+        // A family that waits to be kept still decides about itself (its "we're in" included),
+        // as it stands of its own (groups.dart, `suspended`); it counts once it is kept.
+        if (seen.left && !seen.suspended) throw InvalidInput('${seen.name} isn\'t in this group any more');
         final store = _mat.store;
+        final h = seen.suspended ? Home(store.at(Space.family, RecordType.home, seen.id)!.rec) : seen;
         final others = [for (final a in windowAdmissions(h.id)) if (a.device != deviceId) a];
         String names(Iterable<WindowAdmission> list) => list.map((a) => a.name.isEmpty ? 'another phone' : a.name).join(', ');
         final w = closureFor(h.id);
@@ -4281,16 +4310,19 @@ class Den {
     final readable = readableSpaces;
     final q = query?.trim().toLowerCase();
     final out = <HistoryEntry>[];
-    // In a group, what a family whose place ended made of itself stays on record (groups.dart,
-    // endsJudgedPast) but none of it counts, so none of it shows.
-    final ended = _mat.store.endedHomes;
+    // In a group, what a family whose place ended, or one that waits to be kept, made of itself
+    // stays on record (groups.dart, endsJudgedPast) but none of it counts, so none of it shows.
+    final store = _mat.store;
+    final hidden = store.endedHomes.isEmpty
+        ? const <String>{}
+        : {...store.endedHomes.keys, for (final w in store.waitingHomes.keys) if (suspended(store, w)) w};
     for (final a in _mat.applied.reversed) {
       final c = a.change;
       if (!readable.contains(c.space)) continue;
       if (type != null && c.type != type) continue;
       if (member != null && c.actor != member) continue;
       if (_driversEcho(c)) continue;
-      if (ended.isNotEmpty && ended.containsKey(_homeOfAuthor(c))) continue;
+      if (hidden.isNotEmpty && hidden.contains(_homeOfAuthor(c))) continue;
       final entry = _historyEntry(a);
       if (q != null && q.isNotEmpty && !_historyMatches(entry, q)) continue;
       out.add(entry);
