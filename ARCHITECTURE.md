@@ -169,8 +169,9 @@ device held (in its log, or vouched for by a peer's `completeVector`). A change 
 device numbered past `revokedAfter` and clocked before the revocation is invalid, whatever clock
 it claims. Changes of the revoked device that the revoker never held are lost with it; a device
 re-approved later writes normally after its re-approval. A device removing itself names the
-change just before its removal, in the same commit: the invites made on it are taken away first
-in that commit, and those count.
+change just before its removal, in the same commit, and its removal comes last: what it takes
+away first in that commit (the invites made on it; for a phone let in by recovery that says
+"That wasn't me" of itself, the words or the hub's help that let it in) counts.
 
 Two rules keep a cutoff from erasing what it shouldn't, whoever names it:
 
@@ -410,21 +411,24 @@ so a family behaves as it did. They only narrow the family's rules, which still 
   device) is valid only from a parent's own device, as in a family, and only from a parent of
   the same home. Someone's name and picture, and their photos, are their own family's to change
   too (and their own). One exception, an invited home's **window**, open while the home's
-  `status` is `invited`: the home that invited it (`home.invitedBy`), and only that home, may
-  add its first parent and one-use invite keys for that parent's phone and the family's hub
-  while none of its parents has a device in; take back those keys, the invitation itself
-  (`left`), or "That wasn't them" (below); and nothing else. A window key lets a device in, as
-  that parent or as a hub, only while the window is open (its uses aren't counted: the window
-  bounds it). The window shuts for good when the invited family's own parent says it is in
-  (see the window's closing, below).
+  `status` is `invited`: the home that invited it (`home.invitedBy`), and only that home, makes
+  the invitation (the home, its first parent, and the one key for that parent's phone, which
+  the home's id is bound to: `homeIdFor(key, the inviting device)`) and may take it back
+  (`left`); nothing else: no other key, no hub, no device removed, no words turned off. The
+  invitation's key lets in that parent's phone (never a hub or a shared screen) only while the
+  window is open; its uses aren't counted (the window bounds it). The window shuts for good when
+  that phone says the family is in (the window's closing, below).
 - **G3, homes change only by their own parents.** A home is created invited, by a parent on
-  their own device naming their own home as `invitedBy` (only the founder's starts in, at
-  genesis). After that only its own parents, on their own devices, change it: its name, color,
-  hubs (up to 4 sync URLs), its own log's id (`family`, said once), and its status (`invited` to
-  `active`, either to `left`). The inviting home may take an invitation back (`left`) while its
-  window is open. A home never goes back to invited, `left` is final, and a home is never
-  removed. Going from `invited` to `active` closes the window, and only that change writes
-  `closed` and `kept`.
+  their own device naming their own home as `invitedBy`, with the invitation's key (`key`), its
+  id bound to that key and that device, so nobody else makes a home by that id first (only the
+  founder's starts in, at genesis). After that only its own parents, on their own devices,
+  change it: its name, color, hubs (up to 4 sync URLs), its own log's id (`family`, said once),
+  and its status (`invited` to `active`, either to `left`). The inviting home may take an
+  invitation back (`left`) while its window is open. A home never goes back to invited, `left`
+  is final, and a home is never removed. Going from `invited` to `active` is said only by the
+  phone the invitation let in, as that first parent, and closes the window; only that change
+  writes `heard`. A home whose beginning is contested, or that the inviting phone disowned
+  within a day, ends (below).
 - **G4, hubs act only for their own family.** A hub writes only for a person of its own home,
   never for nobody (groups have no parent-level automations), and records which connection it
   acts for (`_via`) whenever it acts for anyone but its owner. `_via` still never touches a
@@ -436,25 +440,25 @@ so a family behaves as it did. They only narrow the family's rules, which still 
   engine makes no key for one and refuses "Just me" (`InvalidInput`); "Just me" things stay in
   each family's own log. A group has no parental oversight.
 - **G6, letting yourself in.** A device lets itself in (invite_keys.dart) with a key of its own
-  home, or that home's window key while the window is open, writing that home as its own; a
-  personal one as someone of that home. The key's maker must still be a parent, of the key's
-  home or (for a window key) of the inviting home, and neither may have left. Recovery works as
-  in a family with the words a parent copied into their group person (`member.recovery`, set by
-  that parent only), and only them: never the hub's help, which would let one family's server
-  in as another's parent.
+  home, writing that home as its own (a personal one as someone of that home), or, the invited
+  family's first parent's phone, with the invitation's key while the window is open. The key's
+  maker must still be a parent, of the key's home or (for the invitation's) of the inviting
+  home, and neither may have left. Recovery works as in a family with the words a parent
+  copied into their group person (`member.recovery`, set by that parent only), and only them:
+  never the hub's help, which would let one family's server in as another's parent.
 - **G7, record types**, as above.
 - **G8, parents and leaving.** Every home keeps a parent until it leaves. A family leaves in one
-  commit from one of its parents' own devices (`Den.leaveGroup`): its invite keys, and those it
-  made for families still invited, taken away, then the invitations it sent that no parent of
-  theirs has used taken back, its other devices removed (each
-  naming the last of its changes held), its other people removed and everyone's recovery words
-  in the group turned off (keeping no phone they let in that the commit doesn't know of), its
-  home set `left`, and the device itself removed last, naming the change before (so nothing it
-  signs after counts, whatever its clock). From that home's `left` on, nothing any of its devices
-  or people sign counts, even what the commit didn't know of, and no key one of them made is used
-  to seal: the other families' key makers see devices of a family that left that their key in
-  use doesn't list, and rotate (`staleSpaceKeys`), settling on one key as usual. The last family
-  to leave ends the group (`Den.groupEnded`). Nobody removes another family.
+  commit from one of its parents' own devices (`Den.leaveGroup`): its invite keys taken away,
+  the invitations it sent that no parent of theirs has used taken back, its other devices
+  removed (each naming the last of its changes held), its other people removed and everyone's
+  recovery words in the group turned off (keeping no phone they let in that the commit doesn't
+  know of), its home set `left`, and the device itself removed last, naming the change before
+  (so nothing it signs after counts, whatever its clock). From that home's `left` on, nothing
+  any of its devices or people sign counts, even what the commit didn't know of, and no key one
+  of them made is used to seal or lets anyone in: the other families' key makers see devices of
+  a family that left that their key in use doesn't list, and rotate (`staleSpaceKeys`),
+  settling on one key as usual. The last family to leave ends the group (`Den.groupEnded`).
+  Nobody removes another family.
 
 Kids in a group see everything and check off items. Editing events or lists, and claiming a
 ride leg, need the `events` or `lists` grant in the group, which only their own parents give
@@ -473,45 +477,62 @@ hubs. In the family's own log it writes each device's key sealed to that device'
 re-exports) and the family's `groupLink` (the group, its founder key, name and hubs, who of the
 family is in it). Each device opens its own (`Den.openGroupInvite`: only it can) and lets a
 fresh engine in (`Den.joinGroup`). Another family is invited with `Den.inviteFamily`: its home,
-its first parent, and window keys for that parent's phone and its hub, which the invitation
-carries; the parent's phone joins at once, says the family is in once its hub has joined too
-(`Den.updateHome(active: true)`), and brings the rest of its family in the same way. "That
-wasn't them", only while the invited family hasn't said it is in: the inviting family removes
-the phone its invitation let in, takes the invitation's keys away and the words that phone's
-person had copied in (keeping no phone they let in), and may invite that parent again; a family
-removes a device its own key let in as in a family (`Den.disownInvite`). It reaches the phone's
-own changes, all made before the family said it was in: once it has, the phone is the family's
-alone, and a removal the inviting family dates earlier is voided by the closing (below). An
-honest phone of the inviting family that hasn't heard the family is in ("Cancel invitation",
-or leaving the group, which takes its invitations back first) makes changes that are simply
-refused once it hears; what else its commit does counts.
+its first parent, and the one key for that parent's phone, which the invitation carries (with
+the inviting family's hubs, which the phone dials first); the phone joins at once and says the
+family is in (`Den.updateHome(active: true, family:)`), which also writes into the family's own
+log how it began (`groupLink.home`, `.device`, `.closure`: the phone in the group and the change
+that said so). Then that parent brings the rest of the family in, its hub first, with keys of
+the family's own, as above.
 
 **The window's closing** (groups.dart, `WindowClosure`). A device sets its own clock, so a
-status gate alone would let the inviting family, any time later, sign window powers (a removal,
-the keys taken back, the invitation taken back, a join with a window key it made and kept)
-dated inside the window. So the invited family's "we're in" (its `home` going from `invited` to
-`active`, written by one of its parents on their own device) names what it heard: `closed`, the
-last counter it held from each device of the inviting family (every device of that home it
-knows of, 0 for none), and `kept`, the devices let in through the window that stay (itself,
-and by default the hubs a window key let in; `Den.updateHome(keep:)` chooses). Every replica
-then voids, among changes clocked before the closing, any window power over that home from a
-device of the inviting family numbered past its `closed` counter, or from one it doesn't name,
-and any device let in through the window that `kept` doesn't name. The closing decides verdicts
-the way a revocation's cutoff does (materializer.dart): it is settled in the second pass, in
-log order, tried with itself in force when the first pass refused it only because of what it
-voids, and kept if it counts so. One closing never displaces another: the first in log order
-to count wins, so a later "we're in" can't be used to rewrite an earlier one. A family's own
-log is untouched by any of this: it has no homes, so nothing in it closes a window.
+status gate alone would let the inviting family, any time later, sign a takeBack or a join
+with the invitation's key dated inside the window. So the invited family's "we're in" names
+what its phone heard: `heard`, the ids of the window powers over the home (changes of the
+inviting family to it: the invitation, its first parent, its key, and anything else) that the
+phone held and counted. Never counters, which another family's hub could inflate (`through`)
+or a gap could hold back; and in a group, a parent's device or a hub, which receives every
+space there is, takes no floor from `through` at all. Every replica then voids, among changes
+clocked before the closing, any window power over that home it doesn't name, and every device
+let in with the invitation's key but the phone that said it. A "we're in" counts only as the
+closure in force: the materializer tries each, in log order (at most three for one family),
+with itself in force, and keeps it if it counts so, while every closure already kept still
+does; one that would void what let its own phone in is refused as a whole, and the family
+stays invited. A family's own log is untouched by any of this: it has no homes, and look-alikes
+there, or from a group device the invitation didn't let in, cost no replays.
 
-Accepted risk, narrower: the window keys are bearer secrets the inviting family made. With one
-it can still write another beginning for the invited family, before that family's own "we're
-in": a device of its own let in as the first parent, saying the family is in first (both
-clocked inside the window, before the real one, so that one counts and the real one doesn't).
-The log can't tell it from the real beginning, since both are the same key and the same
-person; the real parent sees their phone isn't in and asks again, and anyone sees it in
-History. Closing it needs the first admission bound to the invited parent's own device key (a
-round trip before the window opens), a change to the invitation's format; it is recorded in
-groups_attacks_test.dart ("known limit").
+**Contested and disowned beginnings** (groups.dart, `GroupStarts`). The invitation's key is a
+bearer secret: the inviting family made it, and anyone the link reached holds it. So the log
+alone decides, from what the key signed and nothing else: when two or more devices let in with
+a home's invitation each said it was in (valid or not), no beginning wins, and the home ends for
+everyone from its first "we're in" on. It reads as left (`Home.ended` says `contested`),
+nothing any of its devices or people sign from then on counts, the window never opens again,
+and the family is invited again as a new home. The same happens when the phone that sent the
+invitation says "That wasn't them" (`Den.disownInvite`, `home.disowned`) within a day of the
+family's first "we're in" (`disownWindow`): the way out of a leaked link, where whoever used it
+first said "we're in". Before the family says it is in, "That wasn't them" is taking the
+invitation back. After a day, the family is its own: nothing the inviting family does to it
+counts. These are settled from the log alone before any verdict (an invitation's id binds its
+key and the inviting device, and a device's own first change carries the key's proof), so they
+converge like everything else.
+
+**Alarms.** The family's own log holds what no other family can write: how it began
+(`groupLink.home`, `.device`, `.closure`). `Den.groupAlarm(link, groupEngine)`, on a family's own
+engine, compares the group's log with it, and its devices and its hub run it after each sync: it
+says when the family's place was contested or disowned, when the group says it left and it
+didn't, when the group's closure for its home isn't the one its phone made, when that phone no
+longer counts, when another device used its invitation, and when the inviting family dated
+changes to it before its "we're in" that its phone hadn't heard of (voided, every one). Every
+family's devices can flag a contested home (`Den.homeContested`); `Den.closureFor`,
+`Den.homeEnd`, `Den.windowAdmissions` and `Den.unheardWindowPowers` say the rest.
+
+Accepted risk: the family that invited another can end that family's place in the group: by
+saying "That wasn't them" within a day, or, holding the invitation's key, at any time, by
+letting in a device of its own with it and saying the family is in (a device sets its own
+clock, so the day is the app's limit, not the log's). It does so loudly: the ended home reads
+as ended for everyone, and the invited family's own devices raise an alarm. What it can never
+do is act as that family: nothing its devices sign as them counts, it removes none of their
+devices, turns off none of their words, makes them no keys, and reopens no window. An invited
+family whose link leaked is ended within the day and invited again as a new home.
 
 A family that leaves removes its own hub in the commit, so by its own view the leaving phone has
 nobody left to sync with: `leaveGroup` returns the commit, which the app hands to its family's hub
@@ -541,9 +562,9 @@ commit too (`Den.restoreAll`).
 | `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `colors` (`bright`\|`deep`\|`soft`\|`bold`, optional, `bright` when unset: the shades of people's colors the whole family sees; each person keeps their `marker`), `oversight` (map: memberId -> `{parentsSeePrivate: bool}`, and `<memberId>.rewardsNeedOk` and `<memberId>.ownPicture` -> bool or null; see "Parental controls"), `assistant` (`{enabled, members, kidDailyLimit, budgetCents}`: the in-app assistant, off until a parent turns it on; parents and the members listed may use it, never a little kid or a pre-reader; default 20 questions a day for a kid and $5 a month, which the captures the hub's reader reads count against too), `recovery` (`{serverKey, kept}`: the hub key the family lets help a parent back in, null while off; see "Recovery"), `kind` (`family`\|`group`, absent for a family: set at genesis, never changed; see "Groups of families", whose record carries no `oversight`, `assistant` or `recovery`, and `pointsEnabled: false`) |
 | `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, `initial`, or `photo:<id>` naming one of their `photo` records), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `until` (a sitter's last day with access, a local date, or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order`, `recovery` (a parent's `{key, kept}`: their recovery key, base64url Ed25519, or null; see "Recovery"), `home` (in a group only: their family there, required, never changed), `link` (in a group only: their member id in their own family's log) |
 | `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held, never below its own request to join), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`), `recovery` (written once, by a device letting itself in: `{kind: words\|hub, member, key, nonce, expires, sig}`; see "Recovery"), `invite` (written once, by a device an invite key let in: `{invite, member, mode, key, nonce, expires, sig}`; see "Invite keys"), `home` (in a group only: the family it is of, a personal device's its owner's; set when it is let in, never changed) |
-| `inviteKey` | `f` | Id: the hash of `key`, like a device's. `member` (whose own devices it lets in, or null), `modes` (absent: `personal`; for nobody, `shared` and/or `hub`), `uses` (default 1; a group's window key's aren't counted, its window bounds it), `key` (base64url Ed25519, null once taken away), `by` (the parent who made it), `device` (where), `expires`, `kept` (written with `key: null`), `home` (in a group, required: the family it lets people into; a family refuses it). Made by a parent on their own device, then only taken away |
-| `home` | `f` | In a group only: one family in it. `name`, `color` (a person color name, or null), `hubs` (up to 4 sync URLs, relay `/connect/` ones too), `family` (its own log's id, said once by its own parents), `status` (`invited`\|`active`\|`left`; never back to invited, `left` final), `invitedBy` (the home that invited it; null for the founder's), `closed` and `kept` (written only with the change from `invited` to `active`, by its own parent's device: `closed` maps each device of the inviting home to the last of its counters held, `kept` lists the devices let in through the window that stay, the writer among them; see "The window's closing"). See "Groups of families" |
-| `groupLink` | `f` | In a family only, id the group's: a group the family is in. `group`, `founder` (the group's founder key), `name`, `hubs`, `members` (family member id -> group member id), `displays` (whether shared screens show it), `status` (`active`\|`left`). A parent's own device writes it; it is never removed |
+| `inviteKey` | `f` | Id: the hash of `key`, like a device's. `member` (whose own devices it lets in, or null), `modes` (absent: `personal`; for nobody, `shared` and/or `hub`), `uses` (default 1; an invited family's invitation key's aren't counted, its window bounds it), `key` (base64url Ed25519, null once taken away), `by` (the parent who made it), `device` (where), `expires`, `kept` (written with `key: null`), `home` (in a group, required: the family it lets people into; a family refuses it). Made by a parent on their own device, then only taken away |
+| `home` | `f` | In a group only: one family in it. `name`, `color` (a person color name, or null), `hubs` (up to 4 sync URLs, relay `/connect/` ones too), `family` (its own log's id, said once by its own parents), `status` (`invited`\|`active`\|`left`; never back to invited, `left` final), `invitedBy` (the home that invited it; null for the founder's), `key` (an invited home's one invitation key, base64url Ed25519; its id is `homeIdFor(key, the inviting device)`; never changed), `heard` (written only with the change from `invited` to `active`, by the phone the invitation let in: the ids of the window powers over the home that phone held; see "The window's closing"), `disowned` ("That wasn't them" by the inviting phone, within a day of the first "we're in"; see "Contested and disowned beginnings"). See "Groups of families" |
+| `groupLink` | `f` | In a family only, id the group's: a group the family is in. `group`, `founder` (the group's founder key), `name`, `hubs`, `members` (family member id -> group member id), `displays` (whether shared screens show it), `status` (`active`\|`left`), `home`, `device`, `closure` (how the family began in the group, written by its first parent's phone when it said the family was in: its home there, that phone there, and the change; `Den.groupAlarm` compares the group's log with them). A parent's own device writes it; it is never removed |
 | `groupInvite` | `f` | In a family only, id `<group>@<device>`: one device's admission into a group, `group`, `device`, `sealed` (`{v, from, to, eph, nonce, ct, sig}`: the invite key and what it admits, sealed to that device's `xpub` by the parent's device that writes it, so only that device opens it; History shows only that there is one), `invite` (the key's record id in the group, no secret: the group device it let in, for a parent removing it when the family device goes). A parent's own device writes or removes it |
 | `category` | `f` | `name`, `icon` |
 | `event` | any | `title`, `notes`, `location`, `category`, `start`, `end`, `allDay`, `tz`, `rrule` (RFC 5545 RRULE without DTSTART, or null), `assignees` (member ids), `reminders` (minutes before, list), `source` (`{kind: manual\|ics\|device, ref, label}`), `drivers` (map: leg (`to`\|`from`) -> memberId, or null while nobody drives it; its keys are the legs the event has; see "Rides, one leg at a time"), `rides` (list of `{leg: to\|from, driver: memberId\|null}`: what older versions read, written alongside `drivers`), `countdown` (bool) |

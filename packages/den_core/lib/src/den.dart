@@ -1125,7 +1125,7 @@ class Den {
         if (d == null || proof == null) throw const InvalidInput('That device wasn\'t let in by recovery');
         final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
         var retired = false;
-        final drafts = <_Draft>[..._retireInvites((k) => k.device == deviceId), if (!d.revoked) _revocation(deviceId)];
+        final drafts = <_Draft>[..._retireInvites((k) => k.device == deviceId)];
         final m = member(proof.member);
         final f = family;
         if (proof.kind == RecoveryKind.words && m != null && recoveryKeyOf(m) == proof.key) {
@@ -1139,6 +1139,9 @@ class Den {
             'recovery': {'serverKey': null, 'kept': keptBy(_mat.store, key: proof.key, hub: true)},
           }));
         }
+        // Removed last: the phone removing itself names the change just before ([_Draft.ownLast]),
+        // so what it takes away first in this commit counts.
+        if (!d.revoked) drafts.add(_revocation(deviceId));
         await _commitNow(drafts);
         await _rotateNow(held);
         return DisownedRecovery(member: proof.member, kind: proof.kind, retired: retired, letIn: letInBy(deviceId));
@@ -1233,27 +1236,28 @@ class Den {
         final store = _mat.store;
         final theirs = isGroup ? homeOfDevice(store, d) : null;
         if (theirs != null && theirs != myHome) {
-          // In a group, the family that invited another: "That wasn't them" removes the device its
-          // invitation let in, takes the invitation's keys away, and the words of the parent it
-          // let in, so whoever used it can't come back (groups.dart, G2's window). Only until that
-          // family says it is in.
-          if (!inviteWindowOpen(store, theirs)) {
-            throw const PermissionDenied('That family is in the group: only its own parents remove its devices');
+          // In a group, the family that invited another: "That wasn't them". While that family
+          // hasn't said it is in, it takes the invitation back. For a day after, from the phone
+          // that sent the invitation, it ends that family's place in the group (groups.dart,
+          // GroupStarts): nobody of it counts from its "we're in" on, and the family is invited
+          // again as a new home. It never removes one of that family's devices, nor acts as it.
+          final h = home(theirs);
+          if (h == null || h.left || h.invitedBy != myHome) {
+            throw const PermissionDenied('Only that family\'s own parents remove its devices');
           }
-          final words = proof.member == null ? null : member(proof.member!);
-          await _commitNow([
-            if (k != null && k.key != null) _retire(k),
-            ..._retireInvites((other) =>
-                other.id != k?.id && other.rec.strOrNull('home') == theirs && homeOfMember(store, other.by) == myHome),
-            if (!d.revoked) _revocation(deviceId),
-            // Keeping none: a phone those words let in counts for nothing, backdated or not.
-            if (words != null && recoveryKeyOf(words) != null)
-              _Draft(RecordType.member, words.id, Space.family, {
-                'recovery': {'key': null, 'kept': <String>[]},
-              }),
-          ]);
-          await _rotateNow(held);
-          return DisownedInvite(member: proof.member, letIn: letInBy(deviceId));
+          if (h.status == HomeStatus.invited) {
+            await _commitNow([_Draft(RecordType.home, theirs, Space.family, {'status': HomeStatus.left.name})]);
+            return DisownedInvite(member: proof.member, letIn: const []);
+          }
+          final first = _mat.starts.closings[theirs]?.firstOrNull;
+          if (_mat.starts.invitations[theirs]?.inviter != this.deviceId) {
+            throw const PermissionDenied('Only the phone that sent the invitation can say that wasn\'t them');
+          }
+          if (first == null || _now() >= first.hlc.millis + disownWindow.inMilliseconds) {
+            throw const PermissionDenied('That family said it was in more than a day ago: only its own parents change it now');
+          }
+          await _commitNow([_Draft(RecordType.home, theirs, Space.family, {'disowned': true})]);
+          return DisownedInvite(member: proof.member, letIn: const []);
         }
         await _commitNow([
           if (k != null && k.key != null) _retire(k),
@@ -1311,7 +1315,7 @@ class Den {
   List<Home> get homes => _memo('homes', const {RecordType.home}, visible: false, () {
         return [
           for (final e in _mat.store.ofType(RecordType.home))
-            if (e.space == Space.family) Home(e.rec),
+            if (e.space == Space.family) ?homeAt(_mat.store, e.id),
         ]..sort((a, b) => a.rec.created.compareTo(b.rec.created));
       });
 
@@ -1336,6 +1340,88 @@ class Den {
 
   /// Whether the group has ended: every family in it left, the last one ending it.
   bool get groupEnded => isGroup && homes.isNotEmpty && homes.every((h) => h.left);
+
+  // ------------------------------------------- how invited families began: alarms (groups.dart)
+
+  /// The closure in force for the invited family [homeId]: its "we're in", what it heard, and
+  /// the one phone the invitation let in that stays. Null while it is invited, when its place
+  /// ended ([homeEnd]), or for the family that started the group.
+  WindowClosure? closureFor(String homeId) =>
+      _mat.validator.retiredRecoveryKeys.closures.where((w) => w.home == homeId).firstOrNull;
+
+  /// Why the invited family [homeId]'s place ended before it began for good, when it did
+  /// (`contested` or `disowned`): it then reads as left, for everyone, for good.
+  HomeEnd? homeEnd(String homeId) => _mat.starts.ended[homeId];
+
+  /// Whether two phones let in with [homeId]'s invitation each said the family was in: no
+  /// beginning won, and its place ended. Every family's devices may show it.
+  bool homeContested(String homeId) => homeEnd(homeId)?.contested ?? false;
+
+  /// The devices that let themselves in with [homeId]'s invitation, in log order, whether they
+  /// count or not (one the family's "we're in" didn't keep doesn't): an invitation lets in one
+  /// phone, so more than one is a sign someone else had it.
+  List<WindowAdmission> windowAdmissions(String homeId) => [
+        for (final c in (_mat.starts.windowJoins[homeId] ?? const <String, Change>{}).values)
+          WindowAdmission(
+            device: c.device,
+            name: c.fields['name'] is String ? c.fields['name']! as String : '',
+            joined: c.hlc,
+            counts: deviceCounts(c.device),
+            saidIn: _mat.starts.closings[homeId]?.any((x) => x.device == c.device) ?? false,
+          ),
+      ];
+
+  /// The changes the family that invited [homeId] made to it, dated before the family said it
+  /// was in, that the phone that said so hadn't heard of: voided, every one, but a sign the
+  /// inviting family backdated something.
+  List<Change> unheardWindowPowers(String homeId) {
+    final w = closureFor(homeId);
+    if (w == null) return const [];
+    final store = _mat.store;
+    return [
+      for (final c in _mat.log)
+        if (c.hlc < w.at && !w.heard.contains(c.id) && windowPowerOver(c, store) == homeId) c,
+    ];
+  }
+
+  /// For a family's own engine: whether the group [group] (the family's engine of it, on this
+  /// device) shows something wrong with how the family began there, as the family's own log
+  /// recorded it ([GroupLink.home], [GroupLink.device], [GroupLink.closure], written when its
+  /// first parent's phone said it was in, which no other family can write). The family's
+  /// devices and its hub run it after each sync; null when all is well, or before the family
+  /// recorded how it began.
+  GroupAlarm? groupAlarm(GroupLink link, Den group) {
+    final homeId = link.home;
+    if (isGroup || homeId == null || link.group != group.familyId) return null;
+    final h = group.home(homeId);
+    if (h == null) return null;
+    final end = group.homeEnd(homeId);
+    if (end != null && end.contested) {
+      return const GroupAlarm(GroupAlarmKind.contested, 'Two phones said they were your family in this group, so your place in it ended');
+    }
+    if (end != null) {
+      return const GroupAlarm(GroupAlarmKind.disowned, 'The family that invited you said that wasn\'t you, so your place in this group ended');
+    }
+    if (h.left && link.status != GroupLinkStatus.left) {
+      return const GroupAlarm(GroupAlarmKind.removed, 'This group says your family left it, but your family didn\'t');
+    }
+    if (link.status == GroupLinkStatus.left) return null;
+    final w = group.closureFor(homeId);
+    if (link.closure != null && w?.id != link.closure) {
+      return const GroupAlarm(GroupAlarmKind.notOurs, 'This group\'s record of your family joining isn\'t the one your phone made');
+    }
+    if (link.device != null && !group.deviceCounts(link.device!)) {
+      return const GroupAlarm(GroupAlarmKind.deviceGone, 'The phone that brought your family into this group no longer counts there');
+    }
+    final others = group.windowAdmissions(homeId).where((a) => a.device != link.device);
+    if (others.isNotEmpty) {
+      return const GroupAlarm(GroupAlarmKind.stranger, 'Another phone used your family\'s invitation to this group');
+    }
+    if (group.unheardWindowPowers(homeId).isNotEmpty) {
+      return const GroupAlarm(GroupAlarmKind.backdated, 'The family that invited you dated changes to your family before you joined');
+    }
+    return null;
+  }
 
   /// Starts a group of families on this fresh engine, which has keys and storage of its own (a
   /// device holds one engine per log, so a change signed in one can't be replayed in another).
@@ -1423,11 +1509,13 @@ class Den {
       });
 
   /// Invites another family into the group, from a parent's own device: writes its [Home]
-  /// (invited, by this device's family), its first parent ([parentName]) and two one-use keys,
-  /// one for that parent's own phone and one for that family's hub, which the returned invitation
-  /// carries to them. That is G2's window: until the parent's phone is in, nobody of the invited
-  /// family is, and the inviting family stands in for it. Until then [cancelInvitation] takes it
-  /// back; after, [disownInvite] ("That wasn't them") removes the phone it let in.
+  /// (invited, by this device's family), its first parent ([parentName]) and the one key that
+  /// lets that parent's own phone in, which the returned invitation carries. The home's id is
+  /// bound to that key and to this device (groups.dart, `homeIdFor`). That is G2's window: until
+  /// that phone says the family is in ([updateHome]), the family that invited it may take it back
+  /// ([cancelInvitation], or [disownInvite]); for a day after, [disownInvite] ("That wasn't them",
+  /// on this device only) ends that family's place, and nothing more. The family's hub comes in
+  /// after, with a key of the family's own ([addToGroup]).
   Future<GroupInvitation> inviteFamily({
     required String familyName,
     required String parentName,
@@ -1438,8 +1526,8 @@ class Den {
         final mine = myHome;
         if (!isGroup || mine == null) throw const InvalidInput('Only a family in a group invites another');
         if (life > inviteKeyMaxLife) throw const InvalidInput('An invitation lasts a week at most');
-        final homeId = newId(), memberId = newId();
-        final parentKey = await InviteKey.generate(), hubKey = await InviteKey.generate();
+        final parentKey = await InviteKey.generate();
+        final homeId = homeIdFor(parentKey.publicKey, deviceId), memberId = newId();
         final expires = _now() + life.inMilliseconds;
         await _commitNow([
           _Draft(RecordType.home, homeId, Space.family, {
@@ -1447,6 +1535,7 @@ class Den {
             'color': ?color?.name,
             'status': HomeStatus.invited.name,
             'invitedBy': mine,
+            'key': parentKey.publicKey,
           }),
           _Draft(RecordType.member, memberId, Space.family, {
             'name': parentName,
@@ -1458,46 +1547,39 @@ class Den {
             'home': homeId,
           }),
           _inviteKeyDraft(parentKey.id, parentKey.publicKey, member: memberId, expires: expires, home: homeId),
-          _inviteKeyDraft(hubKey.id, hubKey.publicKey, member: null, modes: const {DeviceMode.hub}, expires: expires, home: homeId),
         ]);
-        Future<GroupAdmission> admission(InviteKey key, String? member, DeviceMode mode) async => GroupAdmission(
-              group: familyId!,
-              founder: founderPubkey!,
-              name: family!.name,
-              home: homeId,
-              member: member,
-              mode: mode,
-              invite: key.id,
-              seed: await key.seed(),
-              expires: expires,
-            );
         return GroupInvitation(
-          parent: await admission(parentKey, memberId, DeviceMode.personal),
-          hub: await admission(hubKey, null, DeviceMode.hub),
+          parent: GroupAdmission(
+            group: familyId!,
+            founder: founderPubkey!,
+            name: family!.name,
+            home: homeId,
+            member: memberId,
+            mode: DeviceMode.personal,
+            invite: parentKey.id,
+            seed: await parentKey.seed(),
+            expires: expires,
+          ),
           homeName: familyName,
           parentName: parentName,
           hubs: home(mine)?.hubs ?? const [],
         );
       });
 
-  /// Takes back an invitation to another family nobody used yet (a parent of the family that
-  /// sent it, on their own device): its keys are taken away and its [Home] says `left`.
+  /// Takes back an invitation to another family that hasn't said it is in (a parent of the
+  /// family that sent it, on their own device): its [Home] says `left`, so its key lets nobody
+  /// in. The family is invited again as a new home.
   Future<void> cancelInvitation(String homeId) => _locked(() async {
         final h = home(homeId);
         if (h == null || h.status != HomeStatus.invited) throw const InvalidInput('That family isn\'t waiting to join');
-        final mine = myHome;
-        final store = _mat.store;
-        await _commitNow([
-          ..._retireInvites((k) => k.rec.strOrNull('home') == homeId && homeOfMember(store, k.by) == mine),
-          _Draft(RecordType.home, homeId, Space.family, {'status': HomeStatus.left.name}),
-        ]);
+        await _commitNow([_Draft(RecordType.home, homeId, Space.family, {'status': HomeStatus.left.name})]);
       });
 
   /// Lets this fresh engine into a group with [admission]: its family's ([openGroupInvite] on the
-  /// family's engine), or an invitation's ([GroupInvitation.parent] for the invited parent's
-  /// phone, [GroupInvitation.hub] for its family's hub). One change to its own device record,
-  /// approved as the admission says, a device of its family in the group, with the key's proof
-  /// ([requestInviteJoin]). Like any self-admission it counts once the group's log arrives.
+  /// family's engine), or an invitation's ([GroupInvitation.parent], for the invited family's
+  /// first parent's phone). One change to its own device record, approved as the admission
+  /// says, a device of its family in the group, with the key's proof ([requestInviteJoin]). Like
+  /// any self-admission it counts once the group's log arrives.
   Future<void> joinGroup(GroupAdmission admission, {required String deviceName, required DeviceKind kind}) async {
     final key = await admission.key();
     if (key.id != admission.invite) throw const InvalidInput('That admission\'s key isn\'t its invite\'s');
@@ -1521,62 +1603,58 @@ class Den {
   /// Changes this device's family in the group (one of its parents, on their own device): its
   /// [name], [color], the [hubs] it syncs at, or its own log's id ([ownFamily], set once).
   ///
-  /// [active] says it is in: what an invited family's first parent says once their phone, and
-  /// the family's hub, are. That closes the invitation's window (groups.dart, `WindowClosure`):
-  /// it names the last change this device holds from each device of the family that invited
-  /// it, and keeps, of the devices let in through the window, this one and the family's hubs
-  /// ([keep], when given: the hub's own device id, as the hub reports it; else every hub of the
-  /// family this device holds that the window let in). From then on nothing the inviting family
-  /// does to this one counts, nor anything it dates before without this device having held it,
-  /// and nothing else the window let in.
+  /// [active] says it is in: what an invited family's first parent's phone, the one its
+  /// invitation let in, says at once. That closes the invitation's window (groups.dart,
+  /// `WindowClosure`): it names the window powers over the family (what the family that
+  /// invited it wrote to it) this device holds; from then on nothing the inviting family does to
+  /// it counts, nor anything it dates before that this device didn't hold, nor any other device
+  /// the window let in. With [family] (the family's own engine on this phone) the family's own
+  /// log records how it began ([GroupLink.device], [GroupLink.closure]), which no other family
+  /// can write, for [groupAlarm] to compare the group's log with.
   Future<void> updateHome({
     String? name,
     Marker? color,
     List<String>? hubs,
     String? ownFamily,
     bool active = false,
-    Iterable<String>? keep,
-  }) =>
-      _locked(() async {
-        final mine = myHome;
-        final h = mine == null ? null : home(mine);
-        if (!isGroup || h == null) throw const InvalidInput('This device isn\'t in a group');
-        final store = _mat.store;
-        final activates = active && h.status == HomeStatus.invited;
-        final inviter = h.invitedBy;
-        final vector = versionVector;
-        final fields = <String, Object?>{
-          'name': ?name,
-          'color': ?color?.name,
-          'hubs': ?hubs,
-          'family': ?ownFamily,
-          if (activates) ...{
-            'status': HomeStatus.active.name,
-            'closed': {
-              for (final e in store.ofType(RecordType.device))
-                if (e.space == Space.family && homeOfDevice(store, Device(e.rec)) == inviter) e.id: vector[e.id] ?? 0,
-            },
-            'kept': {
-              deviceId,
-              ...?keep,
-              if (keep == null)
-                for (final d in devicesOf(h.id))
-                  if (d.mode == DeviceMode.hub && d.id != deviceId && _windowAdmitted(d)) d.id,
-            }.toList()
-              ..sort(),
-          },
-        };
-        if (fields.isEmpty) return;
-        await _commitNow([_Draft(RecordType.home, h.id, Space.family, fields)]);
-      });
-
-  /// Whether [d] was let in with a key the family that invited its family made.
-  bool _windowAdmitted(Device d) {
-    final proof = inviteOf(d);
-    final key = proof == null ? null : _mat.store.at(Space.family, RecordType.inviteKey, proof.invite);
-    return key != null && isWindowKey(_mat.store, InviteKeyRecord(key.rec));
+    Den? family,
+  }) async {
+    final (made, homeId) = await _locked(() async {
+      final mine = myHome;
+      final h = mine == null ? null : home(mine);
+      if (!isGroup || h == null) throw const InvalidInput('This device isn\'t in a group');
+      final store = _mat.store;
+      final activates = active && h.status == HomeStatus.invited;
+      final fields = <String, Object?>{
+        'name': ?name,
+        'color': ?color?.name,
+        'hubs': ?hubs,
+        'family': ?ownFamily,
+        if (activates) ...{
+          'status': HomeStatus.active.name,
+          'heard': [
+            for (final c in _mat.log)
+              if (!_mat.rejected.containsKey(c.id) && windowPowerOver(c, store) == h.id) c.id,
+          ]..sort(),
+        },
+      };
+      if (fields.isEmpty) return (const <Change>[], h.id);
+      return (await _commitNow([_Draft(RecordType.home, h.id, Space.family, fields)]), h.id);
+    });
+    final closure = made.where((c) => closesWindow(c)).firstOrNull;
+    if (family != null && closure != null) {
+      final link = family.groupLink(familyId!);
+      await family.writeGroupLink(
+        group: familyId!,
+        founder: founderPubkey!,
+        name: link?.name ?? this.family!.name,
+        hubs: link?.hubs,
+        home: homeId,
+        device: deviceId,
+        closure: closure.id,
+      );
+    }
   }
-
   /// Brings people of this parent's family into the group, from the group's engine on the
   /// parent's own phone, with [family] the family's own engine on the same phone. In the group:
   /// a person of this device's family for each of [people] (member ids in [family]) not in yet,
@@ -1713,13 +1791,12 @@ class Den {
   }
 
   /// Takes this device's family out of the group, in one commit made on one of its parents' own
-  /// devices (G8): its invite keys, and those it made for families still invited, are taken
-  /// away; then the invitations it sent that no parent of the other family has used are taken
-  /// back (on a phone that hadn't heard the other family is in, both are refused once anyone
-  /// hears, and the rest counts); its other devices are removed, each naming the last of its
-  /// changes this device holds; its other people are removed, and everyone's recovery words in
-  /// the group turned off;
-  /// its [Home] says `left`; and this device is removed last, naming its own last change, so
+  /// devices (G8): its invite keys are taken away; the invitations it sent that no parent of the
+  /// other family has used are taken back (on a phone that hadn't heard the other family is in,
+  /// that is refused once anyone hears, and the rest counts); its other devices are removed,
+  /// each naming the last of its changes this device holds; its other people are removed, and
+  /// everyone's recovery words in the group turned off; its [Home] says `left`; and this device
+  /// is removed last, naming its own last change, so
   /// nothing it signs after counts, whatever clock it claims. Nothing of the family counts after
   /// that, and the other families' key makers rotate every key it held ([staleSpaceKeys]). When
   /// it was the last family in, the group has ended ([groupEnded]).
@@ -1740,12 +1817,9 @@ class Den {
       if (h.left) return const <Change>[];
       final store = _mat.store;
       final drafts = <_Draft>[];
-      // Its own keys, and those it made for a family still waiting (before taking any invitation
-      // back, which shuts its window).
-      drafts.addAll(_retireInvites((k) {
-        final home = k.rec.strOrNull('home');
-        return home == mine || (homeOfMember(store, k.by) == mine && home != null && inviteWindowOpen(store, home));
-      }));
+      // Its own keys. (An invitation's key it made for another family dies with this family:
+      // nothing it made lets anyone in once it left.)
+      drafts.addAll(_retireInvites((k) => k.rec.strOrNull('home') == mine));
       // Invitations it sent that nobody of the other family has used: taken back. One whose
       // parent is in stays theirs to say they are in (the window keys die with this family).
       for (final other in homes) {
@@ -1849,8 +1923,10 @@ class Den {
   }
 
   /// Writes the family's link to [group] (a parent's own device): what the group is called, where
-  /// it lives, who of the family is in it ([members]: family member id -> group member id), and
-  /// whether the family's shared screens show it.
+  /// it lives, who of the family is in it ([members]: family member id -> group member id),
+  /// whether the family's shared screens show it, and how the family began in it ([home], its
+  /// first parent's phone there ([device]) and the change that said it was in ([closure]),
+  /// which [Den.updateHome] writes and [groupAlarm] reads).
   Future<void> writeGroupLink({
     required String group,
     required String founder,
@@ -1859,6 +1935,9 @@ class Den {
     Map<String, String>? members,
     bool? displays,
     GroupLinkStatus status = GroupLinkStatus.active,
+    String? home,
+    String? device,
+    String? closure,
   }) async {
     if (familyId == null || isGroup) throw const InvalidInput('A group\'s link goes in a family\'s own Den');
     await _commit([
@@ -1870,6 +1949,9 @@ class Den {
         'members': ?members,
         'displays': ?displays,
         'status': status.name,
+        'home': ?home,
+        'device': ?device,
+        'closure': ?closure,
       }),
     ]);
   }
@@ -4447,7 +4529,12 @@ class Den {
             }
           }
         }
-        if (through != null && rejected.isEmpty && _pending.isEmpty) {
+        // In a group, a parent's device or a hub receives every space there is (a group has only
+        // `f` and `p`), so it never needs a floor, and takes none: a floor another family's hub
+        // vouched for would count as held what this device never saw, and a removal it names
+        // (`revokedAfter`) would then let through changes it never held.
+        final floors = !isGroup || !spacesForDevice(deviceId).contains(Space.parents);
+        if (through != null && floors && rejected.isEmpty && _pending.isEmpty) {
           for (final e in through.entries) {
             if (e.value > (_floor[e.key] ?? 0)) {
               _floor[e.key] = e.value;

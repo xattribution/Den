@@ -105,7 +105,22 @@ class Validator {
   /// The materializer, which holds the log, answers.
   int? Function(String device, Hlc created)? createdCounter;
 
+  /// While an engine checks its own change before signing it ([Materializer.check]): a group's
+  /// "we're in" is then judged as if it were the closure in force, which the materializer
+  /// settles once the change is added.
+  bool prechecking = false;
+
   Rejection? check(Change c) {
+    // A group's home that ended later reads as it was when [c] was made (groups.dart, homeAt).
+    store.judging = c.hlc;
+    try {
+      return _check(c);
+    } finally {
+      store.judging = null;
+    }
+  }
+
+  Rejection? _check(Change c) {
     final colon = c.id.lastIndexOf(':');
     final counter = colon > 0 ? int.tryParse(c.id.substring(colon + 1)) : null;
     if (counter == null || counter < 1 || c.id.substring(0, colon) != c.device) {
@@ -146,7 +161,8 @@ class Validator {
     // A group of families (groups.dart): its rules G1-G8 narrow the family's below. A family's
     // log refuses what only a group holds.
     final group = isGroupLog(store, trust);
-    final groupRejection = checkGroupRules(c, existing, store, trust, group: group, closures: retiredRecoveryKeys.closures);
+    final groupRejection =
+        checkGroupRules(c, existing, store, trust, group: group, closures: retiredRecoveryKeys.closures, precheck: prechecking);
     if (groupRejection != null) return groupRejection;
 
     final authorEntry = store.at(Space.family, RecordType.device, c.device);
@@ -353,7 +369,7 @@ class Validator {
     RecordType.photo: {'member', 'mime', 'data'},
     RecordType.member: {'home'},
     RecordType.inviteKey: {'member', 'home', 'modes', 'uses', 'by', 'device', 'expires'},
-    RecordType.home: {'invitedBy'},
+    RecordType.home: {'invitedBy', 'key'},
     RecordType.groupLink: {'group', 'founder'},
     RecordType.groupInvite: {'group', 'device'},
   };

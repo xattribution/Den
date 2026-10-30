@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'change.dart';
-import 'groups.dart' show closesWindow, windowClosureOf;
+import 'groups.dart' show GroupStarts, closesWindow, windowClosureOf;
 import 'hlc.dart';
 import 'model.dart';
 import 'invite_keys.dart' show retiresInviteKey;
@@ -82,6 +82,9 @@ class Materializer {
   /// Of [replays], those that started from scratch.
   int fullReplays = 0;
 
+  /// Passes over the whole log, a full replay's own and those settling its second pass included.
+  int passes = 0;
+
   List<Change> get log => _log;
   bool contains(String id) => _byId.containsKey(id);
   Change? byId(String id) => _byId[id];
@@ -127,11 +130,42 @@ class Materializer {
   /// While the history is unread: the valid changes to the family record before the window.
   List<Applied> _familyBefore = const [];
 
-  /// Validates a change as the next one after everything applied.
-  Rejection? check(Change c) => validator.check(c);
+  /// Validates a change as the next one after everything applied: an engine's own, before it
+  /// signs it. A group's "we're in" passes as if it were the closure in force; adding it settles
+  /// whether it is ([replay]).
+  Rejection? check(Change c) {
+    validator.prechecking = true;
+    try {
+      return validator.check(c);
+    } finally {
+      validator.prechecking = false;
+    }
+  }
+
+  /// Whether the log is a group of families' (groups.dart): its founder's genesis said so, which
+  /// never changes. Read from the changes held, before any is applied.
+  bool _groupLog = false;
+
+  /// How each invited family began, read from the log alone at each full replay (groups.dart).
+  GroupStarts _starts = GroupStarts();
+
+  /// How each invited family in a group began, as the log alone says ([GroupStarts]).
+  GroupStarts get starts => _starts;
+
+  /// The most "we're in"s of one family [replay] tries (each with itself in force), so a device
+  /// let in with an invitation's key can't make every replay of the group cost more and more.
+  static const int maxClosureTries = 3;
+
+  /// Whether [c] is a group's genesis record, by its founder.
+  bool _groupGenesis(Change c) {
+    if (c.type != RecordType.family || c.fields['kind'] != LogKind.group) return false;
+    final t = validator.root();
+    return c.rid == t.familyId && c.device == t.founderDevice;
+  }
 
   bool _register(Change c) {
     if (_byId.containsKey(c.id)) return false;
+    if (!_groupLog && _groupGenesis(c)) _groupLog = true;
     _byId[c.id] = c;
     final n = _counterIn(c.id);
     if (n != null) (_counters[c.id.substring(0, c.id.lastIndexOf(':'))] ??= {}).add(n);
@@ -139,9 +173,11 @@ class Materializer {
   }
 
   void _unregister(String id) {
-    if (_byId.remove(id) == null) return;
+    final c = _byId.remove(id);
+    if (c == null) return;
     final n = _counterIn(id);
     if (n != null) _counters[id.substring(0, id.lastIndexOf(':'))]?.remove(n);
+    if (_groupLog && _groupGenesis(c)) _groupLog = _byId.values.any(_groupGenesis);
   }
 
   /// Adds changes not already held; returns the ones that turned out invalid, with reasons.
@@ -189,10 +225,12 @@ class Materializer {
         found++;
       }
     }
+    // Decided before they go: whether one of them decided verdicts reads the log as it was.
+    final rewind = _canRewindTo(at);
     for (final id in drop) {
       _unregister(id);
     }
-    if (_canRewindTo(at)) {
+    if (rewind) {
       replays++;
       _rewindTo(at);
       final tail = [for (final c in _log.sublist(at)) if (!drop.contains(c.id)) c];
@@ -244,6 +282,9 @@ class Materializer {
       ..clear()
       ..addAll(List<Object?>.filled(_log.length, null));
     _windowStart = _log.length;
+    _groupLog = other._groupLog;
+    _starts = other._starts;
+    store.endedHomes = other.store.endedHomes;
   }
 
   /// Forgets every change.
@@ -251,11 +292,13 @@ class Materializer {
     _log.clear();
     _byId.clear();
     _counters.clear();
+    _groupLog = false;
     replay();
   }
 
-  /// Replays the whole log from scratch, then settles which revocations naming a cutoff and
-  /// which replaced recovery keys are in effect, taking them in log order:
+  /// Replays the whole log from scratch, then settles which revocations naming a cutoff, which
+  /// replaced recovery keys and which closed windows of a group are in effect, taking them in log
+  /// order:
   ///
   /// - one is applied only if it counts with those already applied, so a cutoff never makes
   ///   its own revocation count;
@@ -265,49 +308,64 @@ class Materializer {
   /// - after a drop the scan starts over, since what the dropped one undid may let an earlier
   ///   one count.
   ///
-  /// The log is replayed only when one excludes something. Every replica does the same from the
-  /// log alone, and a late change before any of them replays from scratch ([add]).
+  /// In a group, how each invited family began is read first, from the log alone
+  /// ([GroupStarts]): a home two of its window's devices each said "we're in" for, or that the
+  /// family that invited it disowned within a day, ended. A "we're in" counts only as the closure
+  /// in force ([WindowClosure]): each, in log order (at most [maxClosureTries] for one family),
+  /// is tried with itself in force and kept if it counts so, while every closure already kept
+  /// still does (one never displaces another); one that can't is refused as a whole.
+  ///
+  /// The log is replayed only when one excludes something or a closure is tried. Every replica
+  /// does the same from the log alone, and a late change before any of them replays from scratch
+  /// ([add]).
   void replay() {
     replays++;
     fullReplays++;
     validator.cutoffs.clear();
     validator.retiredRecoveryKeys.clear();
+    _settleStarts();
     _replayOnce();
-    final deciding = [for (final c in _log) if (_decidesVerdicts(c)) c];
+    final deciding = [for (final c in _log) if (_hasEffect(c)) c];
     final applied = <String>[];
     final dropped = <String>{};
+    final tries = <String, int>{};
     for (var i = 0; i < deciding.length; i++) {
       final c = deciding[i];
       if (applied.contains(c.id) || dropped.contains(c.id)) continue;
-      // A group's window closed by the invited family's own parent may not count only because
-      // of what it voids: the inviting family dated something before the invited family's own
-      // first change (groups.dart, WindowClosure). It is tried once with itself in force, the
-      // others it voids dropped as usual, and kept when it counts so.
-      final speculative = rejected.containsKey(c.id);
-      final closure = closesWindow(c);
-      if (speculative && !closure) continue;
+      final closure = _closes(c);
+      if (closure) {
+        // A "we're in" never counts before it is tried, with itself in force.
+        final n = tries[c.rid] ?? 0;
+        if (n >= maxClosureTries) {
+          dropped.add(c.id);
+          continue;
+        }
+        tries[c.rid] = n + 1;
+      } else if (rejected.containsKey(c.id)) {
+        continue;
+      }
       final was = List.of(applied);
       applied.add(c.id);
       _applyEffects(applied);
       // Nothing that counts now is cut: the state is already what a replay would give.
-      if (!speculative && !_applied.any((a) => _excluded(a.change))) continue;
+      if (!closure && !_applied.any((a) => _excluded(a.change))) continue;
       final gone = <String>[];
-      var conflict = false;
+      var failed = false;
       while (true) {
         _replayOnce();
-        final now = [for (final id in applied) if (rejected.containsKey(id) && !(speculative && id == c.id)) id];
+        final now = [for (final id in applied) if (rejected.containsKey(id)) id];
         if (now.isEmpty) break;
-        // A window once closed stays closed: one closure never displaces another, or whoever
-        // wrote the last would win.
-        if (closure && now.any((id) => id != c.id && closesWindow(_byId[id]!))) {
-          conflict = true;
+        // A closure that doesn't count with itself in force, or that would displace one kept
+        // already, is refused as a whole.
+        if (closure && (now.contains(c.id) || now.any((id) => _closes(_byId[id]!)))) {
+          failed = true;
           break;
         }
         applied.removeWhere(now.contains);
         gone.addAll(now);
         _applyEffects(applied);
       }
-      if (conflict || (speculative && rejected.containsKey(c.id))) {
+      if (failed) {
         // As if it had never been tried.
         applied
           ..clear()
@@ -322,6 +380,19 @@ class Materializer {
     }
   }
 
+  /// Reads how each invited family of a group began from the log ([GroupStarts]), and marks the
+  /// homes that ended in the store.
+  void _settleStarts() {
+    _starts = _groupLog ? GroupStarts.of(_log) : GroupStarts();
+    store.endedHomes = {for (final e in _starts.ended.entries) e.key: e.value.mark};
+  }
+
+  /// Whether [c] is a "we're in" [replay] tries: in a group, by a device its family's window let
+  /// in, for a family whose place didn't end.
+  bool _closes(Change c) => _groupLog && closesWindow(c) && _starts.saysIn(c) && !_starts.ended.containsKey(c.rid);
+
+  /// Whether [c] has an effect [replay] settles in its second pass.
+  bool _hasEffect(Change c) => _namesCutoff(c) || setsRecoveryKey(c) || retiresInviteKey(c) || _closes(c);
   /// Whether the validator's cutoffs, replaced recovery keys or closed windows make [c] count for
   /// nothing.
   bool _excluded(Change c) {
@@ -367,6 +438,7 @@ class Materializer {
   }
 
   void _replayOnce() {
+    passes++;
     store.clear();
     rejected.clear();
     _applied.clear();
@@ -442,8 +514,12 @@ class Materializer {
   static bool _namesCutoff(Change c) => c.type == RecordType.device && c.fields.containsKey('revokedAfter');
 
   /// Whether [c] can make changes before it count for nothing on a second pass: a revocation
-  /// naming a cutoff, a replaced recovery key or an invite key taken away ([RetiredRecoveryKeys]).
-  static bool _decidesVerdicts(Change c) => _namesCutoff(c) || setsRecoveryKey(c) || retiresInviteKey(c) || closesWindow(c);
+  /// naming a cutoff, a replaced recovery key or an invite key taken away ([RetiredRecoveryKeys]);
+  /// in a group, a "we're in" by a device let in through its family's window, or any change that
+  /// tells how an invited family began ([GroupStarts]). Only in a group's log, and only from
+  /// those devices, so refused look-alikes cost no replays.
+  bool _decidesVerdicts(Change c) =>
+      _hasEffect(c) || (_groupLog && (GroupStarts.isInvitation(c) || _starts.decides(c)));
 
   static int? _counterIn(String id) {
     final colon = id.lastIndexOf(':');
@@ -526,8 +602,10 @@ class Materializer {
     _log.clear();
     _byId.clear();
     _counters.clear();
+    _groupLog = false;
     validator.cutoffs.clear();
     validator.retiredRecoveryKeys.clear();
+    _settleStarts();
     _replayOnce();
     return null;
   }
@@ -537,6 +615,7 @@ class Materializer {
     _log.clear();
     _byId.clear();
     _counters.clear();
+    _groupLog = false;
     final covered = <Change>[], rest = <Change>[];
     for (final c in held) {
       if (_byId.containsKey(c.id)) continue; // A second copy of one it covers.
@@ -601,6 +680,8 @@ class Materializer {
       ];
     }
     _log.addAll(covered);
+    // Read from the log alone, as a replay would (groups.dart).
+    _settleStarts();
     _steps.addAll(List<Object?>.filled(w, null));
     _windowStart = w;
     final window = state['window']! as List;

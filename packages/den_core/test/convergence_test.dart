@@ -306,16 +306,18 @@ void main() {
       var skip = 0;
       Future<Change> byAlex(String type, String rid, Map<String, Object?> fields, {int? millis}) =>
           forgeAs(f.alex, type: type, rid: rid, fields: fields, actor: f.gAlex, millis: millis, skip: skip++);
-      Future<Change> joinWith(GroupAdmission admission, int millis) async {
+      Future<Change> joinWith(GroupAdmission admission, int millis, {DeviceMode? mode}) async {
         final device = await DeviceKeys.generate();
-        final proof = await (await admission.key())
-            .prove(family: f.group, member: admission.member, mode: admission.mode, devicePubkey: device.pubkey, expires: millis + 600000);
+        final m = mode ?? admission.mode;
+        final member = mode == null ? admission.member : null;
+        final proof =
+            await (await admission.key()).prove(family: f.group, member: member, mode: m, devicePubkey: device.pubkey, expires: millis + 600000);
         return forge(device, counter: 1, millis: millis, type: RecordType.device, rid: await device.deviceId(), fields: {
           'name': 'Evil',
-          'kind': admission.mode == DeviceMode.hub ? 'hub' : 'phone',
+          'kind': m == DeviceMode.hub ? 'hub' : 'phone',
           'pubkey': device.pubkey,
-          'member': admission.member,
-          'mode': admission.mode.name,
+          'member': member,
+          'mode': m.name,
           'approved': true,
           'home': admission.home,
           'invite': proof.toJson(),
@@ -325,13 +327,12 @@ void main() {
       final attacks = [
         for (final millis in [null, inWindow]) ...[
           await byAlex(RecordType.inviteKey, f.invitation.parent.invite, {'key': null, 'kept': <String>[]}, millis: millis),
-          await byAlex(RecordType.inviteKey, f.invitation.hub.invite, {'key': null, 'kept': <String>[]}, millis: millis == null ? null : millis + 1),
           await byAlex(RecordType.device, f.dana.deviceId, {'revoked': true, 'revokedAfter': danaJoin.counter},
               millis: millis == null ? null : millis + 2),
         ],
         await byAlex(RecordType.home, f.smithHome, {'status': 'left'}, millis: invitedAt + 500),
         await joinWith(f.invitation.parent, danaJoin.hlc.millis - 100),
-        await joinWith(f.invitation.hub, ownJoin(f.sHub).hlc.millis - 100),
+        await joinWith(f.invitation.parent, danaJoin.hlc.millis - 50, mode: DeviceMode.hub),
         await forgeAs(f.priya, type: RecordType.home, rid: f.smithHome, fields: {'status': 'left'}, actor: f.gPriya),
       ];
       overreach.addAll(attacks);
@@ -380,6 +381,73 @@ void main() {
       }
       for (final c in attacks.where((c) => c.type == RecordType.device && c.rid == c.device)) {
         expect(f.kHub.deviceCounts(c.rid), isFalse);
+      }
+    });
+  }
+
+  for (final seed in [51, 52, 53]) {
+    test('a contested family and a disowned one end the same on every replica, in any order (seed $seed)', () async {
+      final random = Random(seed);
+      final clock = TestClock.at(DateTime.utc(2026, 6, 1, 15));
+      final f = await bothFamilies(clock);
+      // The Parks: Kim's phone says they're in; a device the Kotvases let in with the same key
+      // says so too. The Ohs: Ann's phone says they're in, and the phone that invited them says
+      // that wasn't them within the day.
+      Future<(GroupInvitation, Den)> invited(String family, String parent) async {
+        clock.advance(const Duration(minutes: 1));
+        final inv = await f.alex.inviteFamily(familyName: family, parentName: parent);
+        await exchange(f.alex, f.kHub);
+        final phone = await admit(f, inv.parent, f.kHub, name: "$parent's phone");
+        clock.advance(const Duration(seconds: 2));
+        await phone.updateHome(active: true);
+        await exchange(phone, f.kHub);
+        return (inv, phone);
+      }
+
+      final (parks, kim) = await invited('Parks', 'Kim');
+      final (ohs, ann) = await invited('Ohs', 'Ann');
+      final evil = await DeviceKeys.generate();
+      final proof = await (await parks.parent.key()).prove(family: f.group, member: parks.member, devicePubkey: evil.pubkey, expires: clock.now + 600000);
+      final join = await forge(evil, counter: 1, millis: clock.now - 3000 + random.nextInt(6000), type: RecordType.device, rid: await evil.deviceId(), fields: {
+        'name': 'Evil',
+        'kind': 'phone',
+        'pubkey': evil.pubkey,
+        'member': parks.member,
+        'mode': 'personal',
+        'approved': true,
+        'home': parks.home,
+        'invite': proof.toJson(),
+      });
+      final fakeIn = await forge(evil, counter: 2, millis: join.hlc.millis + 10, type: RecordType.home, rid: parks.home, actor: parks.member,
+          fields: {'status': 'active', 'heard': <String>[]});
+      await exchange(f.alex, f.kHub);
+      clock.advance(Duration(hours: 1 + random.nextInt(20)));
+      await f.alex.disownInvite(ann.deviceId);
+      await kim.addList(title: 'Park snacks');
+      await ann.addList(title: 'Oh snacks');
+
+      final engines = [...f.kotvasDevices, ...f.smithDevices];
+      final pool = {
+        for (final d in [...engines, kim, ann])
+          for (final c in d.changesSince({})) c.id: c,
+        join.id: join,
+        fakeIn.id: fakeIn,
+      }.values.toList();
+      for (final hub in [f.kHub, f.sHub]..shuffle(random)) {
+        await deliver(hub, pool, random);
+      }
+      await settle(f);
+      expect(jsonEncode(f.sHub.exportJson()), jsonEncode(f.kHub.exportJson()), reason: 'both families\' replicas agree');
+      for (final d in engines) {
+        final name = d.thisDevice!.name;
+        expect(d.home(parks.home)!.ended, 'contested', reason: name);
+        expect(d.home(ohs.home)!.ended, 'disowned', reason: name);
+        expect(d.homeContested(parks.home), isTrue, reason: name);
+        for (final gone in [kim.deviceId, ann.deviceId, await evil.deviceId()]) {
+          expect(d.deviceCounts(gone), isFalse, reason: '$gone on $name');
+        }
+        expect(d.lists.where((l) => l.list.title == 'Park snacks' || l.list.title == 'Oh snacks'), isEmpty, reason: name);
+        expect(d.home(f.smithHome)!.status, HomeStatus.active, reason: name);
       }
     });
   }

@@ -487,11 +487,16 @@ final Map<String, TypeSpec> typeSpecs = {
     'family': id(nullable: true),
     'status': names(HomeStatus.values),
     'invitedBy': id(nullable: true),
-    // Written once, by its own parent saying an invited family is in (groups.dart,
-    // WindowClosure): the last change it held from each device of the inviting family, and the
-    // devices let in through the invitation it keeps.
-    'closed': dict(number(min: 0), maxKeys: 200),
-    'kept': listOf(id(), max: 20, unique: true),
+    // An invited family's one invitation key (its public half), which the home's id is bound to
+    // (groups.dart, homeIdFor); set when it is invited, never changed.
+    'key': keyText(),
+    // Written once, by its first parent's phone saying an invited family is in (groups.dart,
+    // WindowClosure): the window powers over the home (changes the inviting family made to it)
+    // that phone held.
+    'heard': listOf(text(min: 3, max: 80), max: 20, unique: true),
+    // "That wasn't them", by the phone that sent the invitation, within a day of the family
+    // saying it was in: its place in the group ends (groups.dart, GroupStarts).
+    'disowned': flag(),
   }, required: {'name', 'status'}, space: Space.family),
   // A group the family is in (groups.dart).
   RecordType.groupLink: TypeSpec({
@@ -502,6 +507,12 @@ final Map<String, TypeSpec> typeSpecs = {
     'members': dict(id(), maxKeys: 50),
     'displays': flag(),
     'status': names(GroupLinkStatus.values),
+    // The family's own record of how it began in the group, which no other family can write:
+    // its home there, its first parent's phone there, and the change that said it was in
+    // (groups.dart; Den.groupAlarm compares the group's log with it).
+    'home': id(nullable: true),
+    'device': id(nullable: true),
+    'closure': text(min: 3, max: 80, nullable: true),
   }, required: {'group', 'founder', 'name', 'status'}, space: Space.family),
   // One device's admission into a group, sealed to it (groups.dart).
   RecordType.groupInvite: TypeSpec({

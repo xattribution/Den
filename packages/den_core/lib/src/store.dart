@@ -110,6 +110,14 @@ class RecordStore {
   /// type -> space -> changes applied to or undone from records of that type in that space.
   final Map<String, Map<String, int>> _versions = {};
 
+  /// In a group: the homes whose place ended (groups.dart, `HomeEnd`), from when, why
+  /// (`contested` or `disowned`) and, when disowned, by which change. Settled by the
+  /// materializer from the log alone; kept through [clear], which a replay does.
+  Map<String, ({Hlc at, String why, String? by})> endedHomes = const {};
+
+  /// While validity judges a change: its clock, so a home that ended later reads as it was then.
+  Hlc? judging;
+
   /// A number that changes whenever a record of one of [types] in one of [spaces] does; equal
   /// numbers within one [epoch] mean nothing those views read has changed.
   int versionOf(Iterable<String> types, Iterable<String> spaces) {

@@ -8,15 +8,19 @@
 /// - **G1** a person's home is required and fixed; a device's is its owner's, and fixed.
 /// - **G2** every trust decision about a person or a device (adding, role, grants, removing,
 ///   approving, revoking, mode) comes from a parent's own device, and a parent of the same home.
-///   The one exception is an invited home's window: while none of its parents is in, the home
-///   that invited it may add its first parent and one-use keys for that parent and its hub.
-/// - **G3** a `home` record changes only by that home's parents (or, while nobody of it is in,
-///   is taken back by the home that invited it), and leaving is final.
+///   The one exception is an invited home's window, until its first parent's phone says it is
+///   in: the home that invited it adds that parent and the one key its id is bound to
+///   ([homeIdFor]), or takes the invitation back; nothing else ([WindowClosure]).
+/// - **G3** a `home` record changes only by that home's parents (or, while it is invited, is
+///   taken back by the home that invited it), and leaving is final. A home two phones of its
+///   window each said "we're in" for, or that the inviting phone disowned within a day, ends
+///   for everyone ([GroupStarts]).
 /// - **G4** a hub acts only for people of its own home, never for nobody; shared screens only
 ///   show a group.
-/// - **G5** `m:X` is X's alone (no parent of any home reads or writes it); `p` is every parent's.
-/// - **G6** a device lets itself in with an invite key of its own home (or its home's window key),
-///   or a parent's recovery words copied into the group, and joins as a device of that home.
+/// - **G5** a group has no one's own space (`m:X`); `p` is every parent's and every hub's.
+/// - **G6** a device lets itself in with an invite key of its own home (or, its first parent's
+///   phone, the invitation's key while the window is open), or a parent's recovery words
+///   copied into the group, and joins as a device of that home.
 /// - **G7** chores, stars, feeds, connections and sign-in records stay in each family's own log.
 /// - **G8** every home keeps a parent until it leaves; leaving is one commit by its own parent,
 ///   after which nothing of that home counts.
@@ -25,8 +29,14 @@
 /// as it did; and a group refuses `groupLink` and `groupInvite`, which only a family holds.
 library;
 
+import 'dart:convert';
+
+import 'package:collection/collection.dart';
+import 'package:cryptography/dart.dart';
+
 import 'change.dart';
 import 'hlc.dart';
+import 'ids.dart';
 import 'invite_keys.dart';
 import 'model.dart';
 import 'permissions.dart';
@@ -69,11 +79,28 @@ bool isGroupLog(RecordStore store, TrustRoot trust) {
   return store.at(Space.family, RecordType.family, id)?.fields['kind'] == LogKind.group;
 }
 
-/// The home [id], removed or not; null when the group has none.
+/// The home [id], removed or not; null when the group has none. A home whose place ended
+/// ([HomeEnd]) reads as left from its end on: while validity judges a change clocked before
+/// that, as it was ([RecordStore.judging]).
 Home? homeAt(RecordStore store, Object? id) {
   if (id is! String) return null;
   final e = store.at(Space.family, RecordType.home, id);
-  return e == null ? null : Home(e.rec);
+  if (e == null) return null;
+  final end = store.endedHomes[id];
+  final judging = store.judging;
+  if (end == null || (judging != null && judging < end.at)) return Home(e.rec);
+  final r = e.rec;
+  return Home(Rec(
+    type: r.type,
+    id: r.id,
+    space: r.space,
+    fields: {...r.fields, 'status': HomeStatus.left.name, 'ended': end.why},
+    created: r.created,
+    updated: r.updated,
+    createdBy: r.createdBy,
+    updatedBy: r.updatedBy,
+    fieldTimes: r.fieldTimes,
+  ));
 }
 
 /// Whether the home [id] left the group (or never was in it).
@@ -105,16 +132,12 @@ Iterable<Device> devicesOfHome(RecordStore store, String homeId) => [
           if (homeOfDevice(store, Device(e.rec)) == homeId) Device(e.rec),
     ];
 
-/// Whether the invited home [homeId] is in its window: it is still `invited`, so none of its own
-/// parents has said it is in. While it is, the home that invited it stands in for it (G2): it adds
-/// its first parent and the keys that let that parent's phone and its hub in, and may take the
-/// invitation back or say "That wasn't them". The invited family's own parent closes the window
-/// when they say it is in ([WindowClosure]), and nothing the inviting family does after, or
-/// dates before without the invited family having held it, counts.
+/// Whether the invited home [homeId] is in its window: it is still `invited`, so its first
+/// parent hasn't said it is in. While it is, the home that invited it may add that parent, the
+/// one key that lets that parent's phone in, and take the invitation back (G2).
 bool inviteWindowOpen(RecordStore store, String homeId) => homeAt(store, homeId)?.status == HomeStatus.invited;
 
-/// Whether a parent of the home [homeId] has a phone of their own in the group: after that, the
-/// inviting family makes no more keys or people for it.
+/// Whether a parent of the home [homeId] has a phone of their own in the group.
 bool firstParentIn(RecordStore store, String homeId) {
   for (final d in devicesOfHome(store, homeId)) {
     if (d.mode != DeviceMode.personal || d.member == null) continue;
@@ -124,30 +147,167 @@ bool firstParentIn(RecordStore store, String homeId) {
   return false;
 }
 
-/// Whether the invite key [key] is a window key: one the home that invited its home made, for
-/// that home's first parent or its hub ([inviteWindowOpen]).
+/// Whether the invite key [key] is a window key: the one key of an invited home, made by the
+/// home that invited it, for its first parent ([homeIdFor]).
 bool isWindowKey(RecordStore store, InviteKeyRecord key) {
   final home = key.rec.strOrNull('home');
   final maker = homeOfMember(store, key.by);
   return home != null && maker != null && maker != home;
 }
 
-/// An invited home's window closed by its own parent saying it is in: the change setting its
-/// `status` from `invited` to `active`, which names in `closed` the last change it held from each
-/// device of the inviting home and in `kept` the devices let in through the window it keeps (its
-/// own, and its family's hub). Like a revocation's cutoff, it is settled from the log alone, so a
-/// device's own clock can't get around it:
+/// The id of an invited family's home: bound to the invitation's one key ([windowKey], the
+/// base64url public half) and to the device that made the invitation. Nobody else makes a home
+/// by that id (another device or another key gives another id), and a device that lets itself
+/// in with that key is, from the log alone, one let in through that home's window.
+String homeIdFor(String windowKey, String device) {
+  final List<int> key;
+  try {
+    key = b64d(windowKey);
+  } on FormatException {
+    return '';
+  }
+  return base32(const DartSha256().hashSync([...utf8.encode('den/home/v1'), 0, ...key, 0, ...utf8.encode(device)]).bytes.sublist(0, 10));
+}
+
+/// How long after an invited family said it is in the family that invited it may still say
+/// "That wasn't them" ([GroupStarts]).
+const Duration disownWindow = Duration(hours: 24);
+
+/// Why an invited family's place in a group ended before it began for good ([GroupStarts]):
+/// two devices let in with its invitation's key each said it was in (contested), or the family
+/// that invited it said "That wasn't them" within a day. Either way the home counts as left for
+/// everyone from its first "we're in" on, and nothing brings it back.
+class HomeEnd {
+  const HomeEnd({required this.home, required this.at, required this.contested, this.disowned, this.closings = const []});
+
+  final String home;
+
+  /// The clock of the first "we're in": from it on, nothing of the home counts.
+  final Hlc at;
+
+  /// Whether two or more devices let in with the invitation's key each said the family is in.
+  final bool contested;
+
+  /// The inviting family's "That wasn't them" that ended it, when one did.
+  final String? disowned;
+
+  /// The "we're in" changes the log holds for the home, from devices let in with its key.
+  final List<String> closings;
+
+  /// What [RecordStore.endedHomes] keeps of it.
+  ({Hlc at, String why, String? by}) get mark => (at: at, why: contested ? 'contested' : 'disowned', by: disowned);
+}
+
+/// What the log alone says about how each invited family began, without any verdict, so every
+/// replica holding the same changes reads the same:
 ///
-/// - a window power of the inviting home over this one (a person or key made for it, a key taken
-///   back, a device removed, recovery words turned off, the invitation taken back) dated before
-///   it counts for nothing unless it is one the closing device held: its device is in `closed`
-///   and it is numbered no later;
-/// - a device let in through the window (an invite key the inviting home made) dated before it
-///   counts for nothing unless it is in `kept`.
+/// - an invitation: a `home` change naming its one key (`key`), whose id is [homeIdFor] that
+///   key and the device that wrote it (the inviting device);
+/// - the devices let in through its window: those whose own first change carries a proof by
+///   that key for that home;
+/// - "we're in": a change setting that home `active`, by one of those devices;
+/// - "That wasn't them": a change saying `disowned`, by the inviting device.
 ///
-/// After it, the window is shut: none of those count, whatever they claim.
+/// A home two of those devices each said "we're in" for is contested: no beginning wins, and the
+/// home ends ([HomeEnd]). So does one the inviting device disowned within [disownWindow] of its
+/// first "we're in". Changes from a window device, or of these shapes, decide verdicts: the
+/// materializer replays when one arrives late.
+class GroupStarts {
+  /// Home -> its invitation: its key, the device that made it, and the change.
+  final Map<String, ({String key, String inviter, String change})> invitations = {};
+
+  /// Home -> the devices let in with its key, each with its first change, in log order.
+  final Map<String, Map<String, Change>> windowJoins = {};
+
+  /// Home -> its "we're in"s by those devices, in log order.
+  final Map<String, List<Change>> closings = {};
+
+  /// Home -> "That wasn't them" by its inviting device, in log order.
+  final Map<String, List<Change>> disowns = {};
+
+  /// Homes whose place ended.
+  final Map<String, HomeEnd> ended = {};
+
+  /// Reads [log], in log order.
+  static GroupStarts of(Iterable<Change> log) {
+    final s = GroupStarts();
+    for (final c in log) {
+      if (isInvitation(c)) s.invitations.putIfAbsent(c.rid, () => (key: c.fields['key']! as String, inviter: c.device, change: c.id));
+    }
+    if (s.invitations.isEmpty) return s;
+    for (final c in log) {
+      final home = s.windowJoinInto(c);
+      if (home != null) (s.windowJoins[home] ??= {}).putIfAbsent(c.device, () => c);
+    }
+    for (final c in log) {
+      if (c.type != RecordType.home) continue;
+      if (s.saysIn(c)) (s.closings[c.rid] ??= []).add(c);
+      if (s.isDisown(c)) (s.disowns[c.rid] ??= []).add(c);
+    }
+    for (final e in s.closings.entries) {
+      final first = e.value.first;
+      final authors = {for (final c in e.value) c.device};
+      final disown = s.disowns[e.key]?.firstWhereOrNull((d) => d.hlc.millis < first.hlc.millis + disownWindow.inMilliseconds);
+      if (authors.length < 2 && disown == null) continue;
+      s.ended[e.key] = HomeEnd(
+        home: e.key,
+        at: first.hlc,
+        contested: authors.length >= 2,
+        disowned: disown?.id,
+        closings: [for (final c in e.value) c.id],
+      );
+    }
+    return s;
+  }
+
+  /// Whether [c] makes an invited family's home with its one key ([homeIdFor]).
+  static bool isInvitation(Change c) {
+    if (c.type != RecordType.home) return false;
+    final key = c.fields['key'];
+    return key is String && c.fields['status'] == HomeStatus.invited.name && c.rid == homeIdFor(key, c.device);
+  }
+
+  /// The home whose window [c] lets its device in through (its first change, with a proof by
+  /// that home's key), or null.
+  String? windowJoinInto(Change c) {
+    if (c.type != RecordType.device || c.rid != c.device) return null;
+    final home = c.fields['home'];
+    if (home is! String) return null;
+    final key = invitations[home]?.key;
+    if (key == null) return null;
+    final proof = InviteProof.parse(c.fields['invite']);
+    return proof != null && proof.key == key ? home : null;
+  }
+
+  /// Whether [c] says its home is in, from a device let in through that home's window.
+  bool saysIn(Change c) =>
+      c.type == RecordType.home && c.fields['status'] == HomeStatus.active.name && (windowJoins[c.rid]?.containsKey(c.device) ?? false);
+
+  /// Whether [c] is "That wasn't them" by the device that made the home's invitation.
+  bool isDisown(Change c) => c.type == RecordType.home && c.fields['disowned'] == true && invitations[c.rid]?.inviter == c.device;
+
+  /// Whether [c] is one of the changes these facts read: the materializer replays when one
+  /// arrives late.
+  bool decides(Change c) => isInvitation(c) || windowJoinInto(c) != null || saysIn(c) || isDisown(c);
+}
+
+/// An invited home's window closed by its first parent's phone saying it is in: the change
+/// setting the home from `invited` to `active`, which names in `heard` the window powers over the
+/// home (changes the inviting family made to it) that the phone held and counted. Settled from
+/// the log alone, like a revocation's cutoff, so no device's clock gets around it:
+///
+/// - a window power over the home dated before it counts only if it is one of those;
+/// - a device let in through the window dated before it counts only if it is the phone itself.
+///
+/// After it the window is shut: none of those count, whatever they claim. A "we're in" counts
+/// only as the closure in force (the materializer tries each, in log order, with itself in
+/// force), so one that would void what let its own phone in is refused as a whole and the home
+/// stays invited.
 class WindowClosure {
-  const WindowClosure(this.home, this.at, this.closed, this.kept);
+  const WindowClosure(this.id, this.home, this.at, this.author, this.heard);
+
+  /// The "we're in" change.
+  final String id;
 
   /// The home whose window it closes.
   final String home;
@@ -155,52 +315,97 @@ class WindowClosure {
   /// The clock of the change that closed it.
   final Hlc at;
 
-  /// Device of the inviting home -> the last of its changes the closing device held.
-  final Map<String, int> closed;
+  /// The device that said it: the one device the window let in that stays.
+  final String author;
 
-  /// Devices let in through the window that count.
-  final Set<String> kept;
+  /// The window powers over the home it held.
+  final Set<String> heard;
 
   /// As a snapshot keeps it, beside the replaced keys (recovery.dart).
-  List<Object?> toJson() => [
-        'window',
-        home,
-        at.toString(),
-        kept.toList()..sort(),
-        {for (final k in closed.keys.toList()..sort()) k: closed[k]},
-      ];
+  List<Object?> toJson() => ['window', id, home, at.toString(), author, heard.toList()..sort()];
 
   /// Reads [toJson]'s output.
   static WindowClosure fromJson(List<Object?> row) => WindowClosure(
         row[1]! as String,
-        Hlc.parse(row[2]! as String),
-        {for (final e in (row[4]! as Map).entries) e.key as String: e.value as int},
-        (row[3]! as List).cast<String>().toSet(),
+        row[2]! as String,
+        Hlc.parse(row[3]! as String),
+        row[4]! as String,
+        (row[5]! as List).cast<String>().toSet(),
       );
 }
 
-/// Whether [c] closes a home's window (a change to a `home` naming `closed`, which validity takes
-/// only from that home's own parent saying it is in). The materializer settles these with the
-/// revocation cutoffs and replaced keys.
-bool closesWindow(Change c) => c.type == RecordType.home && c.fields.containsKey('closed');
+/// A device that let itself in with an invited family's invitation ([Den.windowAdmissions]).
+class WindowAdmission {
+  const WindowAdmission({required this.device, required this.name, required this.joined, required this.counts, required this.saidIn});
+
+  final String device;
+
+  /// The name it gave itself.
+  final String name;
+
+  /// When it says it joined.
+  final Hlc joined;
+
+  /// Whether it counts in the group now.
+  final bool counts;
+
+  /// Whether it said the family was in.
+  final bool saidIn;
+}
+
+/// What [GroupAlarm] is about.
+enum GroupAlarmKind {
+  /// Two phones each said they were the family: its place ended.
+  contested,
+
+  /// The family that invited it said "That wasn't them": its place ended.
+  disowned,
+
+  /// The group says the family left, and it didn't.
+  removed,
+
+  /// The group's "we're in" for the family isn't the one its phone made.
+  notOurs,
+
+  /// The phone that brought the family in no longer counts in the group.
+  deviceGone,
+
+  /// Another phone used the family's invitation.
+  stranger,
+
+  /// The inviting family dated changes to the family before it said it was in, which that phone
+  /// hadn't heard of (all voided).
+  backdated,
+}
+
+/// Something wrong with how a family began in a group, as its own log recorded it
+/// ([Den.groupAlarm]), for its devices to show.
+class GroupAlarm {
+  const GroupAlarm(this.kind, this.message);
+  final GroupAlarmKind kind;
+  final String message;
+
+  @override
+  String toString() => '${kind.name}: $message';
+}
+
+/// Whether [c] is shaped like a "we're in": a change setting a home `active` and naming what it
+/// heard. In a group, the materializer tries the ones by devices let in through that home's
+/// window ([GroupStarts.saysIn]).
+bool closesWindow(Change c) => c.type == RecordType.home && c.fields['status'] == HomeStatus.active.name && c.fields.containsKey('heard');
 
 /// The closure [c] makes, when it makes one.
 WindowClosure? windowClosureOf(Change c) {
   if (!closesWindow(c)) return null;
-  final closed = c.fields['closed'], kept = c.fields['kept'];
-  return WindowClosure(
-    c.rid,
-    c.hlc,
-    {if (closed is Map) for (final e in closed.entries) if (e.value is int) '${e.key}': e.value as int},
-    {if (kept is List) ...kept.whereType<String>()},
-  );
+  final heard = c.fields['heard'];
+  return WindowClosure(c.id, c.rid, c.hlc, c.device, {if (heard is List) ...heard.whereType<String>()});
 }
 
 /// The home whose window [c] is a window power over (see [WindowClosure]), or null: a change to
 /// one of that home's people, devices, keys or its record, by a person of the home that invited
 /// it. Read from what never changes once written (a person's, device's and key's family, a home's
 /// inviter), so it reads the same at any point after those records exist.
-String? _windowPowerOver(Change c, RecordStore store) {
+String? windowPowerOver(Change c, RecordStore store) {
   final actorHome = c.actor == null ? null : homeOfMember(store, c.actor);
   if (actorHome == null) return null;
   Object? target;
@@ -219,34 +424,31 @@ String? _windowPowerOver(Change c, RecordStore store) {
       return null;
   }
   if (target is! String || target == actorHome) return null;
-  return homeAt(store, target)?.invitedBy == actorHome ? target : null;
+  final e = store.at(Space.family, RecordType.home, target);
+  return e?.fields['invitedBy'] == actorHome ? target : null;
 }
 
-/// The home [c] lets a device into through its window (with a key the inviting home made), or
+/// The home [c] lets its device into through its window (a proof by that home's one key), or
 /// null.
-String? _windowAdmissionInto(Change c, RecordStore store) {
+String? windowAdmissionInto(Change c, RecordStore store) {
   if (c.type != RecordType.device || c.rid != c.device) return null;
+  final home = c.fields['home'];
+  if (home is! String) return null;
+  final key = store.at(Space.family, RecordType.home, home)?.fields['key'];
   final proof = InviteProof.parse(c.fields['invite']);
-  final key = proof == null ? null : store.at(Space.family, RecordType.inviteKey, proof.invite);
-  if (key == null) return null;
-  final home = key.fields['home'];
-  final maker = homeOfMember(store, key.fields['by']);
-  return home is String && maker != null && maker != home ? home : null;
+  return key is String && proof != null && proof.key == key ? home : null;
 }
 
 /// Whether one of [closures] makes [c] count for nothing ([WindowClosure]).
 bool windowClosedOut(Change c, RecordStore store, Iterable<WindowClosure> closures) {
   if (closures.isEmpty) return false;
-  final admitted = _windowAdmissionInto(c, store);
-  final power = admitted == null ? _windowPowerOver(c, store) : null;
+  final admitted = windowAdmissionInto(c, store);
+  final power = admitted == null ? windowPowerOver(c, store) : null;
   if (admitted == null && power == null) return false;
   for (final w in closures) {
     if (!(c.hlc < w.at)) continue;
-    if (admitted == w.home && !w.kept.contains(c.rid)) return true;
-    if (power == w.home) {
-      final held = w.closed[c.device];
-      if (held == null || c.counter > held) return true;
-    }
+    if (admitted == w.home && c.device != w.author) return true;
+    if (power == w.home && !w.heard.contains(c.id)) return true;
   }
   return false;
 }
@@ -257,14 +459,16 @@ bool windowClosedOut(Change c, RecordStore store, Iterable<WindowClosure> closur
 /// genesis writes its founder's home; a device joining a group writes its home).
 ///
 /// In a family's log it refuses what only a group holds, so a family behaves as it did.
-/// [closures] are the windows closed so far ([WindowClosure]), settled by the materializer.
+/// [closures] are the windows closed so far ([WindowClosure]), settled by the materializer; a
+/// "we're in" counts only as one of them, unless [precheck] (an engine checking its own change
+/// before it signs it, which the materializer then settles).
 Rejection? checkGroupRules(Change c, Entry? existing, RecordStore store, TrustRoot trust,
-    {required bool group, Iterable<WindowClosure> closures = const []}) {
+    {required bool group, Iterable<WindowClosure> closures = const [], bool precheck = false}) {
   if (!group) return _familyRefusesGroupThings(c);
   if (windowClosedOut(c, store, closures)) {
     return _trust('That family said it was in before this, without having heard of it');
   }
-  return _GroupCheck(c, existing, store, trust).check();
+  return _GroupCheck(c, existing, store, trust, closures, precheck).check();
 }
 
 Rejection? _familyRefusesGroupThings(Change c) {
@@ -299,12 +503,14 @@ Rejection? _groupRecordFields(Map<String, Object?> f) {
 }
 
 class _GroupCheck {
-  _GroupCheck(this.c, this.existing, this.store, this.trust);
+  _GroupCheck(this.c, this.existing, this.store, this.trust, this.closures, this.precheck);
 
   final Change c;
   final Entry? existing;
   final RecordStore store;
   final TrustRoot trust;
+  final Iterable<WindowClosure> closures;
+  final bool precheck;
 
   late Device author;
   String? authorHome;
@@ -475,11 +681,11 @@ class _GroupCheck {
   }
 
   /// G6, invite keys: a key of the device's own home lets it in as that home's (and, for a
-  /// personal device, as someone of that home). A window key ([isWindowKey]) lets in the invited
-  /// home's first parent or its hub while its window is open, and never once it is shut. Within
-  /// the window one such key isn't used up by another device: a join dated earlier with the
-  /// inviting family's copy of the key can't push out the real one, and the invited family's
-  /// own parent keeps the devices it knows when it closes the window ([WindowClosure]).
+  /// personal device, as someone of that home). An invited home's one key ([homeIdFor]) lets in
+  /// its first parent's phone while its window is open, and never once it is shut. Within the
+  /// window it isn't used up: a join dated earlier with the inviting family's copy of the key
+  /// can't push out the real one, and the phone that says the family is in is the one device the
+  /// window let in that stays ([WindowClosure]).
   Rejection? _inviteJoin() {
     final proof = InviteProof.parse(c.fields['invite']);
     if (proof == null) return null;
@@ -497,8 +703,12 @@ class _GroupCheck {
     final makerHome = homeOfMember(store, key.by);
     if (makerHome == null || homeLeft(store, makerHome)) return _trust('The family that made that invite left the group');
     if (makerHome == keyHome) return null;
-    if (home.invitedBy != makerHome) return _trust('Only a family\'s own parents, or the family that invited it, let it in');
-    if (proof.mode == DeviceMode.shared) return _trust('An invitation lets in a family\'s first parent and its hub only');
+    if (home.invitedBy != makerHome || proof.key != home.rec.strOrNull('key')) {
+      return _trust('Only a family\'s own parents, or the family that invited it, let it in');
+    }
+    if (proof.mode != DeviceMode.personal || proof.member == null) {
+      return _trust('An invitation lets in its family\'s first parent\'s phone only');
+    }
     if (!inviteWindowOpen(store, keyHome)) {
       return _trust('${home.name} is in the group already: their own parents let their people in now');
     }
@@ -520,17 +730,31 @@ class _GroupCheck {
     if (c.fields.containsKey('_deleted')) return _deny('A family leaves a group: its record stays');
     final a = actor;
     if (creating) {
-      // Any parent of a family in the group invites another, on their own device.
+      // Any parent of a family in the group invites another, on their own device, with the one
+      // key its id is bound to.
       if (c.fields['status'] != HomeStatus.invited.name) return _deny('A family joins a group when it\'s invited');
       if (a == null || !parentHere) return _deny('Only a parent on their own device invites another family');
       if (c.fields['invitedBy'] != actorHome) return _schema('An invitation names the family that sent it');
+      final key = c.fields['key'];
+      if (key is! String || c.rid != homeIdFor(key, c.device)) {
+        return _schema('An invited family\'s id is its invitation\'s, made on the device that sends it');
+      }
       // Its own log's id (fixed once said) and where its hub syncs are the invited family's to say.
       if (c.fields['family'] != null || c.fields['hubs'] != null) {
         return _schema('A family says where its Den is itself, once it\'s in');
       }
+      if (c.fields.containsKey('heard') || c.fields.containsKey('disowned')) return _schema('A family is invited first');
       return null;
     }
-    final h = Home(existing!.rec);
+    // "That wasn't them" after the invited family said it was in: it counts as the change that
+    // ended that family's place (GroupStarts), and nothing else.
+    if (c.fields.containsKey('disowned')) {
+      if (store.endedHomes[c.rid]?.by == c.id) return null;
+      // Its own engine, before it signs it: the materializer then settles whether it ended it.
+      if (precheck && only({'disowned'}) && c.fields['disowned'] == true && c.device == existing!.createdDevice) return null;
+      return _deny('Only the phone that sent an invitation says "That wasn\'t them", within a day of that family saying it was in');
+    }
+    final h = homeAt(store, c.rid)!;
     if (h.left) return _deny('${h.name} left the group, and that\'s final');
     if (existing!.fields['family'] != null && c.fields.containsKey('family') && c.fields['family'] != existing!.fields['family']) {
       return _schema('A family\'s id can\'t change');
@@ -550,18 +774,21 @@ class _GroupCheck {
     }
     if (a == null || !a.isParent) return _deny('Only parents can change their family in the group');
     if (!ownDevice) return _deny(_ownDeviceOnly);
-    // Saying an invited family is in closes its window ([WindowClosure]): it names the last
-    // change it held from each device of the inviting family, and the devices let in through the
-    // window it keeps, itself among them. Nothing else ever names them.
+    // Saying an invited family is in closes its window ([WindowClosure]): only the phone its
+    // invitation let in says it, as that first parent, naming the window powers it heard of; it
+    // counts only as the closure in force, which the materializer settles.
     final activates = h.status == HomeStatus.invited && status == HomeStatus.active.name;
-    final closed = c.fields['closed'], kept = c.fields['kept'];
     if (activates) {
       if (h.invitedBy == null) return _schema('Only an invited family closes its invitation');
-      if (closed is! Map || kept is! List) {
-        return _schema('Saying the family is in names what it heard from the family that invited it');
+      final proof = inviteOf(author);
+      if (proof == null || proof.key != h.rec.strOrNull('key') || author.member != proof.member || a.id != author.member) {
+        return _deny('Only the phone ${h.name}\'s invitation let in says they\'re in');
       }
-      if (!kept.contains(c.device)) return _schema('Saying the family is in keeps the device that says it');
-    } else if (c.fields.containsKey('closed') || c.fields.containsKey('kept')) {
+      if (c.fields['heard'] is! List) return _schema('Saying the family is in names what it heard from the family that invited it');
+      if (!precheck && !closures.any((w) => w.id == c.id)) {
+        return _trust('That "we\'re in" doesn\'t hold: it would void what let its own phone in');
+      }
+    } else if (c.fields.containsKey('heard')) {
       return _schema('Only saying an invited family is in closes its invitation');
     }
     return null;
@@ -583,9 +810,9 @@ class _GroupCheck {
     // Someone's own picture, sign-in (none, in a group) and recovery words: the family's rules.
     if (!creating && c.actor == c.rid && (only({'picture'}) || only({'signIn'}) || only({'recovery'}))) return null;
     if (actorHome != homeId) {
-      // The window: the family that invited this one adds its first parent.
+      // The window: the family that invited this one adds its first parent, and nothing else.
       if (creating) {
-        if (!inviteWindowOpen(store, homeId) || h.invitedBy != actorHome || firstParentIn(store, homeId)) {
+        if (!inviteWindowOpen(store, homeId) || h.invitedBy != actorHome) {
           return _deny('Only ${h.name}\'s own parents add their people');
         }
         if (c.fields['role'] != Role.parent.name) return _deny('The first person of an invited family is a parent');
@@ -594,19 +821,6 @@ class _GroupCheck {
         }
         if (!parentHere) return _deny(_ownDeviceOnly);
         return null;
-      }
-      // "That wasn't them": the inviting family takes away the recovery words of the parent its
-      // invitation let in, so whoever used the invitation can't come back with words of theirs;
-      // only until that family says it is in.
-      final recovery = c.fields['recovery'];
-      final made = homeOfMember(store, existing!.createdBy);
-      if (only({'recovery'}) &&
-          recovery is Map &&
-          recovery['key'] == null &&
-          made == actorHome &&
-          h.invitedBy == actorHome &&
-          inviteWindowOpen(store, homeId)) {
-        return parentHere ? null : _deny(_ownDeviceOnly);
       }
       return _deny('Only ${h.name}\'s own parents can change their people');
     }
@@ -645,38 +859,21 @@ class _GroupCheck {
       return _schema('A device belongs to its owner\'s family');
     }
     if (c.rid == c.device) return null;
-    // "That wasn't them": the family that invited this one removes the device its invitation
-    // let in, and nothing more; only until that family says it is in. How far back it reaches:
-    // the device's own changes, all made before that ([WindowClosure] voids one dated earlier
-    // without the invited family having heard of it).
-    final proof = inviteOf(target);
-    final keyEntry = proof == null ? null : store.at(Space.family, RecordType.inviteKey, proof.invite);
-    if (keyEntry != null && actorHome != after && after is String && inviteWindowOpen(store, after)) {
-      final key = InviteKeyRecord(keyEntry.rec);
-      final removal = c.fields['revoked'] == true && only({'revoked', 'revokedAfter'});
-      if (removal && isWindowKey(store, key) && homeOfMember(store, key.by) == actorHome) {
-        return parentHere ? null : _deny(_ownDeviceOnly);
-      }
-    }
+    // No other family touches a device, the one an invitation let in included: "That wasn't
+    // them" takes the invitation back, or ends that family's place (GroupStarts).
     if (actorHome != after) return _deny('Only ${homeName(after)}\'s own parents can let its devices in or change them');
     if (c.fields['approved'] == true && after == null) return _schema('Choose which family in the group this device belongs to');
     return null;
   }
 
   /// G2 and G6 for an invite key in a group: it names its home, and only that home's parents
-  /// make one, except the window keys the inviting family makes.
+  /// make or withdraw one, except an invited home's one key, which the family that invited it
+  /// makes with the invitation.
   Rejection? _inviteKey() {
     final e = existing;
     if (e != null) {
-      // Taking it away: that family's parents, or the family that made it (its invitation) until
-      // that family says it is in.
-      final keyHome = e.fields['home'];
-      final makerHome = homeOfMember(store, e.fields['by']);
-      if (actorHome == keyHome) return null;
-      if (actorHome != makerHome || keyHome is! String || !inviteWindowOpen(store, keyHome)) {
-        return _deny('Only ${homeName(keyHome)}\'s own parents, or the family that invited it, can take that invite back');
-      }
-      return null;
+      if (actorHome == e.fields['home']) return null;
+      return _deny('Only ${homeName(e.fields['home'])}\'s own parents can take that invite back');
     }
     final homeId = c.fields['home'];
     if (homeId is! String) return _schema('An invite in a group names the family it lets people into');
@@ -688,22 +885,18 @@ class _GroupCheck {
       if (member is String && homeOfMember(store, member) != homeId) return _schema('That person is in another family');
       return null;
     }
-    // The window: one-use keys for the invited family's first parent and its hub, until that
-    // parent's phone is in.
-    if (!inviteWindowOpen(store, homeId) || h.invitedBy != actorHome || firstParentIn(store, homeId)) {
+    // The window: the invitation's one key, for the invited family's first parent's phone.
+    if (!inviteWindowOpen(store, homeId) || h.invitedBy != actorHome) {
       return _deny('Only ${h.name}\'s own parents can invite their people');
     }
-    if ((c.fields['uses'] ?? 1) != 1) return _deny('An invitation to another family lets in one device per key');
-    if (member != null) {
-      final m = liveMember(member);
-      if (m == null || m.home != homeId || !m.isParent) {
-        return _deny('An invitation lets in the invited family\'s first parent and its hub only');
-      }
-      return null;
-    }
+    final m = liveMember(member);
     final modes = c.fields['modes'];
-    if (modes is! List || modes.length != 1 || modes.single != DeviceMode.hub.name) {
-      return _deny('An invitation lets in the invited family\'s first parent and its hub only');
+    if (c.fields['key'] != h.rec.strOrNull('key') ||
+        m == null ||
+        m.home != homeId ||
+        !m.isParent ||
+        (modes != null && (modes is! List || modes.length != 1 || modes.single != DeviceMode.personal.name))) {
+      return _deny('An invitation lets in its family\'s first parent\'s phone only, with its own key');
     }
     return null;
   }
@@ -923,12 +1116,12 @@ class GroupAdmission {
 }
 
 /// An invitation for another family to join a group ([Den.inviteFamily]): its [Home], its first
-/// parent, and the one-use keys that let that parent's phone and the family's hub in, which the
-/// invitation sent to that parent carries.
+/// parent, and the one key that lets that parent's phone in (the home's id is bound to it,
+/// [homeIdFor]), which the invitation sent to that parent carries. The family's hub joins later,
+/// with a key of the family's own, once its parent's phone says the family is in.
 class GroupInvitation {
   const GroupInvitation({
     required this.parent,
-    required this.hub,
     required this.homeName,
     required this.parentName,
     required this.hubs,
@@ -937,16 +1130,13 @@ class GroupInvitation {
   /// For the invited family's first parent's own phone.
   final GroupAdmission parent;
 
-  /// For the invited family's hub.
-  final GroupAdmission hub;
-
   /// The invited family, as the group names it.
   final String homeName;
 
   /// Its first parent.
   final String parentName;
 
-  /// Where the inviting family's hub syncs the group: the invited family's hub dials it first.
+  /// Where the inviting family's hub syncs the group: the invited phone dials it first.
   final List<String> hubs;
 
   String get group => parent.group;

@@ -55,14 +55,15 @@ const Map<String, String> notExposed = {
   'requestInviteJoin': 'A new device lets itself in as the invited person\'s own with the invite\'s key; nothing '
       'acting for the family holds that key',
   'disownInvite': '$_trust: "That wasn\'t Dad" removes a device an invite let in and takes the invite\'s key away, '
-      'from a parent\'s own phone',
+      'from a parent\'s own phone (in a group, "That wasn\'t them" takes an invitation back, or ends that family\'s '
+      'place, from the phone that sent it)',
   // Groups of families (den_core's groups.dart): which families share a group, who of each is in
   // it, and which devices get in are each family's trust decisions, made on a parent's own phone
   // with an engine of the group's own. Never an assistant's or MCP client's, whoever it acts for:
   // a connection writes into a group only as its own family's person (G4).
   'createGroup': 'A group is started on a parent\'s own phone, on an engine of its own with keys of its own',
-  'inviteFamily': '$_trust: an invitation carries keys that let another family\'s parent and hub in, so only a '
-      'parent\'s own phone makes one, and its secrets go only into the invitation they send',
+  'inviteFamily': '$_trust: an invitation carries the key that lets another family\'s first parent in, so only a '
+      'parent\'s own phone makes one, and its secret goes only into the invitation they send',
   'cancelInvitation': '$_trust: taking back an invitation to another family is the inviting family\'s call, made '
       'on a parent\'s own phone',
   'joinGroup': 'A new engine lets itself into a group with an admission sealed to its device, or an invitation\'s '

@@ -240,7 +240,7 @@ class RetiredRecoveryKeys {
   }
 
   /// As a snapshot keeps them: `[[scope, key, clock, [kept...]], ...]`, then each closed window
-  /// as `["window", home, clock, [kept...], {device: counter}]`.
+  /// as `["window", change, home, clock, author, [heard...]]`.
   List<Object?> toJson() => [
         for (final r in _retired) [r.scope, r.key, r.at.toString(), r.kept.toList()..sort()],
         for (final w in closures) w.toJson(),
@@ -251,7 +251,7 @@ class RetiredRecoveryKeys {
     final out = RetiredRecoveryKeys();
     for (final row in json) {
       final r = row! as List;
-      if (r.length == 5 && r[0] == 'window') {
+      if (r.length == 6 && r[0] == 'window') {
         out.closures.add(WindowClosure.fromJson(r));
         continue;
       }

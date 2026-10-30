@@ -122,8 +122,7 @@ Future<Families> kotvasGroup(TestClock clock) async {
   return f;
 }
 
-/// Alex invites the Smiths: their home, Dana as its first parent, and keys for her phone and
-/// the Smith hub.
+/// Alex invites the Smiths: their home, Dana as its first parent, and the key for her phone.
 Future<void> inviteSmiths(Families f) async {
   f.clock.advance(const Duration(seconds: 1));
   f.smith = await foundFamily(f.clock, name: 'Dana');
@@ -137,16 +136,19 @@ Future<void> inviteSmiths(Families f) async {
   await exchange(f.alex, f.kHub);
 }
 
-/// Dana's phone lets itself in with the invitation, the Smith hub with its key, and Dana brings
-/// the rest of the Smith family in.
+/// Dana's phone lets itself in with the invitation and says the Smiths are in (writing how they
+/// began into the Smiths' own log); then Dana brings the rest of the Smith family in, the hub
+/// first, with keys of the family's own.
 Future<void> smithsJoin(Families f) async {
   f.clock.advance(const Duration(seconds: 1));
   f.dana = await admit(f, f.invitation.parent, f.kHub, name: "Dana's phone");
-  f.sHub = await admit(f, f.invitation.hub, f.kHub, name: 'Smith hub', kind: DeviceKind.hub);
-  await exchange(f.dana, f.sHub);
-  await f.dana.updateHome(active: true, ownFamily: f.smith.familyId, hubs: const ['https://den.smith.example/ws']);
-  await f.dana.addToGroup(family: f.smith, people: [f.sDana, f.sMia], hubs: false);
+  // (A moment later: the window lasts from the invitation to Dana's "we're in".)
+  f.clock.advance(const Duration(seconds: 1));
+  await f.dana.updateHome(active: true, ownFamily: f.smith.familyId, hubs: const ['https://den.smith.example/ws'], family: f.smith);
+  await f.dana.addToGroup(family: f.smith, people: [f.sDana, f.sMia]);
   f.gMia = f.smith.groupLink(f.group)!.members[f.sMia]!;
+  await exchange(f.dana, f.kHub);
+  f.sHub = await admitFrom(f, f.sHubF, f.smith, f.kHub, name: 'Smith hub');
   await exchange(f.dana, f.sHub);
   f.mia = await admitFrom(f, f.miaF, f.smith, f.sHub, name: "Mia's tablet");
   await settle(f);

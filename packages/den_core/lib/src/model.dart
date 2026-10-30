@@ -590,7 +590,15 @@ class Home extends RecordView {
   /// The home whose parent invited this one; null for the founder's.
   String? get invitedBy => rec.strOrNull('invitedBy');
 
+  /// An invited family's one invitation key (its public half), which the home's id is bound to.
+  String? get key => rec.strOrNull('key');
+
   bool get left => status == HomeStatus.left;
+
+  /// Why the family's place ended before it began for good, when it did (it then reads as
+  /// left): `contested` (two phones let in with its invitation each said it was in) or
+  /// `disowned` (the family that invited it said "That wasn't them"). See groups.dart, HomeEnd.
+  String? get ended => rec.strOrNull('ended');
 }
 
 enum GroupLinkStatus { active, left }
@@ -618,6 +626,17 @@ class GroupLink extends RecordView {
 
   /// Whether the family's shared screens show the group.
   bool get displays => rec.flag('displays', true);
+
+  /// The family's home in the group, as its first parent's phone wrote when it said the family
+  /// was in; null before that (and for the family that started the group).
+  String? get home => rec.strOrNull('home');
+
+  /// That phone's device id in the group.
+  String? get device => rec.strOrNull('device');
+
+  /// The change in the group's log that said the family was in: what the group's closure for its
+  /// home must be (Den.groupAlarm).
+  String? get closure => rec.strOrNull('closure');
   GroupLinkStatus get status => _enum(GroupLinkStatus.values, rec.fields['status']) ?? GroupLinkStatus.active;
 }
 

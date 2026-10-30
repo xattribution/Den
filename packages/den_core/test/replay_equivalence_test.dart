@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:den_core/den_core.dart';
-import 'package:den_core/src/groups.dart' show closesWindow;
+import 'package:den_core/src/groups.dart' show GroupStarts, closesWindow, homeAt;
 import 'package:den_core/src/materializer.dart';
 import 'package:den_core/src/recovery.dart';
 import 'package:den_core/src/snapshot.dart';
@@ -611,17 +611,15 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
   await settle(f);
   await rounds(6, [f.leo, f.mia]);
 
-  // Alex invites the Lees with a second key for Jun made in the window; Jun joins with the
-  // first, and someone else with the second, clocked before or after Jun.
+  // Alex invites the Lees; Jun joins with the invitation's key, and someone else with the same
+  // key, clocked before or after Jun.
   final lees = await f.alex.inviteFamily(familyName: 'Lees', parentName: 'Jun');
-  final spare = await InviteKey.generate();
-  await f.alex.createInviteKey(member: lees.member, publicKey: spare.publicKey, expires: clock.now + 3600000, home: lees.home);
-  final spareAt = clock.now;
+  final keyAt = clock.now;
   await exchange(f.alex, f.kHub);
   final jun = await admit(f, lees.parent, f.kHub, name: "Jun's phone");
   final other = await DeviceKeys.generate();
-  final at = random.nextBool() ? spareAt + 100 + random.nextInt(800) : clock.now + 500 + random.nextInt(1500);
-  final proof = await spare.prove(family: f.group, member: lees.member, devicePubkey: other.pubkey, expires: at + 600000);
+  final at = random.nextBool() ? keyAt + 100 + random.nextInt(800) : clock.now + 500 + random.nextInt(1500);
+  final proof = await (await lees.parent.key()).prove(family: f.group, member: lees.member, devicePubkey: other.pubkey, expires: at + 600000);
   forged.add(await forge(other, counter: 1, millis: at, type: RecordType.device, rid: await other.deviceId(), fields: {
     'name': 'Not Jun',
     'kind': 'phone',
@@ -635,7 +633,7 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
   await jun.addList(title: 'Lee snacks');
   await exchange(jun, f.kHub);
   await settle(f);
-  // "That wasn't them": Alex removes Jun's phone and takes the Lees' invitation keys away.
+  // "That wasn't them" before the Lees said they were in: Alex takes the invitation back.
   clock.advance(const Duration(minutes: 2));
   await f.alex.disownInvite(jun.deviceId);
   await settle(f);
@@ -645,8 +643,8 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
   await rounds(8, phones);
   await settle(f);
 
-  // The Kotvases turn on the Smiths, who said they were in long ago (the review's R1-R6b and
-  // R8-R10): each signed past the engines' checks, now or dated inside the Smiths' window, and
+  // The Kotvases turn on the Smiths, who said they were in long ago (the reviews' R1-R10 and
+  // V1-V3): each signed past the engines' checks, now or dated inside the Smiths' window, and
   // refused wherever it lands, since the Smiths' "we're in" shut that window.
   final attacks = groupAttacks[seed] = [];
   Change attack(Change c) {
@@ -658,20 +656,22 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
   final invitedAt = f.kHub.home(f.smithHome)!.rec.created.millis;
   final danaJoin = ownJoin(f.dana), hubJoin = ownJoin(f.sHub);
   final inWindow = danaJoin.hlc.millis + 1 + random.nextInt(200);
-  final smithsIn = f.dana.changesSince(const {}).firstWhere((c) => c.type == RecordType.home && c.fields.containsKey('closed'));
+  final smithsIn = f.dana.changesSince(const {}).firstWhere((c) => c.type == RecordType.home && c.fields.containsKey('heard'));
   groupKept[seed] = [danaJoin.id, hubJoin.id, smithsIn.id];
   Future<Change> alexForges(String type, String rid, Map<String, Object?> fields, {int? millis}) =>
       forge(f.alex.keys, counter: forgedCounter++, millis: millis ?? clock.now, type: type, rid: rid, fields: fields, actor: f.gAlex);
-  Future<Change> joinWith(GroupAdmission admission, int millis, {DeviceKeys? keys}) async {
+  Future<Change> joinWith(GroupAdmission admission, int millis, {DeviceKeys? keys, DeviceMode? mode}) async {
     final device = keys ?? await DeviceKeys.generate();
-    final proof = await (await admission.key())
-        .prove(family: f.group, member: admission.member, mode: admission.mode, devicePubkey: device.pubkey, expires: millis + 600000);
+    final m = mode ?? admission.mode;
+    final member = mode == null ? admission.member : null;
+    final proof =
+        await (await admission.key()).prove(family: f.group, member: member, mode: m, devicePubkey: device.pubkey, expires: millis + 600000);
     return forge(device, counter: 1, millis: millis, type: RecordType.device, rid: await device.deviceId(), fields: {
       'name': 'Evil',
-      'kind': admission.mode == DeviceMode.hub ? 'hub' : 'phone',
+      'kind': m == DeviceMode.hub ? 'hub' : 'phone',
       'pubkey': device.pubkey,
-      'member': admission.member,
-      'mode': admission.mode.name,
+      'member': member,
+      'mode': m.name,
       'approved': true,
       'home': admission.home,
       'invite': proof.toJson(),
@@ -680,9 +680,8 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
 
   clock.advance(const Duration(minutes: 1));
   for (final millis in [clock.now, inWindow]) {
-    // R1: the window keys taken back; R2: "That wasn't them"; R3: Dana's words turned off.
+    // R1: the invitation's key taken back; R2: Dana's phone removed; R3: her words turned off.
     forged.add(attack(await alexForges(RecordType.inviteKey, f.invitation.parent.invite, {'key': null, 'kept': <String>[]}, millis: millis)));
-    forged.add(attack(await alexForges(RecordType.inviteKey, f.invitation.hub.invite, {'key': null, 'kept': <String>[]}, millis: millis + 1)));
     forged.add(attack(await alexForges(RecordType.device, f.dana.deviceId, {'revoked': true, 'revokedAfter': danaJoin.counter}, millis: millis + 2)));
     forged.add(attack(await alexForges(RecordType.member, f.gDana, {
       'recovery': {'key': null, 'kept': <String>[]},
@@ -690,11 +689,11 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
   }
   // R4: the invitation taken back, dated before Dana joined.
   forged.add(attack(await alexForges(RecordType.home, f.smithHome, {'status': 'left'}, millis: invitedAt + 500)));
-  // R5: devices let in with the invitation's own keys, dated before Dana's and the hub's, and
-  // with a window key made afresh, dated in the window too; R10: one now.
+  // R5 and V1: devices let in with the invitation's own key, dated before Dana's phone, as a
+  // phone or as a hub, and with a key made afresh, dated in the window too; R10: a hub now.
   forged.add(attack(await joinWith(f.invitation.parent, danaJoin.hlc.millis - 100)));
-  forged.add(attack(await joinWith(f.invitation.hub, hubJoin.hlc.millis - 100)));
-  forged.add(attack(await joinWith(f.invitation.hub, clock.now)));
+  forged.add(attack(await joinWith(f.invitation.parent, danaJoin.hlc.millis - 50, mode: DeviceMode.hub)));
+  forged.add(attack(await joinWith(f.invitation.parent, clock.now, mode: DeviceMode.hub)));
   final fresh = await InviteKey.generate();
   forged.add(attack(await alexForges(RecordType.inviteKey, fresh.id, {
     'member': f.gDana,
@@ -725,13 +724,14 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
   forged.add(attack(await forge(laptop, counter: 2, millis: inWindow + 10, type: RecordType.home, rid: f.smithHome, actor: f.gAlex,
       fields: {'status': 'left'})));
   // R6b: "Cancel invitation" on Priya's phone, which hadn't heard the Smiths were in.
-  forged.add(attack(await forge(f.priya.keys, counter: forgedCounter++, millis: clock.now + 100, type: RecordType.inviteKey,
-      rid: f.invitation.parent.invite, actor: f.gPriya, fields: {'key': null, 'kept': <String>[]})));
   forged.add(attack(await forge(f.priya.keys, counter: forgedCounter++, millis: clock.now + 200, type: RecordType.home, rid: f.smithHome,
       actor: f.gPriya, fields: {'status': 'left'})));
   // R8: someone's own space in a group.
   forged.add(attack(await forge(f.priya.keys, counter: forgedCounter++, millis: clock.now + 300, type: RecordType.list, rid: newId(),
       space: Space.member(f.gPriya), actor: f.gPriya, fields: {'title': 'Mine'})));
+  // "That wasn't them" more than a day after the Smiths said they were in.
+  forged.add(attack(await alexForges(RecordType.home, f.smithHome, {'disowned': true},
+      millis: smithsIn.hlc.millis + disownWindow.inMilliseconds + random.nextInt(3600000))));
 
   // R7: Dana drives the way to the final; once the Smiths leave, Alex may say the whole list
   // again with her on it, but never put her on the other leg.
@@ -758,8 +758,8 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
 
   // The Parks: Kim's phone lets itself in and says they're in; the Kotvases write another
   // beginning for them with the invitation's key, a device of their own saying the Parks are
-  // in just before Kim did. The known limit (ARCHITECTURE.md, "Groups of families"): the first
-  // "we're in" wins, in every order, and a window once closed stays closed.
+  // in just before Kim did. Two "we're in"s: no beginning wins, and the Parks' place ends from
+  // the first on, in every order (GroupStarts).
   clock.advance(const Duration(minutes: 1));
   final parks = await f.alex.inviteFamily(familyName: 'Parks', parentName: 'Kim');
   await exchange(f.alex, f.kHub);
@@ -772,33 +772,43 @@ Future<(TrustRoot, List<Change>, List<Change>)> buildGroupPool(int seed) async {
   await exchange(kim, f.kHub);
   final evil = await DeviceKeys.generate();
   forged.add(await joinWith(parks.parent, ownJoin(kim).hlc.millis + 1, keys: evil));
-  forged.add(await forge(evil, counter: 2, millis: kimIn.hlc.millis - 1, type: RecordType.home, rid: parks.home, actor: parks.member, fields: {
-    'status': 'active',
-    'closed': {for (final d in f.kotvasDevices) d.deviceId: 1000000},
-    'kept': [await evil.deviceId()],
-  }));
-  groupKept[seed]!.add(forged.last.id);
+  forged.add(attack(await forge(evil, counter: 2, millis: kimIn.hlc.millis - 1, type: RecordType.home, rid: parks.home, actor: parks.member,
+      fields: {'status': 'active', 'heard': kimIn.fields['heard']})));
   attacks.add(kimIn.id);
+  groupKept[seed]!.add(ownJoin(kim).id);
+  // The Ohs: Ann's phone lets itself in and says they're in; within the day, the phone that sent
+  // the invitation says that wasn't them, and the Ohs' place ends.
+  clock.advance(const Duration(minutes: 1));
+  final ohs = await f.alex.inviteFamily(familyName: 'Ohs', parentName: 'Ann');
+  await exchange(f.alex, f.kHub);
+  final ann = await admit(f, ohs.parent, f.kHub, name: "Ann's phone");
+  clock.advance(const Duration(seconds: 2));
+  await ann.updateHome(active: true);
+  attacks.add(ann.changesSince(const {}).lastWhere((c) => c.type == RecordType.home).id);
+  await exchange(ann, f.kHub);
+  await exchange(f.alex, f.kHub);
+  clock.advance(Duration(hours: 1 + random.nextInt(20)));
+  await f.alex.disownInvite(ann.deviceId);
+  groupKept[seed]!.add(f.alex.changesSince(const {}).lastWhere((c) => c.type == RecordType.home && c.rid == ohs.home).id);
   await rounds(6, [f.alex, f.priya, f.leo]);
   await settle(f, smiths: false);
 
   final pool = {
-    for (final x in [...f.kotvasDevices, ...f.smithDevices, jun, kim])
+    for (final x in [...f.kotvasDevices, ...f.smithDevices, jun, kim, ann])
       for (final ch in x.changesSince(const {})) ch.id: ch,
     for (final ch in forged) ch.id: ch,
   }.values.toList();
   return (TrustRoot(familyId: f.group, founderPubkey: f.alex.founderPubkey), pool, before);
 }
 
-/// The group pool's attacks, by seed, and the Parks' real "we're in" (the known limit): each
-/// counts for nothing.
+/// The group pool's attacks, by seed, and the "we're in"s of the families whose place ended (the
+/// Parks', contested, and the Ohs', disowned): each counts for nothing.
 final groupAttacks = <int, List<String>>{};
 
 /// What the group pool's attacks leave counting, by seed: the Smiths' beginning, Alex saying a
-/// ride list again with a driver on the leg she held, and the Kotvases' forged "we're in" for
-/// the Parks (the known limit).
+/// ride list again with a driver on the leg she held, what came before the Parks' first "we're
+/// in", and the Kotvases' "That wasn't them" for the Ohs.
 final groupKept = <int, List<String>>{};
-
 /// Everything a materializer holds, as text: the log's order, every record as stored (and the
 /// order the store keeps them in), what didn't count and why, how each valid change applied,
 /// and the revocation cutoffs.
@@ -822,6 +832,8 @@ String stateOf(Materializer m) => canonicalJson({
         for (final e in m.validator.cutoffs.entries) e.key: [for (final k in e.value) [k.after, '${k.at}']],
       },
       'retired': m.validator.retiredRecoveryKeys.toJson(),
+      // In a group: the homes whose place ended, read from the log alone (groups.dart).
+      'ended': {for (final e in m.store.endedHomes.entries) e.key: [e.value.at.toString(), e.value.why, e.value.by]},
       // Who drives, as people see it: from per-leg drivers, or a whole list an older version wrote.
       'rides': [
         for (final e in m.store.liveOfType(RecordType.event)) [e.space, e.id, ridesText(Event(e.rec).rides)],
@@ -878,7 +890,6 @@ void main() {
           expect(reference.store.liveOfType(RecordType.event).any((e) => e.fields['title'] == 'Just after'), isTrue);
           expect(reference.validator.retiredRecoveryKeys.isEmpty, isFalse, reason: 'invitation keys taken away');
           final homes = [for (final e in reference.store.ofType(RecordType.home)) Home(e.rec)];
-          expect(homes.where((h) => h.left), hasLength(1), reason: 'the Smiths left');
           // The review's attacks (R1-R10) count for nothing; what they aimed at stays.
           for (final id in groupAttacks[seed]!) {
             expect(reference.rejected.containsKey(id), isTrue, reason: 'attack $id');
@@ -888,8 +899,14 @@ void main() {
           }
           expect(reasons.where((r) => r.contains('said it was in')), isNotEmpty, reason: 'something dated in a window that was shut');
           expect(reasons.where((r) => r.contains('no one\'s own space')), isNotEmpty);
-          // Two windows shut: the Smiths', and the Parks' (by the forged "we're in").
-          expect(reference.validator.retiredRecoveryKeys.closures.map((w) => w.home).toSet(), hasLength(2));
+          // One window shut by its family's own "we're in": the Smiths'. The Parks' two "we're
+          // in"s ended their place; the Kotvases disowned the Ohs within the day.
+          expect(reference.validator.retiredRecoveryKeys.closures.map((w) => w.home).toSet(), hasLength(1));
+          final ended = reference.starts.ended.values;
+          expect(ended.where((e) => e.contested), hasLength(1));
+          expect(ended.where((e) => !e.contested && e.disowned != null), hasLength(1));
+          expect(homes.where((h) => h.left), hasLength(2), reason: 'the Smiths and the Lees left (the ended ones read as left in views)');
+          expect([for (final e in reference.store.ofType(RecordType.home)) homeAt(reference.store, e.id)!].where((h) => h.left), hasLength(4));
           return;
         }
         if (revocations) {
@@ -936,7 +953,12 @@ void main() {
 
       test('with no revocation, replaced recovery key or closed window to decide, a late change only ever rewinds', () {
         final random = Random(seed * 17);
-        final plain = [for (final c in beforeRevocation) if (!setsRecoveryKey(c) && !closesWindow(c)) c];
+        // (Nor how an invited family began in a group: its invitation, the phone it let in.)
+        final starts = GroupStarts.of([...beforeRevocation]..sort(changeOrder));
+        final plain = [
+          for (final c in beforeRevocation)
+            if (!setsRecoveryKey(c) && !closesWindow(c) && !GroupStarts.isInvitation(c) && starts.windowJoinInto(c) == null) c,
+        ];
         final reference = Materializer(() => root)..add(plain);
         reference.replay();
         final want = stateOf(reference);

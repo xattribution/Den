@@ -374,6 +374,29 @@ void main() {
       expect(again.invalid.values.single, contains('hasn\'t let the hub help'));
     });
 
+    test('on the phone itself: the words go off first, then the phone, and both count', () async {
+      // The parent got back in with their words, then thinks better of the phone itself ("that
+      // wasn't me after all"): its removal names the change just before it in the same commit
+      // (Den._Draft.ownLast), so the words it turned off first stay off.
+      final (phone, result) = await recover(words);
+      expect(result.invalid, isEmpty);
+      await sync(hub, phone);
+      clock.advance(const Duration(minutes: 1));
+      final done = await phone.disownRecovery(phone.deviceId);
+      expect(done.retired, isTrue);
+      final mine = [for (final c in phone.changesSince(const {})) if (c.device == phone.deviceId) c];
+      final wordsOff = mine.lastWhere((c) => c.type == RecordType.member && c.rid == dana);
+      final removal = mine.last;
+      expect(removal.type, RecordType.device);
+      expect(removal.rid, phone.deviceId);
+      expect(removal.fields['revokedAfter'], wordsOff.counter);
+      expect((await hub.ingest(phone.changesSince(hub.versionVector))).invalid, isEmpty);
+      expect(recoveryKeyOf(hub.member(dana)!), isNull, reason: 'the words are off');
+      expect(hub.device(phone.deviceId)!.revoked, isTrue);
+      final (_, again) = await recover(words);
+      expect(again.invalid.values.single, contains('no recovery words'));
+    });
+
     test('leaves words alone that were already replaced', () async {
       final (intruder, _) = await recover(words);
       await exchange(hub, parent);

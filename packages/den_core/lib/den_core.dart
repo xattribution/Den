@@ -5,7 +5,18 @@ library;
 export 'src/change.dart';
 export 'src/den.dart';
 export 'src/family_controls.dart';
-export 'src/groups.dart' show GroupAdmission, GroupInvitation, groupRefusedTypes;
+export 'src/groups.dart'
+    show
+        GroupAdmission,
+        GroupAlarm,
+        GroupAlarmKind,
+        GroupInvitation,
+        HomeEnd,
+        WindowAdmission,
+        WindowClosure,
+        disownWindow,
+        groupRefusedTypes,
+        homeIdFor;
 export 'src/hlc.dart';
 export 'src/ids.dart' show newId, base32, randomBytes;
 export 'src/invite_keys.dart'

@@ -140,7 +140,7 @@ void main() {
   });
 
   group('another family joins', () {
-    test('an invitation: the family, its first parent, and one-use keys for their phone and hub', () async {
+    test('an invitation: the family, bound to its one key, its first parent, and the key for their phone', () async {
       final f = await kotvasGroup(clock);
       await inviteSmiths(f);
       final smiths = f.alex.home(f.smithHome)!;
@@ -149,37 +149,46 @@ void main() {
       expect(f.alex.member(f.gDana)!.home, f.smithHome);
       expect(f.alex.invitationOpen(f.smithHome), isTrue);
       final keys = [for (final k in f.alex.inviteKeys) if (k.rec.strOrNull('home') == f.smithHome) k];
-      expect(keys, hasLength(2));
-      expect(keys.every((k) => k.uses == 1), isTrue);
-      expect({for (final k in keys) k.modes.single}, {DeviceMode.personal, DeviceMode.hub});
+      expect(keys.single.modes, {DeviceMode.personal});
+      expect(keys.single.member, f.gDana);
+      expect(smiths.key, keys.single.key);
+      expect(f.smithHome, homeIdFor(smiths.key!, f.alex.deviceId), reason: 'the home\'s id is its invitation\'s');
       expect(f.invitation.parent.member, f.gDana);
-      expect(f.invitation.hub.member, isNull);
       expect(f.invitation.hubs, ['https://den.kotvas.app/ws']);
     });
 
-    test('Dana\'s phone lets itself in at once; then the window closes, and the Smith hub still gets in', () async {
+    test('Dana\'s phone lets itself in at once and says the Smiths are in; their hub comes in with a key of their own', () async {
       final f = await kotvasGroup(clock);
       await inviteSmiths(f);
       f.dana = await admit(f, f.invitation.parent, f.kHub, name: "Dana's phone");
       expect(f.dana.isApproved, isTrue);
       expect(f.dana.owner?.id, f.gDana);
       expect(f.dana.myHome, f.smithHome);
-      // In, but the window stays open until Dana says the Smiths are in: the hub's key still works.
-      expect(f.kHub.invitationOpen(f.smithHome), isTrue);
-      f.sHub = await admit(f, f.invitation.hub, f.kHub, name: 'Smith hub', kind: DeviceKind.hub);
-      expect(f.sHub.isApproved, isTrue);
-      expect(f.sHub.thisDevice!.home, f.smithHome);
-      // Dana says they're in: that shuts the window, keeping her phone and the hub it let in.
-      await exchange(f.dana, f.kHub);
-      await f.dana.updateHome(active: true);
+      expect(f.kHub.invitationOpen(f.smithHome), isTrue, reason: 'until Dana says they\'re in');
+      // Dana says they're in: that shuts the window, naming what the Kotvases wrote to the Smiths
+      // that her phone heard, and writing how the Smiths began into their own log.
+      await f.dana.updateHome(active: true, family: f.smith);
       final said = f.dana.changesSince(const {}).lastWhere((c) => c.type == RecordType.home);
-      expect(said.fields['kept'], unorderedEquals([f.dana.deviceId, f.sHub.deviceId]));
-      expect((said.fields['closed'] as Map).keys, containsAll([f.alex.deviceId, f.kHub.deviceId]));
+      expect(said.fields['heard'], hasLength(3), reason: 'the invitation: the home, Dana, her key');
+      expect(said.fields.containsKey('kept'), isFalse);
+      final link = f.smith.groupLink(f.group)!;
+      expect(link.home, f.smithHome);
+      expect(link.device, f.dana.deviceId);
+      expect(link.closure, said.id);
       await exchange(f.dana, f.kHub);
       expect(f.kHub.invitationOpen(f.smithHome), isFalse);
       expect(f.kHub.home(f.smithHome)!.status, HomeStatus.active);
-      expect(f.kHub.deviceCounts(f.sHub.deviceId), isTrue);
+      expect(f.kHub.closureFor(f.smithHome)!.id, said.id);
+      expect(f.kHub.closureFor(f.smithHome)!.author, f.dana.deviceId);
       expect(f.kHub.deviceCounts(f.dana.deviceId), isTrue);
+      expect(f.smith.groupAlarm(link, f.kHub), isNull);
+      // The Smith hub, with a key Dana's phone makes and seals to it in the Smiths' own log.
+      await f.dana.addToGroup(family: f.smith, people: [f.sDana]);
+      await exchange(f.dana, f.kHub);
+      f.sHub = await admitFrom(f, f.sHubF, f.smith, f.kHub, name: 'Smith hub');
+      expect(f.sHub.isApproved, isTrue);
+      expect(f.sHub.thisDevice!.home, f.smithHome);
+      expect(f.kHub.windowAdmissions(f.smithHome).map((a) => a.device), [f.dana.deviceId], reason: 'the hub didn\'t come through the window');
       // History tells the inviting family who joined, and how.
       await exchange(f.alex, f.kHub);
       final joined = f.alex.history(type: RecordType.device).firstWhere((h) => h.rid == f.dana.deviceId);
@@ -198,8 +207,15 @@ void main() {
       expect(smiths.hubs, ['https://den.smith.example/ws']);
       expect(f.alex.membersOf(f.smithHome).map((m) => m.name), unorderedEquals(['Dana', 'Mia']));
       expect(f.mia.owner?.id, f.gMia);
-      expect(f.smith.groupLink(f.group)!.members, {f.sDana: f.gDana, f.sMia: f.gMia});
+      final link = f.smith.groupLink(f.group)!;
+      expect(link.members, {f.sDana: f.gDana, f.sMia: f.gMia});
+      expect(link.device, f.dana.deviceId, reason: 'adding people keeps how the family began');
       expect(f.alex.history(type: RecordType.home).map((h) => h.verb), containsAll(['added', 'invited', 'joined']));
+      // Every Smith device, and its hub, finds nothing wrong.
+      for (final d in [f.smith, f.miaF, f.sHubF]) {
+        await sync(f.smith, d);
+        expect(d.groupAlarm(d.groupLink(f.group)!, f.sHub), isNull, reason: d.thisDevice?.name);
+      }
     });
 
     test('a third family can be invited by a parent of either family', () async {
@@ -368,44 +384,71 @@ void main() {
   });
 
   group('"That wasn\'t them"', () {
-    test('the inviting family removes the phone its invitation let in, and the key; the invitation opens again', () async {
+    test('before the family says it is in, the inviting family takes the invitation back; the family is invited again as a new home', () async {
       final f = await kotvasGroup(clock);
       await inviteSmiths(f);
       final impostor = await admit(f, f.invitation.parent, f.kHub, name: 'Not Dana');
-      final words = await RecoveryKey.generate();
-      await impostor.setRecoveryKey(f.gDana, words.publicKey);
-      await exchange(impostor, f.kHub);
       await exchange(f.alex, f.kHub);
-      // Whoever it was hasn't said the Smiths are in (and once a Smith has, it's theirs alone).
       expect(f.alex.invitationOpen(f.smithHome), isTrue);
       final disowned = await f.alex.disownInvite(impostor.deviceId);
       expect(disowned.member, f.gDana);
-      expect(f.alex.device(impostor.deviceId)!.revoked, isTrue);
-      expect(f.alex.inviteKey(f.invitation.parent.invite)!.key, isNull);
-      expect(f.alex.inviteKey(f.invitation.hub.invite)!.key, isNull, reason: 'the rest of the invitation goes too');
-      expect(recoveryKeyOf(f.alex.member(f.gDana)!), isNull, reason: 'whoever it was can\'t come back with their words');
-      // Nobody of the Smiths is in, so Alex can invite Dana again into the same family.
-      expect(f.alex.invitationOpen(f.smithHome), isTrue);
-      final again = await InviteKey.generate();
-      await f.alex.createInviteKey(member: f.gDana, publicKey: again.publicKey, expires: clock.now + 3600000, home: f.smithHome);
+      expect(f.alex.home(f.smithHome)!.left, isTrue);
+      expect(f.alex.deviceCounts(impostor.deviceId), isFalse, reason: 'nothing of a family that left counts');
       await exchange(f.alex, f.kHub);
-      final dana = await admit(
-        f,
-        GroupAdmission(
-          group: f.group,
-          founder: f.alex.founderPubkey!,
-          name: 'Cousins soccer',
-          home: f.smithHome,
-          member: f.gDana,
-          mode: DeviceMode.personal,
-          invite: again.id,
-          seed: await again.seed(),
-          expires: clock.now + 3600000,
-        ),
-        f.kHub,
-        name: "Dana's phone",
-      );
+      // Whoever it was can't say they're in now.
+      await impostor.ingest(f.kHub.changesSince(impostor.versionVector));
+      await impostor.updateHome(active: true);
+      expect(impostor.home(f.smithHome)!.left, isTrue);
+      expect(impostor.changesSince(const {}).where((c) => c.device == impostor.deviceId && c.type == RecordType.home), isEmpty);
+      // A new invitation, a new home.
+      final again = await f.alex.inviteFamily(familyName: 'Smiths', parentName: 'Dana');
+      expect(again.home, isNot(f.smithHome));
+      await exchange(f.alex, f.kHub);
+      final dana = await admit(f, again.parent, f.kHub, name: "Dana's phone");
       expect(dana.isApproved, isTrue);
+    });
+
+    test('for a day after the family says it is in, the phone that sent the invitation can end its place, and nothing more', () async {
+      final f = await kotvasGroup(clock);
+      await inviteSmiths(f);
+      // Someone who saw the link lets themselves in and says they're the Smiths.
+      final impostor = await admit(f, f.invitation.parent, f.kHub, name: "Dana's phone");
+      await impostor.updateHome(active: true);
+      await exchange(impostor, f.kHub);
+      await exchange(f.alex, f.kHub);
+      expect(f.alex.home(f.smithHome)!.status, HomeStatus.active);
+      // Only the phone that sent the invitation says so.
+      await exchange(f.priya, f.kHub);
+      await expectLater(f.priya.disownInvite(impostor.deviceId), throwsA(isA<PermissionDenied>()));
+      clock.advance(const Duration(hours: 2));
+      await f.alex.disownInvite(impostor.deviceId);
+      await exchange(f.alex, f.kHub);
+      for (final d in [f.alex, f.kHub]) {
+        final h = d.home(f.smithHome)!;
+        expect(h.left, isTrue);
+        expect(h.ended, 'disowned');
+        expect(d.homeEnd(f.smithHome)!.disowned, isNotNull);
+        expect(d.deviceCounts(impostor.deviceId), isFalse);
+        expect(d.closureFor(f.smithHome), isNull);
+      }
+      // What the impostor wrote as the Smiths counts for nothing, from its "we're in" on.
+      final start = clock.now + 86400000;
+      final fake = await forgeAs(impostor, type: RecordType.event, rid: newId(), actor: f.gDana,
+          fields: {'title': 'Cancelled, don\'t come', 'start': start, 'end': start + 3600000});
+      expect(await refusal(f.kHub, fake), contains('left the group'));
+      // The real Smiths are invited again as a new home.
+      final again = await f.alex.inviteFamily(familyName: 'Smiths', parentName: 'Dana');
+      expect(again.home, isNot(f.smithHome));
+    });
+
+    test('a day after, it is the family\'s own: the inviting family can\'t end it, nor touch its devices', () async {
+      final f = await bothFamilies(clock);
+      clock.advance(const Duration(hours: 25));
+      await expectLater(f.alex.disownInvite(f.dana.deviceId), throwsA(isA<PermissionDenied>()));
+      final late = await forgeAs(f.alex, type: RecordType.home, rid: f.smithHome, actor: f.gAlex, fields: {'disowned': true});
+      expect(await refusal(f.kHub, late), contains('within a day'));
+      final remove = await forgeAs(f.alex, type: RecordType.device, rid: f.dana.deviceId, actor: f.gAlex, fields: {'revoked': true, 'revokedAfter': 1});
+      expect(await refusal(f.kHub, remove), contains('Smiths\'s own parents'));
     });
 
     test('a family removes a device its own key let in, the usual way', () async {
@@ -486,16 +529,19 @@ void main() {
       await inviteSmiths(f);
       await f.alex.leaveGroup();
       expect(f.alex.home(f.smithHome)!.status, HomeStatus.left);
-      expect(f.alex.inviteKey(f.invitation.parent.invite)!.key, isNull);
       expect(f.alex.groupEnded, isTrue);
     });
 
-    test('an invitation nobody used yet can be taken back', () async {
+    test('an invitation nobody used yet can be taken back: its key lets nobody in', () async {
       final f = await kotvasGroup(clock);
       await inviteSmiths(f);
       await f.alex.cancelInvitation(f.smithHome);
       expect(f.alex.home(f.smithHome)!.status, HomeStatus.left);
-      expect(f.alex.inviteKey(f.invitation.hub.invite)!.key, isNull);
+      await exchange(f.alex, f.kHub);
+      clock.advance(const Duration(seconds: 1));
+      final late = await openDen(clock);
+      await late.joinGroup(f.invitation.parent, deviceName: "Dana's phone", kind: DeviceKind.phone);
+      expect((await f.kHub.ingest(late.changesSince(const {}))).invalid.values.single, contains('left the group'));
     });
   });
 }
