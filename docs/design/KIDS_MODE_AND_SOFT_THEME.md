@@ -189,7 +189,7 @@ The family app's own navigation (bottom tab bar on phones, 248 pt sidebar on iPa
 
 - Phone (< 700): kid board is 2 columns (`kidColumns`), header, star card, grid, read-to-me bar pinned. Mock: `mocks/kid-chore-board-phone.png`.
 - Tablet (700 to 1100): 3 columns, 24 side margins, read-to-me moves up under the star card; star card and today's events sit side by side at >= 900.
-- Wall (>= 1100, `wallScale` 1.3): one column per kid (2 to 4 kids; at 5+ the columns scroll sideways by page), each with avatar, name, "2 of 4 done", star total, then job rows. Mock: `mocks/kid-chore-board-wall.png`. This is a new `DisplayLayout.chores` next to the existing today/week layouts (`wall_screen.dart:99-104`).
+- Wall (>= 1100, `wallScale` 1.3): one column per kid (2 to 4 kids; at 5+ the columns scroll sideways by page), each with avatar, name, "2 of 4 done", star total, then job rows. Mock: `mocks/kid-chore-board-wall.png`. This is a new `DisplayLayout.chores` next to the existing today/week layouts (`wall_screen.dart:99-104`). As built it is `WallView.chores` in the app (`state/display.dart`): a parent still picks Week or Today for a display, and the Chores tab on the wall switches to it and the display keeps it (`DevicePrefs.wallView`). Adding `chores` to den_core's `DisplayLayout` later lets a parent pick it from another device.
 - Family Soft calendar (phone): title, top view switch, week strip with the selected day in baby blue and person dots, then today's events as solid person-color blocks with navy text and a pictogram; "everyone" events are a solid ink block. Light and dark side by side: `mocks/family-soft-calendar.png`.
 
 ## Accessibility for pre-readers
@@ -216,7 +216,7 @@ The family app's own navigation (bottom tab bar on phones, 248 pt sidebar on iPa
 | `app/lib/features/shared_screens/screens/kid_home.dart:20,180-345` | Use `ChunkyPressable`, disc + pictogram tile, star pips, pinned read-to-me |
 | `app/lib/features/shared_screens/widgets/kid_parts.dart` | Shared `KidDisc`, `StarPips`, `TodoRing` |
 | `app/lib/features/shared_screens/screens/wall_screen.dart:96-140` | Add `DisplayLayout.chores` board; top bar with text tabs |
-| `packages/den_core/lib/src/model.dart:222`, `app/lib/features/shared_screens/state/display.dart:4-10` | Add `chores` to `DisplayLayout` and to `wallLayouts`; the Lists tab on the wall mock is only shown if Lists comes back (it was cut, `display.dart:6-7`) |
+| `packages/den_core/lib/src/model.dart:222`, `app/lib/features/shared_screens/state/display.dart:4-10` | Add `chores` to `DisplayLayout` and to `wallLayouts`; the Lists tab on the wall mock is only shown if Lists comes back (it was cut, `display.dart:6-7`). Built first as the app's `WallView` (week, today, chores) with the choice kept on the wall; den_core is unchanged |
 | `app/lib/features/settings/...` (Appearance) | Show Soft as a fourth theme choice with a preview |
 | `DESIGN.md:54-110, 665-670`, `docs/design/ANTI-SLOP.md:30-36` | Record Soft as a second palette, and kid primaries as the scoped exception |
 | `tool/design/contrast.py` | Already added; exits non-zero on a failing pair, so it can be wired into CI |
