@@ -190,6 +190,9 @@ Migration: first deploy writes one grant per approved device (`by` = `approvedBy
 7. **One PIN per kid, synced to every family device, verified locally.** A parent sets or changes it once; it syncs everywhere through the family log (today's model), and each device checks it locally so it works offline. Any lockout is per-device. A parent reset propagates via sync. Reliability beats secrecy: Den is a scheduling app with no payments. The offline-crack risk is known and accepted (low). Only hardening that keeps offline use is allowed: a local per-device lockout/backoff and a versioned stronger KDF.
 8. **Removing an owner or authorizing account signs out every device they authorized.** Any surviving adult with parent-level perms (adult kids, uncles, etc., up to the server admin) can scan that device's "take over" QR code to re-authorize it under their own account (see decision 9).
 9. **Takeover or remote wipe, no auto-wipe.** When the account that authorized a device or screen is removed, the device does not wipe right away. When it learns of the removal it shows a warning and a "take over" QR code. Any approved adult with parent-level perms can scan it and re-authorize the device under their own account; the device keeps its data and setup, its device key is regenerated, and its perms become that adult's grant (capped by their current perms). The warning stays up, across syncs and restarts, until an approved parent-level adult takes the device over or a parent wipes it remotely from their device list. There is no sync-based or timed auto-wipe. While waiting, the device shows only the warning and the takeover QR; no family data is visible (it stays on the device for a takeover but is hidden). The kid PIN session ends when the warning appears; kid PINs work again after a takeover. Offline edits made after the revoke are dropped, even if the device is taken over. After a remote wipe the device shows the sign-in/QR screen, where anyone can sign in with a different account or a parent-level adult can re-pair it by QR (re-syncs from the server).
+10. **Google or Apple, nothing else.** Every account signs in with Google or Apple. There is no email magic link and no password; a person with neither (a grandparent, say) uses a device or screen a parent set up. (Answers open question 2.)
+11. **Grown-ups on a shared screen tap from their own phone; PINs are for kids only.** An adult acts as themselves on a shared screen by confirming from their own phone, never with a PIN. Phases 3 and 3b build the tap; until then nothing may assume a grown-up PIN. (Answers open question 1.)
+12. **Both providers, Google first.** Phase 1 builds Google and Apple and tests both against fake providers. Apple waits on the owner's Apple Developer Program membership, so it stays off unless configured, and the hosting guide says it is optional until then.
 
 ---
 
@@ -198,15 +201,22 @@ Migration: first deploy writes one grant per approved device (`by` = `approvedBy
 General rules for every phase: run the full existing test suite (`dart test` in each of `packages/den_core`, `packages/den_hub`, `packages/den_net`, `packages/den_actions`, plus app tests) before and after. No phase may break an existing test without an explanation in the PR. Don't touch `deploy/` before phase 5.
 
 ### Phase 1: OIDC sign-in and account binding
-- [ ] New `hub/oidc.dart`: Google and Apple discovery, JWKS fetch/cache via `hub/net_guard.dart`, Apple client-secret JWT (ES256 from `.p8`).
-- [ ] New `hub/accounts.dart`: callbacks, `__Host-` session cookie (Secure, HttpOnly, SameSite=Lax), Origin check on state-changing POSTs, account→member binding.
-- [ ] `core/schema.dart`: add `member.account` (`{provider, sub}` hash).
-- [ ] `hub/hub.dart` (routes near `:251-279`): `/auth/oidc/{google,apple}/{start,callback}`, `/auth/logout`, `/api/v1/me`.
-- [ ] `hub/edge.dart:160-184`: add `Limits.auth` budget for `/auth/*`.
-- [ ] Binding: a signed-in parent's existing device binds their account to their member. No new admission path yet.
+- [x] New `hub/oidc.dart`: Google and Apple discovery, JWKS fetch/cache via `hub/net_guard.dart`, Apple client-secret JWT (ES256 from `.p8`).
+- [x] New `hub/accounts.dart`: callbacks, `__Host-` session cookie (Secure, HttpOnly, SameSite=Lax), Origin check on state-changing POSTs, account→member binding.
+- [x] `core/schema.dart`: add `member.account` (`{provider, sub}` hash).
+- [x] `hub/hub.dart` (routes near `:251-279`): `/auth/oidc/{google,apple}/{start,callback}`, `/auth/logout`, `/api/v1/me`.
+- [x] `hub/edge.dart:160-184`: add `Limits.auth` budget for `/auth/*`.
+- [x] Binding: a signed-in parent's existing device binds their account to their member. No new admission path yet.
 
 Acceptance: an existing parent can sign in with Google and Apple and `/api/v1/me` returns their member. A sign-in with no binding returns the generic reply and creates nothing. Nothing else about devices changes.
 Tests: `iss`/`aud` exact match, nonce, PKCE, expired/forged ID token, `email_verified=false` rejected, Apple relay email rejected, `sub` binding (not email), cookie flags, rate limit on `/auth/*`, identical response body/status/timing class for "no invite" vs "no family".
+
+Phase 1 as built (`feat/auth-oidc`):
+- `member.account` is `{provider, hash}`, hash = HMAC-SHA256 keyed by the family id over `"den/account/v1" 0 provider 0 sub` (`core/account.dart`). Validity: a parent binds only their own, only from a **personal** device (stricter than the other trust fields: a hub-mode device whose owner is using it can't, since the hub checks the sign-in), in a change that writes nothing else; the person or any parent may clear it; a hash another member holds is refused.
+- Binding never lets the hub write: the parent's phone asks for a binding (signed), opens its start link in a browser, reads the result back once (signed), and writes `member.account` itself. A second browser opening the start link spoils it.
+- "No invite" doesn't exist yet in phase 1; the tested pair is "bound to nobody" vs "hub in no family", which share one page and the same work. Phase 3's "no invite" must reuse `HubAccounts.noAccountPage`.
+- Routes are registered only when a provider is configured and `DEN_PUBLIC_URL` is https; `auth` joined the host's reserved paths and the web app's service-worker pass-through.
+- Drift from 7248c3c, code wins: routes are at `hub/hub.dart:249-280` (not `:251-279`); `_device` is `core/validity.dart:480-516` (not `:479-515`), and the dispatch cites one line early (`:143-149`, not `:142-149`). The rest of the citations used by phase 1 held.
 
 ### Phase 2: `grant` record, dual-write
 - [ ] `core/schema.dart`: `RecordType.grant` with the fields in section 2.
@@ -292,7 +302,7 @@ Acceptance: `https://den.kotvas.app` reachable only via tunnel (no open 443); si
 ---
 
 ## 5. Open questions
-1. Keep the PIN on screens for adults ("act as me on the kitchen tablet"), or require a phone tap? (Kids use PINs: decided.)
-2. A grandparent without Google or Apple: email magic links, or require an account?
+1. ~~Keep the PIN on screens for adults ("act as me on the kitchen tablet"), or require a phone tap?~~ Answered: a tap from their own phone; PINs are for kids only (decision 11).
+2. ~~A grandparent without Google or Apple: email magic links, or require an account?~~ Answered: require Google or Apple; no magic links (decision 10).
 3. Tunnel (setup B) or Cloudflare proxy in front of Caddy (setup A)? This plan assumes B.
 4. Dual-run length before deleting the private setup [INF: 2 weeks proposed].

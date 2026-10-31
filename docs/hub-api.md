@@ -61,6 +61,12 @@ feed), and the mDNS advertisement.
   [`GET /api/v1/recovery/key`](#get-apiv1recoverykey) ·
   [`POST /api/v1/recovery/tickets`](#post-apiv1recoverytickets) ·
   [`POST /api/v1/recovery/redeem`](#post-apiv1recoveryredeem)
+- [Signing in with Google and Apple](#signing-in-with-google-and-apple):
+  [`GET /auth/oidc/{provider}/start`](#get-authoidcproviderstart) ·
+  [`GET /auth/oidc/{provider}/callback`](#get-authoidcprovidercallback-and-post-authoidcapplecallback) ·
+  [`POST /auth/logout`](#post-authlogout) ·
+  [`GET /api/v1/me`](#get-apiv1me) ·
+  [Binding an account](#binding-an-account)
 - [Web Push: reminders in browsers](#web-push-reminders-in-browsers)
 - [One host, several families](#one-host-several-families)
 
@@ -197,6 +203,7 @@ The hub counts what each client does, by IP address (an IPv6 address by its /64)
 | Invite keys on `/ws` that name nothing (`pair` kind `key`) | 10 in 10 minutes from one client, 200 from all clients together; then `pair_fail` `rate-limited` |
 | Devices on `/ws` that aren't approved yet (proving an invite or code, or waiting for a parent) | 4 at once, of 64 for everyone |
 | OAuth: registrations, sign-in requests, token requests | 10 an hour, 10 in 15 minutes, 60 in 5 minutes |
+| Signing in with Google or Apple: every `/auth/*` request (starting, coming back, signing out) | 30 in 10 minutes; a sign-in takes two (Google) or three (Apple). Past it, a page with `429` and `Retry-After` |
 | WebSocket connections (`/ws`, `/api/v1/hub/setup/ws`) | 120 new a minute, 64 open at once. A message may be 2 MiB (a session frame, base64 encoded); a frame announcing more closes the socket as its header arrives, before any of it is buffered |
 
 ### Behind a reverse proxy
@@ -318,6 +325,9 @@ From den_core's `Member`; sign-in salts and hashes are never sent.
 | `until` | date? | For a sitter: the last day they have access (set only in the Den app, on a parent's own device) |
 | `grants` | string[] | Subset of `events`, `chores`, `lists`, `points` |
 | `order` | int | Display order; members arrays are sorted by it |
+
+The Google or Apple account bound to someone (`member.account`,
+[below](#signing-in-with-google-and-apple)) isn't part of it.
 
 ### Category
 
@@ -2030,6 +2040,134 @@ clients together; and per client,
 the same budget as invites and browser links, see [Limits per client](#limits-per-client)),
 `503 not_ready`.
 
+## Signing in with Google and Apple
+
+A parent's Google or Apple account signs in to the hub, in a browser, as their member: phase 1
+of [docs/auth/ACCOUNT_FIRST_REVIEW.md](auth/ACCOUNT_FIRST_REVIEW.md). Nothing else about devices
+changes yet; a browser that is signed in can read `GET /api/v1/me` and no more. These routes
+exist only when the owner set up a provider (`DEN_GOOGLE_*`, `DEN_APPLE_*`; docs/hosting.md,
+"Setting up Google and Apple sign-in") **and** `DEN_PUBLIC_URL` is an `https` address, where the
+provider sends people back. Otherwise every path in this section answers `404` like any path the
+hub doesn't know, and nothing else changes. A provider that isn't set up (Apple, say) has no
+routes either.
+
+**Who an account is.** `member.account` is `{"provider": "google" | "apple", "hash": "<64 hex>"}`:
+lowercase hex HMAC-SHA256, keyed by the UTF-8 bytes of the family id, over
+`"den/account/v1" 0x00 provider 0x00 sub`, where `sub` is the provider's own lasting id for the
+account (den_core's `accountHash`). Never the email: a sign-in matches a member by provider and
+`sub` alone, so the same person with a new address is still them, and another account with their
+address is not. Keyed by the family, the same person in two families has two unrelated hashes. The
+record is written only by the parent themselves, on their own personal device (ARCHITECTURE.md,
+"Accounts"): never by the hub, an app or assistant through it, or a shared screen.
+
+**Sessions.** A browser that signs in gets `__Host-den_session`, a random 256-bit value
+(`Secure; HttpOnly; SameSite=Lax; Path=/`, no `Domain`, `Max-Age` 12 hours). The hub keeps only its
+SHA-256, in memory: a restart signs everyone out. Each sign-in makes a new session and ends the one
+the browser had; a session ends at once when its member no longer has the account it signed in
+with (unbound, bound to another account, removed). A cookie sent twice counts as none.
+
+### `GET /auth/oidc/{provider}/start`
+
+`provider` is `google` or `apple`. Answers `302` to the provider's sign-in, with
+`response_type=code`, `scope=openid email`, `state`, `nonce` and PKCE (`code_challenge_method=S256`;
+the verifier never leaves the hub but for the token endpoint), `redirect_uri` the hub's
+`DEN_PUBLIC_URL` + `/auth/oidc/{provider}/callback`, and for Apple `response_mode=form_post`. It
+sets `__Host-den_signin` (`Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`), which ties the
+sign-in to this browser: it finishes only there, within 10 minutes, once.
+
+With `?bind=<ticket>` it finishes a [binding](#binding-an-account) a parent's phone started. A
+ticket works for one browser: opening it a second time answers `400` and spoils the binding, so
+neither browser binds anything. The provider's endpoints come from its discovery document
+(`<issuer>/.well-known/openid-configuration`, whose `issuer` must be exactly the provider's,
+endpoints `https`), fetched through NetGuard and kept a day; a provider that can't be reached
+answers a `503` page with `Retry-After`.
+
+### `GET /auth/oidc/{provider}/callback` and `POST /auth/oidc/apple/callback`
+
+Where the provider sends the browser back. Google redirects with `code` and `state` (and `iss`,
+RFC 9207, which must be Google's when present). Apple posts a form: the `POST` must come from
+Apple's origin (or name none), the body `application/x-www-form-urlencoded`, at most 16 KiB; the
+hub keeps the code with its sign-in and answers `303` to `GET .../callback?state=...`, because a
+`SameSite=Lax` cookie stays behind on a post from another site and comes along on that `GET`. A
+second post for one sign-in spoils it. The `id_token` and `user` Apple posts are ignored: the hub
+believes only the ID token it gets from the token endpoint itself.
+
+The `state` is used up when it comes back, whatever happens next, and must come back to the
+browser holding the sign-in's cookie. The hub exchanges the code (with the PKCE verifier; Apple's
+client secret is an ES256 JWT it signs with the `.p8` key, good for 5 minutes) and checks the ID
+token: RS256 only (`none`, HS256 and every other `alg` are refused before any key is looked at;
+`crit` is refused), signed by a key in the provider's key set (fetched through NetGuard, kept by
+its `Cache-Control` between 5 minutes and a day, fetched again for an unknown key id at most once
+every 30 seconds), `iss` exactly the provider's (Google's tokens may name
+`https://accounts.google.com` or `accounts.google.com`, the two Google documents), `aud` exactly
+the hub's client id and nothing else, `azp` the same when present, `exp`, `iat` (no older than 10
+minutes) and `nbf` within 60 seconds, `nonce` this sign-in's, and an email that is there, verified
+(`email_verified` true, or Apple's `"true"`) and not one of Apple's Hide My Email addresses
+(`@privaterelay.appleid.com`, or `is_private_email`). Every answer is a page (`text/html`,
+`Cache-Control: no-store`, no script) and clears `__Host-den_signin`:
+
+| Outcome | Status |
+| --- | --- |
+| Signed in as the member the account is bound to: sets `__Host-den_session` | `200` |
+| The account is bound to nobody in this family, **or the hub isn't in a family yet**: the same page, byte for byte, with the same headers, after the same work (the code exchanged and the token checked), and nothing made: no session, no record, nothing in the family's log. In phase 3 "no invite" answers the same | `403` |
+| A Hide My Email address (the page says how to share the real one); an email that isn't verified | `403` |
+| The sign-in expired, was used already, or came back to another browser | `400` |
+| The token or the answer didn't check out (forged, another key, another nonce or audience) | `400` |
+| The person cancelled at the provider (`error`) | `400` |
+| A binding finished: the page says to go back to Den on the phone | `200` |
+| A binding whose account already signs in as someone else in the family | `409` |
+| The provider couldn't be reached | `503`, `Retry-After` |
+| Past the [`/auth` budget](#limits-per-client) | `429`, `Retry-After` |
+
+### `POST /auth/logout`
+
+Ends this browser's session. Only from Den's own pages: `Origin` must be exactly the hub's public
+origin, or the answer is `403 permission_denied` and the session stays. Answer `200 {"ok": true}`,
+clearing `__Host-den_session`.
+
+### `GET /api/v1/me`
+
+Who this browser is signed in as, by its session cookie. Answer `200`:
+
+```json
+{
+  "member": {"id": "M3ALEX7QK4MXN3TB", "name": "Alex", "role": "parent"},
+  "provider": "google",
+  "family": {"id": "F7QK4MXN3TBM3ALEX", "name": "Carter family"},
+  "signed_in_ms": 1793202120000,
+  "expires_ms": 1793245320000
+}
+```
+
+`401 unauthorized` without a working session.
+
+### Binding an account
+
+A parent binds their own account from a device they already use, their own personal phone; there
+is no other way in this phase, and no new way into the family. The phone does it in four steps, and
+writes `member.account` itself: the hub only checks the sign-in, and can never write that record.
+
+1. `POST /api/v1/account/bindings {"provider": "google"}`, signed by the parent's own personal
+   device (`DeviceRequest`, as for capture; a kid's phone, a shared screen or a hub-mode device is
+   `403 permission_denied`, a provider the hub doesn't offer `400 invalid_input`). Answer `201
+   {"id", "provider", "start_url", "expires_ms"}`. `id` is what the phone reads the result back
+   by; `start_url` (`.../auth/oidc/google/start?bind=<ticket>`) carries a different random value,
+   so the link can't read the result. At most 3 at once per phone (`429 rate_limited`), 100 per hub
+   (`429 busy`); each lasts 10 minutes.
+2. The phone opens `start_url` in the browser, and the parent signs in there.
+3. `GET /api/v1/account/bindings/{id}`, signed by the same phone for the same parent (anyone else:
+   `404 not_found`): `{"state": "waiting"}`, `{"state": "failed", "message": "..."}`, or
+   `{"state": "done", "account": {"provider", "hash"}, "email": "alex@example.com"}`. A result or a
+   failure is given once; then the binding is gone (`404`).
+4. The phone shows which account it was and, on the parent's OK, writes
+   `member.account = account` on their own member. Every replica refuses that change from anywhere
+   but the parent's own personal device, and refuses a hash another member already has.
+
+A session cookie plays no part in this: it can neither start a binding nor read one. A sign-in
+comes back once, to the browser that began it, and a start link opened twice binds nothing.
+`GET /api/v1/account/providers`, signed the same way, answers `{"providers": [{"id": "google",
+"name": "Google"}]}`: what the hub offers.
+
 ## Web Push: reminders in browsers
 
 Den in a browser (on an iPhone, a Home Screen web app on iOS 16.4 or later) gets its reminders
@@ -2140,6 +2278,7 @@ records alone.
 | `GET`/`POST /api/v1/link/{slot}` | The family that gave the browser that link code |
 | `POST /api/v1/invites` | The hub the grant's invite names |
 | `POST /api/v1/hub/setup` | The address's family only (the setup link names it); at an address that is no family's, `404 no_family` |
+| `/auth/*`, `GET /api/v1/me` | The address's family only: each family's sign-in comes back to its own address (its own redirect), with cookies only that address holds (`__Host-`). At an address that is no family's, `404 no_family`, before any sign-in starts |
 | Anything else | The address's family |
 
 "The address's family" is the family whose public URL names the request's host (`Host`, or a
