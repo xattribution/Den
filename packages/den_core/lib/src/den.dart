@@ -994,6 +994,11 @@ class Den {
     await _commit([_Draft(RecordType.member, memberId, Space.family, {'account': account?.toJson()})]);
   }
 
+  /// The earliest time (UTC milliseconds) the next change this engine makes can be clocked at:
+  /// now, or the latest change it has made or seen, when that is later. A proof that must still
+  /// hold at a change's clock (`AccountProof.expires`) counts from here.
+  int get clockMillis => math.max(now(), _clock.millis);
+
   /// The member [account] signs in as, or null for none, or when more than one member has it
   /// (two bindings made while apart both stand: the hub then signs in as neither, and
   /// [sharedAccounts] tells the parents).

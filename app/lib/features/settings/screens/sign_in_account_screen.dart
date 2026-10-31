@@ -218,6 +218,12 @@ class _SignInAccountScreenState extends State<SignInAccountScreen> {
           'account itself, not its email.',
           style: t.body(c.ink2),
         ),
+        if (account != null && app.den.sharedAccounts().any((list) => list.any((m) => m.id == me?.id)))
+          const AttentionLine(
+            message: 'Someone else in the family has this account too, so it signs in as neither of you. Whoever it '
+                'isn\'t takes it away.',
+            bad: true,
+          ),
         GroupCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

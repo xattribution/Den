@@ -8,6 +8,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:io' show File, Platform;
 
 import 'package:cryptography/dart.dart';
@@ -504,7 +505,9 @@ class HubAccounts {
       provider: who.provider,
       hash: hash,
       nonce: randomToken(),
-      expires: hub.now() + accountProofLife.inMilliseconds,
+      // From the family's clock as the hub has seen it, so a family whose log runs ahead of the
+      // hub's wall clock still gets a proof that holds at the phone's next change.
+      expires: math.max(hub.now(), hub.den.clockMillis) + accountProofLife.inMilliseconds,
     );
     if (over()) return _expired();
     if (b.result != null) {

@@ -105,6 +105,29 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
     );
   }
 
+  /// "It isn't mine": takes this parent's binding of a shared account away, so it is the
+  /// others' again.
+  Future<void> _notMyAccount(AppState app, FamilyNeed need) async {
+    final me = app.me;
+    if (me == null) return;
+    final trust = context.trustActions;
+    final key = need.key;
+    setState(() {
+      _busy.add(key);
+      _failed.remove(key);
+    });
+    final problem = await tryWrite(() => trust.setAccount(me.id, null));
+    if (!mounted) return;
+    setState(() {
+      _busy.remove(key);
+      if (problem != null) {
+        _failed[key] = problem;
+      } else {
+        _settled[key] = _Settled('It no longer signs in as you', null);
+      }
+    });
+  }
+
   Widget _ask(BuildContext context, AppState app, FamilyNeed need) {
     final c = context.colors;
     final t = context.text;
@@ -173,6 +196,20 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
               child: const Text('Set PIN', maxLines: 1, softWrap: false),
             ),
           ),
+        ),
+      SharedAccountNotice(:final account, :final members) => (
+          faceOr(null, PhosphorIconsRegular.signIn, context, size: 44),
+          'One ${account.provider == 'apple' ? 'Apple' : 'Google'} account signs in as ${FamilyWords.joinAnd([for (final m in members) m.name])}',
+          'So it signs in as none of them. Whoever it isn\'t takes it away.',
+          members.any((m) => m.id == app.me?.id)
+              ? Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton(
+                    onPressed: busy ? null : () => _notMyAccount(app, need),
+                    child: const Text('It isn\'t mine', maxLines: 1, softWrap: false),
+                  ),
+                )
+              : const SizedBox.shrink(),
         ),
       RecoveryWordsAsk() => (
           faceOr(null, PhosphorIconsRegular.key, context, size: 44),

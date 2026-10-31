@@ -61,10 +61,19 @@ abstract interface class AccountSignInSource {
   Future<BindingState> poll(String id);
 }
 
+/// Whether [url], a hub's start link, is on one of the hub's own `https` addresses this device
+/// knows ([hubBases]): same scheme, host and port, no user name. A link anywhere else is never
+/// opened, whatever the hub said (review finding F5).
+bool startUrlAllowed(Uri url, Iterable<Uri> hubBases) {
+  if (!url.isScheme('https') || url.userInfo.isNotEmpty || url.host.isEmpty) return false;
+  return hubBases.any((b) => b.isScheme('https') && b.host.toLowerCase() == url.host.toLowerCase() && b.port == url.port);
+}
+
 /// [AccountSignInSource] through the family's hub, signed by this phone.
 class HubAccountSignIn implements AccountSignInSource {
-  HubAccountSignIn(DenNetwork network) : _api = HubApi(network);
+  HubAccountSignIn(this._network) : _api = HubApi(_network);
 
+  final DenNetwork _network;
   final HubApi _api;
 
   @override
@@ -88,7 +97,10 @@ class HubAccountSignIn implements AccountSignInSource {
     final json = await _api.send('POST', '/api/v1/account/bindings', body: {'provider': provider});
     final url = Uri.tryParse(json['start_url'] as String? ?? '');
     final id = json['id'];
-    if (url == null || !url.isScheme('https') || id is! String) throw const HubException('The hub gave a sign-in Den can\'t use.');
+    if (url == null || id is! String) throw const HubException('The hub gave a sign-in Den can\'t use.');
+    if (!startUrlAllowed(url, await _network.hubBases())) {
+      throw const HubException('The hub gave a sign-in at another address, so Den didn\'t open it.');
+    }
     return BindingStart(id: id, provider: provider, startUrl: url);
   }
 
