@@ -6,24 +6,31 @@ import 'tokens.dart';
 
 /// Draws [child] in the day tokens whatever the app's theme is, with the family's colors and the
 /// type scale of the theme around it: the calendar a device keeps light while the rest of the app
-/// is dark. It doesn't fork anything: the same widgets read `context.colors` and get the light
-/// values. Sheets opened inside it are light too ([showDenSheet] carries the theme over).
+/// is dark. In the Soft theme that is Soft's day ([DenColors.softDay]). It doesn't fork anything:
+/// the same widgets read `context.colors` and get the light values. Sheets opened inside it are
+/// light too ([showDenSheet] carries the theme over).
 ///
-/// The theme for each pack and scale is made once, so rebuilding never starts a theme animation,
-/// and nothing below it moves when the app's own theme animates between day and night.
+/// The theme for each palette, pack and scale is made once, so rebuilding never starts a theme
+/// animation, and nothing below it moves when the app's own theme animates between day and night.
 class DayTheme extends StatelessWidget {
   const DayTheme({super.key, required this.child});
 
   final Widget child;
 
-  static final Map<(ColorPack, double), ThemeData> _themes = {};
+  static final Map<(DenPalette, ColorPack, double), ThemeData> _themes = {};
 
-  /// The day theme drawing people in [pack], at the type [scale] (1.3 on the wall).
-  static ThemeData of(ColorPack pack, double scale) =>
-      _themes[(pack, scale)] ??= denTheme(DenColors.day.withPack(pack), typeScale: scale);
+  /// The day theme drawing people in [pack], at the type [scale] (1.3 on the wall), in
+  /// [palette]'s light tokens.
+  static ThemeData of(ColorPack pack, double scale, {DenPalette palette = DenPalette.neutral}) =>
+      _themes[(palette, pack, scale)] ??= denTheme(
+        (palette == DenPalette.soft ? DenColors.softDay : DenColors.day).withPack(pack),
+        typeScale: scale,
+      );
 
-  /// The day theme for what [context] draws now: its family's colors and its type scale.
-  static ThemeData around(BuildContext context) => of(context.colors.pack, context.text.scale);
+  /// The day theme for what [context] draws now: its palette, its family's colors and its type
+  /// scale.
+  static ThemeData around(BuildContext context) =>
+      of(context.colors.pack, context.text.scale, palette: context.colors.palette);
 
   @override
   Widget build(BuildContext context) => Theme(data: around(context), child: child);

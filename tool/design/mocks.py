@@ -142,7 +142,8 @@ save('kid-chore-board-wall',1920,1080,''.join(wall()))
 # ---------- 3. Family Soft calendar: light + dark phones ----------
 SOFT=['#71C8FF','#7CE695','#C7A8FF','#FFB072']  # existing Soft pack: Bluebell, Mint, Lilac, Apricot
 def cal(ox,dark):
-    bg,card,ink,ink2,fill,line,sel=(('#060D16','#111F30','#EAF3FC','#A8BCD1','#192B40','#22364E','#1E4A73') if dark
+    # Soft dark is true black (DenColors.softNightGround), with navy steps above it.
+    bg,card,ink,ink2,fill,line,sel=(('#000000','#111F30','#EAF3FC','#A8BCD1','#192B40','#22364E','#1E4A73') if dark
         else (BG,CARD,NAVY,INK2,FILL,LINE,BABY))
     b=[f'<rect x="{ox}" y="0" width="390" height="844" fill="{bg}"/>']
     b.append(T(ox+24,58,0,'9:41',15,700,ink))

@@ -140,13 +140,11 @@ class _DenAppState extends State<DenApp> {
                 ),
               ),
             ),
-            theme: denTheme(DenColors.day, typeScale: scale),
-            darkTheme: denTheme(DenColors.night, typeScale: scale),
-            themeMode: switch (_prefs.theme) {
-              ThemeChoice.auto => ThemeMode.system,
-              ThemeChoice.day => ThemeMode.light,
-              ThemeChoice.night => ThemeMode.dark,
-            },
+            // Day, Night and Auto draw Den's grays; Soft its tints and navy, light or dark as
+            // the device is. MaterialApp animates from one theme to the next.
+            theme: denTheme(_prefs.theme.light, typeScale: scale),
+            darkTheme: denTheme(_prefs.theme.dark, typeScale: scale),
+            themeMode: _prefs.theme.mode,
           );
           },
         ),
