@@ -177,6 +177,10 @@ abstract final class Limits {
   /// OAuth token requests.
   static const Rate oauthToken = Rate(60, Duration(minutes: 5));
 
+  /// Signing in with Google or Apple (`/auth/*`): starting, coming back, signing out. A sign-in
+  /// takes two or three of these.
+  static const Rate auth = Rate(30, Duration(minutes: 10));
+
   /// New WebSocket connections (device sync).
   static const Rate sockets = Rate(120, Duration(minutes: 1));
 

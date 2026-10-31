@@ -117,10 +117,16 @@ res = await v1.dispatch('fetch', { request: req('/version.json?cachebuster=5') }
 assert.equal(await (await res).text(), '{"version":"1.0.0"}');
 assert.deepEqual(fetched, [], 'nothing went to the network');
 
-// 3. The API, sync and update checks pass through.
+// 3. The API, sync, sign-in and update checks pass through. Sign-in pages are navigations, so
+// those are checked as one too: the provider sends the browser back there, never to the cached app.
 for (const p of ['/api/v1/hub/status', '/ws', '/mcp', '/oauth/authorize', '/health', '/flutter_bootstrap.js?den-check=1', '/sw.js']) {
   assert.equal(await v1.dispatch('fetch', { request: req(p) }), undefined, p + ' passes through');
 }
+for (const p of ['/auth/oidc/google/start', '/auth/oidc/google/callback?code=c&state=s', '/auth/oidc/apple/callback?state=s']) {
+  assert.equal(await v1.dispatch('fetch', { request: req(p, 'navigate') }), undefined, p + ' passes through');
+}
+res = await v1.dispatch('fetch', { request: req('/authors', 'navigate') });
+assert.equal(await (await res).text(), '<html>index 111</html>', 'only /auth/ itself, not anything starting with "auth"');
 
 // 4. A worker for a version the hub no longer serves doesn't install.
 server = build('222', 'main v2');

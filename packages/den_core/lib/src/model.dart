@@ -1,6 +1,7 @@
 import 'package:collection/collection.dart';
 import 'package:meta/meta.dart';
 
+import 'account.dart';
 import 'hlc.dart';
 
 /// Record type names used in [Change.type]. See ARCHITECTURE.md, "Record types and fields".
@@ -485,6 +486,10 @@ class Member extends RecordView {
   }
 
   int get order => rec.integer('order');
+
+  /// The Google or Apple account that signs in as them (`member.account`), or null.
+  AccountRef? get account => AccountRef.fromJson(rec.fields['account']);
+
   bool get isParent => role == Role.parent;
   bool get isKid => role == Role.kid;
 }

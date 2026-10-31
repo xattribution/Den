@@ -25,9 +25,10 @@ import '../widgets/theme_choice.dart';
 import 'web_reminders.dart';
 
 /// Settings: how this device syncs in one line; for parents the family's settings, calendars
-/// and the AI helper; Day, Night, Auto or Soft with a preview, the text size and how the
-/// calendar looks; reminders on this device; Advanced for parents; and About: the version, the
-/// build (its commit and when it was built) and, in a browser, the build the hub serves now.
+/// and the AI helper, and on a parent's own phone the Google or Apple account that signs in as
+/// them; Day, Night, Auto or Soft with a preview, the text size and how the calendar looks;
+/// reminders on this device; Advanced for parents; and About: the version, the build (its commit
+/// and when it was built) and, in a browser, the build the hub serves now.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, this.version, this.web, this.hub});
 
@@ -139,13 +140,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch(const {RecordType.subscription});
+    final app = context.watch(const {RecordType.subscription, RecordType.member});
     final den = app.den;
     final parent = app.allows(DenAction.manageFamily);
     final web = widget.web ?? Capabilities.web;
     final helper = den.family?.assistant.enabled ?? false;
     final calendars = den.subscriptions.length + (app.phoneCalendars?.picks.length ?? 0);
     final thing = web ? 'this browser' : 'this device';
+    // Which Google or Apple account signs in as them: a parent's own, set on their own phone, in a
+    // family with a hub to sign in to.
+    final signIn = den.thisDevice?.mode == DeviceMode.personal &&
+        app.allowsTrust(DenAction.manageFamily) &&
+        !DemoSession.active &&
+        app.network?.hubDevice != null;
+    final account = app.me?.account;
 
     return DenPage(
       title: 'Settings',
@@ -175,6 +183,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   label: 'AI helper',
                   value: helper ? 'On' : 'Off',
                   onTap: () => context.push('/settings/assistant'),
+                ),
+              if (signIn)
+                NavRow(
+                  icon: PhosphorIconsRegular.signIn,
+                  label: 'Google or Apple sign-in',
+                  value: account == null ? 'Off' : (account.provider == 'apple' ? 'Apple' : 'Google'),
+                  onTap: () => context.push('/settings/sign-in'),
                 ),
             ], indent: 36),
           ),

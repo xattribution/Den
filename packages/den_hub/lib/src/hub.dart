@@ -7,6 +7,7 @@ import 'package:shelf/shelf.dart';
 import 'package:stream_channel/stream_channel.dart';
 
 import 'access.dart';
+import 'accounts.dart';
 import 'api.dart';
 import 'assistant.dart';
 import 'capture.dart';
@@ -76,6 +77,7 @@ class DenHub implements RoutableLog {
   late final ReminderService _reminders;
   late final WebPushService _push;
   late final HubRecovery _recovery;
+  late final HubAccounts _accounts;
   final Routes _routes = Routes();
   late final DeviceAuth _auth;
   RelayTunnel? _tunnel;
@@ -199,6 +201,9 @@ class DenHub implements RoutableLog {
   /// Server-assisted recovery, for a family that turned it on.
   HubRecovery get recovery => _recovery;
 
+  /// Signing in with Google and Apple, when configured.
+  HubAccounts get accounts => _accounts;
+
   /// Where setup stands.
   SetupStage get setupStage => _setup.stage;
 
@@ -285,6 +290,7 @@ class DenHub implements RoutableLog {
     feedLinks.register(_routes);
     _recovery = HubRecovery(_ctx, _auth)..register(_routes);
     _push.register(_routes);
+    _accounts = HubAccounts(_ctx, _auth)..register(_routes);
     _changes = den.onChange.listen((_) {
       _setup.refresh();
       final m = _mdns;

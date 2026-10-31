@@ -2,6 +2,7 @@
 /// Pure Dart: runs in the app, the browser, the hub and tests.
 library;
 
+export 'src/account.dart';
 export 'src/change.dart';
 export 'src/den.dart';
 export 'src/family_controls.dart';

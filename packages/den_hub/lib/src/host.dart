@@ -238,7 +238,7 @@ class DenHost implements HostLink {
   static const String secretHeader = 'x-den-host-secret';
 
   /// Paths the families answer; everything else is the web app.
-  static const Set<String> reserved = {'api', 'mcp', 'oauth', 'ics', '.well-known', 'ws', 'health'};
+  static const Set<String> reserved = {'api', 'mcp', 'oauth', 'auth', 'ics', '.well-known', 'ws', 'health'};
 
   /// Starts serving, with no families yet ([add] them).
   static Future<DenHost> start(HostConfig config) async {
@@ -482,12 +482,13 @@ class DenHost implements HostLink {
         return response;
       };
 
-  /// The request path with secrets in it (feed tokens, link slots) hidden and no query.
+  /// The request path with secrets in it (feed tokens, link slots, account bindings) hidden and
+  /// no query (where sign-in codes and states are).
   static String _safePath(Request request) {
     final segments = request.url.pathSegments;
     final out = <String>[];
     for (var i = 0; i < segments.length; i++) {
-      final hide = i > 0 && (segments[i - 1] == 'ics' || segments[i - 1] == 'link');
+      final hide = i > 0 && (segments[i - 1] == 'ics' || segments[i - 1] == 'link' || segments[i - 1] == 'bindings');
       out.add(hide ? '…' : segments[i]);
     }
     return '/${out.join('/')}';

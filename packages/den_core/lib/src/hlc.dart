@@ -54,6 +54,9 @@ class HlcClock {
 
   static int _wallClock() => DateTime.now().toUtc().millisecondsSinceEpoch;
 
+  /// The milliseconds of the latest clock this one has given or seen.
+  int get millis => _millis;
+
   Hlc next() {
     final wall = _now();
     if (wall > _millis) {

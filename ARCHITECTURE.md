@@ -216,6 +216,11 @@ keeps the hashes of the hourly OAuth access tokens and refresh tokens it issues 
 decision (a parent's import through the hub does it): nothing can act for a new member until a
 parent approves a device or an AI connection for them on their own device.
 
+One trust decision is narrower still: which Google or Apple account signs in as someone
+(`member.account`, see "Accounts"). Only a parent binds one, their own, on their own **personal**
+device, in a change that does nothing else; a hub-mode device never can, its owner using it
+included, because the hub is what checks the sign-in.
+
 Each space has a key for sealing changes on the relay, with an epoch. The founder's device makes
 the first keys at genesis and a parent's device makes one for each member it adds. When a parent's
 device revokes another device (directly or by removing its member), it rotates the key of every
@@ -382,6 +387,72 @@ Argon2id stretch it can't run back in the invite's day), sees the key's public h
 proof, and never the words; a web app it serves sees whatever the page holds, as always (see
 "The web app").
 
+### Accounts
+
+A person can sign in to the family's hub with Google or Apple, in a browser, as their member:
+phase 1 of the account-first plan (docs/auth/ACCOUNT_FIRST_REVIEW.md). There is no password and
+no email link; someone with neither account uses a device a parent set up. In this phase an
+account does one thing, `GET /api/v1/me`; devices, grants and approvals are unchanged.
+
+**Which account is whose** is `member.account`: `{provider, hash}` and the hub's proof, where `hash` is HMAC-SHA256
+keyed by the family id over `"den/account/v1" 0x00 provider 0x00 sub` (den_core's
+`accountHash`). It binds on `sub`, the provider's lasting id for the account, never on the email,
+which a person can change and a provider can hand to someone else. It is keyed by the family id so
+the same person in two families has two unrelated hashes: whoever holds both logs (a Den host, a
+backup, a device in both) can't join them up by it. The family id never changes, so a binding
+survives the hub moving or being restored, and nothing about it depends on a key one machine
+holds. It hides nothing from someone who already has the `sub` (a Google `sub` can be looked up),
+so a hash alone binds nothing: the record also carries the hub's proof (`AccountProof`), its device
+key's signature over `[family, member, provider, hash, hub, nonce, expires]`, made only when that
+account really signed in for that member. Every replica checks the signature as the change arrives,
+and validity checks that the key is an approved, unremoved hub of the family at the change's place
+in the log and that the proof (an hour) hasn't expired at the change's clock.
+
+Validity treats it as a trust decision narrower than the others. A parent binds **their own**
+account, on their own **personal** device, in a change that writes nothing else; never the hub
+(whatever it acts for, its owner using it included), a connection through it (`_via`), a shared
+screen, a kid, or one parent for another. The person, or any parent on their own personal device,
+may take one away. Two members with the same account (bound while apart) both keep it: no change,
+however it is clocked, takes an account from someone else. It then signs in as neither, and every
+parent's own device says so in Needs you until one takes it away. A new member never arrives with
+one. The API's member objects don't carry it. In this phase only a member who is a parent now signs
+in; a parent made something else keeps a dormant binding that does nothing, and their sessions end.
+Grants (phases 2 and 3) must cap what a binding may do by the person's current permissions.
+
+**Binding** goes through the parent's own phone and never lets the hub write the record:
+
+1. The phone asks the hub, signed, for a binding (`POST /api/v1/account/bindings`) and gets two
+   random values: an `id` it reads the result back by and a `ticket` in a start link.
+2. It opens the start link in a browser (only on the hub's own address). The page asks first
+   ("Continue only if you are Alex"); Continue posts back, and the parent signs in.
+3. The hub checks the sign-in (below), signs its proof, and keeps the result for that binding.
+4. The phone reads it back (`GET /api/v1/account/bindings/{id}`, signed by the same phone for the
+   same parent), once, shows which account it was, and on the parent's OK writes
+   `member.account` itself.
+
+A session cookie plays no part, so a stolen one binds nothing. Opening the start link starts
+nothing (so previews and scanners spoil nothing); its Continue starts one sign-in, with nothing
+awaited between checking and marking it, and a second one spoils the binding, so someone who sees
+the link can't slip their own account in. A binding is finished once. A sign-in comes back once (its `state` is used up as it
+arrives), to the browser holding its `__Host-` cookie, so a replayed or forwarded callback
+finishes nothing. A binding lives in one family's hub and its hash is keyed by that family, so it
+means nothing in another family on the same host.
+
+**Signing in** (`den_hub/lib/src/oidc.dart`, `accounts.dart`): the hub is the OpenID Connect relying
+party. It finds each provider's endpoints by discovery (the document's `issuer` must be exactly
+the provider's), sends the browser there with `state`, a `nonce` and PKCE S256, exchanges the code
+itself (Apple's client secret is an ES256 JWT it signs with the `.p8` key), and believes the ID
+token only when it is RS256, signed by a key in the provider's published set (fetched through
+NetGuard, kept by its `Cache-Control`, fetched again for a rotated key at most every 30 seconds),
+for exactly this client from exactly this issuer, fresh within a minute of skew, with this
+sign-in's nonce, and with a verified email that isn't one of Apple's Hide My Email addresses.
+Apple answers with a form it posts; the hub keeps the code and bounces the browser to a `GET`, so
+its `SameSite=Lax` cookie comes along. An account bound to nobody in the family gets one generic
+answer, the same as a hub with no family yet, after the same work, and nothing is made. A bound
+one gets a session: a `__Host-` cookie (`Secure`, `HttpOnly`, `SameSite=Lax`, 12 hours) whose
+hash the hub keeps in memory, new on each sign-in, ended the moment the member no longer has that
+account. With no provider configured the hub has no `/auth` routes at all.
+
 ### Record types and fields
 
 Times are UTC milliseconds unless noted. Local dates are `YYYY-MM-DD` strings in the family's
@@ -404,7 +475,7 @@ commit too (`Den.restoreAll`).
 | Type | Space | Fields |
 | --- | --- | --- |
 | `family` | `f` | `name`, `timezone` (IANA), `weekStart` (0 Sunday, 1 Monday), `founderDevice`, `capture` (`direct`\|`review`), `pointsEnabled`, `colors` (`bright`\|`deep`\|`soft`\|`bold`, optional, `bright` when unset: the shades of people's colors the whole family sees; each person keeps their `marker`), `oversight` (map: memberId -> `{parentsSeePrivate: bool}`, and `<memberId>.rewardsNeedOk` and `<memberId>.ownPicture` -> bool or null; see "Parental controls"), `assistant` (`{enabled, members, kidDailyLimit, budgetCents}`: the in-app assistant, off until a parent turns it on; parents and the members listed may use it, never a little kid or a pre-reader; default 20 questions a day for a kid and $5 a month, which the captures the hub's reader reads count against too), `recovery` (`{serverKey, kept}`: the hub key the family lets help a parent back in, null while off; see "Recovery") |
-| `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, `initial`, or `photo:<id>` naming one of their `photo` records), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `until` (a sitter's last day with access, a local date, or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order`, `recovery` (a parent's `{key, kept}`: their recovery key, base64url Ed25519, or null; see "Recovery") |
+| `member` | `f` | `name`, `role` (`parent`\|`adult`\|`kid`\|`guest`), `tier` (`preReader`\|`little`\|`big`\|`teen`\|null), `marker` (sky, grass, lavender, tangerine, aqua, coral, sunshine, bubblegum, in the order new people get them; older names are read as one of these), `picture` (a pack id such as `fox`, `initial`, or `photo:<id>` naming one of their `photo` records), `animal` (older versions' look, read as a picture when `picture` is unset), `birthday` (local date or null), `until` (a sitter's last day with access, a local date, or null), `grants` (list: `events`, `chores`, `lists`, `points`), `signIn` (`{kind: pin\|pattern\|none, salt, hash}` for shared screens), `order`, `recovery` (a parent's `{key, kept}`: their recovery key, base64url Ed25519, or null; see "Recovery"), `account` (`{provider: google\|apple, hash}` or null: the account that signs in as them, never an email; see "Accounts") |
 | `device` | `f` | `name`, `kind` (`phone`\|`tablet`\|`desktop`\|`browser`\|`hub`\|`display`), `pubkey` (base64url Ed25519), `xpub` (base64url X25519 for sealing), `member` (owner id, null for shared), `mode` (`personal`\|`shared`\|`hub`), `approved`, `approvedBy`, `revoked`, `revokedAfter` (written only with `revoked: true`: the highest counter of the device's changes the revoker held, never below its own request to join), `display` (`{layout: today\|week\|month\|lists\|photos, openCheckoff: bool}`), `recovery` (written once, by a device letting itself in: `{kind: words\|hub, member, key, nonce, expires, sig}`; see "Recovery"), `invite` (written once, by a device an invite key let in: `{invite, member, mode, key, nonce, expires, sig}`; see "Invite keys") |
 | `inviteKey` | `f` | Id: the hash of `key`, like a device's. `member` (whose own devices it lets in, or null), `modes` (absent: `personal`; for nobody, `shared` and/or `hub`), `uses` (default 1), `key` (base64url Ed25519, null once taken away), `by` (the parent who made it), `device` (where), `expires`, `kept` (written with `key: null`), `home` (for groups of families later; a family refuses it). Made by a parent on their own device, then only taken away |
 | `category` | `f` | `name`, `icon` |
@@ -879,6 +950,9 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `GET /api/v1/recovery/key` | signed by a parent's own device | The hub's server recovery key, for "Let the hub help us get back in" |
 | `POST /api/v1/recovery/tickets` | `den_hub recover` on the hub's machine (a secret in the data directory) | A one-time link and four words for one parent, 30 minutes, only while the family has server help on |
 | `POST /api/v1/recovery/redeem` | the four words and the new device's key | The hub's recovery proof for that device and an invite to join with it |
+| `GET /auth/oidc/{google\|apple}/start` (with `?bind=`: a page asking first, whose Continue is `POST .../start`), `.../callback` (Apple: `POST`, then a `GET`), `POST /auth/logout` | a browser; the posts to `start` and logout only with the hub's own `Origin` | Signing in with Google or Apple (see "Accounts"); only when the owner set a provider up, else `404` |
+| `GET /api/v1/me` | the `__Host-den_session` cookie | Who the browser is signed in as |
+| `GET /api/v1/account/providers`, `POST /api/v1/account/bindings`, `GET /api/v1/account/bindings/{id}` | signed by a parent's own personal device | Binding their own account: a start link for the browser, and the result read back once |
 
 The hub is a device in the family: it holds its own key and every space, signs the changes it
 makes for API and MCP callers with `actor` set to the token's member (or null with the token

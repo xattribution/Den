@@ -60,6 +60,14 @@ ArgParser cliParser() {
     ..addOption('host-push',
         help: 'Families that share the host\'s own Web Push key, so one web app holding several of them gets every '
             'family\'s reminders: "all", or their addresses, comma-separated (env DEN_HOST_PUSH; default none)')
+    ..addOption('google-client-id', help: 'Sign in with Google: the OAuth client id (env DEN_GOOGLE_CLIENT_ID)')
+    ..addOption('google-client-secret',
+        help: 'Sign in with Google: its client secret (env DEN_GOOGLE_CLIENT_SECRET, better than this option: '
+            'the command line shows in ps)')
+    ..addOption('apple-services-id', help: 'Sign in with Apple: the Services ID (env DEN_APPLE_SERVICES_ID)')
+    ..addOption('apple-team-id', help: 'Sign in with Apple: the Apple Developer team id (env DEN_APPLE_TEAM_ID)')
+    ..addOption('apple-key-id', help: 'Sign in with Apple: the key\'s id (env DEN_APPLE_KEY_ID)')
+    ..addOption('apple-key-file', help: 'Sign in with Apple: the .p8 key file (env DEN_APPLE_KEY_FILE)')
     ..addOption('log-level', help: 'debug, info, warn or error (env DEN_LOG)')
     ..addFlag('public',
         help: 'Reachable from the internet: minimal unauthenticated answers, mDNS off (env DEN_PUBLIC=1; '
@@ -246,6 +254,22 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
   final allowedOrigins = [...?env['DEN_ALLOWED_ORIGINS']?.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty)];
   final log = HubLog(level: _level(opt('log-level', 'DEN_LOG')), sink: io.err.writeln);
   final sharedPush = parseHostPush(opt('host-push', 'DEN_HOST_PUSH') ?? '');
+  // Signing in with Google and Apple: one set of providers for every family on the host, each
+  // family's address registered with them as a redirect (docs/hosting.md).
+  final SignInProviders? signIn;
+  try {
+    signIn = SignInProviders.fromSettings(
+      googleClientId: opt('google-client-id', 'DEN_GOOGLE_CLIENT_ID'),
+      googleClientSecret: opt('google-client-secret', 'DEN_GOOGLE_CLIENT_SECRET'),
+      appleServicesId: opt('apple-services-id', 'DEN_APPLE_SERVICES_ID'),
+      appleTeamId: opt('apple-team-id', 'DEN_APPLE_TEAM_ID'),
+      appleKeyId: opt('apple-key-id', 'DEN_APPLE_KEY_ID'),
+      appleKeyFile: opt('apple-key-file', 'DEN_APPLE_KEY_FILE'),
+      warn: log.warn,
+    );
+  } on FormatException catch (e) {
+    throw CliUsage(e.message);
+  }
 
   /// A family's hub: the first family's as `serve` always made it; another family's at its own
   /// address, labeled in the log, with its own notify.json, and without mDNS and Home Assistant
@@ -271,6 +295,7 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
         mdns: hosted == null ? a['mdns'] as bool? ?? _envFlag(env['DEN_MDNS']) ?? !publicPosture : false,
         log: hosted == null ? log : log.labeled(hosted.hostname ?? hosted.id),
         hostPush: sharedPush.all || (address != null && sharedPush.hosts.contains(address.host.toLowerCase())),
+        signIn: signIn,
       );
 
   Future<HostedTenant> openLog(HostedLog hosted, {required bool fresh}) async {

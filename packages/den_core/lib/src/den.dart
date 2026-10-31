@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
 
+import 'account.dart';
 import 'calendar.dart';
 import 'change.dart';
 import 'chores.dart';
@@ -261,7 +262,8 @@ class Den {
       if (gone()) return;
       for (var i = 0; i < unvouched.length; i++) {
         final h = checked[i];
-        if (h == null || !await recoveryProofHolds(unvouched[i], familyId) || !await inviteProofHolds(unvouched[i], familyId)) {
+        if (h == null || !await recoveryProofHolds(unvouched[i], familyId) || !await inviteProofHolds(unvouched[i], familyId) ||
+            !await accountProofHolds(unvouched[i], familyId)) {
           bad.add(unvouched[i].id);
         } else {
           _hashes[unvouched[i].id] = h;
@@ -961,6 +963,59 @@ class Den {
     }
     final value = await hashSignIn(kind, secret);
     await _commit([_Draft(RecordType.member, memberId, Space.family, {'signIn': value})]);
+  }
+
+  /// Binds [account] (from the hub's sign-in with Google or Apple, ARCHITECTURE.md "Accounts") to
+  /// [memberId], so that account signs in as them; null takes it away. Only a parent binds their
+  /// own, on their own personal device; they, or any parent there, may take one away. The hub can
+  /// never write this (validity.dart).
+  Future<void> setAccount(String memberId, AccountRef? account) async {
+    final m = member(memberId);
+    if (m == null) throw const InvalidInput('That person isn\'t in the family');
+    final a = actor;
+    final d = thisDevice;
+    if (a == null || d == null || d.mode != DeviceMode.personal || d.member != a.id) {
+      throw const PermissionDenied('Only a parent on their own phone can do that');
+    }
+    if (account != null && (a.id != memberId || !a.isParent)) {
+      throw const PermissionDenied('Only the parent themselves can choose the account they sign in with');
+    }
+    if (account == null && a.id != memberId && !a.isParent) {
+      throw const PermissionDenied('Only a parent can take away the account someone signs in with');
+    }
+    if (account != null) {
+      // The hub's proof, checked here as every replica checks it when the change arrives.
+      final proof = account.proof;
+      final family = familyId;
+      if (proof == null || family == null || !await proof.verifies(family: family, member: memberId, account: account)) {
+        throw const PermissionDenied('Only an account the family\'s hub saw sign in for you can be bound');
+      }
+    }
+    await _commit([_Draft(RecordType.member, memberId, Space.family, {'account': account?.toJson()})]);
+  }
+
+  /// The earliest time (UTC milliseconds) the next change this engine makes can be clocked at:
+  /// now, or the latest change it has made or seen, when that is later. A proof that must still
+  /// hold at a change's clock (`AccountProof.expires`) counts from here.
+  int get clockMillis => math.max(now(), _clock.millis);
+
+  /// The member [account] signs in as, or null for none, or when more than one member has it
+  /// (two bindings made while apart both stand: the hub then signs in as neither, and
+  /// [sharedAccounts] tells the parents).
+  Member? memberWithAccount(AccountRef account) {
+    final found = [for (final m in members) if (m.account == account) m];
+    return found.length == 1 ? found.single : null;
+  }
+
+  /// Accounts bound to more than one member, each with those members: none of them signs in
+  /// with it until all but one take it away. Parents see it in Needs you.
+  List<List<Member>> sharedAccounts() {
+    final by = <AccountRef, List<Member>>{};
+    for (final m in members) {
+      final a = m.account;
+      if (a != null) (by[a] ??= []).add(m);
+    }
+    return [for (final list in by.values) if (list.length > 1) list];
   }
 
   Future<void> approveDevice(String deviceId, {String? member, DeviceMode? mode}) async {
@@ -3752,7 +3807,7 @@ class Den {
         for (var i = 0; i < toCheck.length; i++) {
           final c = toCheck[i], h = checked[i];
           // A recovery or invite proof is checked with the signature: signed by the key it names.
-          if (h == null || !await recoveryProofHolds(c, familyId) || !await inviteProofHolds(c, familyId)) {
+          if (h == null || !await recoveryProofHolds(c, familyId) || !await inviteProofHolds(c, familyId) || !await accountProofHolds(c, familyId)) {
             rejected[c.id] = 'The signature doesn\'t verify';
           } else {
             accepted.add(c);

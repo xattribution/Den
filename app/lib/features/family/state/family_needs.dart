@@ -77,6 +77,17 @@ final class RecoveryWordsAsk extends FamilyNeed {
   String get key => 'recovery-words';
 }
 
+/// One Google or Apple account bound to two people or more (bindings made while apart both
+/// stand): it signs in as none of them until all but one take it away.
+final class SharedAccountNotice extends FamilyNeed {
+  const SharedAccountNotice(this.account, this.members);
+  final AccountRef account;
+  final List<Member> members;
+
+  @override
+  String get key => 'account:${account.provider}:${account.hash}';
+}
+
 /// What waits on Family for whoever uses this device: devices asking to join, connections
 /// asking, and their own PIN once the family has a shared screen. Empty off a parent's own
 /// device: those are trust decisions.
@@ -94,6 +105,7 @@ List<FamilyNeed> familyNeeds(AppState app, List<PendingJoin> joins) {
       if (c.status == ConnectionStatus.pending) ConnectionAsk(c),
     for (final d in Recovery.unseen(den, app.seen)) RecoveredNotice(d),
     for (final d in Invites.unseen(den, app.seen, now: den.now(), me: app.me?.id)) InvitedNotice(d),
+    for (final shared in den.sharedAccounts()) SharedAccountNotice(shared.first.account!, shared),
   ];
   final me = app.me;
   final display = sharedDisplays(den).firstOrNull;

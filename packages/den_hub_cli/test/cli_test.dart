@@ -258,6 +258,26 @@ void main() {
     }
   });
 
+  test('serve refuses Google or Apple sign-in set up only in part, before it opens anything', () async {
+    final cases = <Map<String, String>>[
+      {'DEN_GOOGLE_CLIENT_ID': 'id.apps.googleusercontent.com'},
+      {'DEN_GOOGLE_CLIENT_SECRET': 'shh-not-for-logs'},
+      {'DEN_APPLE_SERVICES_ID': 'family.den.signin', 'DEN_APPLE_TEAM_ID': 'TEAM123456', 'DEN_APPLE_KEY_ID': 'KEY7654321'},
+      {
+        'DEN_APPLE_SERVICES_ID': 'family.den.signin',
+        'DEN_APPLE_TEAM_ID': 'TEAM123456',
+        'DEN_APPLE_KEY_ID': 'KEY7654321',
+        'DEN_APPLE_KEY_FILE': '${tmp.path}/no-such-key.p8',
+      },
+    ];
+    for (final env in cases) {
+      final (code, _, err) = await run(['serve', '--data', dataPath, '--port', '0'], env: env);
+      expect(code, 64, reason: '$env');
+      expect(err, anyOf(contains('Google sign-in needs'), contains('Apple sign-in needs'), contains('DEN_APPLE_KEY_FILE')), reason: '$env');
+      expect(err, isNot(contains('shh-not-for-logs')), reason: 'a secret is never echoed');
+    }
+  });
+
   test('recover: a link and four words for a parent, only once the family turned server help on', () async {
     final hubDir = DataDir(dataPath);
     await hubDir.lock();
