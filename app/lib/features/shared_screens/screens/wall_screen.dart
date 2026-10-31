@@ -7,9 +7,12 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../widgets/sign_in.dart';
+import '../widgets/wall_chores.dart';
 import '../../../design/glyphs.dart';
+import '../../../design/motion.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
+import '../../../design/words.dart';
 import '../state/display.dart';
 import '../state/kids.dart';
 import '../../../app/app_state.dart';
@@ -19,8 +22,9 @@ import '../../chores/chores.dart';
 import '../state/sign_in_actions.dart';
 import '../../lists/lists.dart';
 
-/// The kitchen wall: the date and a large clock, the family week as the main region, and a strip
-/// with today's chores per person and the grocery list. Anyone can read it; writes ask "Who's
+/// The kitchen wall: a top bar with the date, the tabs (Week, Today, Chores) and a large clock;
+/// the family week (or today's board) as the main region with a strip of today's chores per
+/// person and the grocery list, or the kids' chores board ([WallChoresBoard]). Anyone can read it; writes ask "Who's
 /// doing this?" unless open check-off is on, then act as that person for a minute.
 class WallScreen extends StatefulWidget {
   const WallScreen({super.key, this.now, this.keepAwake = true});
@@ -96,45 +100,50 @@ class _WallScreenState extends State<WallScreen> {
     // Wide walls put today's chores and groceries beside the week; narrower ones put them in a
     // band of person columns underneath, so every person's column in the week stays on screen.
     final side = size.width >= 1500;
-    final layout = wallLayoutOf(den.thisDevice);
+    final view = wallViewOf(den.thisDevice, app.device.wallView);
     final today = app.today;
+    void acted() => setState(() {});
 
-    final Widget main = layout == DisplayLayout.today
-        ? _TodayBoard(onAct: () => setState(() {}))
-        : FamilyWeek(startDate: today, showChores: false, fillHeight: true);
-
-    final onlyAnyone = layout == DisplayLayout.today;
-    final strip = _TodayStrip(onAct: () => setState(() {}), onlyAnyone: onlyAnyone);
+    final Widget body;
+    if (view == WallView.chores) {
+      body = WallChoresBoard(onAct: acted);
+    } else {
+      final Widget main = view == WallView.today
+          ? _TodayBoard(onAct: acted)
+          : FamilyWeek(startDate: today, showChores: false, fillHeight: true);
+      final onlyAnyone = view == WallView.today;
+      body = side
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: main),
+                VerticalDivider(width: 1, color: c.rule),
+                SizedBox(
+                  width: (size.width * 0.27).clamp(320.0, 560.0),
+                  child: _TodayStrip(onAct: acted, onlyAnyone: onlyAnyone),
+                ),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: main),
+                Divider(height: 1, color: c.rule),
+                SizedBox(
+                  height: (size.height * 0.4).clamp(240.0, 420.0),
+                  child: _TodayBand(onAct: acted, onlyAnyone: onlyAnyone),
+                ),
+              ],
+            );
+    }
 
     return Scaffold(
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _Header(now: _now(), onChanged: () => setState(() {})),
-            Divider(height: 1, color: c.rule),
-            Expanded(
-              child: side
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(child: main),
-                        VerticalDivider(width: 1, color: c.rule),
-                        SizedBox(width: (size.width * 0.27).clamp(320.0, 560.0), child: strip),
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(child: main),
-                        Divider(height: 1, color: c.rule),
-                        SizedBox(
-                          height: (size.height * 0.4).clamp(240.0, 420.0),
-                          child: _TodayBand(onAct: () => setState(() {}), onlyAnyone: onlyAnyone),
-                        ),
-                      ],
-                    ),
-            ),
+            _Header(now: _now(), view: view, onView: (v) => app.device.wallView = v.name, onChanged: acted),
+            Expanded(child: body),
           ],
         ),
       ),
@@ -142,9 +151,15 @@ class _WallScreenState extends State<WallScreen> {
   }
 }
 
+/// The wall's top bar (KIDS_MODE_AND_SOFT_THEME.md, "Navigation"): the date at the start, text
+/// tabs in the middle (Week, Today, Chores) with a navy underline under the one showing, and the
+/// clock at the end, with Switch person (or who's acting) and Settings beside it. On a narrow
+/// screen the clock and controls come first, then the date, then the tabs.
 class _Header extends StatelessWidget {
-  const _Header({required this.now, required this.onChanged});
+  const _Header({required this.now, required this.view, required this.onView, required this.onChanged});
   final DateTime now;
+  final WallView view;
+  final ValueChanged<WallView> onView;
   final VoidCallback onChanged;
 
   @override
@@ -152,6 +167,7 @@ class _Header extends StatelessWidget {
     final app = context.app;
     final den = app.den;
     final c = context.colors;
+    final t = context.text;
     final f = app.formats;
     final ms = now.millisecondsSinceEpoch;
     final actor = den.actor;
@@ -159,9 +175,16 @@ class _Header extends StatelessWidget {
     final shared = den.thisDevice?.isShared ?? false;
     final width = MediaQuery.sizeOf(context).width;
     final narrow = width < 760;
+    final wide = width >= 1100;
     final date = Semantics(
       header: true,
-      child: Text(f.long(f.localDate(ms)), style: context.type.heading(c.ink2), overflow: TextOverflow.ellipsis),
+      child: Text(tidy(f.long(f.localDate(ms))), style: t.kidWall(40, FontWeight.w800, c.ink)),
+    );
+    final clock = Text(f.time(ms), style: t.kidWall(56, FontWeight.w800, c.ink, height: 1));
+    // Three tabs always fit a wall; on a narrow screen with large text they scroll sideways.
+    final tabs = SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: _WallTabs(view: view, onView: onView, compact: narrow),
     );
 
     final controls = <Widget>[
@@ -180,11 +203,6 @@ class _Header extends StatelessWidget {
           icon: const Icon(PhosphorIconsRegular.userSwitch),
           label: const Text('Switch person'),
         ),
-      if (width >= 1100 && den.thisDevice != null) ...[
-        const SizedBox(width: Sp.l),
-        Text(den.thisDevice!.name, style: context.type.body(c.ink2)),
-      ],
-      const SizedBox(width: Sp.s),
       IconButton(
         tooltip: 'Settings',
         onPressed: () => context.push('/settings'),
@@ -192,30 +210,117 @@ class _Header extends StatelessWidget {
       ),
     ];
 
-    return Padding(
-      padding: EdgeInsets.fromLTRB(narrow ? Sp.l : Sp.xl, Sp.m, Sp.m, Sp.m),
-      child: narrow
-          ? Column(
+    final bar = narrow
+        ? Padding(
+            padding: const EdgeInsets.fromLTRB(Sp.l, Sp.m, Sp.s, 0),
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Text(f.time(ms), style: context.type.display(c.ink)),
-                    const Spacer(),
-                    ...controls,
-                  ],
-                ),
+                Row(children: [clock, const Spacer(), ...controls]),
                 date,
-              ],
-            )
-          : Row(
-              children: [
-                Text(f.time(ms), style: context.type.display(c.ink)),
-                const SizedBox(width: Sp.xl),
-                Expanded(child: date),
-                ...controls,
+                const SizedBox(height: Sp.s),
+                tabs,
               ],
             ),
+          )
+        : Padding(
+            // About 120 tall on a 1080p wall, the tabs' underline on its bottom edge.
+            padding: EdgeInsets.fromLTRB(
+              wide ? KidLayout.wallMargin : Sp.xl,
+              wide ? Sp.xxl : Sp.m,
+              wide ? KidLayout.wallMargin : Sp.xl,
+              0,
+            ),
+            child: Row(
+              children: [
+                Expanded(child: Align(alignment: AlignmentDirectional.centerStart, child: date)),
+                const SizedBox(width: Sp.l),
+                Flexible(flex: 0, child: tabs),
+                const SizedBox(width: Sp.l),
+                Expanded(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Flexible(
+                        child: Wrap(
+                          alignment: WrapAlignment.end,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: controls,
+                        ),
+                      ),
+                      const SizedBox(width: Sp.l),
+                      clock,
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: c.bar,
+        border: Border(bottom: BorderSide(color: c.line, width: 2)),
+      ),
+      child: bar,
+    );
+  }
+}
+
+/// Week, Today and Chores as text tabs, not pills: the one showing is ink and heavy with a navy
+/// underline, the others quiet. Each is 64 or more to press.
+class _WallTabs extends StatelessWidget {
+  const _WallTabs({required this.view, required this.onView, this.compact = false});
+  final WallView view;
+  final ValueChanged<WallView> onView;
+
+  /// Tighter on a narrow screen.
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final t = context.text;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final v in WallView.values)
+          DenPressable(
+            onTap: v == view ? () {} : () => onView(v),
+            scale: false,
+            selected: v == view,
+            semanticLabel: '${v.label}, tab',
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.input)),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: KidLayout.minTarget, minHeight: KidLayout.minTarget),
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(compact ? Sp.m : Sp.xl, Sp.m, compact ? Sp.m : Sp.xl, 0),
+                child: ExcludeSemantics(
+                  child: IntrinsicWidth(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          v.label,
+                          textAlign: TextAlign.center,
+                          style: t.kidWall(30, v == view ? FontWeight.w800 : FontWeight.w400, v == view ? c.ink : c.ink2),
+                        ),
+                        const SizedBox(height: Sp.m),
+                        Container(
+                          height: 4 * t.scale,
+                          decoration: BoxDecoration(
+                            color: v == view ? c.ink : Colors.transparent,
+                            borderRadius: BorderRadius.circular(2 * t.scale),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -296,7 +401,8 @@ Future<void> wallWrite(
   await attempt(context, write);
 }
 
-DenAction _choreAction(ChoreDay day, Member? actor) =>
+/// The permission checking [day] off on the wall needs for [actor]: their own chore, or anyone's.
+DenAction wallChoreAction(ChoreDay day, Member? actor) =>
     day.owner == null || day.owner == actor?.id ? DenAction.completeOwnChore : DenAction.completeAnyChore;
 
 /// Today's chores per person with big checks, then the pinned grocery list.
@@ -397,7 +503,7 @@ class _WallChore extends StatelessWidget {
     Future<void> toggle(bool v) async {
       await wallWrite(
         context,
-        (actor) => _choreAction(day, actor),
+        (actor) => wallChoreAction(day, actor),
         () => context.choreActions.setDone(day, v),
         likely: day.owner,
       );

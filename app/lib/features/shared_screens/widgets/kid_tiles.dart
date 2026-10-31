@@ -45,12 +45,22 @@ class KidAvatar extends StatelessWidget {
 /// A fat colored disc holding a navy pictogram, or once [done] (0 to 1, so it can move between
 /// them) a white disc with a navy check drawing its stroke.
 class KidDisc extends StatelessWidget {
-  const KidDisc({super.key, required this.color, required this.glyph, this.done = 0, this.size = KidLayout.disc});
+  const KidDisc({
+    super.key,
+    required this.color,
+    required this.glyph,
+    this.done = 0,
+    this.size = KidLayout.disc,
+    this.ink = KidColors.navy,
+  });
 
   final Color color;
   final IconData? glyph;
   final double done;
   final double size;
+
+  /// The pictogram's color: navy on a kid primary, the theme's onMarker on a person's color.
+  final Color ink;
 
   @override
   Widget build(BuildContext context) {
@@ -65,7 +75,7 @@ class KidDisc extends StatelessWidget {
             if (glyph != null && t < 0.5)
               Opacity(
                 opacity: 1 - t * 2,
-                child: Icon(glyph, size: size * 0.55, color: KidColors.navy),
+                child: Icon(glyph, size: size * 0.55, color: ink),
               ),
             if (t > 0)
               CustomPaint(size: Size.square(size * 0.6), painter: CheckPainter(progress: ((t - 0.2) / 0.8).clamp(0.0, 1.0))),

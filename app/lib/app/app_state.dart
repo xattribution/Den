@@ -63,8 +63,8 @@ abstract final class Changes {
 }
 
 /// How this device looks and runs, whichever family it shows: Day, Night or Auto, the text
-/// size, how the calendar looks, whether it is a wall display, and whether it shows the screen
-/// info over the app. Every family's [AppState] on the device shares one, so a change in one
+/// size, how the calendar looks, whether it is a wall display (and which view it shows), and
+/// whether it shows the screen info over the app. Every family's [AppState] on the device shares one, so a change in one
 /// family's Settings is the device's.
 class DevicePrefs extends ChangeNotifier {
   DevicePrefs({
@@ -74,12 +74,14 @@ class DevicePrefs extends ChangeNotifier {
     CalendarDays calendarDays = CalendarDays.dots,
     bool calendarLight = false,
     bool screenInfo = false,
+    String? wallView,
   })  : _wall = wall,
         _theme = theme,
         _textSize = textSize,
         _calendarDays = calendarDays,
         _calendarLight = calendarLight,
-        _screenInfo = screenInfo;
+        _screenInfo = screenInfo,
+        _wallView = wallView;
 
   static const _wallKey = 'den.wall';
   static const _themeKey = 'den.theme';
@@ -87,6 +89,7 @@ class DevicePrefs extends ChangeNotifier {
   static const _calendarDaysKey = 'den.calendarDays';
   static const _calendarLightKey = 'den.calendarLight';
   static const _screenInfoKey = 'den.screenInfo';
+  static const _wallViewKey = 'den.wallView';
 
   /// The saved preferences.
   static Future<DevicePrefs> load() async {
@@ -98,6 +101,7 @@ class DevicePrefs extends ChangeNotifier {
       calendarDays: CalendarDays.values.asNameMap()[prefs.getString(_calendarDaysKey)] ?? CalendarDays.dots,
       calendarLight: prefs.getBool(_calendarLightKey) ?? false,
       screenInfo: prefs.getBool(_screenInfoKey) ?? false,
+      wallView: prefs.getString(_wallViewKey),
     );
   }
 
@@ -154,6 +158,18 @@ class DevicePrefs extends ChangeNotifier {
     _screenInfo = value;
     notifyListeners();
     AppState._save((p) => p.setBool(_screenInfoKey, value));
+  }
+
+  /// On a wall display, the view someone there chose with the tabs at its top (`WallView`'s
+  /// name: week, today or chores), kept on this device; null follows the layout a parent picked
+  /// for the display.
+  String? _wallView;
+  String? get wallView => _wallView;
+  set wallView(String? value) {
+    if (value == _wallView) return;
+    _wallView = value;
+    notifyListeners();
+    AppState._save((p) => value == null ? p.remove(_wallViewKey) : p.setString(_wallViewKey, value));
   }
 }
 
