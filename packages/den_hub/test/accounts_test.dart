@@ -457,8 +457,11 @@ void main() {
           configure: (base) => configFor(base, signIn: providersFor(google: google), proxies: [IpNetwork.parse('127.0.0.1/32')]));
       final b = Browser(f.base);
       final headers = {'x-forwarded-for': '203.0.113.7'};
+      // What cloudflared sends: whatever the client claimed first, the real client last. Making
+      // up the front of the chain buys nothing.
       for (var i = 0; i < Limits.auth.burst; i++) {
-        expect((await b.go('GET', '/auth/oidc/google/start', headers: headers)).status, 302, reason: '$i');
+        final spoofed = {'x-forwarded-for': '198.51.100.$i, 192.0.2.$i, 203.0.113.7'};
+        expect((await b.go('GET', '/auth/oidc/google/start', headers: spoofed)).status, 302, reason: '$i');
       }
       final limited = await b.go('GET', '/auth/oidc/google/start', headers: headers);
       expect(limited.status, 429);

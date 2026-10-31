@@ -196,7 +196,9 @@ Map<String, RsaPublicKey> parseJwks(Object? json) {
     } on FormatException {
       continue;
     }
-    if (key.n.bitLength < 2048 || key.n.bitLength > 8192 || key.e < BigInt.from(3) || key.e.isEven) continue;
+    if (key.n.bitLength < 2048 || key.n.bitLength > 8192 || key.e < BigInt.from(3) || key.e.isEven || key.e.bitLength > 32) {
+      continue;
+    }
     if (found.containsKey(kid) || twice.contains(kid)) {
       found.remove(kid);
       twice.add(kid);
