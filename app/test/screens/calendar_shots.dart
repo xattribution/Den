@@ -29,10 +29,11 @@ Future<void> shootAt(
   String? base,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
   double? text,
   Future<void> Function()? act,
 }) async {
-  await pumpAt(tester, state: state, location: location, base: base, size: size, night: night, text: text, act: act);
+  await pumpAt(tester, state: state, location: location, base: base, size: size, night: night, theme: theme, text: text, act: act);
   await expectLater(find.byType(MaterialApp), matchesGoldenFile('../goldens/$name.png'));
 }
 
@@ -45,6 +46,7 @@ Future<void> pumpAt(
   String? base,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
   double? text,
   Future<void> Function()? act,
 }) async {
@@ -60,7 +62,7 @@ Future<void> pumpAt(
       child: MaterialApp.router(
         debugShowCheckedModeBanner: false,
         routerConfig: router,
-        theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
+        theme: denTheme(theme ?? (night ? DenColors.night : DenColors.day), typeScale: scale),
         builder: (context, child) => systemText(tester, text, state: state, child: child!),
       ),
     ),
@@ -88,6 +90,7 @@ Future<void> pumpCalendar(
   required AppState state,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
   double? text,
 }) async {
   await loadFonts();
@@ -99,7 +102,7 @@ Future<void> pumpCalendar(
       state: state,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: state.wall ? DenType.wallScale : 1),
+        theme: denTheme(theme ?? (night ? DenColors.night : DenColors.day), typeScale: state.wall ? DenType.wallScale : 1),
         builder: (context, child) => systemText(tester, text, state: state, child: child!),
         home: Scaffold(body: screen),
       ),
@@ -116,10 +119,11 @@ Future<void> shootCalendar(
   required AppState state,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
   double? text,
   Future<void> Function()? act,
 }) async {
-  await pumpCalendar(tester, screen, state: state, size: size, night: night, text: text);
+  await pumpCalendar(tester, screen, state: state, size: size, night: night, theme: theme, text: text);
   if (act != null) {
     await act();
     await tester.pumpAndSettle();

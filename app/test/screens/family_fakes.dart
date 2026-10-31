@@ -172,6 +172,7 @@ Future<void> pumpScreen(
   required AppState state,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
   PairingService? pairing,
   bool pushed = false,
 }) async {
@@ -188,7 +189,7 @@ Future<void> pumpScreen(
         // A fresh navigator for each screen a test pumps: its first pages are made only once.
         key: UniqueKey(),
         debugShowCheckedModeBanner: false,
-        theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
+        theme: denTheme(theme ?? (night ? DenColors.night : DenColors.day), typeScale: scale),
         builder: (context, navigator) => TextSizeFromState(
           child: pairing == null ? navigator! : PairingScope(service: pairing, child: navigator!),
         ),
@@ -215,10 +216,11 @@ Future<void> shootWith(
   required AppState state,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
   PairingService? pairing,
   bool pushed = false,
 }) async {
-  await pumpScreen(tester, screen, state: state, size: size, night: night, pairing: pairing, pushed: pushed);
+  await pumpScreen(tester, screen, state: state, size: size, night: night, theme: theme, pairing: pairing, pushed: pushed);
   await matchShot(name);
 }
 
