@@ -138,6 +138,11 @@ class TrustActions {
 
   /// "Let the hub help us get back in": the hub's server recovery key, or null to stop it.
   Future<void> setHubHelp(String? serverKey) => _den.setServerRecoveryKey(serverKey);
+
+  /// The Google or Apple account that signs in as [member] ([Den.setAccount]): the one the hub's
+  /// sign-in just found, read back on this phone, or null to take it away. Only a parent binds
+  /// their own, on their own phone.
+  Future<void> setAccount(String member, AccountRef? account) => _den.setAccount(member, account);
 }
 
 extension TrustActionsOf on BuildContext {

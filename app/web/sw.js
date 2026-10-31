@@ -38,7 +38,7 @@ const EXTRA = [
   'version.json',
 ];
 
-const PASS_THROUGH = /^(api|ws|mcp|oauth|ics|health|\.well-known)(\/|$)/;
+const PASS_THROUGH = /^(api|ws|mcp|oauth|auth|ics|health|\.well-known)(\/|$)/;
 
 async function fresh(path) {
   const response = await fetch(new Request(path, { cache: 'no-cache' }));
