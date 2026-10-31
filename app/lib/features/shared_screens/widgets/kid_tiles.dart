@@ -242,8 +242,8 @@ class KidJobTile extends StatelessWidget {
     final reduced = DenMotion.reduced(context);
     return TweenAnimationBuilder<double>(
       tween: Tween(end: done ? 1 : 0),
-      duration: reduced ? DenMotion.fade : DenMotion.settle(DenMotion.check),
-      curve: reduced ? Curves.linear : SpringCurve(DenMotion.check),
+      duration: reduced ? DenMotion.fade : DenMotion.checkSettle,
+      curve: reduced ? Curves.linear : DenMotion.checkCurve,
       builder: (context, v, _) {
         final t = v.clamp(0.0, 1.0);
         final face = Color.lerp(c.card, person, t)!;
