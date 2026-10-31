@@ -213,6 +213,11 @@ extension KidText on DenText {
 
   /// The star total: 46 / 800.
   TextStyle kidCount(Color c) => _kid(46, FontWeight.w800, c, 1.0);
+
+  /// A size the wall mock gives in its own pixels ([px] at 1920 wide: a job's title is 40, a
+  /// kid's name 48): the wall's 1.3 scale brings it there, and the person's text size applies.
+  TextStyle kidWall(double px, FontWeight weight, Color c, {double height = 1.2}) =>
+      _kid(px / DenType.wallScale, weight, c, height);
 }
 
 extension KidTheme on BuildContext {
