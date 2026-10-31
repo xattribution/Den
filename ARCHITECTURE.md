@@ -394,36 +394,46 @@ phase 1 of the account-first plan (docs/auth/ACCOUNT_FIRST_REVIEW.md). There is 
 no email link; someone with neither account uses a device a parent set up. In this phase an
 account does one thing, `GET /api/v1/me`; devices, grants and approvals are unchanged.
 
-**Which account is whose** is `member.account`: `{provider, hash}`, where `hash` is HMAC-SHA256
+**Which account is whose** is `member.account`: `{provider, hash}` and the hub's proof, where `hash` is HMAC-SHA256
 keyed by the family id over `"den/account/v1" 0x00 provider 0x00 sub` (den_core's
 `accountHash`). It binds on `sub`, the provider's lasting id for the account, never on the email,
 which a person can change and a provider can hand to someone else. It is keyed by the family id so
 the same person in two families has two unrelated hashes: whoever holds both logs (a Den host, a
 backup, a device in both) can't join them up by it. The family id never changes, so a binding
 survives the hub moving or being restored, and nothing about it depends on a key one machine
-holds. It hides nothing from someone who already has the `sub`; it isn't meant to.
+holds. It hides nothing from someone who already has the `sub` (a Google `sub` can be looked up),
+so a hash alone binds nothing: the record also carries the hub's proof (`AccountProof`), its device
+key's signature over `[family, member, provider, hash, hub, nonce, expires]`, made only when that
+account really signed in for that member. Every replica checks the signature as the change arrives,
+and validity checks that the key is an approved, unremoved hub of the family at the change's place
+in the log and that the proof (an hour) hasn't expired at the change's clock.
 
 Validity treats it as a trust decision narrower than the others. A parent binds **their own**
 account, on their own **personal** device, in a change that writes nothing else; never the hub
 (whatever it acts for, its owner using it included), a connection through it (`_via`), a shared
 screen, a kid, or one parent for another. The person, or any parent on their own personal device,
-may take one away. A hash another live member holds is refused, so one account signs in as one
-person; two parents binding the same account while apart settle by the log, the later refused on
-every replica. A new member never arrives with one. The API's member objects don't carry it.
+may take one away. Two members with the same account (bound while apart) both keep it: no change,
+however it is clocked, takes an account from someone else. It then signs in as neither, and every
+parent's own device says so in Needs you until one takes it away. A new member never arrives with
+one. The API's member objects don't carry it. In this phase only a member who is a parent now signs
+in; a parent made something else keeps a dormant binding that does nothing, and their sessions end.
+Grants (phases 2 and 3) must cap what a binding may do by the person's current permissions.
 
 **Binding** goes through the parent's own phone and never lets the hub write the record:
 
 1. The phone asks the hub, signed, for a binding (`POST /api/v1/account/bindings`) and gets two
    random values: an `id` it reads the result back by and a `ticket` in a start link.
-2. It opens the start link in a browser; the parent signs in there.
-3. The hub checks the sign-in (below) and keeps the result for that binding.
+2. It opens the start link in a browser (only on the hub's own address). The page asks first
+   ("Continue only if you are Alex"); Continue posts back, and the parent signs in.
+3. The hub checks the sign-in (below), signs its proof, and keeps the result for that binding.
 4. The phone reads it back (`GET /api/v1/account/bindings/{id}`, signed by the same phone for the
    same parent), once, shows which account it was, and on the parent's OK writes
    `member.account` itself.
 
-A session cookie plays no part, so a stolen one binds nothing. The start link works for one
-browser: opened twice, the binding is spoiled and neither binds anything, so someone who sees the
-link can't slip their own account in. A sign-in comes back once (its `state` is used up as it
+A session cookie plays no part, so a stolen one binds nothing. Opening the start link starts
+nothing (so previews and scanners spoil nothing); its Continue starts one sign-in, with nothing
+awaited between checking and marking it, and a second one spoils the binding, so someone who sees
+the link can't slip their own account in. A binding is finished once. A sign-in comes back once (its `state` is used up as it
 arrives), to the browser holding its `__Host-` cookie, so a replayed or forwarded callback
 finishes nothing. A binding lives in one family's hub and its hash is keyed by that family, so it
 means nothing in another family on the same host.
@@ -940,7 +950,7 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `GET /api/v1/recovery/key` | signed by a parent's own device | The hub's server recovery key, for "Let the hub help us get back in" |
 | `POST /api/v1/recovery/tickets` | `den_hub recover` on the hub's machine (a secret in the data directory) | A one-time link and four words for one parent, 30 minutes, only while the family has server help on |
 | `POST /api/v1/recovery/redeem` | the four words and the new device's key | The hub's recovery proof for that device and an invite to join with it |
-| `GET /auth/oidc/{google\|apple}/start`, `.../callback` (Apple: `POST`, then a `GET`), `POST /auth/logout` | a browser; logout only with the hub's own `Origin` | Signing in with Google or Apple (see "Accounts"); only when the owner set a provider up, else `404` |
+| `GET /auth/oidc/{google\|apple}/start` (with `?bind=`: a page asking first, whose Continue is `POST .../start`), `.../callback` (Apple: `POST`, then a `GET`), `POST /auth/logout` | a browser; the posts to `start` and logout only with the hub's own `Origin` | Signing in with Google or Apple (see "Accounts"); only when the owner set a provider up, else `404` |
 | `GET /api/v1/me` | the `__Host-den_session` cookie | Who the browser is signed in as |
 | `GET /api/v1/account/providers`, `POST /api/v1/account/bindings`, `GET /api/v1/account/bindings/{id}` | signed by a parent's own personal device | Binding their own account: a start link for the browser, and the result read back once |
 

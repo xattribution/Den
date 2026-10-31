@@ -2051,20 +2051,28 @@ provider sends people back. Otherwise every path in this section answers `404` l
 hub doesn't know, and nothing else changes. A provider that isn't set up (Apple, say) has no
 routes either.
 
-**Who an account is.** `member.account` is `{"provider": "google" | "apple", "hash": "<64 hex>"}`:
-lowercase hex HMAC-SHA256, keyed by the UTF-8 bytes of the family id, over
+**Who an account is.** `member.account` is `{"provider": "google" | "apple", "hash": "<64 hex>",
+"hub", "key", "nonce", "expires", "sig"}`. `hash` is lowercase hex HMAC-SHA256, keyed by the UTF-8 bytes of the family id, over
 `"den/account/v1" 0x00 provider 0x00 sub`, where `sub` is the provider's own lasting id for the
 account (den_core's `accountHash`). Never the email: a sign-in matches a member by provider and
 `sub` alone, so the same person with a new address is still them, and another account with their
 address is not. Keyed by the family, the same person in two families has two unrelated hashes. The
-record is written only by the parent themselves, on their own personal device (ARCHITECTURE.md,
-"Accounts"): never by the hub, an app or assistant through it, or a shared screen.
+rest is the hub's proof that the account really signed in for this member (den_core's
+`AccountProof`): its device `hub`, with key `key`, signs `"den/account-proof/v1" 0x00 | canonical
+JSON [family, member, provider, hash, hub, nonce, expires]`. A `sub` can be looked up and the
+family id is on every device, so without it anyone could compute someone else's hash. The record
+is written only by the parent themselves, on their own personal device (ARCHITECTURE.md,
+"Accounts"): never by the hub, an app or assistant through it, or a shared screen. In this phase
+only a member who is a parent now signs in: someone made something else keeps a dormant binding
+that signs in as nobody. Two members with the same account (bound while apart) both keep it, and it
+signs in as neither until one takes it away.
 
 **Sessions.** A browser that signs in gets `__Host-den_session`, a random 256-bit value
 (`Secure; HttpOnly; SameSite=Lax; Path=/`, no `Domain`, `Max-Age` 12 hours). The hub keeps only its
 SHA-256, in memory: a restart signs everyone out. Each sign-in makes a new session and ends the one
 the browser had; a session ends at once when its member no longer has the account it signed in
-with (unbound, bound to another account, removed). A cookie sent twice counts as none.
+with (unbound, bound to another account, removed) or stops being a parent. A cookie sent twice
+counts as none.
 
 ### `GET /auth/oidc/{provider}/start`
 
@@ -2075,12 +2083,26 @@ the verifier never leaves the hub but for the token endpoint), `redirect_uri` th
 sets `__Host-den_signin` (`Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`), which ties the
 sign-in to this browser: it finishes only there, within 10 minutes, once.
 
-With `?bind=<ticket>` it finishes a [binding](#binding-an-account) a parent's phone started. A
-ticket works for one browser: opening it a second time answers `400` and spoils the binding, so
-neither browser binds anything. The provider's endpoints come from its discovery document
+With `?bind=<ticket>` (a [binding](#binding-an-account)'s start link) it starts nothing: it
+answers `200` with a page that says "This makes the Google account you choose sign in as Alex in
+the Carters' Den. Continue only if you are Alex.", no script, every name escaped, and one form
+(`form-action 'self'`) whose Continue posts the ticket back. So a link preview or a scanner that
+fetches the link spoils nothing. A ticket that expired, was used, or isn't this hub's answers a
+`400` page.
+
+`POST /auth/oidc/{provider}/start` `bind=<ticket>` (`application/x-www-form-urlencoded`) is that
+Continue: `Origin` must be exactly the hub's public origin (else a `403` page). It starts the
+binding's sign-in as above. A ticket starts one sign-in: a second post answers `400` and spoils
+the binding, so neither browser binds anything, however close together the two came.
+
+The provider's endpoints come from its discovery document
 (`<issuer>/.well-known/openid-configuration`, whose `issuer` must be exactly the provider's,
 endpoints `https`), fetched through NetGuard and kept a day; a provider that can't be reached
-answers a `503` page with `Retry-After`.
+answers a `503` page with `Retry-After`, and isn't asked again for 45 seconds.
+
+Sign-ins on their way are kept on the hub for 10 minutes. One client keeps at most 4 plain ones (a
+fifth ends its oldest); past 5000 in all the oldest plain one ends; a binding's sign-in is never
+ended this way. Nobody is turned away.
 
 ### `GET /auth/oidc/{provider}/callback` and `POST /auth/oidc/apple/callback`
 
@@ -2108,8 +2130,8 @@ minutes) and `nbf` within 60 seconds, `nonce` this sign-in's, and an email that 
 
 | Outcome | Status |
 | --- | --- |
-| Signed in as the member the account is bound to: sets `__Host-den_session` | `200` |
-| The account is bound to nobody in this family, **or the hub isn't in a family yet**: the same page, byte for byte, with the same headers, after the same work (the code exchanged and the token checked), and nothing made: no session, no record, nothing in the family's log. In phase 3 "no invite" answers the same | `403` |
+| Signed in as the parent the account is bound to: sets `__Host-den_session` | `200` |
+| The account is bound to nobody in this family (or to someone who isn't a parent now, or to two people), **or the hub isn't in a family yet**: the same page, byte for byte, with the same headers, after the same work (the code exchanged and the token checked), and nothing made: no session, no record, nothing in the family's log. In phase 3 "no invite" answers the same | `403` |
 | A Hide My Email address (the page says how to share the real one); an email that isn't verified | `403` |
 | The sign-in expired, was used already, or came back to another browser | `400` |
 | The token or the answer didn't check out (forged, another key, another nonce or audience) | `400` |
@@ -2154,17 +2176,22 @@ writes `member.account` itself: the hub only checks the sign-in, and can never w
    by; `start_url` (`.../auth/oidc/google/start?bind=<ticket>`) carries a different random value,
    so the link can't read the result. At most 3 at once per phone (`429 rate_limited`), 100 per hub
    (`429 busy`); each lasts 10 minutes.
-2. The phone opens `start_url` in the browser, and the parent signs in there.
+2. The phone opens `start_url` in the browser (only when it is on one of the hub's own `https`
+   addresses the phone knows), the parent presses Continue on the page it shows, and signs in.
 3. `GET /api/v1/account/bindings/{id}`, signed by the same phone for the same parent (anyone else:
    `404 not_found`): `{"state": "waiting"}`, `{"state": "failed", "message": "..."}`, or
-   `{"state": "done", "account": {"provider", "hash"}, "email": "alex@example.com"}`. A result or a
-   failure is given once; then the binding is gone (`404`).
+   `{"state": "done", "account": {"provider", "hash", "hub", "key", "nonce", "expires", "sig"},
+   "email": "alex@example.com"}`: the account with the hub's proof, good for an hour. A binding is
+   finished once (a second sign-in spoils it), and a result or a failure is given once; then the
+   binding is gone (`404`).
 4. The phone shows which account it was and, on the parent's OK, writes
-   `member.account = account` on their own member. Every replica refuses that change from anywhere
-   but the parent's own personal device, and refuses a hash another member already has.
+   `member.account = account` on their own member. Every replica checks the proof's signature as
+   the change arrives, and refuses it from anywhere but the parent's own personal device, or with a
+   proof that isn't from an approved hub of the family at that place in the log, or expired at the
+   change's clock.
 
 A session cookie plays no part in this: it can neither start a binding nor read one. A sign-in
-comes back once, to the browser that began it, and a start link opened twice binds nothing.
+comes back once, to the browser that began it, and a start link used twice binds nothing.
 `GET /api/v1/account/providers`, signed the same way, answers `{"providers": [{"id": "google",
 "name": "Google"}]}`: what the hub offers.
 
