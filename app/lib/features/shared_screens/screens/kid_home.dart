@@ -61,8 +61,8 @@ class KidHome extends StatelessWidget {
     final readAloud = reader && jobs.any((j) => !j.done);
     final pinned = readAloud && layout.isCompact;
     final read = ReadToMeBar(onTap: () => _readAll(context, jobs));
-    // Kid primaries for the discs, by chore, never the same as a neighbor's.
-    final discs = context.kid.forJobs([for (final j in jobs) j.day.chore.id]);
+    // Kid primaries for the discs, by job, never the same as a neighbor's.
+    final discs = context.kid.forJobs([for (final j in jobs) discKey(j.day.chore)]);
 
     final stars = pointsOn ? _Stars(kid: kid) : null;
     final today = !reader && _Today.has(app, kid) ? _Today(kid: kid) : null;
@@ -366,7 +366,7 @@ class _StepTile extends StatelessWidget {
     final c = context.colors;
     final t = context.text;
     final picture = stepPicture(step.text);
-    final disc = context.kid.forJob('${day.chore.id}/${step.id}').face;
+    final disc = context.kid.forJob('${discKey(day.chore)}/${step.text.trim().toLowerCase()}').face;
     return ChunkyPressable(
       onTap: () {
         final actions = context.choreActions;

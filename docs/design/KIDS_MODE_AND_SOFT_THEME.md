@@ -72,7 +72,7 @@ Soft defaults the family pack to `ColorPack.soft` (`tokens.dart:332`) but the fa
 | berry | `#FF6F7D` | `#E04A5C` | 5.94:1 |
 | bubble | `#F58BC0` | `#D9619E` | 7.08:1 |
 
-Rules: text and pictograms on a face are always navy `#0F2338`. A lip never carries text. On a kid's own board the disc color is chosen per job from this set (stable per chore id, hashed), and a done tile always fills with the kid's person color so "my color = done" holds. On the wall, where several kids share one screen, discs use the person's color only (the "a hue means a person" rule in `DESIGN.md:40-41` is kept where it matters).
+Rules: text and pictograms on a face are always navy `#0F2338`. A lip never carries text. On a kid's own board the disc color is chosen per job from this set (stable per job, hashed; as built the key is the job's title, so it also holds across devices and screenshots, and a job that would match the one beside or above it takes the next color), and a done tile always fills with the kid's person color so "my color = done" holds. On the wall, where several kids share one screen, discs use the person's color only (the "a hue means a person" rule in `DESIGN.md:40-41` is kept where it matters).
 
 Todo ring (unchecked circle, non-text 3:1): `#7F96AE` on white 3.05:1; `#5F7894` on `#111F30` 3.64:1. In Day and Night: `#8C8C8C` on white 3.36:1; `#6B6B6B` on `#141414` 3.46:1.
 

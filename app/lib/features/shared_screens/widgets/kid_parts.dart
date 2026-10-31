@@ -58,6 +58,14 @@ List<KidJob> kidJobs(Den den, String date, String kidId) => [
           ], owned: false),
     ];
 
+/// What picks a job's disc color ([KidColors.forJob]): its title, so "Make bed" is the same
+/// color for every kid, on every device and every day, and in every screenshot (chore ids are
+/// minted fresh for each family). A job without a title falls back to its id.
+String discKey(Chore chore) {
+  final title = chore.title.trim().toLowerCase();
+  return title.isEmpty ? chore.id : title;
+}
+
 /// What a kid's star card counts toward: a goal running now, or the next reward.
 class KidTarget {
   const KidTarget({required this.name, required this.have, required this.need, required this.words, this.reward});
