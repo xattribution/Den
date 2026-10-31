@@ -200,9 +200,17 @@ moment, and what's missing or hidden when she needs it.
   Settings: 3 and two scrolls → 4.
 - **Screen info**: stays in Advanced, under "When something looks wrong".
 
+## Found on the way
+
+- **The kitchen screen in portrait.** The wall's new top bar (date, tabs and clock in one row,
+  from the wall chores board) ran off the edge between 760 and about 1000 pt wide, which
+  includes an iPad standing in portrait on the counter. Below 1000 pt the wall now uses the
+  stacked bar it already had (clock and controls, then the date, then the tabs). This was the
+  one failing test on family-ready.
+
 ## What stayed where it was, on purpose
 
-- Kids' views and the wall: nothing changed. Parent-only things stay parent-only: Kitchen
+- Kids' views: nothing changed; the wall only got the fix above. Parent-only things stay parent-only: Kitchen
   screen, like Family and the AI helper, shows on Settings only to a parent, and its page still
   says that shared screens change only on a parent's own phone.
 - Accessibility: every new row is a `NavRow` (56 pt, its value read with its label), the Text
