@@ -61,6 +61,10 @@ abstract final class DenMotion {
 
   /// [ui] as a curve over [uiSettle], for implicit animations such as AnimatedSize.
   static final Curve uiCurve = SpringCurve(ui);
+
+  /// [check] as a duration and a curve: a kid tile filling and its check drawing.
+  static final Duration checkSettle = settle(check);
+  static final Curve checkCurve = SpringCurve(check);
 }
 
 /// A spring from 0 to 1 as a curve, over the time it takes to settle. Use it only where Flutter

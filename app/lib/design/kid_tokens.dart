@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'tokens.dart';
@@ -78,9 +80,27 @@ class KidColors extends ThemeExtension<KidColors> {
 
   final List<KidPrimary> primaries;
 
-  /// The primary for a job: chosen from its chore id, so the same job is the same color on
-  /// every device and every day. Two jobs can share one; the pictogram tells them apart.
-  KidPrimary forJob(String choreId) => primaries[stableIndex(choreId, primaries.length)];
+  /// The primary for a job: chosen from a stable key for it (the board uses its title), so the
+  /// same job is the same color on every device and every day. Two jobs can share one; the
+  /// pictogram tells them apart.
+  KidPrimary forJob(String key) => primaries[stableIndex(key, primaries.length)];
+
+  /// The primaries for a board's jobs in order: each job's own ([forJob]), except that a job
+  /// whose color matches one of the [apart] jobs before it takes the next free one, so no tile
+  /// matches the one beside it or above it (2 or 3 across). The same jobs in the same order get
+  /// the same colors every time.
+  List<KidPrimary> forJobs(List<String> keys, {int apart = 3}) {
+    final picked = <KidPrimary>[];
+    for (final id in keys) {
+      final recent = picked.skip(math.max(0, picked.length - apart)).toSet();
+      var i = stableIndex(id, primaries.length);
+      for (var tries = 0; tries < primaries.length && recent.contains(primaries[i]); tries++) {
+        i = (i + 1) % primaries.length;
+      }
+      picked.add(primaries[i]);
+    }
+    return picked;
+  }
 
   /// A hash of [id] into `0 ≤ i < n` that is the same on every platform (the VM and the web
   /// differ in `String.hashCode`), and stays within doubles' exact integers on the web.
