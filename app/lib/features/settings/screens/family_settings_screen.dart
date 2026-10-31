@@ -1,5 +1,6 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
@@ -12,16 +13,19 @@ import '../../rewards/rewards.dart' show PointsSwitch;
 import '../widgets/family_colors_choice.dart';
 import '../widgets/hub_help_switch.dart';
 
-/// Settings → Family: the family's name, time zone and first day of the week, the family's
-/// colors (each pack shown with the family's own people), whether it uses points (the rewards'
-/// [PointsSwitch]), and whether what Den reads from a photo or a message is added right away or
-/// shown first. Each saves as it changes.
+/// Settings → Family: the family's name; its time zone, first day of the week and colors, each
+/// a row saying what it's set to (the colors open their own page, each pack shown with the
+/// family's own people); whether it uses points (the rewards' [PointsSwitch]); and whether what
+/// Den reads from a photo or a message is added right away or shown first. Each saves as it
+/// changes.
 class FamilySettingsScreen extends StatefulWidget {
   const FamilySettingsScreen({super.key});
 
   @override
   State<FamilySettingsScreen> createState() => _FamilySettingsScreenState();
 }
+
+const _weekStarts = [Choice(0, 'Sunday'), Choice(1, 'Monday')];
 
 class _FamilySettingsScreenState extends State<FamilySettingsScreen> {
   late final TextEditingController _name = TextEditingController(text: DenScope.read(context).den.family?.name ?? '');
@@ -84,30 +88,33 @@ class _FamilySettingsScreenState extends State<FamilySettingsScreen> {
           ),
         ),
         GroupCard(
-          child: NavRow(
-            icon: PhosphorIconsRegular.globeHemisphereWest,
-            label: 'Time zone',
-            value: zoneLabel(family.timezone),
-            onTap: () async {
-              final zone = await showTimeZoneSheet(context, family.timezone);
-              if (zone != null && zone != family.timezone) await _write(() => actions.setTimeZone(zone));
-            },
-          ),
-        ),
-        DenSection(
-          title: 'Weeks start on',
-          child: ChoiceRows<int>(
-            choices: const [Choice(0, 'Sunday'), Choice(1, 'Monday')],
-            value: family.weekStart,
-            onChanged: (d) => _write(() => actions.setWeekStart(d)),
-          ),
-        ),
-        DenSection(
-          title: 'Family colors',
-          child: FamilyColorsChoice(
-            people: app.den.members,
-            value: familyPack(family, context.colors.palette),
-            onChanged: (pack) => _write(() => actions.setColors(pack)),
+          child: Column(
+            children: ruled([
+              NavRow(
+                icon: PhosphorIconsRegular.globeHemisphereWest,
+                label: 'Time zone',
+                value: zoneLabel(family.timezone),
+                onTap: () async {
+                  final zone = await showTimeZoneSheet(context, family.timezone);
+                  if (zone != null && zone != family.timezone) await _write(() => actions.setTimeZone(zone));
+                },
+              ),
+              NavRow(
+                icon: PhosphorIconsRegular.calendarDots,
+                label: 'Weeks start on',
+                value: _weekStarts.firstWhere((c) => c.value == family.weekStart, orElse: () => _weekStarts.first).label,
+                onTap: () async {
+                  final day = await showChoiceSheet<int>(context, title: 'Weeks start on', choices: _weekStarts, value: family.weekStart);
+                  if (day != null && day != family.weekStart) await _write(() => actions.setWeekStart(day));
+                },
+              ),
+              NavRow(
+                icon: PhosphorIconsRegular.palette,
+                label: 'Family colors',
+                value: familyPack(family, context.colors.palette).label,
+                onTap: () => context.push('/settings/family/colors'),
+              ),
+            ], indent: 36),
           ),
         ),
         const GroupCard(child: PointsSwitch()),
@@ -124,6 +131,45 @@ class _FamilySettingsScreenState extends State<FamilySettingsScreen> {
         ),
         const Ungapped(RecoveryWordsReminder()),
         const Ungapped(HubHelpSwitch()),
+      ],
+    );
+  }
+}
+
+/// Settings → Family → Family colors: each pack with the family's own people in it; one tap
+/// picks it for every device in the family.
+class FamilyColorsScreen extends StatefulWidget {
+  const FamilyColorsScreen({super.key});
+
+  @override
+  State<FamilyColorsScreen> createState() => _FamilyColorsScreenState();
+}
+
+class _FamilyColorsScreenState extends State<FamilyColorsScreen> {
+  String? _error;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch(const {});
+    final family = app.den.family;
+    final parent = family != null && app.allows(DenAction.manageFamily);
+    final actions = context.familyActions;
+    return DenPage(
+      title: 'Family colors',
+      children: [
+        if (_error != null) ErrorState(message: _error!, actionLabel: 'OK', onAction: () => setState(() => _error = null)),
+        GroupCard(
+          child: FamilyColorsChoice(
+            people: app.den.members,
+            value: familyPack(family, context.colors.palette),
+            onChanged: parent
+                ? (pack) async {
+                    final problem = await tryWrite(() => actions.setColors(pack));
+                    if (mounted) setState(() => _error = problem);
+                  }
+                : null,
+          ),
+        ),
       ],
     );
   }

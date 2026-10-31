@@ -13,10 +13,10 @@ import '../state/chores_model.dart';
 import '../words/chore_words.dart';
 
 /// A chore on one day, as Chores.dc.html draws it: a 34 pt ring in its person's color, the
-/// title, a quiet line (when, stars, steps, late), and "Give to…" at the end for someone who
-/// may hand it on. The ring checks it (a chore with steps fills its ring as an arc and checks
-/// through its steps). Tapping the words opens it in place: its steps to check, Give to… and
-/// Details. [date] is the day the board shows.
+/// title and a quiet line (when, stars, steps, late). The ring checks it (a chore with steps
+/// fills its ring as an arc and checks through its steps). Tapping the words opens it in place:
+/// its steps to check, Give to… for someone who may hand it on, and Details. Nothing else sits
+/// on the row, so a board of chores reads as names and rings. [date] is the day the board shows.
 class ChoreRow extends StatelessWidget {
   const ChoreRow({
     super.key,
@@ -47,8 +47,6 @@ class ChoreRow extends StatelessWidget {
     final pointsOn = app.den.family?.pointsEnabled ?? true;
     final stepped = day.stepCount > 0;
     final meta = choreMeta(day, date: date, today: app.today, f: app.formats, stars: pointsOn ? day.pointsAvailable : null);
-    final scale = MediaQuery.textScalerOf(context).scale(1);
-    final giveBeside = onGive != null && !day.done && scale <= 1.35;
 
     void check() => attempt(context, () => context.choreActions.setDone(day, !day.done));
     final ringTap = stepped ? onOpen : (canCheck ? check : null);
@@ -111,14 +109,6 @@ class ChoreRow extends StatelessWidget {
                   child: ExcludeSemantics(child: Align(alignment: AlignmentDirectional.centerStart, child: words)),
                 ),
               ),
-              if (giveBeside) ...[
-                const SizedBox(width: Sp.s),
-                OutlinedButton(
-                  onPressed: onGive,
-                  style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14)),
-                  child: const Text('Give to…', maxLines: 1, softWrap: false),
-                ),
-              ],
             ],
           ),
         ),

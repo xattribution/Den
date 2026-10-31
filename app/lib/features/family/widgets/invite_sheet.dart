@@ -36,7 +36,7 @@ class InviteSheet extends StatefulWidget {
   /// The clock for when the invite stops working; tests pass a fixed time.
   final DateTime Function()? now;
 
-  /// An invite for a shared display, which names nobody (Advanced, Shared displays).
+  /// An invite for a shared display, which names nobody (Settings, Kitchen screen).
   final bool shared;
 
   @override

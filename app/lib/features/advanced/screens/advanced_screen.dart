@@ -10,11 +10,11 @@ import '../../../app/build_info.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/web/web_app.dart';
-import '../../family/family.dart';
 
 /// Settings → Advanced, for parents: what someone sets up once and the family never sees in
-/// daily use. The hub and sync, shared displays, assistants and automations, Home Assistant,
-/// and the family's data; and Show screen info, for reporting a problem with the screen.
+/// daily use. The hub and sync, assistants and automations, Home Assistant, and the family's
+/// data; and Show screen info, for reporting a problem with the screen. The kitchen screen is on
+/// Settings itself, where a parent looks for it.
 class AdvancedScreen extends StatelessWidget {
   const AdvancedScreen({super.key, this.web});
 
@@ -29,7 +29,6 @@ class AdvancedScreen extends StatelessWidget {
     if (!app.allows(DenAction.manageFamily)) {
       return const DenPage(title: 'Advanced', children: [EmptyState(message: 'Only parents can open Advanced.')]);
     }
-    final displays = sharedDisplays(den).length;
     final connected = den.connections.where((x) => x.status == ConnectionStatus.active).length;
     final waiting = den.connections.where((x) => x.status == ConnectionStatus.pending).length;
     return DenPage(
@@ -48,12 +47,6 @@ class AdvancedScreen extends StatelessWidget {
                 label: 'Hub and sync',
                 detail: 'Keeping every device up to date',
                 onTap: () => context.push('/settings/advanced/hub'),
-              ),
-              NavRow(
-                icon: PhosphorIconsRegular.monitor,
-                label: 'Shared displays',
-                value: displays == 0 ? 'None' : '$displays',
-                onTap: () => context.push('/settings/advanced/displays'),
               ),
               NavRow(
                 icon: PhosphorIconsRegular.plugsConnected,

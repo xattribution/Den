@@ -251,7 +251,7 @@ sheet. Body text is 17. Figures are tabular, so times and counts line up.
 ## Words: scaling and wrapping
 
 - **Text follows the system size** up to 200 % (`DenTextScale` clamps above that, never below
-  135 %), times the person's own Text size (Settings, Appearance: Default, Larger at 20 pt
+  135 %), times the person's own Text size (Settings, Text size: Default, Larger at 20 pt
   body, Largest at 23 pt), which is how a Home Screen web app gets larger words at all. The
   product still stops at 200 %, and every screen is checked there (`text_size_test.dart`). Nothing holding text has a fixed height; use a minimum.
 - **Actions never squeeze text.** A button sits beside its text only while the text fits on one
@@ -520,10 +520,13 @@ tap happened, and shows it in a `DoneRow`.
   family's events in one card by time with their tags, and says Chores and stars stay with each
   family. Someone in one family sees none of it, except Settings' **Join another family**.
 - **Today**: the date and the greeting for the time of day, the person's face at the right
-  (it opens Family, Points, History and Settings); "Ask about your day" while the AI helper is on
-  for them (see "AI helper"); Needs you, for whoever may settle each thing
-  (rides in the next 48 hours, reward requests while points are on, late chores from today and
-  yesterday, devices and AI connections asking to join, lists due), one action each, which
+  (it opens Family, Invite someone, Points and rewards and Settings; Search is the glass beside
+  it); "Ask about your day" while the AI helper is on
+  for them (see "AI helper"); Needs you, for whoever may settle each thing, most pressing first
+  (rides in the next 48 hours, soonest first; then whoever waits on an answer now: a device
+  asking to join, a reward request while points are on; lists due; late chores from today and
+  yesterday; AI connections asking to connect; then notices that only need "Got it"), one
+  action each, which
   turns into what it did with Undo in place; Today's events (time column, title, who and
   whether anyone is driving, faces); from 5 PM, Tomorrow too; Chores by person (face, pills; a
   pill's name opens its steps, Give to… and Details in place); Groceries with the add bar. With
@@ -561,8 +564,8 @@ tap happened, and shows it in a `DoneRow`.
 - **Chores** (Chores.dc.html): the day with back, Today and forward, and how many are done;
   a section per person with their stars and goal bar in their color (while points are on),
   then their chores in one card. A row's ring checks it (steps fill the ring as an arc); its
-  words open it in place (steps, Give to…, Details); "Give to…" at the end hands it on for the
-  day, and its old section says so with Undo. iPad: the people in two columns. The editor asks
+  words open it in place (steps, Give to…, Details), and nothing else sits on the row; "Give
+  to…" there hands it on for the day, and its old section says so with Undo. iPad: the people in two columns. The editor asks
   only for name, picture, who, when and stars; the rest is under More options.
 - **Points and rewards** (no board; built from Chores): requests waiting for a parent with
   Approve and Decline in place, each person's stars and goal bar (tap to give or take),
@@ -580,6 +583,13 @@ tap happened, and shows it in a `DoneRow`.
   holds Share, Copy, Reorder, Edit and Delete. iPad: the lists in a column beside the chosen
   one. Today's Groceries add the same way.
 - **Family**: Needs you, the people (face, name, who they are), parent controls as switches.
+- **Settings** fits one iPhone screen: rows that say what each is set to (Family, Calendars,
+  Kitchen screen, AI helper, and on a parent's own phone the Google or Apple sign-in;
+  Appearance and Text size), the reminders switch, Advanced and About. A choice made once lives
+  a tap deeper: Appearance (Day, Night, Auto, Soft with the preview; how the calendar looks),
+  Text size (a short sheet: one tap picks and closes), About (version, build, licenses; a hub
+  serving a newer Den says so on the About row), Family's colors and first day of the week.
+  The hub, assistants, Home Assistant, data and screen info stay in Advanced.
 - **Add**: one field that understands a sentence, the kinds as chips, one button naming what it
   will add.
 - **Kid**: "Hi, Leo" with their picture, a star card with their goal bar, 2 to 4 big chore tiles.

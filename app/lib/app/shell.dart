@@ -11,7 +11,7 @@ import '../design/tokens.dart';
 import '../design/widgets.dart';
 import '../features/add/add.dart';
 import '../features/assistant/assistant.dart' show askPlace, askShortcutOn, openAsk;
-import '../features/family/family.dart' show AccessWatch, FamilySwitch;
+import '../features/family/family.dart' show AccessWatch, FamilySwitch, showInviteSheet;
 import 'app_state.dart';
 import 'household.dart';
 
@@ -190,12 +190,14 @@ class PersonButton extends StatelessWidget {
   }
 }
 
-/// What opens from the person: Family, Points and rewards (when stars are on), Search and
-/// Settings.
+/// What opens from the person: Family, Invite someone (for a parent on their own phone),
+/// Points and rewards (when stars are on) and Settings. Search isn't here: it sits beside the
+/// person on Today and in the iPad sidebar.
 Future<void> showPersonMenu(BuildContext context) {
   final app = DenScope.read(context);
   final router = GoRouter.of(context);
   final pointsOn = app.den.family?.pointsEnabled ?? true;
+  final invite = app.allowsTrust(DenAction.manageFamily);
   final me = app.me;
   void open(BuildContext sheet, String route) {
     Navigator.of(sheet).pop();
@@ -208,8 +210,16 @@ Future<void> showPersonMenu(BuildContext context) {
       final c = sheet.colors;
       final rows = [
         NavRow(icon: PhosphorIconsRegular.usersThree, label: 'Family', onTap: () => open(sheet, '/family')),
+        if (invite)
+          NavRow(
+            icon: PhosphorIconsRegular.userPlus,
+            label: 'Invite someone',
+            onTap: () {
+              Navigator.of(sheet).pop();
+              showInviteSheet(context);
+            },
+          ),
         if (pointsOn) NavRow(icon: PhosphorIconsRegular.star, label: 'Points and rewards', onTap: () => open(sheet, '/points')),
-        NavRow(icon: PhosphorIconsRegular.magnifyingGlass, label: 'Search', onTap: () => open(sheet, '/search')),
         NavRow(icon: PhosphorIconsRegular.gearSix, label: 'Settings', onTap: () => open(sheet, '/settings')),
       ];
       return Padding(
