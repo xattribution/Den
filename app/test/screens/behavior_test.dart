@@ -242,6 +242,8 @@ void main() {
       final first = den.choresOn(tomorrow).firstWhere((d) => !d.done && d.owner != null);
       final todays = den.choresOn(state.today).where((d) => d.chore.id == first.chore.id).firstOrNull?.owner;
       final row = find.ancestor(of: findWords(first.chore.title), matching: find.byType(ChoreRow)).first;
+      await tester.tap(find.descendant(of: row, matching: findWords(first.chore.title)));
+      await tester.pumpAndSettle();
       await tester.tap(find.descendant(of: row, matching: find.text('Give to…')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Anyone').last);

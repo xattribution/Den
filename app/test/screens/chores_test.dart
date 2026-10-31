@@ -144,8 +144,12 @@ void main() {
     );
   });
 
-  testWidgets('Give to… from a row: the people sheet, then the row says what it did, with Undo', (tester) async {
+  testWidgets('Give to… from an opened row: the people sheet, then the row says what it did, with Undo', (tester) async {
     final state = await demo(tester);
+    ChoreDay day(String title) => state.den.today().chores.firstWhere((d) => d.chore.title == title);
+    final first = state.den.today().chores.firstWhere((d) => !d.done && d.owner != null);
+    final title = first.chore.title;
+    final owner = first.owner;
     await shootAfter(
       tester,
       'chores_give_sheet_phone',
@@ -153,15 +157,15 @@ void main() {
       state: state,
       size: tall,
       act: (tester) async {
-        await tester.tap(find.text('Give to…').first);
+        // The rows are rings and names only; Give to… is in the row, opened.
+        expect(find.text('Give to…'), findsNothing);
+        await tester.tap(findWords(title).first);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Give to…'));
         await tester.pumpAndSettle();
         expect(find.text('Anyone'), findsWidgets);
       },
     );
-    ChoreDay day(String title) => state.den.today().chores.firstWhere((d) => d.chore.title == title);
-    final first = state.den.today().chores.firstWhere((d) => !d.done && d.owner != null);
-    final title = first.chore.title;
-    final owner = first.owner;
     await tester.tap(find.text('Anyone').last);
     await settle(tester);
     expect(state.den.today().chores.where((d) => d.chore.id == first.chore.id && d.owner == null), isNotEmpty);

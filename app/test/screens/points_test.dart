@@ -128,7 +128,7 @@ void main() {
       state: state,
       size: const Size(390, 1200),
       act: (tester) async {
-        await tester.tap(find.text('Give points'));
+        await tester.tap(find.text('Give stars'));
         await tester.pumpAndSettle();
         await tester.tap(find.text(kid.name).last);
         await tester.tap(find.text('5').last);
