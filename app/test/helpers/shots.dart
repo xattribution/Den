@@ -60,6 +60,7 @@ Future<void> shoot(
   required AppState state,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
 }) async {
   await loadFonts();
   tester.view.physicalSize = size;
@@ -72,7 +73,7 @@ Future<void> shoot(
       state: state,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
+        theme: denTheme(theme ?? (night ? DenColors.night : DenColors.day), typeScale: scale),
         builder: (context, child) => TextSizeFromState(child: child!),
         home: Scaffold(body: SafeArea(child: screen)),
       ),
@@ -90,6 +91,7 @@ Future<void> shootRoute(
   required AppState state,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
 }) async {
   await loadFonts();
   tester.view.physicalSize = size;
@@ -102,7 +104,7 @@ Future<void> shootRoute(
       child: MaterialApp.router(
         debugShowCheckedModeBanner: false,
         routerConfig: router,
-        theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
+        theme: denTheme(theme ?? (night ? DenColors.night : DenColors.day), typeScale: scale),
         builder: (context, child) => TextSizeFromState(child: child!),
       ),
     ),

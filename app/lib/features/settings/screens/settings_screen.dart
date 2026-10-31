@@ -21,12 +21,13 @@ import '../../family/family.dart' show ConfirmPanel, MembershipActions, pasteAno
 import '../../onboarding/onboarding.dart';
 import '../widgets/calendar_look_choice.dart';
 import '../widgets/text_size_choice.dart';
+import '../widgets/theme_choice.dart';
 import 'web_reminders.dart';
 
 /// Settings: how this device syncs in one line; for parents the family's settings, calendars
-/// and the AI helper; Day, Night or Auto, the text size and how the calendar looks; reminders on
-/// this device; Advanced for parents; and About: the version, the build (its commit and when it
-/// was built) and, in a browser, the build the hub serves now.
+/// and the AI helper; Day, Night, Auto or Soft with a preview, the text size and how the
+/// calendar looks; reminders on this device; Advanced for parents; and About: the version, the
+/// build (its commit and when it was built) and, in a browser, the build the hub serves now.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, this.version, this.web, this.hub});
 
@@ -184,17 +185,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              GroupCard(
-                child: ChoiceRows<ThemeChoice>(
-                  choices: const [
-                    Choice(ThemeChoice.day, 'Day'),
-                    Choice(ThemeChoice.night, 'Night', detail: 'True black, easy on the eyes after dark'),
-                    Choice(ThemeChoice.auto, 'Auto', detail: 'Follows this device'),
-                  ],
-                  value: app.theme,
-                  onChanged: (t) => app.theme = t,
-                ),
-              ),
+              const ThemeChoiceSection(),
               const SizedBox(height: Sp.l),
               const TextSizeChoice(),
               const SizedBox(height: Sp.l),

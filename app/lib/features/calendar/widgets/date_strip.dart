@@ -42,7 +42,8 @@ List<Color> dayDots(AppState app, DenColors c, List<Occurrence> occurrences, Str
   ];
 }
 
-/// The week as seven day tiles in a card: the chosen day in ink, people's dots under each day.
+/// The week as seven day tiles in a card: the chosen day in `selection` (ink; baby blue in Soft),
+/// people's dots under each day.
 /// Swipe it for the next or the last week; it settles on the UI spring. Tap a day to choose it.
 class WeekStrip extends StatefulWidget {
   const WeekStrip({super.key, required this.selected, required this.onPick, this.person});
@@ -223,8 +224,9 @@ class _DayTile extends StatelessWidget {
     final app = context.watch(const {});
     final f = app.formats;
     final c = context.colors;
-    final fill = selected ? c.primary : c.card;
-    final ink = selected ? c.onPrimary : c.ink;
+    // The chosen day is `selection`: ink in Day and Night, baby blue in Soft.
+    final fill = selected ? c.selection : c.card;
+    final ink = selected ? c.onSelection : c.ink;
     final day = f.dateTime(date).day;
     return DenPressable(
       onTap: onTap,
@@ -270,8 +272,8 @@ class _DayTile extends StatelessWidget {
 /// The month on a phone: the weekday letters and six weeks of day tiles in a card. The strip's
 /// month form: swipe for the next or the last month, tap a day to see it below.
 ///
-/// With days shown as dots (the default), the chosen day is ink, today ringed, and people's dots
-/// sit under each day. With days shown as colors ([CalendarDays.colors]), each day is its
+/// With days shown as dots (the default), the chosen day is `selection` (ink; baby blue in
+/// Soft), today ringed, and people's dots sit under each day. With days shown as colors ([CalendarDays.colors]), each day is its
 /// people's colors at full strength ([DaySegments]); the chosen day has an ink ring, today's
 /// number sits in an ink disc, and days of the months around keep their dots.
 class MonthCard extends StatefulWidget {
@@ -494,8 +496,8 @@ class _MonthDay extends StatelessWidget {
     final app = context.watch(const {});
     final f = app.formats;
     final c = context.colors;
-    final fill = selected ? c.primary : c.card;
-    final ink = selected ? c.onPrimary : (inMonth ? c.ink : c.ink3);
+    final fill = selected ? c.selection : c.card;
+    final ink = selected ? c.onSelection : (inMonth ? c.ink : c.ink3);
     final number = Text(
       '${f.dateTime(date).day}',
       style: today || selected ? context.text.rowTitle(ink) : context.text.body(ink),
