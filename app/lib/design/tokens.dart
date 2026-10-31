@@ -3,9 +3,28 @@ import 'dart:ui';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 
+export 'kid_tokens.dart';
+
+/// Den's two sets of grounds and ink (KIDS_MODE_AND_SOFT_THEME.md, "Tokens").
+enum DenPalette {
+  /// Day and Night: grays with equal R, G and B, and near-black ink.
+  neutral,
+
+  /// The Soft theme: the same app with its grays swapped for baby-blue tints and its ink for
+  /// navy; at night true black with cards a step up in navy. Nothing warm, light or dark.
+  soft;
+
+  /// The family colors a family sees before a parent picks any ([Family.colors]): Bright, or in
+  /// the Soft theme the Soft pack. A family that has picked a pack keeps it in either.
+  ColorPack get defaultPack => this == soft ? ColorPack.soft : ColorPack.bright;
+}
+
 /// Den's color tokens. Neutral grays (equal R, G and B), ink for every action, and color only
 /// for people, the star and destructive red. Light and dark set the same names; dark is true
 /// black for OLED with cards a step up in gray. See DESIGN.md, "Color".
+///
+/// The Soft theme ([softDay], [softNight]) sets the same names in baby-blue tints and navy
+/// ([DenPalette.soft]); its night is true black too, with cards a step up in navy.
 ///
 /// The old names (`paper`, `well`, `rule`, `onInk`, `bad`, `caution`) still work as deprecated
 /// aliases so screens can move to the new names one at a time.
@@ -35,10 +54,16 @@ class DenColors extends ThemeExtension<DenColors> {
     required this.photoBg,
     required this.photoFg,
     required this.bar,
+    required this.selection,
+    required this.onSelection,
+    this.palette = DenPalette.neutral,
     this.pack = ColorPack.bright,
   });
 
   final Brightness brightness;
+
+  /// Den's grays ([DenPalette.neutral]) or Soft's tints and navy ([DenPalette.soft]).
+  final DenPalette palette;
 
   /// The family's colors ([Family.colors]): which shades [marker] draws. The app sets it from
   /// the family for everything under it; it never changes the grays or ink.
@@ -109,6 +134,13 @@ class DenColors extends ThemeExtension<DenColors> {
   /// The tab bar and the iPad sidebar.
   final Color bar;
 
+  /// The chosen day in the calendar's week strip and month, with [onSelection] on it. Ink in
+  /// Day and Night, as it always was; baby blue in Soft, the one place baby blue is a fill.
+  final Color selection;
+
+  /// Text on [selection]: [onPrimary] in Day and Night, ink in Soft.
+  final Color onSelection;
+
   /// The primary action's fill: ink.
   Color get primary => ink;
 
@@ -116,6 +148,8 @@ class DenColors extends ThemeExtension<DenColors> {
   Color get sidebar => bar;
 
   bool get isDark => brightness == Brightness.dark;
+
+  bool get isSoft => palette == DenPalette.soft;
 
   /// A person's color in the family's [pack]. The same hex in light and dark, always with
   /// [onMarker] on it.
@@ -163,6 +197,8 @@ class DenColors extends ThemeExtension<DenColors> {
     photoBg: Color(0xFFD9D9D9),
     photoFg: Color(0xFFA6A6A6),
     bar: Color(0xFFFFFFFF),
+    selection: Color(0xFF141414),
+    onSelection: Color(0xFFFFFFFF),
   );
 
   static const night = DenColors(
@@ -191,6 +227,85 @@ class DenColors extends ThemeExtension<DenColors> {
     photoBg: Color(0xFF3A3A3A),
     photoFg: Color(0xFF8C8C8C),
     bar: Color(0xFF000000),
+    selection: Color(0xFFF2F2F2),
+    onSelection: Color(0xFF000000),
+  );
+
+  /// Soft's ground at night: the page, the tab bar, and text on an ink fill. True black, as in
+  /// Night (the owner's choice over the spec's navy-black #060D16, 2026-10-30). It is this one
+  /// token, so the other way is a one-line change; every ratio passes with either.
+  static const softNightGround = Color(0xFF000000);
+
+  /// Navy text on a person's color in Soft. Deeper than Soft's ink (#0F2338) so it keeps the
+  /// packs' 4.8:1 on every color of every pack (4.83:1 at worst, on Deep's Cherry): a Soft
+  /// family can still pick Deep or Bold, where #0F2338 falls to 4.16:1.
+  static const softOnMarker = Color(0xFF071426);
+
+  /// The Soft theme by day: a baby-blue page behind white cards, navy ink.
+  static const softDay = DenColors(
+    brightness: Brightness.light,
+    palette: DenPalette.soft,
+    pack: ColorPack.soft,
+    bg: Color(0xFFEEF5FC),
+    card: Color(0xFFFFFFFF),
+    raised: Color(0xFFFFFFFF),
+    fill: Color(0xFFDCEBF8),
+    line: Color(0xFFD3E0EE),
+    ink: Color(0xFF0F2338),
+    ink2: Color(0xFF45596E),
+    ink3: Color(0xFF55697F),
+    onPrimary: Color(0xFFFFFFFF),
+    onMarker: softOnMarker,
+    destructive: Color(0xFFB8231C),
+    star: Color(0xFFFFC83D),
+    // A navy edge: the neutral theme's #8A6200 reads brown on a blue page.
+    starEdge: Color(0xFF1F3B57),
+    scrim: Color(0x7A0F2338),
+    handle: Color(0xFFB9CADC),
+    track: Color(0xFFD3E0EE),
+    switchOff: Color(0xFFC6D5E5),
+    knob: Color(0xFFFFFFFF),
+    pictureBg: Color(0xFFE3EFFA),
+    photoBg: Color(0xFFCFDDEB),
+    photoFg: Color(0xFF94A9BF),
+    bar: Color(0xFFFFFFFF),
+    selection: Color(0xFFA9D4F5),
+    onSelection: Color(0xFF0F2338),
+  );
+
+  /// The Soft theme at night: true black ([softNightGround]) with surfaces stepping up in navy
+  /// (#111F30, then #192B40), secondary text re-picked for the navy card, and no star edge
+  /// (gold on black already passes).
+  static const softNight = DenColors(
+    brightness: Brightness.dark,
+    palette: DenPalette.soft,
+    pack: ColorPack.soft,
+    bg: softNightGround,
+    card: Color(0xFF111F30),
+    raised: Color(0xFF192B40),
+    fill: Color(0xFF192B40),
+    line: Color(0xFF22364E),
+    ink: Color(0xFFEAF3FC),
+    ink2: Color(0xFFA8BCD1),
+    ink3: Color(0xFF8DA3BA),
+    onPrimary: softNightGround,
+    onMarker: softOnMarker,
+    destructive: Color(0xFFFF8A7E),
+    star: Color(0xFFFFC83D),
+    starEdge: Color(0xFFFFC83D),
+    // As in Night, a black page can't be dimmed: behind a sheet it goes to a flat navy between
+    // the card and raised steps, and the black sheet stands out against it.
+    scrim: Color(0xD9152536),
+    handle: Color(0xFF3A5270),
+    track: Color(0xFF22364E),
+    switchOff: Color(0xFF2E4560),
+    knob: Color(0xFFEAF3FC),
+    pictureBg: Color(0xFF192B40),
+    photoBg: Color(0xFF2E4560),
+    photoFg: Color(0xFF8DA3BA),
+    bar: softNightGround,
+    selection: Color(0xFF1E4A73),
+    onSelection: Color(0xFFEAF3FC),
   );
 
   static final Expando<Map<ColorPack, DenColors>> _packs = Expando('DenColors.withPack');
@@ -227,6 +342,9 @@ class DenColors extends ThemeExtension<DenColors> {
           photoBg: photoBg,
           photoFg: photoFg,
           bar: bar,
+          selection: selection,
+          onSelection: onSelection,
+          palette: palette,
           pack: pack,
         );
 
@@ -236,6 +354,7 @@ class DenColors extends ThemeExtension<DenColors> {
     Color l(Color a, Color b) => Color.lerp(a, b, t)!;
     return DenColors(
       brightness: t < 0.5 ? brightness : other.brightness,
+      palette: t < 0.5 ? palette : other.palette,
       pack: t < 0.5 ? pack : other.pack,
       bg: l(bg, other.bg),
       card: l(card, other.card),
@@ -259,6 +378,8 @@ class DenColors extends ThemeExtension<DenColors> {
       photoBg: l(photoBg, other.photoBg),
       photoFg: l(photoFg, other.photoFg),
       bar: l(bar, other.bar),
+      selection: l(selection, other.selection),
+      onSelection: l(onSelection, other.onSelection),
     );
   }
 }
@@ -419,6 +540,18 @@ abstract final class Radii {
 
   /// Buttons and chips. Prefer a [StadiumBorder]; this is the same as a radius.
   static const double pill = 999;
+
+  /// Kids mode: a job tile on a phone or tablet. Thick rounded shapes, 24 to 32.
+  static const double kidTile = 24;
+
+  /// Kids mode: a job row on the wall.
+  static const double kidTileWall = 32;
+
+  /// Kids mode: the star card.
+  static const double kidCard = 28;
+
+  /// Kids mode: "Read my jobs to me", a rounded slab rather than a pill.
+  static const double kidButton = 24;
 
   @Deprecated('Use input (14) for fields, a StadiumBorder for buttons and chips, or tile (16).')
   static const double control = input;

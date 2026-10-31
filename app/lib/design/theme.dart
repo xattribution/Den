@@ -62,7 +62,7 @@ ThemeData denTheme(DenColors c, {double typeScale = 1}) {
     scaffoldBackgroundColor: c.bg,
     canvasColor: c.bg,
     fontFamily: DenType.family,
-    extensions: [c, type, text],
+    extensions: [c, type, text, KidColors.of(c)],
     splashFactory: NoSplash.splashFactory,
     highlightColor: c.ink.withValues(alpha: 0.06),
     splashColor: Colors.transparent,

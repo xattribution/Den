@@ -25,14 +25,17 @@ Future<void> shootDesign(
   bool night = false,
   double textScale = 1,
   WidgetBuilder? sheet,
-  ColorPack pack = ColorPack.bright,
+  ColorPack? pack,
+  bool soft = false,
 }) async {
   await loadFonts();
   await tester.runAsync(DenPictures.load);
   tester.view.physicalSize = size * 2;
   tester.view.devicePixelRatio = 2;
   addTearDown(tester.view.reset);
-  final colors = (night ? DenColors.night : DenColors.day).withPack(pack);
+  final theme = soft ? (night ? DenColors.softNight : DenColors.softDay) : (night ? DenColors.night : DenColors.day);
+  // Each palette's own pack unless one is given: Bright, or Soft's.
+  final colors = theme.withPack(pack ?? theme.palette.defaultPack);
   final navigator = GlobalKey<NavigatorState>();
   await tester.pumpWidget(
     MaterialApp(
@@ -70,6 +73,28 @@ void main() {
       return shootDesign(tester, 'pictures_pad$n', const PackSample(), size: const Size(1180, 1660), night: night);
     });
   }
+
+  // The Soft theme (KIDS_MODE_AND_SOFT_THEME.md): baby-blue tints and navy by day, true black
+  // with navy steps at night, people in the Soft pack.
+  for (final night in [false, true]) {
+    final n = night ? '_night' : '';
+
+    testWidgets('Today, phone, Soft$n', (tester) {
+      return shootDesign(tester, 'today_phone_soft$n', const TodaySample(), night: night, soft: true);
+    });
+
+    testWidgets('type and controls, phone, Soft$n', (tester) {
+      return shootDesign(tester, 'controls_phone_soft$n', const ControlsSample(), size: const Size(390, 1360), night: night, soft: true);
+    });
+
+    testWidgets('picture sheet, phone, Soft$n', (tester) {
+      return shootDesign(tester, 'sheet_phone_soft$n', const TodaySample(), night: night, soft: true, sheet: (_) => const PickerSheet());
+    });
+  }
+
+  testWidgets('Today at 200 % text, phone, Soft', (tester) {
+    return shootDesign(tester, 'today_text200_phone_soft', const TodaySample(tabBar: false), size: const Size(390, 1800), textScale: 2, soft: true);
+  });
 
   for (final pack in ColorPack.values) {
     testWidgets('family colors, ${pack.label}', (tester) {

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../design/layout.dart' show TextSize;
+import '../design/tokens.dart' show DenColors;
 import '../platform/calendars/phone_calendars.dart';
 import '../platform/sync/den_network.dart';
 import '../platform/notifications/reminder_scheduler.dart';
@@ -19,7 +20,27 @@ export 'actions.dart';
 export 'den_scope.dart';
 export '../design/layout.dart' show TextSize;
 
-enum ThemeChoice { auto, day, night }
+/// How this device looks: Day, Night, Auto (Day or Night as the device is), or Soft, the
+/// baby-blue and navy theme, light or dark as the device is.
+enum ThemeChoice {
+  auto,
+  day,
+  night,
+  soft;
+
+  /// The tokens this choice draws by day.
+  DenColors get light => this == soft ? DenColors.softDay : DenColors.day;
+
+  /// The tokens this choice draws at night.
+  DenColors get dark => this == soft ? DenColors.softNight : DenColors.night;
+
+  /// Whether it follows the device, or keeps to day or to night.
+  ThemeMode get mode => switch (this) {
+        auto || soft => ThemeMode.system,
+        day => ThemeMode.light,
+        night => ThemeMode.dark,
+      };
+}
 
 /// How the calendar's month shows who has something on a day: their dots under the date, or the
 /// day itself in their colors. Kept on this device.

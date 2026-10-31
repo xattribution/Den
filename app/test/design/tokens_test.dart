@@ -99,6 +99,135 @@ void main() {
     expect(DenColors.night.onMarker, const Color(0xFF141414));
   });
 
+  group('Soft', () {
+    String hex(Color c) => '#${(c.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
+    String argb(Color c) => '#${c.toARGB32().toRadixString(16).padLeft(8, '0').toUpperCase()}';
+    Map<String, Color> tokens(DenColors c) => {
+          'bg': c.bg,
+          'card': c.card,
+          'raised': c.raised,
+          'fill': c.fill,
+          'line': c.line,
+          'ink': c.ink,
+          'ink2': c.ink2,
+          'ink3': c.ink3,
+          'onPrimary': c.onPrimary,
+          'onMarker': c.onMarker,
+          'destructive': c.destructive,
+          'star': c.star,
+          'starEdge': c.starEdge,
+          'scrim': c.scrim,
+          'handle': c.handle,
+          'track': c.track,
+          'switchOff': c.switchOff,
+          'knob': c.knob,
+          'pictureBg': c.pictureBg,
+          'photoBg': c.photoBg,
+          'photoFg': c.photoFg,
+          'bar': c.bar,
+          'selection': c.selection,
+          'onSelection': c.onSelection,
+        };
+
+    test("the spec's tokens (KIDS_MODE_AND_SOFT_THEME.md), with a true black night", () {
+      String row(DenColors c) => [for (final e in tokens(c).entries) '${e.key} ${e.key == 'scrim' ? argb(e.value) : hex(e.value)}'].join(', ');
+      expect(
+        row(DenColors.softDay),
+        'bg #EEF5FC, card #FFFFFF, raised #FFFFFF, fill #DCEBF8, line #D3E0EE, ink #0F2338, ink2 #45596E, '
+        'ink3 #55697F, onPrimary #FFFFFF, onMarker #071426, destructive #B8231C, star #FFC83D, starEdge #1F3B57, '
+        'scrim #7A0F2338, handle #B9CADC, track #D3E0EE, switchOff #C6D5E5, knob #FFFFFF, pictureBg #E3EFFA, '
+        'photoBg #CFDDEB, photoFg #94A9BF, bar #FFFFFF, selection #A9D4F5, onSelection #0F2338',
+      );
+      expect(
+        row(DenColors.softNight),
+        'bg #000000, card #111F30, raised #192B40, fill #192B40, line #22364E, ink #EAF3FC, ink2 #A8BCD1, '
+        'ink3 #8DA3BA, onPrimary #000000, onMarker #071426, destructive #FF8A7E, star #FFC83D, starEdge #FFC83D, '
+        'scrim #D9152536, handle #3A5270, track #22364E, switchOff #2E4560, knob #EAF3FC, pictureBg #192B40, '
+        'photoBg #2E4560, photoFg #8DA3BA, bar #000000, selection #1E4A73, onSelection #EAF3FC',
+      );
+    });
+
+    test('the night ground is one token, true black: the page, the bar and text on ink', () {
+      expect(DenColors.softNightGround, const Color(0xFF000000));
+      final n = DenColors.softNight;
+      expect([n.bg, n.bar, n.onPrimary], everyElement(DenColors.softNightGround));
+    });
+
+    test('Soft is its own palette, and draws the Soft pack until a family picks one', () {
+      expect([DenColors.softDay.palette, DenColors.softNight.palette], everyElement(DenPalette.soft));
+      expect([DenColors.day.palette, DenColors.night.palette], everyElement(DenPalette.neutral));
+      expect(DenPalette.soft.defaultPack, ColorPack.soft);
+      expect(DenPalette.neutral.defaultPack, ColorPack.bright);
+      expect(DenColors.softDay.pack, ColorPack.soft);
+      expect(DenColors.softDay.withPack(ColorPack.deep).palette, DenPalette.soft, reason: 'a pack changes people only');
+      expect([DenColors.softDay.brightness, DenColors.softNight.brightness], [Brightness.light, Brightness.dark]);
+    });
+
+    test('nothing warm: no token is redder than it is blue, but the star and destructive red', () {
+      for (final theme in [DenColors.softDay, DenColors.softNight]) {
+        for (final e in tokens(theme).entries) {
+          if (e.key == 'star' || e.key == 'destructive') continue;
+          // At night the edge drops away: it is the star's own gold.
+          if (e.key == 'starEdge' && e.value == theme.star) continue;
+          final (r, b) = (_channel(e.value.r), _channel(e.value.b));
+          expect(r - b, lessThanOrEqualTo(8), reason: '${theme.isDark ? 'night' : 'day'} ${e.key} ${hex(e.value)}');
+        }
+      }
+    });
+
+    for (final (name, c) in [('day', DenColors.softDay), ('night', DenColors.softNight)]) {
+      test('$name: text reads at 4.5:1 or better on the page, on cards and on overlays', () {
+        final texts = {'ink': c.ink, 'ink2': c.ink2, 'ink3': c.ink3, 'destructive': c.destructive};
+        final surfaces = {'bg': c.bg, 'card': c.card, 'raised': c.raised};
+        for (final t in texts.entries) {
+          for (final s in surfaces.entries) {
+            expect(contrast(t.value, s.value), greaterThanOrEqualTo(4.5), reason: '${t.key} on ${s.key}');
+          }
+        }
+        expect(contrast(c.onPrimary, c.primary), greaterThanOrEqualTo(4.5), reason: 'a primary button');
+        expect(c.primary, c.ink, reason: 'there is no brand accent: actions are ink');
+        expect(contrast(c.onSelection, c.selection), greaterThanOrEqualTo(4.5), reason: 'the chosen day');
+        expect(contrast(c.star, c.bg) >= 3 || contrast(c.starEdge, c.bg) >= 3, isTrue, reason: 'the star stands out');
+      });
+    }
+
+    test('quiet text on the segmented track by day: 4.65:1, the lowest text pair', () {
+      expect(contrast(DenColors.softDay.ink3, DenColors.softDay.fill), closeTo(4.65, 0.01));
+    });
+
+    test('the chosen day: baby blue in Soft, and ink in Day and Night exactly as before', () {
+      expect(DenColors.softDay.selection, const Color(0xFFA9D4F5));
+      expect(DenColors.softDay.onSelection, DenColors.softDay.ink);
+      for (final c in [DenColors.day, DenColors.night]) {
+        expect((c.selection, c.onSelection), (c.primary, c.onPrimary));
+      }
+    });
+
+    test('navy text reads at 4.8:1 or better on every color of every pack, by day and at night', () {
+      for (final p in ColorPack.values) {
+        for (final theme in [DenColors.softDay, DenColors.softNight]) {
+          final c = theme.withPack(p);
+          for (final m in Marker.values) {
+            expect(contrast(c.onMarker, c.marker(m)), greaterThanOrEqualTo(4.8), reason: '${p.name} ${p.of(m).label}');
+          }
+        }
+      }
+      expect(
+        contrast(DenColors.softDay.ink, ColorPack.deep.color(Marker.coral)),
+        lessThan(4.5),
+        reason: "why onMarker isn't Soft's ink: #0F2338 on Deep's Cherry fails",
+      );
+    });
+
+    test('a theme change animates: every token lerps, and the palette flips halfway', () {
+      final mid = DenColors.day.lerp(DenColors.softDay, 0.5);
+      expect(mid.bg, Color.lerp(DenColors.day.bg, DenColors.softDay.bg, 0.5));
+      expect(mid.selection, Color.lerp(DenColors.day.selection, DenColors.softDay.selection, 0.5));
+      expect(DenColors.day.lerp(DenColors.softDay, 0.4).palette, DenPalette.neutral);
+      expect(DenColors.day.lerp(DenColors.softDay, 0.6).palette, DenPalette.soft);
+    });
+  });
+
   test('the family colors, in assignment order', () {
     expect(PersonColor.assignmentOrder.map((p) => (p.label, p.color.toARGB32())), [
       ('Sky', 0xFF339FEE),

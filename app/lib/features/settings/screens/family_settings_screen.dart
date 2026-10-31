@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
+import '../../../app/family_colors.dart';
 import '../../../design/pickers/time_zone_picker.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
@@ -105,7 +106,7 @@ class _FamilySettingsScreenState extends State<FamilySettingsScreen> {
           title: 'Family colors',
           child: FamilyColorsChoice(
             people: app.den.members,
-            value: family.colors,
+            value: familyPack(family, context.colors.palette),
             onChanged: (pack) => _write(() => actions.setColors(pack)),
           ),
         ),
