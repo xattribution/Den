@@ -41,7 +41,9 @@ const Map<String, String> notExposed = {
   'setRecoveryKey': '$_trust: a parent\'s recovery words are set up on their own phone, and only they keep them',
   'setServerRecoveryKey': '$_trust: whether whoever runs the hub may let a parent\'s new phone in is the family\'s '
       'call, made on a parent\'s own phone',
-  'requestRecovery': 'A new device lets itself in as a parent\'s own with their recovery words or the hub\'s proof; '
+  'setAccount': '$_trust: which Google or Apple account signs in as a parent is bound by that parent on their own '
+      'personal phone, from a sign-in it read back itself; the hub, which checks the sign-in, never writes it',
+  'requestRecovery':'A new device lets itself in as a parent\'s own with their recovery words or the hub\'s proof; '
       'nothing acting for the family can',
   'disownRecovery': '$_trust: "That wasn\'t us" removes a phone recovery let in and turns off the words or the hub\'s '
       'help that let it in, from another parent\'s own phone',
