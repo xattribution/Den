@@ -31,7 +31,10 @@ class Answer {
 /// browser would, `SameSite=Lax` and all) and follows nothing on its own. Requests go to the hub
 /// at [base] (loopback) as if at [hostname].
 class Browser {
-  Browser(this.base, {this.hostname});
+  Browser(this.base, {this.hostname}) : origin = 'https://${hostname ?? 'den.test'}';
+
+  /// What its pages' posts name as their `Origin`: the hub's public address.
+  final String origin;
 
   /// Where the hub listens.
   final Uri base;
@@ -82,6 +85,16 @@ class Browser {
     }
   }
 
+  /// Opens a binding's start link [start] and, on the page it shows, presses Continue (a form
+  /// posted back to the hub from its own page): the hub's answer to that post, or the page when
+  /// it shows no form.
+  Future<Answer> confirm(String start) async {
+    final page = await go('GET', start);
+    if (page.status != 200 || !page.body.contains('<form method="post"')) return page;
+    final ticket = Uri.parse(start).queryParameters['bind']!;
+    return go('POST', Uri.parse(start).path, form: 'bind=${Uri.encodeQueryComponent(ticket)}', headers: {'origin': origin});
+  }
+
   /// Signs in at [idp] as [sub]: opens [start] (the hub's start link, `/auth/oidc/<p>/start`
   /// by default), signs in at the provider, and comes back as the provider sends the browser
   /// back (Google: a redirect; Apple: a form it posts, from its own origin). Returns the hub's
@@ -98,7 +111,7 @@ class Browser {
     Map<String, String> Function(Map<String, String> query)? back,
   }) async {
     final provider = idp.apple ? 'apple' : 'google';
-    final started = await go('GET', start ?? '/auth/oidc/$provider/start');
+    final started = start != null && start.contains('bind=') ? await confirm(start) : await go('GET', start ?? '/auth/oidc/$provider/start');
     if (started.status != 302) return started;
     final at = Uri.parse(started.location!);
     final code = idp.signIn(authorize == null ? at : authorize(at), sub: sub, email: email, verified: verified, extra: extra);

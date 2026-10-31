@@ -111,6 +111,8 @@ void main() {
       final account = await bind(f, f.phone, google, '108812345');
       expect(account.provider, 'google');
       expect(account.hash, accountHash(f.phone.familyId!, 'google', '108812345'));
+      expect(account.proof!.hub, f.hubDen.deviceId, reason: 'the hub vouches for the sign-in; the phone writes it');
+      expect(account.proof!.key, f.hubDen.keys.pubkey);
       expect(f.hubDen.member(alex)!.account, account);
 
       final b = Browser(f.base);
@@ -374,27 +376,76 @@ void main() {
         expect((await b.go('GET', '/api/v1/account/bindings/${binding['id']}')).status, 401);
       });
 
-      test('a start link opened twice binds nothing, whoever opened it first', () async {
+      test('a start link used twice binds nothing, whoever used it first', () async {
         final b = await startBinding(f.phone);
         final start = b['start_url'] as String;
+        final ticket = Uri.parse(start).queryParameters['bind']!;
         final mine = Browser(f.base);
-        final first = await mine.go('GET', start);
+        final first = await mine.confirm(start);
         expect(first.status, 302);
-        // Someone else who saw the link opens it too, and signs in with their own account.
-        final theirs = await Browser(f.base).go('GET', start);
+        // Someone else who saw the link opens it too: the page no longer offers it.
+        expect((await Browser(f.base).go('GET', start)).status, 400);
+        // And posting its ticket anyway spoils it for both.
+        final theirs = await Browser(f.base)
+            .go('POST', '/auth/oidc/google/start', form: 'bind=$ticket', headers: {'origin': 'https://den.test'});
         expect(theirs.status, 400);
         final at = Uri.parse(first.location!);
         await mine.go('GET', '/auth/oidc/google/callback?code=${google.signIn(at, sub: '108812345')}&state=${at.queryParameters['state']}');
         final polled = (await poll(f.phone, b)).json! as Map;
         expect(polled['state'], 'failed');
-        expect(polled['message'], contains('opened twice'));
+        expect(polled['message'], contains('used twice'));
         expect(polled.containsKey('account'), isFalse);
+      });
+
+      test('the start link only asks: opening it (a preview, a scanner) starts nothing', () async {
+        final b = await startBinding(f.phone);
+        final start = b['start_url'] as String;
+        for (var i = 0; i < 3; i++) {
+          final page = await Browser(f.base).go('GET', start);
+          expect(page.status, 200);
+          expect(page.setCookies, isEmpty);
+          expect(page.body, contains('sign in as Alex in Carter family&#39;s Den'));
+          expect(page.body, contains('Continue only if you are Alex'));
+          expect(page.body, isNot(contains('<script')));
+          expect(page.body, contains('<form method="post" action="/auth/oidc/google/start">'));
+          final policy = page.header('content-security-policy')!;
+          expect(policy, contains("default-src 'none'"));
+          expect(policy, contains("form-action 'self'"));
+          expect(policy, isNot(contains('script-src')));
+        }
+        expect(f.hub.accounts.flowCount, 0);
+        expect(google.discoveryFetches, 0, reason: 'nothing was started');
+        // Then the parent presses Continue and it works.
+        final page = await Browser(f.base).signIn(google, sub: '108812345', start: start);
+        expect(page.status, 200, reason: page.body);
+        expect(((await poll(f.phone, b)).json! as Map)['state'], 'done');
+      });
+
+      test('Continue takes the hub\'s own Origin', () async {
+        final b = await startBinding(f.phone);
+        final ticket = Uri.parse(b['start_url'] as String).queryParameters['bind']!;
+        for (final origin in [null, 'https://evil.test', 'null']) {
+          final a = await Browser(f.base)
+              .go('POST', '/auth/oidc/google/start', form: 'bind=$ticket', headers: {'origin': ?origin});
+          expect(a.status, 403, reason: '$origin');
+        }
+        expect(f.hub.accounts.flowCount, 0);
+        expect(((await poll(f.phone, b)).json! as Map)['state'], 'waiting', reason: 'nothing spoiled it');
+      });
+
+      test('names on the page are escaped', () async {
+        await f.phone.updateMember(f.id('Alex'), {'name': '<b>Alex</b>'});
+        await f.toHub();
+        final b = await startBinding(f.phone);
+        final page = await Browser(f.base).go('GET', b['start_url'] as String);
+        expect(page.body, isNot(contains('<b>Alex</b>')));
+        expect(page.body, contains('&lt;b&gt;Alex&lt;&#47;b&gt;'));
       });
 
       test('a binding\'s callback replayed finishes nothing more', () async {
         final b = await startBinding(f.phone);
         final browser = Browser(f.base);
-        final started = await browser.go('GET', b['start_url'] as String);
+        final started = await browser.confirm(b['start_url'] as String);
         final at = Uri.parse(started.location!);
         final flow = browser.cookies[HubAccounts.flowCookie]!;
         final callback = '/auth/oidc/google/callback?code=${google.signIn(at, sub: '108812345')}&state=${at.queryParameters['state']}';
@@ -615,10 +666,10 @@ void main() {
       // The same person, bound in A, is nobody in B.
       final inB = await Browser(host.base, hostname: 'den-b.test').signIn(google, sub: 'same-person');
       expect(inB.status, 403);
-      // Even B's parent copying A's hash in doesn't make it B's: the hash is keyed by the family.
+      // B's parent can't copy A's binding in: A's hub vouched for A's family and member only. And
+      // the hash itself is keyed by the family, so it wouldn't match in B anyway.
       final b = host['den-b.test'];
-      await b.phone.setAccount(b.phone.actor!.id, a);
-      await b.toHub();
+      await expectLater(b.phone.setAccount(b.phone.actor!.id, a), throwsA(isA<PermissionDenied>()));
       expect((await Browser(host.base, hostname: 'den-b.test').signIn(google, sub: 'same-person')).status, 403);
       expect(accountHash(b.phone.familyId!, 'google', 'same-person'), isNot(a.hash));
     });

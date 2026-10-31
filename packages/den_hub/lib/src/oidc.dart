@@ -473,6 +473,12 @@ class OidcProvider {
   OidcEndpoints? _endpoints;
   int _endpointsAt = 0;
   Future<OidcEndpoints>? _discovering;
+  OidcRefused? _discoveryFailure;
+  int _discoveryFailedAt = 0;
+
+  /// How long a failed discovery is remembered before the hub asks again: sign-ins started
+  /// meanwhile fail at once instead of each waiting on, and adding to, a provider in trouble.
+  static const Duration discoveryRetry = Duration(seconds: 45);
 
   Map<String, RsaPublicKey> _keys = const {};
   int _keysAt = 0;
@@ -492,12 +498,21 @@ class OidcProvider {
   Future<OidcEndpoints> endpoints(http.Client client, int now) async {
     final kept = _endpoints;
     if (kept != null && now - _endpointsAt < discoveryLife.inMilliseconds) return kept;
+    final failed = _discoveryFailure;
+    final recent = failed != null && now - _discoveryFailedAt < discoveryRetry.inMilliseconds;
+    if (recent) {
+      if (kept != null && now - _endpointsAt < staleLife.inMilliseconds) return kept;
+      throw failed;
+    }
     try {
       final found = await (_discovering ??= _discover(client).whenComplete(() => _discovering = null));
       _endpoints = found;
       _endpointsAt = now;
+      _discoveryFailure = null;
       return found;
-    } on OidcRefused {
+    } on OidcRefused catch (e) {
+      _discoveryFailure = e;
+      _discoveryFailedAt = now;
       if (kept != null && now - _endpointsAt < staleLife.inMilliseconds) return kept;
       rethrow;
     }

@@ -30,11 +30,15 @@ class _Flow {
     required this.verifier,
     required this.browser,
     required this.created,
+    required this.client,
     this.binding,
   });
 
   final String provider;
   final String nonce;
+
+  /// The client it came from ([HubContext.clientOf]): each keeps only a few plain sign-ins.
+  final String client;
 
   /// The PKCE verifier, which never leaves the hub but for the token endpoint.
   final String verifier;
@@ -148,8 +152,16 @@ class HubAccounts {
   /// How long a parent's phone has to finish binding.
   static const Duration bindingLifetime = Duration(minutes: 10);
 
-  /// Most sign-ins on their way at once.
-  static const int maxFlows = 500;
+  /// Most sign-ins on their way at once, by default. Past it, the oldest plain sign-in makes
+  /// room; a sign-in finishing a binding never does, and nobody is turned away (review finding
+  /// F2: a few addresses could otherwise fill the store and keep everyone out).
+  static const int defaultMaxFlows = 5000;
+
+  /// [defaultMaxFlows]; tests lower it.
+  int maxFlows = defaultMaxFlows;
+
+  /// Most plain sign-ins one client has on their way: a new one ends its oldest.
+  static const int maxFlowsPerClient = 4;
 
   /// Most browsers signed in at once; past it, the oldest session ends.
   static const int maxSessions = 2000;
@@ -193,6 +205,7 @@ class HubAccounts {
     for (final p in configured) {
       routes
         ..add('GET', '/auth/oidc/${p.id}/start', (r, _) => _limited(r, () => start(r, p)))
+        ..add('POST', '/auth/oidc/${p.id}/start', (r, _) => _limited(r, () => startBinding(r, p)))
         ..add('GET', '/auth/oidc/${p.id}/callback', (r, _) => _limited(r, () => callback(r, p)));
       if (p.formPost) routes.add('POST', '/auth/oidc/${p.id}/callback', (r, _) => _limited(r, () => formPost(r, p)));
     }
@@ -221,25 +234,68 @@ class HubAccounts {
     return body();
   }
 
-  /// `GET /auth/oidc/<provider>/start[?bind=<ticket>]`: sends the browser to the provider, with
-  /// `state`, a `nonce` and PKCE, and a cookie only this browser holds. With `bind`, the sign-in
-  /// finishes a binding a parent's phone started, and the link works once.
+  /// `GET /auth/oidc/<provider>/start`: sends the browser to the provider, with `state`, a
+  /// `nonce` and PKCE, and a cookie only this browser holds.
+  ///
+  /// With `?bind=<ticket>` (the link a parent's phone opens) it only asks: a page that says whose
+  /// account this makes it and a button that posts back here ([startBinding]). Opening the link
+  /// changes nothing, so a link preview or a scanner that fetches it spoils nothing (finding F6).
   Future<Response> start(Request r, OidcProvider p) async {
     final now = hub.now();
     _prune(now);
     final ticket = r.url.queryParameters['bind'];
-    _Binding? binding;
-    if (ticket != null) {
-      binding = _tickets[_sha(ticket)];
-      if (binding == null || binding.expired(now) || binding.provider != p.id || binding.failure != null) return _expired();
-      if (binding.started) {
-        // Opened in a second browser: whoever that is, neither sign-in binds anything now.
-        binding.fail('The sign-in link was opened twice, so it doesn\'t bind anything. Start again in Den.');
-        hub.log.warn('A link to bind an account was opened a second time; it binds nothing now');
-        return _expired();
-      }
+    if (ticket != null) return _confirm(p, ticket, now);
+    return _begin(r, p, null, now);
+  }
+
+  /// The page that asks before a binding's sign-in starts: no script, a strict policy, every
+  /// name escaped, one same-origin form.
+  Response _confirm(OidcProvider p, String ticket, int now) {
+    final binding = _tickets[_sha(ticket)];
+    final member = binding == null ? null : hub.den.member(binding.member);
+    if (binding == null || member == null || binding.expired(now) || binding.provider != p.id || binding.failure != null || binding.started) {
+      return _expired();
     }
-    if (_flows.length >= maxFlows) return _page(503, 'Den is busy', 'Too many people are signing in right now. Try again in a minute.');
+    final family = hub.den.family?.name;
+    final where = family == null ? 'your family\'s Den' : '$family\'s Den';
+    return _page(
+      200,
+      'Sign in as ${member.name}?',
+      'This makes the ${p.name} account you choose sign in as ${member.name} in $where. Continue only if you are '
+          '${member.name}. If you didn\'t just start this in Den on your phone, close this page.',
+      form: (action: '/auth/oidc/${p.id}/start', fields: {'bind': ticket}, label: 'Continue to ${p.name}'),
+    );
+  }
+
+  /// `POST /auth/oidc/<provider>/start` `bind=<ticket>`, from the page [_confirm] shows (its
+  /// `Origin` must be the hub's): starts the sign-in that finishes the binding. A ticket starts
+  /// one sign-in; a second one spoils the binding, so neither binds anything.
+  Future<Response> startBinding(Request r, OidcProvider p) async {
+    final origin = r.headers['origin'];
+    if (origin == null || origin != hub.config.publicUrl!.origin) {
+      hub.failed(r);
+      return _page(403, 'Start from Den', 'This sign-in starts from the page Den opened for it. Start again in Den.',
+          headers: _clearFlow);
+    }
+    if (r.mimeType != 'application/x-www-form-urlencoded') return _expired();
+    final Map<String, String> form;
+    try {
+      form = Uri.splitQueryString(utf8.decode(await readBodyBytes(r, limit: 4096)));
+    } on Object {
+      return _expired();
+    }
+    final ticket = form['bind'];
+    final now = hub.now();
+    _prune(now);
+    final binding = ticket == null ? null : _tickets[_sha(ticket)];
+    if (binding == null || binding.expired(now) || binding.provider != p.id || binding.failure != null) return _expired();
+    return _begin(r, p, binding, now);
+  }
+
+  /// Starts a sign-in through [p], for [binding] or (null) a plain one. The provider's endpoints
+  /// come first; then, with nothing awaited in between, the binding is checked and marked
+  /// started, so two posts of one ticket can't both start (finding F1).
+  Future<Response> _begin(Request r, OidcProvider p, _Binding? binding, int now) async {
     final OidcEndpoints endpoints;
     try {
       endpoints = await p.endpoints(hub.fetch, now);
@@ -247,11 +303,42 @@ class HubAccounts {
       hub.log.warn('Can\'t start a sign-in with ${p.name}: ${e.reason}');
       return _unavailable(p);
     }
+    if (binding != null) {
+      if (binding.failure != null || binding.expired(hub.now())) return _expired();
+      if (binding.started) {
+        // A second sign-in for one binding: whoever that is, neither binds anything now.
+        binding.fail('The sign-in link was used twice, so it doesn\'t bind anything. Start again in Den.');
+        hub.log.warn('A link to bind an account was used a second time; it binds nothing now');
+        return _expired();
+      }
+      binding.started = true;
+    }
     final state = randomToken(), nonce = randomToken(), verifier = randomToken(), browser = randomToken();
-    _flows[_sha(state)] = _Flow(provider: p.id, nonce: nonce, verifier: verifier, browser: _sha(browser), created: now, binding: binding);
-    binding?.started = true;
+    _keep(
+      _sha(state),
+      _Flow(provider: p.id, nonce: nonce, verifier: verifier, browser: _sha(browser), created: now, client: hub.clientOf(r), binding: binding),
+    );
     final to = p.authorizeUrl(endpoints, redirectUri: redirectUri(p), state: state, nonce: nonce, challenge: pkceChallenge(verifier));
     return Response.found(to, headers: {'set-cookie': _cookie(flowCookie, browser, flowLifetime), 'cache-control': 'no-store'});
+  }
+
+  /// Keeps [flow] under [key]. A client keeps at most [maxFlowsPerClient] plain sign-ins, its
+  /// oldest ending first; past [maxFlows] the oldest plain sign-in of anyone's ends. A sign-in
+  /// finishing a binding is never ended this way (there are at most [maxBindings] of those), and
+  /// nobody is turned away.
+  void _keep(String key, _Flow flow) {
+    if (flow.binding == null) {
+      final mine = [for (final e in _flows.entries) if (e.value.binding == null && e.value.client == flow.client) e.key];
+      while (mine.length >= maxFlowsPerClient) {
+        _flows.remove(mine.removeAt(0));
+      }
+      while (_flows.length >= maxFlows) {
+        final oldest = _flows.entries.where((e) => e.value.binding == null).firstOrNull;
+        if (oldest == null) break;
+        _flows.remove(oldest.key);
+      }
+    }
+    _flows[key] = flow;
   }
 
   /// `POST /auth/oidc/apple/callback`: Apple posts the code here (form_post). The browser's
@@ -347,16 +434,19 @@ class HubAccounts {
       });
       return page;
     }
-    if (binding != null) return _bind(binding, who, p);
+    if (binding != null) return await _bind(binding, who, p);
     return _signIn(r, who, p);
   }
 
   /// The member [who] is bound to here: none before the hub is in a family, none when no one
-  /// (or, which validity never lets happen, more than one) has that account.
+  /// (or more than one) has that account, and, in this phase, none who isn't a parent now. A
+  /// parent made something else keeps a dormant binding that signs in as nobody (finding F4);
+  /// grants (phases 2 and 3) cap what it may do by the person's current permissions instead.
   Member? _memberFor(OidcIdentity who) {
     final family = hub.den.familyId;
     if (!hub.ready || family == null) return null;
-    return hub.den.memberWithAccount(AccountRef(who.provider, accountHash(family, who.provider, who.sub)));
+    final m = hub.den.memberWithAccount(AccountRef(who.provider, accountHash(family, who.provider, who.sub)));
+    return m != null && m.isParent ? m : null;
   }
 
   Response _signIn(Request r, OidcIdentity who, OidcProvider p) {
@@ -387,19 +477,39 @@ class HubAccounts {
     );
   }
 
-  Response _bind(_Binding b, OidcIdentity who, OidcProvider p) {
-    final now = hub.now();
+  /// Finishes binding [b] with [who]: the hub's proof that [who] signed in for [b]'s member
+  /// ([AccountProof], signed with the hub's device key), which the phone writes with the record.
+  /// A binding is finished once: a second sign-in spoils it (finding F1).
+  Future<Response> _bind(_Binding b, OidcIdentity who, OidcProvider p) async {
     final family = hub.den.familyId;
     final member = hub.den.member(b.member);
-    if (_bindings[b.id] != b || b.expired(now) || b.failure != null || !hub.ready || family == null || member == null) {
+    bool over() => _bindings[b.id] != b || b.expired(hub.now()) || b.failure != null;
+    if (over() || !hub.ready || family == null || member == null) return _expired();
+    if (b.result != null) {
+      b.fail('That sign-in came back twice, so it doesn\'t bind anything. Start again in Den.');
       return _expired();
     }
-    final account = AccountRef(who.provider, accountHash(family, who.provider, who.sub));
-    final holder = hub.den.memberWithAccount(account);
+    final hash = accountHash(family, who.provider, who.sub);
+    final holder = hub.den.memberWithAccount(AccountRef(who.provider, hash));
     if (holder != null && holder.id != b.member) {
       b.fail('That ${p.name} account already signs in as someone else in the family.');
       return _page(409, 'That account is someone else\'s', 'It already signs in as someone else in your family. Go back to Den and '
           'choose another.', headers: _clearFlow);
+    }
+    final account = await AccountProof.sign(
+      keys: hub.den.keys,
+      hub: hub.den.deviceId,
+      family: family,
+      member: b.member,
+      provider: who.provider,
+      hash: hash,
+      nonce: randomToken(),
+      expires: hub.now() + accountProofLife.inMilliseconds,
+    );
+    if (over()) return _expired();
+    if (b.result != null) {
+      b.fail('That sign-in came back twice, so it doesn\'t bind anything. Start again in Den.');
+      return _expired();
     }
     b.result = _Bound(account, who.email);
     hub.log.info('${member.name} signed in with ${p.name} to bind it; their phone finishes that');
@@ -436,7 +546,7 @@ class HubAccounts {
 
   /// The session [r]'s cookie names, with its member: none when the cookie is missing, sent twice
   /// or unknown, the session is over, or the member no longer has the account it signed in with
-  /// (which ends it).
+  /// or is no longer a parent (either ends it).
   (_Session, Member)? _session(Request r) {
     final token = cookie(r, sessionCookie);
     if (token == null) return null;
@@ -444,7 +554,7 @@ class HubAccounts {
     final s = _sessions[key];
     if (s == null) return null;
     final m = hub.ready ? hub.den.member(s.member) : null;
-    if (hub.now() >= s.expires || m == null || m.account != s.account) {
+    if (hub.now() >= s.expires || m == null || m.account != s.account || !m.isParent) {
       _sessions.remove(key);
       return null;
     }
@@ -588,21 +698,34 @@ class HubAccounts {
       headers: {..._clearFlow, 'retry-after': '60'});
 
   static const HtmlEscape _html = HtmlEscape();
+  static const HtmlEscape _attribute = HtmlEscape(HtmlEscapeMode.attribute);
 
   late final String _style = _styleFor(hub.config.webDir);
-  late final String _policy = [
-    "default-src 'none'",
-    "style-src 'sha256-${base64.encode(const DartSha256().hashSync(utf8.encode(_style)).bytes)}'",
-    "font-src 'self'",
-    "img-src 'self'",
-    "base-uri 'none'",
-    "form-action 'none'",
-    "frame-ancestors 'none'",
-  ].join('; ');
+  String _policy({bool form = false}) => [
+        "default-src 'none'",
+        "style-src 'sha256-${base64.encode(const DartSha256().hashSync(utf8.encode(_style)).bytes)}'",
+        "font-src 'self'",
+        "img-src 'self'",
+        "base-uri 'none'",
+        "form-action ${form ? "'self'" : "'none'"}",
+        "frame-ancestors 'none'",
+      ].join('; ');
 
   /// A page for people, in Den's design tokens like the OAuth pages, with no script: its one
   /// style is allowed by its hash, so the same page is the same bytes every time.
-  Response _page(int status, String heading, String message, {Map<String, Object> headers = const {}, bool link = false}) {
+  Response _page(
+    int status,
+    String heading,
+    String message, {
+    Map<String, Object> headers = const {},
+    bool link = false,
+    ({String action, Map<String, String> fields, String label})? form,
+  }) {
+    final button = form == null
+        ? ''
+        : '<form method="post" action="${_attribute.convert(form.action)}">\n'
+            '${[for (final e in form.fields.entries) '<input type="hidden" name="${_attribute.convert(e.key)}" value="${_attribute.convert(e.value)}">\n'].join()}'
+            '<button type="submit">${_html.convert(form.label)}</button>\n</form>\n';
     final body = '''<!doctype html>
 <html lang="en">
 <head>
@@ -616,13 +739,13 @@ class HubAccounts {
 <main>
 <h1>${_html.convert(heading)}</h1>
 <p>${_html.convert(message)}</p>
-${link ? '<p><a href="/">Open Den</a></p>\n' : ''}</main>
+${link ? '<p><a href="/">Open Den</a></p>\n' : ''}$button</main>
 </body>
 </html>''';
     return Response(status, body: body, headers: {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
-      'content-security-policy': _policy,
+      'content-security-policy': _policy(form: form != null),
       ...headers,
     });
   }
@@ -639,6 +762,8 @@ ${link ? '<p><a href="/">Open Den</a></p>\n' : ''}</main>
         'main{max-width:480px;margin:0 auto;padding:48px 16px;}'
         'h1{font-size:26px;font-weight:800;line-height:1.2;margin:0 0 16px;}'
         'p{margin:0 0 12px;}'
-        'a{color:var(--ink);font-weight:700;}';
+        'a{color:var(--ink);font-weight:700;}'
+        'button{font:inherit;font-weight:700;color:var(--paper);background:var(--ink);border:0;border-radius:24px;'
+        'padding:12px 20px;margin-top:12px;min-height:48px;cursor:pointer;}';
   }
 }

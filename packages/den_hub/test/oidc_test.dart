@@ -334,6 +334,19 @@ void main() {
       await expectLater(provider.endpoints(client, now), refused(OidcRefusal.unavailable));
     });
 
+    test('a discovery that failed is remembered for a while, not asked again at once (finding F7)', () async {
+      idp.discovery = {'issuer': 'https://accounts.google.com'};
+      await expectLater(provider.endpoints(client, now), refused(OidcRefusal.unavailable));
+      for (var i = 0; i < 5; i++) {
+        await expectLater(provider.endpoints(client, now + i * 1000), refused(OidcRefusal.unavailable));
+      }
+      expect(idp.discoveryFetches, 1);
+      idp.discovery = null;
+      final later = now + OidcProvider.discoveryRetry.inMilliseconds + 1;
+      expect((await provider.endpoints(client, later)).token.path, '/token');
+      expect(idp.discoveryFetches, 2);
+    });
+
     test('everything goes through NetGuard: a key set on the hub\'s own network is never fetched', () async {
       // The provider's document points its keys at the cloud metadata address.
       idp.discovery = {
