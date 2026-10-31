@@ -8,6 +8,28 @@ library;
 export 'package:den_actions/den_actions.dart' show readableSpacesFor;
 export 'package:den_actions/times.dart' show parseInstant, isoIn;
 export 'src/access.dart' show Access, accessForToken;
+export 'src/accounts.dart' show HubAccounts;
+export 'src/oidc.dart'
+    show
+        AppleKey,
+        Jwt,
+        OidcEndpoints,
+        OidcIdentity,
+        OidcProvider,
+        OidcRefusal,
+        OidcRefused,
+        RsaPublicKey,
+        SignInProviders,
+        appleClientSecret,
+        appleProvider,
+        appleRelayDomain,
+        googleProvider,
+        parseJwks,
+        pkceChallenge,
+        pkcs1Sha256,
+        randomToken,
+        readP8,
+        rsaVerifySha256;
 export 'src/assistant.dart' show HubAssistant;
 export 'src/capture.dart' show HubCapture;
 export 'src/config.dart';

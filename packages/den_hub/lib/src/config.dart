@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'edge.dart';
 import 'log.dart';
 import 'net_guard.dart';
+import 'oidc.dart';
 
 /// The hub's default port, shared by HTTP, WebSocket sync and MCP.
 const int defaultHubPort = 47733;
@@ -62,6 +63,7 @@ class HubConfig {
     this.refreshTokenLifetime = const Duration(days: 90),
     this.onSetupCode,
     this.hostPush = false,
+    this.signIn,
   });
 
   /// TCP port for HTTP, WebSocket sync and MCP; 0 picks a free one.
@@ -173,6 +175,11 @@ class HubConfig {
   /// own subscriptions with its own key; never another family's. Off (the default), the family
   /// hands out and signs with its own key only, as a hub always has.
   final bool hostPush;
+
+  /// Signing in with Google and Apple (`DEN_GOOGLE_*`, `DEN_APPLE_*`; accounts.dart). Null, or
+  /// none configured: the hub has no `/auth` routes, `/api/v1/me` or account bindings at all.
+  /// It needs an `https` [publicUrl], where the providers send people back.
+  final SignInProviders? signIn;
 
   /// The bind address as an [InternetAddress] or string for `HttpServer.bind`.
   Object get bindAddress => host ?? InternetAddress.anyIPv4;
