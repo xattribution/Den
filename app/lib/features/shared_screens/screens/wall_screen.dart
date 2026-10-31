@@ -174,7 +174,9 @@ class _Header extends StatelessWidget {
     final until = den.actingUntil;
     final shared = den.thisDevice?.isShared ?? false;
     final width = MediaQuery.sizeOf(context).width;
-    final narrow = width < 760;
+    // The date, the tabs and the wall's clock in one row need about 1000 pt; an iPad in portrait
+    // on the counter (820 to 834) gets the stacked bar instead of a clock pushed off the edge.
+    final narrow = width < 1000;
     final wide = width >= 1100;
     final date = Semantics(
       header: true,
