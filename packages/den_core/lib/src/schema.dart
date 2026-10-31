@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'account.dart';
 import 'model.dart';
 import 'rrule.dart';
 import 'time.dart';
@@ -416,6 +417,8 @@ final Map<String, TypeSpec> typeSpecs = {
     'signIn': _signIn,
     'order': number(),
     'recovery': _recoveryKey('key'),
+    // The Google or Apple account that signs in as them (account.dart): never an email.
+    'account': shape({'provider': oneOf(accountProviders), 'hash': hex64()}, required: {'provider', 'hash'}, nullable: true),
   }, required: {'name', 'role'}, space: Space.family),
   RecordType.signInTries: TypeSpec({
     'device': id(),

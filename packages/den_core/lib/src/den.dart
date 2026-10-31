@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
 
+import 'account.dart';
 import 'calendar.dart';
 import 'change.dart';
 import 'chores.dart';
@@ -961,6 +962,34 @@ class Den {
     }
     final value = await hashSignIn(kind, secret);
     await _commit([_Draft(RecordType.member, memberId, Space.family, {'signIn': value})]);
+  }
+
+  /// Binds [account] (from the hub's sign-in with Google or Apple, ARCHITECTURE.md "Accounts") to
+  /// [memberId], so that account signs in as them; null takes it away. Only a parent binds their
+  /// own, on their own personal device; they, or any parent there, may take one away. The hub can
+  /// never write this (validity.dart).
+  Future<void> setAccount(String memberId, AccountRef? account) async {
+    final m = member(memberId);
+    if (m == null) throw const InvalidInput('That person isn\'t in the family');
+    final a = actor;
+    final d = thisDevice;
+    if (a == null || d == null || d.mode != DeviceMode.personal || d.member != a.id) {
+      throw const PermissionDenied('Only a parent on their own phone can do that');
+    }
+    if (account != null && (a.id != memberId || !a.isParent)) {
+      throw const PermissionDenied('Only the parent themselves can choose the account they sign in with');
+    }
+    if (account == null && a.id != memberId && !a.isParent) {
+      throw const PermissionDenied('Only a parent can take away the account someone signs in with');
+    }
+    await _commit([_Draft(RecordType.member, memberId, Space.family, {'account': account?.toJson()})]);
+  }
+
+  /// The member [account] signs in as, or null for none (or, which validity never lets happen,
+  /// more than one).
+  Member? memberWithAccount(AccountRef account) {
+    final found = [for (final m in members) if (m.account == account) m];
+    return found.length == 1 ? found.single : null;
   }
 
   Future<void> approveDevice(String deviceId, {String? member, DeviceMode? mode}) async {

@@ -73,6 +73,11 @@ Rejection _schema(String m) => Rejection(RejectionKind.schema, m);
 const String _ownDeviceOnly =
     'Only a parent on their own device can do that, not a shared screen or an app acting through the hub';
 
+const String _ownPhoneOnly =
+    'Only a parent on their own phone can do that, not the hub, a shared screen or an app acting through the hub';
+
+const String _accountLater = 'Someone chooses the account they sign in with once they are in the family';
+
 final RegExp _ridRe = RegExp(r'^[A-Za-z0-9_\-:@.]{1,120}$');
 
 bool _validSpace(String s) =>
@@ -229,6 +234,7 @@ class Validator {
         if (!familyExists) return _trust('The family isn\'t set up yet');
         if (existing != null) return _trust('The founder can only add people once the family is set up');
         if (c.fields['role'] != Role.parent.name) return _trust('The founder must be a parent');
+        if (c.fields.containsKey('account')) return _trust(_accountLater);
         return null;
       case RecordType.device:
         if (!familyExists) return _trust('The family isn\'t set up yet');
@@ -346,6 +352,7 @@ class Validator {
         if (c.fields.containsKey('recovery') && !x.ownDevice) return _deny(_ownDeviceOnly);
         return null;
       case RecordType.member:
+        if (c.fields.containsKey('account')) return _account(x);
         // A person's role, permissions and sign-in, and whether they are in the family at all,
         // are trust decisions: never made by the hub (whoever it acts for) or on a shared screen.
         // Adding someone isn't: nothing can act for them until a parent approves a device or an
@@ -463,6 +470,40 @@ class Validator {
         if (s is Map) s['id']: worth(s['points']),
     };
     return steps.any((s) => s is Map && worth(s['points']) != (before[s['id']] ?? 0));
+  }
+
+  /// `member.account`: the Google or Apple account that signs in as this person (account.dart).
+  /// Which account is someone's is a trust decision, and a narrower one than the others: a
+  /// parent binds their own account, on their own personal device, in a change that does nothing
+  /// else. Never the hub (whatever it acts for, its owner included: the hub is what checks the
+  /// sign-in, so it must not also be what says whose it is), a connection through it (`_via`), a
+  /// shared screen, or one parent for another. Taking an account away is the person's own, or
+  /// any parent's, on their own personal device. One account signs in as one person, so a hash
+  /// another member of the family holds is refused; the later of two such changes in the log is
+  /// the one every replica refuses.
+  Rejection? _account(_Ctx x) {
+    final c = x.c;
+    if (x.creating) return _trust(_accountLater);
+    final actor = x.actor;
+    if (c.fields.containsKey('_via') || x.device.mode != DeviceMode.personal || actor == null || x.device.member != actor.id) {
+      return _deny(_ownPhoneOnly);
+    }
+    if (!x.only({'account'})) return _schema('A sign-in account is set on its own');
+    final value = c.fields['account'];
+    final self = actor.id == c.rid;
+    if (value is! Map) {
+      return self || actor.isParent ? null : _deny('Only a parent can take away the account someone signs in with');
+    }
+    if (!self) return _deny('Only the person themselves can choose the account they sign in with');
+    if (!actor.isParent) return _deny('Only parents sign in with Google or Apple for now');
+    for (final e in store.liveOfType(RecordType.member)) {
+      if (e.space != Space.family || e.id == c.rid) continue;
+      final other = e.fields['account'];
+      if (other is Map && other['provider'] == value['provider'] && other['hash'] == value['hash']) {
+        return _deny('That account already signs in as someone else in the family');
+      }
+    }
+    return null;
   }
 
   bool _leavesNoParent(Change c, Entry? existing) {
