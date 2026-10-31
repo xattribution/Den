@@ -417,8 +417,17 @@ final Map<String, TypeSpec> typeSpecs = {
     'signIn': _signIn,
     'order': number(),
     'recovery': _recoveryKey('key'),
-    // The Google or Apple account that signs in as them (account.dart): never an email.
-    'account': shape({'provider': oneOf(accountProviders), 'hash': hex64()}, required: {'provider', 'hash'}, nullable: true),
+    // The Google or Apple account that signs in as them, with the hub's proof that it signed in
+    // (account.dart): never an email.
+    'account': shape({
+      'provider': oneOf(accountProviders),
+      'hash': hex64(),
+      'hub': id(),
+      'key': keyText(),
+      'nonce': keyText(),
+      'expires': number(min: 0),
+      'sig': keyText(),
+    }, required: {'provider', 'hash', 'hub', 'key', 'nonce', 'expires', 'sig'}, nullable: true),
   }, required: {'name', 'role'}, space: Space.family),
   RecordType.signInTries: TypeSpec({
     'device': id(),

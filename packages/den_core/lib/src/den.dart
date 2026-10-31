@@ -262,7 +262,8 @@ class Den {
       if (gone()) return;
       for (var i = 0; i < unvouched.length; i++) {
         final h = checked[i];
-        if (h == null || !await recoveryProofHolds(unvouched[i], familyId) || !await inviteProofHolds(unvouched[i], familyId)) {
+        if (h == null || !await recoveryProofHolds(unvouched[i], familyId) || !await inviteProofHolds(unvouched[i], familyId) ||
+            !await accountProofHolds(unvouched[i], familyId)) {
           bad.add(unvouched[i].id);
         } else {
           _hashes[unvouched[i].id] = h;
@@ -982,14 +983,34 @@ class Den {
     if (account == null && a.id != memberId && !a.isParent) {
       throw const PermissionDenied('Only a parent can take away the account someone signs in with');
     }
+    if (account != null) {
+      // The hub's proof, checked here as every replica checks it when the change arrives.
+      final proof = account.proof;
+      final family = familyId;
+      if (proof == null || family == null || !await proof.verifies(family: family, member: memberId, account: account)) {
+        throw const PermissionDenied('Only an account the family\'s hub saw sign in for you can be bound');
+      }
+    }
     await _commit([_Draft(RecordType.member, memberId, Space.family, {'account': account?.toJson()})]);
   }
 
-  /// The member [account] signs in as, or null for none (or, which validity never lets happen,
-  /// more than one).
+  /// The member [account] signs in as, or null for none, or when more than one member has it
+  /// (two bindings made while apart both stand: the hub then signs in as neither, and
+  /// [sharedAccounts] tells the parents).
   Member? memberWithAccount(AccountRef account) {
     final found = [for (final m in members) if (m.account == account) m];
     return found.length == 1 ? found.single : null;
+  }
+
+  /// Accounts bound to more than one member, each with those members: none of them signs in
+  /// with it until all but one take it away. Parents see it in Needs you.
+  List<List<Member>> sharedAccounts() {
+    final by = <AccountRef, List<Member>>{};
+    for (final m in members) {
+      final a = m.account;
+      if (a != null) (by[a] ??= []).add(m);
+    }
+    return [for (final list in by.values) if (list.length > 1) list];
   }
 
   Future<void> approveDevice(String deviceId, {String? member, DeviceMode? mode}) async {
@@ -3781,7 +3802,7 @@ class Den {
         for (var i = 0; i < toCheck.length; i++) {
           final c = toCheck[i], h = checked[i];
           // A recovery or invite proof is checked with the signature: signed by the key it names.
-          if (h == null || !await recoveryProofHolds(c, familyId) || !await inviteProofHolds(c, familyId)) {
+          if (h == null || !await recoveryProofHolds(c, familyId) || !await inviteProofHolds(c, familyId) || !await accountProofHolds(c, familyId)) {
             rejected[c.id] = 'The signature doesn\'t verify';
           } else {
             accepted.add(c);

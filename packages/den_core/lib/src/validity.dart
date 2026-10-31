@@ -1,5 +1,6 @@
 import 'package:collection/collection.dart';
 
+import 'account.dart';
 import 'change.dart';
 import 'chores.dart';
 import 'hlc.dart';
@@ -75,6 +76,8 @@ const String _ownDeviceOnly =
 
 const String _ownPhoneOnly =
     'Only a parent on their own phone can do that, not the hub, a shared screen or an app acting through the hub';
+
+const String _noProof = 'Only an account the family\'s hub saw sign in for this person can be bound';
 
 const String _accountLater = 'Someone chooses the account they sign in with once they are in the family';
 
@@ -478,9 +481,14 @@ class Validator {
   /// else. Never the hub (whatever it acts for, its owner included: the hub is what checks the
   /// sign-in, so it must not also be what says whose it is), a connection through it (`_via`), a
   /// shared screen, or one parent for another. Taking an account away is the person's own, or
-  /// any parent's, on their own personal device. One account signs in as one person, so a hash
-  /// another member of the family holds is refused; the later of two such changes in the log is
-  /// the one every replica refuses.
+  /// any parent's, on their own personal device.
+  ///
+  /// A binding also carries the hub's proof that the account really signed in for this member
+  /// (`AccountProof`, its signature checked as the change arrives): signed by an approved hub of
+  /// the family at this place in the log, and not expired at the change's clock. So nobody binds
+  /// a hash they merely computed. Two members with the same account both stand, so no change,
+  /// however it is clocked, takes an account away from someone else; the hub then signs in as
+  /// neither, and parents are told (`Den.sharedAccounts`).
   Rejection? _account(_Ctx x) {
     final c = x.c;
     if (x.creating) return _trust(_accountLater);
@@ -496,12 +504,16 @@ class Validator {
     }
     if (!self) return _deny('Only the person themselves can choose the account they sign in with');
     if (!actor.isParent) return _deny('Only parents sign in with Google or Apple for now');
-    for (final e in store.liveOfType(RecordType.member)) {
-      if (e.space != Space.family || e.id == c.rid) continue;
-      final other = e.fields['account'];
-      if (other is Map && other['provider'] == value['provider'] && other['hash'] == value['hash']) {
-        return _deny('That account already signs in as someone else in the family');
-      }
+    final proof = AccountRef.fromJson(value)?.proof;
+    if (proof == null) return _trust(_noProof);
+    final hubEntry = store.at(Space.family, RecordType.device, proof.hub);
+    final hub = hubEntry == null || hubEntry.deleted ? null : Device(hubEntry.rec);
+    if (hub == null || !hub.approved || hub.revoked || hub.mode != DeviceMode.hub || hub.pubkey != proof.key) {
+      return _trust(_noProof);
+    }
+    final at = c.hlc.millis;
+    if (proof.expires <= at || proof.expires - at > accountProofMaxLife.inMilliseconds) {
+      return _trust('That sign-in is too old to bind. Sign in again');
     }
     return null;
   }
