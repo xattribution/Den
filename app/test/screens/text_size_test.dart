@@ -25,16 +25,19 @@ void main() {
       expect(DenTextScale.combined(0.85, TextSize.standard), 0.85, reason: 'a smaller system size is kept');
     });
 
-    testWidgets('Settings, Appearance: one tap makes text larger, and this device remembers it', (tester) async {
+    testWidgets('Settings, Text size: a short sheet, one tap makes text larger, and this device remembers it', (tester) async {
       final state = await demoIn(tester);
-      await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state, size: const Size(390, 1800), pushed: true);
+      await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state, pushed: true);
+      await tester.tap(find.text('Text size'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Largest'));
       await tester.pumpAndSettle();
       await matchShot('settings_text_size_phone');
       expect(state.textSize, TextSize.largest);
+      expect(find.text('Largest'), findsOneWidget, reason: 'the row says the size now');
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('den.textSize'), 'largest');
-      final text = tester.element(find.text('Version'));
+      final text = tester.element(find.text('Text size'));
       expect(MediaQuery.textScalerOf(text).scale(1), closeTo(23 / 17, 1e-9));
     });
 

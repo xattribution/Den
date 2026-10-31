@@ -9,7 +9,7 @@ import 'package:den_app/design/widgets.dart' show DenSidebar, DenTabBar;
 import 'package:den_app/features/add/screens/add_sheet.dart' show AddSheet;
 import 'package:den_app/features/advanced/screens/advanced_screen.dart';
 import 'package:den_app/features/assistant/screens/ask_screen.dart';
-import 'package:den_app/features/settings/screens/settings_screen.dart';
+import 'package:den_app/features/settings/screens/about_screen.dart';
 import 'package:den_app/platform/web/web_insets.dart';
 import 'package:den_assistant/testing.dart';
 import 'package:den_app/features/assistant/assistant.dart';
@@ -333,12 +333,12 @@ void main() {
       expect(HubBuild.parse(build: null, health: '{"version":"0.1.0"}')!.label, 'hub 0.1.0');
     });
 
-    testWidgets('Settings, About shows it, and the hub\'s, and says when a newer one waits', (tester) async {
+    testWidgets('Settings, About (its own page) shows it, and the hub\'s, and says when a newer one waits', (tester) async {
       final state = await demo(tester);
       await shoot(
         tester,
         'settings_about_build',
-        SettingsScreen(
+        AboutScreen(
           version: '1.0.0',
           hub: () async => const HubBuild(commit: 'def5678', built: '2026-10-30T08:00Z', version: '0.1.0'),
         ),

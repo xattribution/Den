@@ -1,40 +1,39 @@
 import 'package:flutter/material.dart';
 
 import '../../../app/app_state.dart';
-import '../../../design/layout.dart';
-import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 
-/// Settings, Appearance: how large this device draws text, on top of the system's own size. A
-/// Home Screen web app never hears the iPhone's Text Size setting, so this is the way to larger
-/// words there; elsewhere it adds to it. Either way text stops growing at 200 %.
-class TextSizeChoice extends StatelessWidget {
-  const TextSizeChoice({super.key});
+/// Settings: how large this device draws text, on top of the system's own size. A Home Screen
+/// web app never hears the iPhone's Text Size setting, so this is the way to larger words there;
+/// elsewhere it adds to it. Either way text stops growing at 200 %.
+///
+/// A row on Settings that says the size now ("Text size, Default") and opens a short sheet: one
+/// tap picks a size and closes it.
+class TextSizeRow extends StatelessWidget {
+  const TextSizeRow({super.key, this.icon});
+
+  final IconData? icon;
+
+  static const choices = [
+    Choice(TextSize.standard, 'Default', detail: 'The size this device uses'),
+    Choice(TextSize.larger, 'Larger'),
+    Choice(TextSize.largest, 'Largest'),
+  ];
+
+  /// What [size] is called on the row and in the sheet.
+  static String label(TextSize size) => choices.firstWhere((c) => c.value == size).label;
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch(const {Changes.prefs});
-    final c = context.colors;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: DenLayout.headingInset),
-          child: Semantics(header: true, child: Text('Text size', style: context.text.meta(c.ink2))),
-        ),
-        const SizedBox(height: Sp.s),
-        GroupCard(
-          child: ChoiceRows<TextSize>(
-            choices: const [
-              Choice(TextSize.standard, 'Default', detail: 'The size this device uses'),
-              Choice(TextSize.larger, 'Larger'),
-              Choice(TextSize.largest, 'Largest'),
-            ],
-            value: app.textSize,
-            onChanged: (size) => app.textSize = size,
-          ),
-        ),
-      ],
+    return NavRow(
+      icon: icon,
+      label: 'Text size',
+      value: label(app.textSize),
+      onTap: () async {
+        final size = await showChoiceSheet<TextSize>(context, title: 'Text size', choices: choices, value: app.textSize);
+        if (size != null) app.textSize = size;
+      },
     );
   }
 }

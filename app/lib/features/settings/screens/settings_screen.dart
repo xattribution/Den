@@ -15,20 +15,20 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/notifications/reminder_scheduler.dart';
-import '../../../platform/web/web_app.dart';
 import '../../advanced/advanced.dart';
-import '../../family/family.dart' show ConfirmPanel, MembershipActions, pasteAnotherFamily;
+import '../../family/family.dart' show ConfirmPanel, MembershipActions, pasteAnotherFamily, sharedDisplays;
 import '../../onboarding/onboarding.dart';
-import '../widgets/calendar_look_choice.dart';
 import '../widgets/text_size_choice.dart';
-import '../widgets/theme_choice.dart';
+import 'about_screen.dart';
+import 'appearance_screen.dart';
 import 'web_reminders.dart';
 
-/// Settings: how this device syncs in one line; for parents the family's settings, calendars
-/// and the AI helper, and on a parent's own phone the Google or Apple account that signs in as
-/// them; Day, Night, Auto or Soft with a preview, the text size and how the calendar looks;
-/// reminders on this device; Advanced for parents; and About: the version, the build (its commit
-/// and when it was built) and, in a browser, the build the hub serves now.
+/// Settings, short enough to see at once on a phone: how this device syncs in one line; for
+/// parents the family's settings, calendars, the kitchen screen and the AI helper, and on a
+/// parent's own phone the Google or Apple account that signs in as them; Appearance (Day, Night,
+/// Auto or Soft, and how the calendar looks) and Text size, each saying what it's set to;
+/// reminders on this device; Advanced for parents; and About, which says so here when the hub
+/// serves a newer Den.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, this.version, this.web, this.hub});
 
@@ -85,7 +85,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    registerFontLicense();
     _version = widget.version;
     if (_version == null) {
       PackageInfo.fromPlatform()
@@ -95,7 +94,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .catchError((Object _) {});
     }
     if (widget.hub != null || (widget.web ?? Capabilities.web)) {
-      (widget.hub ?? _hubBuild)()
+      (widget.hub ?? AboutScreen.hubBuild)()
           .then((hub) {
             if (mounted) setState(() => _hub = hub);
           })
@@ -108,13 +107,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .catchError((Object _) {
           if (mounted) setState(() => _reminders = true);
         });
-  }
-
-  /// What the hub this page came from serves now: the build its Dockerfile wrote down and the
-  /// version its health check reports.
-  static Future<HubBuild?> _hubBuild() async {
-    final answers = await Future.wait([WebApp.fetchFresh('build.json'), WebApp.fetchFresh('health')]);
-    return HubBuild.parse(build: answers[0], health: answers[1]);
   }
 
   Future<void> _setReminders(bool on) async {
@@ -140,7 +132,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch(const {RecordType.subscription, RecordType.member});
+    final app = context.watch(const {RecordType.subscription, RecordType.member, Changes.prefs});
     final den = app.den;
     final parent = app.allows(DenAction.manageFamily);
     final web = widget.web ?? Capabilities.web;
@@ -154,6 +146,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         !DemoSession.active &&
         app.network?.hubDevice != null;
     final account = app.me?.account;
+
+    final displays = sharedDisplays(den).length;
+    final newer = _hub?.differsFrom(DenBuild.commit) ?? false;
 
     return DenPage(
       title: 'Settings',
@@ -179,6 +174,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               if (parent)
                 NavRow(
+                  icon: PhosphorIconsRegular.monitor,
+                  label: 'Kitchen screen',
+                  value: displays == 0 ? 'Set up' : '$displays',
+                  onTap: () => context.push('/settings/advanced/displays'),
+                ),
+              if (parent)
+                NavRow(
                   icon: PhosphorIconsRegular.chatCircle,
                   label: 'AI helper',
                   value: helper ? 'On' : 'Off',
@@ -194,18 +196,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ], indent: 36),
           ),
         ),
-        DenSection(
-          title: 'Appearance',
-          carded: false,
+        GroupCard(
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const ThemeChoiceSection(),
-              const SizedBox(height: Sp.l),
-              const TextSizeChoice(),
-              const SizedBox(height: Sp.l),
-              const CalendarLookChoice(),
-            ],
+            children: ruled([
+              NavRow(
+                icon: PhosphorIconsRegular.palette,
+                label: 'Appearance',
+                value: AppearanceScreen.themeLabel(app.theme),
+                onTap: () => context.push('/settings/appearance'),
+              ),
+              const TextSizeRow(icon: PhosphorIconsRegular.textAa),
+            ], indent: 36),
           ),
         ),
         DenSection(
@@ -225,29 +226,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: NavRow(
               icon: PhosphorIconsRegular.slidersHorizontal,
               label: 'Advanced',
-              detail: 'Hub, shared displays, assistants, Home Assistant, data',
+              detail: 'Hub, assistants, Home Assistant, data',
               onTap: () => context.push('/settings/advanced'),
             ),
           ),
-        DenSection(
-          title: 'About',
-          child: Column(
-            children: ruled([
-              _Fact(label: 'Version', value: _version ?? ''),
-              _Fact(label: 'Build', value: DenBuild.label),
-              if (_hub case final hub?)
-                _Fact(
-                  label: 'On the hub',
-                  value: hub.label,
-                  note: hub.differsFrom(DenBuild.commit)
-                      ? 'A newer Den is waiting. It opens the next time Den starts: close Den and open it again.'
-                      : null,
-                ),
-              NavRow(
-                label: 'Licenses',
-                onTap: () => showLicensePage(context: context, applicationName: 'Den', applicationVersion: _version),
-              ),
-            ]),
+        GroupCard(
+          child: NavRow(
+            icon: PhosphorIconsRegular.info,
+            label: 'About',
+            value: _version,
+            // The one thing here she may need to act on, said where she'll see it.
+            detail: newer ? AboutScreen.newerWaiting : null,
+            onTap: () => context.push('/settings/about'),
           ),
         ),
         ?_leaveFamily(context, thing),
@@ -325,48 +315,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
         ),
       ],
-    );
-  }
-}
-
-/// A fact about this device, read-only: its label and value (wrapping at the end when long),
-/// and a [note] under them.
-class _Fact extends StatelessWidget {
-  const _Fact({required this.label, required this.value, this.note});
-
-  final String label;
-  final String value;
-  final String? note;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final t = context.text;
-    return MergeSemantics(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 56),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: Sp.s),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: t.body(c.ink)),
-                  const SizedBox(width: Sp.m),
-                  Expanded(child: Text(value, style: t.meta(c.ink2), textAlign: TextAlign.end)),
-                ],
-              ),
-              if (note != null) ...[
-                const SizedBox(height: Sp.xs),
-                Text(note!, style: t.meta(c.ink2)),
-              ],
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

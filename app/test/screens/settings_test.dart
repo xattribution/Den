@@ -1,5 +1,5 @@
 import 'package:den_app/app/app_state.dart';
-import 'package:den_app/design/widgets.dart' show DenSwitch;
+import 'package:den_app/design/widgets.dart' show DenSwitch, NavRow;
 import 'package:den_app/features/advanced/screens/advanced_screen.dart';
 import 'package:den_app/features/advanced/screens/connect_guide_screen.dart';
 import 'package:den_app/features/advanced/screens/connections_screen.dart';
@@ -8,6 +8,8 @@ import 'package:den_app/features/advanced/screens/data_screen.dart';
 import 'package:den_app/features/advanced/screens/displays_screen.dart';
 import 'package:den_app/features/advanced/screens/home_assistant_screen.dart';
 import 'package:den_app/features/advanced/widgets/hub_apps_section.dart';
+import 'package:den_app/features/settings/screens/about_screen.dart';
+import 'package:den_app/features/settings/screens/appearance_screen.dart';
 import 'package:den_app/features/settings/screens/assistant_screen.dart';
 import 'package:den_app/features/settings/screens/calendars_screen.dart';
 import 'package:den_app/features/settings/screens/family_settings_screen.dart';
@@ -143,17 +145,29 @@ void main() {
       await shootWith(tester, 'settings_tablet', const SettingsScreen(version: '1.0.0'), state: state, size: tablet, pushed: true);
     });
 
-    testWidgets('Night is one tap', (tester) async {
+    testWidgets('Appearance says the theme; Night is one tap on its page, and the row follows', (tester) async {
       final state = await connected(tester);
-      await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state, size: _tall);
+      await pumpScreen(tester, const AppearanceScreen(), state: state, size: _tall);
       await tester.tap(find.text('Night'));
       await tester.pumpAndSettle();
       expect(state.theme, ThemeChoice.night);
+      await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state);
+      expect(find.descendant(of: find.widgetWithText(NavRow, 'Appearance'), matching: find.text('Night')), findsOneWidget);
+    });
+
+    testWidgets('About: the version on the row, the build and licenses on its page', (tester) async {
+      final state = await connected(tester);
+      await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state);
+      expect(find.text('1.0.0'), findsOneWidget);
+      expect(find.text('Build'), findsNothing);
+      await pumpScreen(tester, const AboutScreen(version: '1.0.0'), state: state, pushed: true);
+      expect(find.text('Build'), findsOneWidget);
+      expect(find.text('Licenses'), findsOneWidget);
     });
 
     testWidgets('the calendar: always light, and days in colors, one tap each, kept on this device', (tester) async {
       final state = await connected(tester);
-      await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state, size: const Size(390, 2400));
+      await pumpScreen(tester, const AppearanceScreen(), state: state, size: const Size(390, 2400));
       await tester.tap(find.text('Always light'));
       await tester.pumpAndSettle();
       expect(state.calendarLight, isTrue);
@@ -197,17 +211,33 @@ void main() {
 
     testWidgets('family colors, at night', (tester) async {
       final state = await connected(tester);
-      await shootWith(tester, 'settings_family_colors_phone_night', const FamilySettingsScreen(), state: state, size: _tall, night: true, pushed: true);
+      await shootWith(tester, 'settings_family_colors_phone_night', const FamilyColorsScreen(), state: state, night: true, pushed: true);
     });
 
-    testWidgets('family colors: one tap picks a pack for the whole family, and everyone keeps their place', (tester) async {
+    testWidgets('family colors: a row saying the pack, then one tap picks a pack for the whole family, and everyone keeps their place',
+        (tester) async {
       final state = await connected(tester);
       final maya = state.den.members.firstWhere((m) => m.name == 'Maya');
       await pumpScreen(tester, const FamilySettingsScreen(), state: state, size: _tall);
+      expect(find.descendant(of: find.widgetWithText(NavRow, 'Family colors'), matching: find.text('Bright')), findsOneWidget);
+      await pumpScreen(tester, const FamilyColorsScreen(), state: state, size: _tall);
       expect(find.bySemanticsLabel(RegExp(r'^Deep: Alex, Ocean; Priya, Emerald; Maya, Pumpkin')), findsOneWidget);
       await _tapAndWait(tester, find.text('Deep'));
       expect(state.den.family!.colors, ColorPack.deep);
       expect(state.den.member(maya.id)!.marker, maya.marker, reason: 'Maya keeps her place in the colors');
+    });
+
+    testWidgets('weeks start on Monday: a short sheet, one tap', (tester) async {
+      final state = await connected(tester);
+      await pumpScreen(tester, const FamilySettingsScreen(), state: state, size: _tall);
+      await tester.tap(find.text('Weeks start on'));
+      await tester.pumpAndSettle();
+      await _tapAndWait(tester, find.text('Monday'));
+      // The sheet closes first, then the change is signed on the real clock.
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 400)));
+      await tester.pumpAndSettle();
+      expect(state.den.family!.weekStart, 1);
+      expect(find.descendant(of: find.widgetWithText(NavRow, 'Weeks start on'), matching: find.text('Monday')), findsOneWidget);
     });
 
     testWidgets('"Show me first" sets the family to review', (tester) async {

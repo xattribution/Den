@@ -143,10 +143,13 @@ const int noticeDays = 14;
 /// How many late chores Needs you lists one by one before it sums them up.
 const int lateShown = 3;
 
-/// What waits for whoever is using the device, most pressing first: a change a parent made to
-/// their privacy, rides in the next 48 hours, reward requests (when stars are on), late chores
-/// (today's and yesterday's), sitters whose access ended, devices and AI connections asking to
-/// join, and lists due. Each only for someone who may settle it.
+/// What waits for whoever is using the device, most pressing first (HOUSEMOM_PASS.md): a change
+/// a parent made to their privacy; rides in the next 48 hours, soonest first; then whoever waits
+/// on an answer right now: a device asking to join, a kid asking for a reward (when stars are
+/// on); lists due, today's before tomorrow's; late chores (today's and yesterday's); AI
+/// connections asking to connect; then what only needs a "Got it" (devices an invite let in,
+/// recovered phones, sign-in tries, sitters whose access ended); and last the reminder to save
+/// recovery words. Each only for someone who may settle it.
 List<Need> needsYou(AppState app, {required int now}) {
   final den = app.den;
   if (app.me == null) return const [];
@@ -163,15 +166,22 @@ List<Need> needsYou(AppState app, {required int now}) {
   }
 
   if (canTakeRide(app)) {
+    final rides = <(int, RideNeed)>[];
     for (final gap in den.gaps(now, now + 48 * 3600000)) {
       if (gap.kind != GapKind.noDriver || gap.occurrences.isEmpty || gap.leg == null) continue;
       final occ = gap.occurrences.single;
       if (occ.event.source.readOnly) continue;
       final at = gap.leg == 'from' ? occ.end : occ.start;
       if (at < now) continue;
-      out.add(RideNeed(occ, gap.leg!));
+      rides.add((at, RideNeed(occ, gap.leg!)));
     }
+    rides.sort((a, b) => a.$1.compareTo(b.$1));
+    out.addAll(rides.map((r) => r.$2));
   }
+
+  final parentHere = app.allowsTrust(DenAction.manageFamily);
+  // Someone holding a phone or tablet, waiting to be let in.
+  if (parentHere) out.addAll(den.pendingDevices.map(DeviceNeed.new));
 
   final pointsOn = den.family?.pointsEnabled ?? true;
   if (pointsOn && app.allows(DenAction.managePoints)) {
@@ -182,6 +192,18 @@ List<Need> needsYou(AppState app, {required int now}) {
     }
   }
 
+  final today = app.today;
+  final tomorrow = app.formats.addDays(today, 1);
+  final due = <(String, ListNeed)>[];
+  for (final l in den.lists) {
+    final needBy = l.list.needBy;
+    if (l.list.lifecycle != ListLifecycle.dated || needBy == null) continue;
+    if (needBy.compareTo(today) < 0 || needBy.compareTo(tomorrow) > 0 || l.open == 0) continue;
+    due.add((needBy, ListNeed(l)));
+  }
+  due.sort((a, b) => a.$1.compareTo(b.$1));
+  out.addAll(due.map((d) => d.$2));
+
   if (app.allows(DenAction.completeAnyChore)) {
     final late = den.lateChores(days: 1);
     if (late.length > lateShown) {
@@ -191,7 +213,11 @@ List<Need> needsYou(AppState app, {required int now}) {
     }
   }
 
-  if (app.allowsTrust(DenAction.manageFamily)) {
+  if (parentHere) {
+    out.addAll([for (final c in den.connections) if (c.status == ConnectionStatus.pending) ConnectionNeed(c)]);
+    out.addAll(Invites.unseen(den, app.seen, now: now, me: me.id).map(InvitedNeed.new));
+    out.addAll(Recovery.unseen(den, app.seen).map(RecoveredNeed.new));
+    out.addAll(_triesToTell(app, now).map(SignInTriesNeed.new));
     final since = app.formats.addDays(app.today, -noticeDays);
     for (final m in den.members) {
       final until = m.until;
@@ -199,21 +225,7 @@ List<Need> needsYou(AppState app, {required int now}) {
       final need = AccessEndedNeed(m, until);
       if (!app.seen(need.key)) out.add(need);
     }
-    out.addAll(den.pendingDevices.map(DeviceNeed.new));
-    out.addAll([for (final c in den.connections) if (c.status == ConnectionStatus.pending) ConnectionNeed(c)]);
-    out.addAll(Recovery.unseen(den, app.seen).map(RecoveredNeed.new));
-    out.addAll(Invites.unseen(den, app.seen, now: now, me: me.id).map(InvitedNeed.new));
-    out.addAll(_triesToTell(app, now).map(SignInTriesNeed.new));
     if (RecoveryReminder.due(app, now: now)) out.add(RecoveryWordsNeed(me.id));
-  }
-
-  final today = app.today;
-  final tomorrow = app.formats.addDays(today, 1);
-  for (final l in den.lists) {
-    final needBy = l.list.needBy;
-    if (l.list.lifecycle != ListLifecycle.dated || needBy == null) continue;
-    if (needBy.compareTo(today) < 0 || needBy.compareTo(tomorrow) > 0 || l.open == 0) continue;
-    out.add(ListNeed(l));
   }
   return out;
 }

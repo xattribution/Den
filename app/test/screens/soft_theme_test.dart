@@ -2,7 +2,7 @@ import 'package:den_app/app/app_state.dart';
 import 'package:den_app/design/tokens.dart';
 import 'package:den_app/features/calendar/screens/calendar_screen.dart';
 import 'package:den_app/features/calendar/widgets/date_strip.dart';
-import 'package:den_app/features/settings/screens/settings_screen.dart';
+import 'package:den_app/features/settings/screens/appearance_screen.dart';
 import 'package:den_app/features/settings/widgets/theme_choice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,7 +21,7 @@ void main() {
   group('Settings, Appearance', () {
     testWidgets('Soft is the fourth choice, one tap, kept on this device', (tester) async {
       final state = await demo(tester);
-      await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state, size: tall);
+      await pumpScreen(tester, const AppearanceScreen(), state: state, size: tall);
       expect(find.text('Soft'), findsOneWidget);
       expect(findWords('Baby blue and navy, light or dark as this device is'), findsOneWidget);
       await tester.tap(find.text('Soft'));
@@ -33,7 +33,7 @@ void main() {
     testWidgets('the preview follows the choice: Soft by day and at night, Day alone', (tester) async {
       final state = await demo(tester);
       state.theme = ThemeChoice.soft;
-      await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state, size: tall);
+      await pumpScreen(tester, const AppearanceScreen(), state: state, size: tall);
       expect(find.text('By day'), findsOneWidget);
       expect(find.text('At night'), findsOneWidget);
       final soft = find.descendant(of: find.byType(ThemePreview), matching: find.text('29'));
@@ -50,7 +50,7 @@ void main() {
     testWidgets('the preview is a picture: the screen reader hears the rows, not it', (tester) async {
       final state = await demo(tester);
       final handle = tester.ensureSemantics();
-      await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state, size: tall);
+      await pumpScreen(tester, const AppearanceScreen(), state: state, size: tall);
       expect(find.bySemanticsLabel('Soft, Baby blue and navy, light or dark as this device is'), findsOneWidget);
       expect(find.bySemanticsLabel('Approve'), findsNothing);
       handle.dispose();
@@ -60,7 +60,7 @@ void main() {
       testWidgets('phone, Soft$suffix', (tester) async {
         final state = await demo(tester);
         state.theme = ThemeChoice.soft;
-        await shootWith(tester, 'settings_soft_phone$suffix', const SettingsScreen(version: '1.0.0'), state: state, size: tall, theme: theme, pushed: true);
+        await shootWith(tester, 'settings_soft_phone$suffix', const AppearanceScreen(), state: state, size: tall, theme: theme, pushed: true);
       });
     }
 
@@ -68,13 +68,13 @@ void main() {
       final state = await demo(tester);
       state.theme = ThemeChoice.soft;
       withTextScale(tester, 2);
-      await shootWith(tester, 'settings_soft_phone_text200', const SettingsScreen(version: '1.0.0'), state: state, size: const Size(390, 3600), theme: DenColors.softDay, pushed: true);
+      await shootWith(tester, 'settings_soft_phone_text200', const AppearanceScreen(), state: state, size: const Size(390, 3600), theme: DenColors.softDay, pushed: true);
     });
 
     testWidgets('tablet, Soft', (tester) async {
       final state = await demo(tester);
       state.theme = ThemeChoice.soft;
-      await shootWith(tester, 'settings_soft_tablet', const SettingsScreen(version: '1.0.0'), state: state, size: tablet, theme: DenColors.softDay, pushed: true);
+      await shootWith(tester, 'settings_soft_tablet', const AppearanceScreen(), state: state, size: tablet, theme: DenColors.softDay, pushed: true);
     });
   });
 

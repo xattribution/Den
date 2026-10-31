@@ -64,6 +64,9 @@ void main() {
 
   testWidgets('Use as wall display sends Today to the wall', (tester) async {
     final state = await demo(tester, wall: true);
+    // The real font: the test font's square glyphs make the wall's header (date, tabs, clock)
+    // wider than any screen draws it.
+    await loadFonts();
     await tester.pumpWidget(
       DenScope(state: state, child: MaterialApp.router(theme: denTheme(DenColors.day), routerConfig: buildRouter(state))),
     );

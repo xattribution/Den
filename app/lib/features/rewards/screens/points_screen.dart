@@ -117,7 +117,7 @@ class _PointsScreenState extends State<PointsScreen> {
 
     final balances = DenSection(
       title: 'Stars',
-      trailing: manage ? SectionLink('Give points', onTap: () => _give()) : null,
+      trailing: manage ? SectionLink('Give stars', onTap: () => _give()) : null,
       child: holders.isEmpty
           ? const EmptyState(compact: true, message: 'No one has stars yet. Chores with stars earn them.')
           : Column(

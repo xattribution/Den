@@ -9,8 +9,8 @@ import '../../../design/widgets.dart';
 import '../../family/family.dart';
 import '../../shared_screens/shared_screens.dart';
 
-/// Advanced → Shared displays: the screens the whole family uses (a tablet on the counter, a
-/// screen on the wall), what each shows, whether anyone there may check things off without a
+/// Settings → Kitchen screen (`/settings/advanced/displays`, kept for links): the shared screens
+/// the whole family uses (a tablet on the counter, a screen on the wall), what each shows, whether anyone there may check things off without a
 /// PIN, and removing one. This device can be a wall display too. A new display joins with an
 /// invite that names nobody, and a parent lets it in as a shared display.
 class DisplaysScreen extends StatefulWidget {
@@ -53,12 +53,12 @@ class _DisplaysScreenState extends State<DisplaysScreen> {
     final me = app.me;
     final needsPin = me != null && me.isParent && me.signIn.kind == 'none' && displays.isNotEmpty;
     return DenPage(
-      title: 'Shared displays',
+      title: 'Kitchen screen',
       children: [
         if (!trust)
           const NoticeLine(
             icon: PhosphorIconsRegular.lockKey,
-            message: "Shared displays change only on a parent's own phone.",
+            message: "Kitchen screens change only on a parent's own phone.",
           ),
         if (needsPin && trust)
           GroupCard(
@@ -71,13 +71,13 @@ class _DisplaysScreenState extends State<DisplaysScreen> {
           ),
         for (final d in displays) _displayCard(context, d, trust: trust),
         DenSection(
-          title: displays.isEmpty ? 'Add a display' : 'Another display',
+          title: displays.isEmpty ? 'Set one up' : 'Another screen',
           child: EmptyState(
             compact: true,
             message: displays.isEmpty
-                ? 'No shared displays yet. Open Den on the tablet, join with an invite, then let it in here as a shared display.'
-                : 'Open Den on it, join with an invite, then let it in as a shared display.',
-            actionLabel: trust ? 'Invite a display' : null,
+                ? 'Send an invite to the tablet or screen, open it there, then let it in as a shared screen.'
+                : 'Send it an invite, open it there, then let it in as a shared screen.',
+            actionLabel: trust ? 'Invite a screen' : null,
             onAction: trust ? () => showInviteSheet(context, shared: true) : null,
           ),
         ),
