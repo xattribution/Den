@@ -59,6 +59,9 @@ const Set<String> trust = {
   'createInviteKey',
   'withdrawInviteKey',
   'disownInvite',
+  // Which Google or Apple account signs in as a parent: bound by that parent on their own phone,
+  // from a sign-in it read back from the hub itself (phase 1 of the account-first plan).
+  'setAccount',
 };
 
 /// Writes in one file each, with why.
