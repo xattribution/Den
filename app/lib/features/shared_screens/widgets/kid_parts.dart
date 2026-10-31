@@ -4,7 +4,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 
 import '../../../app/format.dart';
 import '../../../design/glyphs.dart';
-import '../../rewards/rewards.dart' show currentGoal, goalFraction, goalLine;
+import '../../rewards/rewards.dart' show currentGoal, goalLine;
 
 /// A picture for a chore step, from its words (steps have no pictogram of their own), or null
 /// to show the step's number instead.
@@ -58,17 +58,56 @@ List<KidJob> kidJobs(Den den, String date, String kidId) => [
           ], owned: false),
     ];
 
-/// What a kid is saving toward, as the bar's fill (0 to 1) and its words: the goal running now
-/// for them, in the same words as Chores ("13 more for First to 25 stars this week"), or else
-/// the cheapest reward they can't have yet ("3 more stars for Later bedtime"). Null when
-/// there's nothing to aim for.
-(double, String)? kidGoal(PointsSummary points, String kidId, String today, Formats f) {
+/// What a kid's star card counts toward: a goal running now, or the next reward.
+class KidTarget {
+  const KidTarget({required this.name, required this.have, required this.need, required this.words, this.reward});
+
+  /// "Park trip", "First to 25 stars".
+  final String name;
+
+  /// Stars toward it so far, and how many it takes: the pips.
+  final int have;
+  final int need;
+
+  /// What the card says: "3 more stars for Park trip", "Park trip is ready".
+  final String words;
+
+  /// The reward, when the target is one; a kid can ask for it once [ready].
+  final Reward? reward;
+
+  /// A reward the kid has enough stars for.
+  bool get ready => reward != null && have >= need;
+}
+
+/// What a kid's star card counts toward: the goal running now for them, in the same words as
+/// Chores; or else the cheapest active reward they haven't asked for yet, which is ready once
+/// they have the stars ("Park trip is ready") and gives way to the next one once they ask.
+/// Null when there's nothing to aim for.
+KidTarget? kidTarget(PointsSummary points, String kidId, String today, Formats f) {
   final goal = currentGoal(points, kidId, today);
-  if (goal != null) return (goalFraction(goal.$1, goal.$2), goalLine(goal.$1, goal.$2, today, f));
+  if (goal != null) {
+    final (g, s) = goal;
+    return KidTarget(
+      name: g.goal.title,
+      have: s.earned,
+      need: g.goal.target < 1 ? 1 : g.goal.target,
+      words: goalLine(g, s, today, f),
+    );
+  }
   final have = points.available(kidId);
-  final next = [for (final r in points.rewards) if (r.active && r.cost > have) r]..sort((a, b) => a.cost - b.cost);
+  final asked = {
+    for (final r in points.pending)
+      if (r.member == kidId && r.status == RedemptionStatus.requested) r.reward,
+  };
+  final next = [for (final r in points.rewards) if (r.active && !asked.contains(r.id)) r]..sort((a, b) => a.cost - b.cost);
   if (next.isEmpty) return null;
   final reward = next.first;
   final left = reward.cost - have;
-  return (have / reward.cost, '$left more ${left == 1 ? 'star' : 'stars'} for ${reward.title}');
+  return KidTarget(
+    name: reward.title,
+    have: have,
+    need: reward.cost,
+    words: left <= 0 ? '${reward.title} is ready' : '$left more ${left == 1 ? 'star' : 'stars'} for ${reward.title}',
+    reward: reward,
+  );
 }

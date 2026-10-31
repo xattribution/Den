@@ -1,9 +1,10 @@
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
+import '../../../design/chunky.dart';
 import '../../../design/glyphs.dart';
 import '../../../design/layout.dart';
 import '../../../design/motion.dart';
@@ -11,19 +12,22 @@ import '../../../design/pictograms.dart';
 import '../../../design/sheet.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
-import '../../../design/words.dart';
 import '../../chores/chores.dart';
 import '../../rewards/rewards.dart';
 import '../widgets/kid_parts.dart';
+import '../widgets/kid_star_card.dart';
+import '../widgets/kid_tiles.dart';
 
-/// The corners of everything a kid acts on.
-const double kidRadius = 24;
-
-/// A kid's own screen (Kid.dc.html), for pre-readers and little kids: their picture and "Hi,
-/// Leo", their stars and what they're saving toward in their color, then today's jobs as big
-/// tiles, 168 tall, that a tap checks off (a job with steps opens them). Pre-readers can have
-/// their jobs read to them. Little kids also see their rewards and what's on today. Every
-/// target is 72 or more.
+/// A kid's own screen (Kid.dc.html, KIDS_MODE_AND_SOFT_THEME.md), for pre-readers and little
+/// kids: their picture and "Hi, Leo" with the day, their stars on a chunky card with a pip per
+/// star toward what they're saving for, then today's jobs as chunky tiles that sink onto their
+/// lip when pressed and that a tap checks off (a job with steps opens them; a long press reads
+/// it out). Pre-readers have their jobs read to them from a bar pinned to the bottom of a
+/// phone, or under the star card on a tablet. Little kids also see their rewards and what's on
+/// today.
+///
+/// Two columns on a phone, three on a tablet (fewer when large text would wrap a title to a
+/// third line). Every target is 64 or more; job tiles are 136 or taller.
 class KidHome extends StatelessWidget {
   const KidHome({super.key, required this.kid, this.action});
 
@@ -51,20 +55,34 @@ class KidHome extends StatelessWidget {
     final jobs = kidJobs(den, app.today, kid.id);
     final reader = kid.tier == Tier.preReader;
     final width = MediaQuery.sizeOf(context).width;
-    final columns = DenLayout.forWidth(width).kidColumns;
-    final side = width < DenLayout.compactMax ? DenLayout.gutter : 32.0;
+    final layout = DenLayout.forWidth(width);
+    final side = layout.isCompact ? DenLayout.gutter : 24.0;
     final color = c.marker(kid.marker);
+    final readAloud = reader && jobs.any((j) => !j.done);
+    final pinned = readAloud && layout.isCompact;
+    final read = ReadToMeBar(onTap: () => _readAll(context, jobs));
+    // Kid primaries for the discs, by chore, never the same as a neighbor's.
+    final discs = context.kid.forJobs([for (final j in jobs) j.day.chore.id]);
+
+    final stars = pointsOn ? _Stars(kid: kid) : null;
+    final today = !reader && _Today.has(app, kid) ? _Today(kid: kid) : null;
+    // The star card and today's events side by side from 900 wide.
+    final besides = stars != null && today != null && width >= 900;
 
     final children = <Widget>[
       _Header(kid: kid, action: action),
-      if (pointsOn) _StarCard(kid: kid, color: color),
-      if (reader && jobs.any((j) => !j.done))
-        OutlinedButton.icon(
-          onPressed: () => _readAll(context, jobs),
-          style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(Targets.kid)),
-          icon: Icon(PhosphorIconsFill.speakerHigh, size: 28, color: c.ink),
-          label: Text('Read my jobs to me', style: t.section(c.ink)),
-        ),
+      if (besides)
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: stars),
+            const SizedBox(width: KidLayout.gridGap),
+            Expanded(child: today),
+          ],
+        )
+      else
+        ?stars,
+      if (readAloud && !pinned) read,
       if (jobs.isEmpty)
         Padding(
           padding: const EdgeInsets.symmetric(vertical: Sp.xxl),
@@ -77,28 +95,52 @@ class KidHome extends StatelessWidget {
           ),
         )
       else
-        _Grid(columns: columns, children: [for (final j in jobs) _JobTile(job: j, kid: kid, color: color, pointsOn: pointsOn)]),
+        KidGrid(
+          columns: layout.kidColumns.clamp(1, 3),
+          titles: [for (final j in jobs) j.day.chore.title],
+          children: [
+            for (final (i, j) in jobs.indexed)
+              _JobTile(job: j, kid: kid, color: color, disc: discs[i].face, pointsOn: pointsOn),
+          ],
+        ),
       if (!reader && pointsOn) _Rewards(kid: kid),
-      if (!reader) _Today(kid: kid),
+      if (today != null && !besides) today,
     ];
     return Scaffold(
       backgroundColor: c.bg,
       body: SafeArea(
-        child: ListView(
-          padding: EdgeInsets.fromLTRB(side, Sp.l, side, Sp.xxl),
+        child: Column(
           children: [
-            Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1100),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (final (i, w) in children.indexed) ...[if (i > 0) const SizedBox(height: 20), w],
-                  ],
-                ),
+            Expanded(
+              child: ListView(
+                // Pinned, the bar sits below the list rather than over it, so the last tile
+                // always scrolls clear of it.
+                padding: EdgeInsets.fromLTRB(side, Sp.l, side, pinned ? Sp.l : Sp.xxl),
+                children: [
+                  Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1100),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (final (i, w) in children.indexed) ...[
+                            if (i > 0) const SizedBox(height: KidLayout.sectionGap),
+                            w,
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
+            if (pinned)
+              Padding(
+                key: const Key('read-to-me-pinned'),
+                padding: EdgeInsets.fromLTRB(side, Sp.s, side, Sp.m),
+                child: read,
+              ),
           ],
         ),
       ),
@@ -112,7 +154,8 @@ class KidHome extends StatelessWidget {
   }
 }
 
-/// "Hi, Leo" with their picture, 68 across.
+/// "Hi, Leo" and the day, with their picture in their color: the kid's top bar, with Grown-ups
+/// (or Done) at its end.
 class _Header extends StatelessWidget {
   const _Header({required this.kid, this.action});
   final Member kid;
@@ -120,18 +163,34 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final app = context.watch(const {});
     final c = context.colors;
     final t = context.text;
+    final day = DateFormat('EEEE').format(app.formats.dateTime(app.today));
+    final hello = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(header: true, child: Text('Hi, ${kid.name}', style: t.kidHello(c.ink))),
+        Text(day, style: t.body(c.ink2)),
+      ],
+    );
+    // With large text the greeting gets the whole width, under the picture and the pill, so a
+    // name never breaks inside a word.
+    if (MediaQuery.textScalerOf(context).scale(1) > 1.5) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [KidAvatar(kid), const Spacer(), ?action]),
+          const SizedBox(height: Sp.s),
+          hello,
+        ],
+      );
+    }
     return Row(
       children: [
-        DenAvatar(kid, size: 68),
+        KidAvatar(kid),
         const SizedBox(width: Sp.m),
-        Expanded(
-          child: Semantics(
-            header: true,
-            child: Text('Hi, ${kid.name}', style: t.screenTitle(c.ink).copyWith(fontSize: 32)),
-          ),
-        ),
+        Expanded(child: hello),
         if (action != null) ...[const SizedBox(width: Sp.s), action!],
       ],
     );
@@ -160,12 +219,13 @@ class KidHeaderPill extends StatelessWidget {
           child: DenPressable(
             onTap: onTap,
             color: c.card,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.input)),
             semanticLabel: label,
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 48, minWidth: 72),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: Sp.l),
-                child: Center(widthFactor: 1, child: Text(label, style: context.text.meta(c.ink2).bold)),
+                child: Center(widthFactor: 1, heightFactor: 1, child: Text(label, style: context.text.meta(c.ink).bold)),
               ),
             ),
           ),
@@ -175,161 +235,68 @@ class KidHeaderPill extends StatelessWidget {
   }
 }
 
-/// Their stars, big, landing with one spring when one is earned, and the bar toward what
-/// they're saving for in their own color.
-class _StarCard extends StatefulWidget {
-  const _StarCard({required this.kid, required this.color});
+/// The kid's star card, from the family's points: their total and what they count toward.
+class _Stars extends StatelessWidget {
+  const _Stars({required this.kid});
   final Member kid;
-  final Color color;
-
-  @override
-  State<_StarCard> createState() => _StarCardState();
-}
-
-class _StarCardState extends State<_StarCard> with SingleTickerProviderStateMixin {
-  late final AnimationController _land = AnimationController.unbounded(vsync: this, value: 1);
-  int? _last;
-
-  @override
-  void dispose() {
-    _land.dispose();
-    super.dispose();
-  }
-
-  void _landIfMore(int stars) {
-    final last = _last;
-    _last = stars;
-    if (last == null || stars <= last || DenMotion.reduced(context)) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      HapticFeedback.lightImpact();
-      _land.value = 1.35;
-      _land.springTo(1, spring: DenMotion.check);
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
-    final t = context.text;
     final app = context.watch(const {});
     final points = app.den.points();
-    final stars = points.available(widget.kid.id);
-    _landIfMore(stars);
-    final goal = kidGoal(points, widget.kid.id, app.today, app.formats);
-    final label = goal?.$2;
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(kidRadius)),
-      child: Row(
-        children: [
-          RepaintBoundary(
-            child: AnimatedBuilder(
-              animation: _land,
-              builder: (context, star) => Transform.scale(scale: _land.value, child: star),
-              child: const Star(size: 60),
-            ),
-          ),
-          const SizedBox(width: Sp.l),
-          Expanded(
-            child: Semantics(
-              label: '$stars ${stars == 1 ? 'star' : 'stars'}${label == null ? '' : '. $label'}',
-              excludeSemantics: true,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('$stars', style: t.display(c.ink).withWeight(FontWeight.w800)),
-                  if (goal != null) ...[
-                    const SizedBox(height: Sp.s),
-                    ProgressBar(fraction: goal.$1, color: widget.color, label: goal.$2, height: 12),
-                    const SizedBox(height: Sp.s),
-                    Text(tidy(goal.$2), style: t.rowTitle(c.ink)),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
+    final target = kidTarget(points, kid.id, app.today, app.formats);
+    final reward = target?.reward;
+    return KidStarCard(
+      stars: points.available(kid.id),
+      target: target,
+      onGetIt: reward == null
+          ? null
+          : () {
+              final rewardActions = context.rewardActions;
+              attempt(context, () => rewardActions.request(reward, member: kid.id));
+            },
     );
   }
 }
 
-/// Tiles [columns] across, 12 apart.
-class _Grid extends StatelessWidget {
-  const _Grid({required this.columns, required this.children});
-  final int columns;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final rows = <Widget>[];
-    for (var i = 0; i < children.length; i += columns) {
-      rows.add(Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (var j = 0; j < columns; j++) ...[
-            if (j > 0) const SizedBox(width: Sp.m),
-            Expanded(child: i + j < children.length ? children[i + j] : const SizedBox.shrink()),
-          ],
-        ],
-      ));
-    }
-    return Column(children: [for (final (i, r) in rows.indexed) ...[if (i > 0) const SizedBox(height: Sp.m), r]]);
-  }
-}
-
-/// One job as a big tile: its picture, its name, and "+1 star", or done in the kid's color. A
-/// tap checks it off (or back on); a job with steps opens them.
+/// One job as a chunky tile ([KidJobTile]): its disc in a kid primary picked by its chore, its
+/// title, and "+1 star" or "1 of 3", or done in the kid's color. A tap checks it off (or back
+/// on); a job with steps opens them. A long press reads it out.
 class _JobTile extends StatelessWidget {
-  const _JobTile({required this.job, required this.kid, required this.color, required this.pointsOn});
+  const _JobTile({required this.job, required this.kid, required this.color, required this.disc, required this.pointsOn});
   final KidJob job;
   final Member kid;
   final Color color;
+
+  /// The disc's kid primary ([KidColors.forJobs]).
+  final Color disc;
   final bool pointsOn;
 
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
-    final t = context.text;
     final chore = job.day.chore;
     final done = job.done;
     final stepped = job.steps.isNotEmpty;
-    final fg = done ? c.onMarker : c.ink;
+    final points = pointsOn && job.points > 0;
     final mark = done
         ? 'Done'
         : stepped
             ? '${job.stepsDone} of ${job.steps.length}'
-            : pointsOn && job.points > 0
+            : points
                 ? '+${job.points} ${job.points == 1 ? 'star' : 'stars'}'
                 : null;
-    return DenPressable(
+    return KidJobTile(
+      title: chore.title,
+      glyph: choreGlyph(chore.icon, chore.title),
+      disc: disc,
+      person: color,
+      done: done,
+      meta: mark,
+      metaStar: !stepped && points,
       onTap: () => stepped ? _openSteps(context) : _toggle(context),
-      haptic: !stepped,
+      onLongPress: () => _read(context),
       toggled: stepped ? null : done,
-      color: done ? color : c.card,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kidRadius)),
       semanticLabel: [chore.title, ?mark].join(', '),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 168),
-        child: Padding(
-          padding: const EdgeInsets.all(Sp.m),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(done ? PhosphorIconsBold.check : choreGlyph(chore.icon, chore.title), size: 44, color: fg),
-              const SizedBox(height: Sp.m),
-              ExcludeSemantics(
-                child: Text(chore.title, textAlign: TextAlign.center, style: t.section(fg).withWeight(FontWeight.w800)),
-              ),
-              if (mark != null) ...[
-                const SizedBox(height: Sp.xs),
-                ExcludeSemantics(child: Text(mark, style: t.label(fg))),
-              ],
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -338,11 +305,16 @@ class _JobTile extends StatelessWidget {
     await attempt(context, () => actions.setDone(job.day, !job.day.done));
   }
 
+  Future<void> _read(BuildContext context) async {
+    final problem = await speak(choreWords(job.day.chore, steps: job.steps));
+    if (problem != null && context.mounted) showNote(context, problem);
+  }
+
   Future<void> _openSteps(BuildContext context) =>
       showDenSheet<void>(context, builder: (_) => _StepsSheet(job: job, kid: kid, color: color));
 }
 
-/// A job's steps as big tiles, each checked with a tap, and Read it to me.
+/// A job's steps as chunky tiles with a number disc, each checked with a tap, and Read it to me.
 class _StepsSheet extends StatelessWidget {
   const _StepsSheet({required this.job, required this.kid, required this.color});
   final KidJob job;
@@ -352,8 +324,6 @@ class _StepsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch(const {RecordType.chore, RecordType.completion});
-    final c = context.colors;
-    final t = context.text;
     // The day as it is now, so a checked step shows at once.
     final day = app.den.choresOn(job.day.date).where((d) => d.chore.id == job.day.chore.id).firstOrNull ?? job.day;
     final now = KidJob(day, job.steps, owned: job.owned);
@@ -363,16 +333,14 @@ class _StepsSheet extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SheetHeader(title: day.chore.title, actionLabel: 'Done', primary: now.done),
-          OutlinedButton.icon(
-            onPressed: () async {
+          ReadToMeBar(
+            label: 'Read it to me',
+            onTap: () async {
               final problem = await speak(choreWords(day.chore, steps: job.steps));
               if (problem != null && context.mounted) showNote(context, problem);
             },
-            style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(Targets.kid)),
-            icon: Icon(PhosphorIconsFill.speakerHigh, size: 28, color: c.ink),
-            label: Text('Read it to me', style: t.section(c.ink)),
           ),
-          const SizedBox(height: Sp.l),
+          const SizedBox(height: KidLayout.sectionGap),
           for (final (i, s) in job.steps.indexed) ...[
             if (i > 0) const SizedBox(height: Sp.m),
             _StepTile(n: i + 1, step: s, done: now.stepDone(s), color: color, day: day),
@@ -383,6 +351,8 @@ class _StepsSheet extends StatelessWidget {
   }
 }
 
+/// One step as a chunky tile: a number disc (or the step's picture) and its words; done in the
+/// kid's color with a white disc and a check.
 class _StepTile extends StatelessWidget {
   const _StepTile({required this.n, required this.step, required this.done, required this.color, required this.day});
   final int n;
@@ -396,36 +366,43 @@ class _StepTile extends StatelessWidget {
     final c = context.colors;
     final t = context.text;
     final picture = stepPicture(step.text);
-    final fg = done ? c.onMarker : c.ink;
-    return DenPressable(
+    final disc = context.kid.forJob('${day.chore.id}/${step.id}').face;
+    return ChunkyPressable(
       onTap: () {
         final actions = context.choreActions;
         attempt(context, () => actions.setStep(day, step.id, !done));
       },
-      haptic: true,
+      face: done ? color : c.card,
+      lip: done ? KidColors.lipOf(color) : c.line,
       toggled: done,
-      color: done ? color : c.card,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kidRadius)),
       semanticLabel: step.text,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 96),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: Sp.l, vertical: Sp.m),
-          child: Row(
-            children: [
-              SizedBox.square(
-                dimension: 48,
-                child: Center(
-                  child: done
-                      ? Icon(PhosphorIconsBold.check, size: 36, color: fg)
-                      : picture != null
-                          ? Icon(picture, size: 40, color: fg)
-                          : Text('$n', style: t.display(fg).copyWith(fontSize: 36)),
-                ),
-              ),
-              const SizedBox(width: Sp.l),
-              Expanded(child: ExcludeSemantics(child: Text(step.text, style: t.section(fg)))),
-            ],
+          child: ExcludeSemantics(
+            child: Row(
+              children: [
+                if (picture != null || done)
+                  KidDisc(color: disc, glyph: picture, done: done ? 1 : 0, size: 56)
+                else
+                  SizedBox.square(
+                    dimension: 56,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(color: disc, shape: BoxShape.circle),
+                      child: Center(
+                        child: Text(
+                          '$n',
+                          textScaler: TextScaler.noScaling,
+                          style: t.kidCount(KidColors.navy).copyWith(fontSize: 30),
+                        ),
+                      ),
+                    ),
+                  ),
+                const SizedBox(width: Sp.l),
+                Expanded(child: Text(step.text, style: t.kidJob(done ? c.onMarker : c.ink))),
+              ],
+            ),
           ),
         ),
       ),
@@ -460,7 +437,7 @@ class _Rewards extends StatelessWidget {
           Container(
             constraints: const BoxConstraints(minHeight: 96),
             padding: const EdgeInsets.symmetric(horizontal: Sp.l, vertical: Sp.m),
-            decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(kidRadius)),
+            decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(Radii.kidTile)),
             child: Row(
               children: [
                 Icon(Pictograms.reward(r.icon), size: 44, color: c.ink),
@@ -502,17 +479,25 @@ class _Today extends StatelessWidget {
   const _Today({required this.kid});
   final Member kid;
 
+  static List<Occurrence> _events(AppState app, Member kid) {
+    final f = app.formats;
+    final today = app.today;
+    return app.den
+        .occurrences(f.startOf(today), f.startOf(f.addDays(today, 1)))
+        .where((o) => o.assignees.isEmpty || o.assignees.contains(kid.id))
+        .toList();
+  }
+
+  /// Whether [kid] has anything on today.
+  static bool has(AppState app, Member kid) => _events(app, kid).isNotEmpty;
+
   @override
   Widget build(BuildContext context) {
     final app = context.watch(const {});
     final f = app.formats;
     final c = context.colors;
     final t = context.text;
-    final today = app.today;
-    final events = app.den
-        .occurrences(f.startOf(today), f.startOf(f.addDays(today, 1)))
-        .where((o) => o.assignees.isEmpty || o.assignees.contains(kid.id))
-        .toList();
+    final events = _events(app, kid);
     if (events.isEmpty) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -523,7 +508,7 @@ class _Today extends StatelessWidget {
         ),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: Sp.l),
-          decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(kidRadius)),
+          decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(Radii.kidTile)),
           child: Column(
             children: ruled([
               for (final o in events)

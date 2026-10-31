@@ -60,6 +60,19 @@ void main() {
       expect(KidColors.stableIndex('', 6), inInclusiveRange(0, 5));
     });
 
+    test("on a board no disc matches the three before it (beside or above), and it's stable", () {
+      const kid = KidColors.day;
+      final ids = [for (var i = 0; i < 40; i++) 'job-${i * 7}'];
+      final colors = kid.forJobs(ids);
+      for (var i = 0; i < colors.length; i++) {
+        for (var back = 1; back <= 3 && i - back >= 0; back++) {
+          expect(colors[i], isNot(colors[i - back]), reason: 'job $i and ${i - back}');
+        }
+      }
+      expect(kid.forJobs(ids), colors);
+      expect(kid.forJobs(['only']).single, kid.forJob('only'), reason: 'a lone job keeps its own color');
+    });
+
     test("a derived lip is darker than its face and close to the spec's own lips", () {
       for (final p in KidColors.all) {
         final lip = KidColors.lipOf(p.face);
