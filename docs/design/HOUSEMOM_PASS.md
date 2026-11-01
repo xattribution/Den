@@ -261,7 +261,7 @@ defaults suggested there. Item 9 (the kitchen screen joining by a code) is its o
 | Swipe right to approve, left (or a small ×) to decline, with Undo in place | Say no to a reward | 3 (her face, Stars and rewards, Decline) → 1 |
 | | Turn away a device asking to join | 3 (her face, Family, Turn it away) → 1 |
 | | Approve a reward or a device | 1 → 1 (the button, or a swipe) |
-| | Hide "Nobody is driving Zoe" until tomorrow | not possible → 1 |
+| | Put off "Nobody is driving Zoe" until an hour before it leaves | not possible → 1 |
 | The AI helper line at the end of Today: "Not now", and only in the family's first three weeks | Put it away | not possible → 1; after three weeks 0 |
 | "Stars and rewards", not "Points and rewards" | Open it | 2 → 2 |
 | "Approve" for a device on Family too (it said "Let Grandma Rosa in") | Let a device in | 1 → 1 |
@@ -288,7 +288,9 @@ defaults suggested there. Item 9 (the kitchen screen joining by a code) is its o
 - **Swipe to answer** (DESIGN.md, "Swipe to answer"). Right approves, calling exactly what the
   Approve button calls, so a device is still let in only from a parent's own phone. Left, or
   the ×, declines a reward or turns a device away; on a row with no no it means "Not now",
-  which puts it off on this phone until tomorrow. What happened shows in the row with Undo for
+  which puts it off on this phone until tomorrow; a ride only until an hour before it leaves
+  (it comes back then if nobody has taken it), and a ride leaving within the hour has no × or
+  swipe at all, so a kid is never left without one. What happened shows in the row with Undo for
   five seconds; a decline or a turn-away is only sent once those pass (or Today closes), so a
   swipe by mistake never reaches the kid or the person holding the device; then the row folds
   away. Rows that already have Got it (notices) or Remind me later get the swipe and no ×.
@@ -332,7 +334,5 @@ The before and after renders (all under `app/test/goldens/`; befores of this rou
    should scroll, a sideways one answer.
 3. **Undo in the row, not a bar at the bottom.** Kept to "Undo in place, never a toast"; say if
    you'd rather have the bar.
-4. **"Not now" on a ride is until tomorrow**, which for a ride later today means it doesn't come
-   back. A few hours instead?
-5. **The AI line's "Not now" is this phone's.** Following her to her other devices needs a
+4. **The AI line's "Not now" is this phone's.** Following her to her other devices needs a
    per-person setting in the family's records.

@@ -127,6 +127,9 @@ String needsMore(int n) => '$n more';
 /// What "Not now" (the × or a swipe to the left) did: back tomorrow.
 const String notNowDone = 'Hidden until tomorrow';
 
+/// What "Not now" on a ride did: back an hour before it leaves, unless someone takes it.
+String rideBackAt(String time) => 'Back at $time if nobody is driving';
+
 /// A reward request declined, as one approved says it: "$5 declined for Maya".
 String rewardDeclined(String title, String name) => '$title declined for $name';
 

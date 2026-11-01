@@ -335,26 +335,46 @@ void main() {
       expect(device('Hall tablet').revoked, isTrue);
     });
 
-    testWidgets('a ride has no no: the × puts it off until tomorrow, and Undo brings it back', (tester) async {
+    testWidgets('a ride has no no: the × puts it off until an hour before it leaves, and Undo brings it back', (tester) async {
       final state = await _family(tester);
       await _app(tester, state);
       final ride = _needRow('Nobody is driving Zoe');
       final need = needsYou(state, now: state.den.now()).whereType<RideNeed>().single;
       final key = need.key;
+      const hour = 3600000;
+      expect(notNowUntil(state, need), need.leaves - hour, reason: 'never until tomorrow: a kid could be left without a ride');
       await _Taps(tester).on(find.descendant(of: ride, matching: find.bySemanticsLabel('Not now')));
-      expect(findWords('Hidden until tomorrow'), findsOneWidget);
+      expect(findWords('Back at 3:30 PM if nobody is driving'), findsOneWidget, reason: 'the swim lesson leaves at 4:30 PM');
       expect(needsYou(state, now: state.den.now()).whereType<RideNeed>(), isEmpty);
       await tester.tap(find.text('Undo'));
       await tester.pumpAndSettle();
       expect(needsYou(state, now: state.den.now()).whereType<RideNeed>(), hasLength(1));
       expect(_needRow('Nobody is driving Zoe'), findsOneWidget);
-      // Put off again, it stays away until tomorrow and comes back then.
+      // Put off again, it stays away until an hour before the ride leaves, then comes back if
+      // nobody has taken it.
       await _swipe(tester, findWords('Nobody is driving Zoe'), -260);
       await _undoPasses(tester);
       expect(findWords('Nobody is driving Zoe').hitTestable(), findsNothing);
-      expect(state.snoozedUntil(key), notNowUntil(state));
-      expect(putOff(state, need, now: notNowUntil(state) - 1), isTrue);
-      expect(putOff(state, need, now: notNowUntil(state)), isFalse, reason: 'back tomorrow');
+      expect(state.snoozedUntil(key), need.leaves - hour);
+      expect(putOff(state, need, now: need.leaves - hour - 1), isTrue);
+      expect(needsYou(state, now: need.leaves - hour - 60000).whereType<RideNeed>(), isEmpty);
+      expect(needsYou(state, now: need.leaves - hour).whereType<RideNeed>().map((n) => n.key), [key],
+          reason: 'back an hour before it leaves');
+      // Within the hour it can't be put off at all: it would be back at once.
+      expect(canPutOff(state, need, now: need.leaves - hour + 60000), isFalse);
+      expect(canPutOff(state, need, now: need.leaves - 2 * hour), isTrue);
+    });
+
+    testWidgets('a ride leaving within the hour has no × and no swipe', (tester) async {
+      final state = await _family(tester);
+      final need = needsYou(state, now: state.den.now()).whereType<RideNeed>().single;
+      // Today at 4:00 PM, half an hour before the swim lesson.
+      final soon = (await real(tester, () async => AppState(await createDemoFamily(now: DateTime.fromMillisecondsSinceEpoch(need.leaves - 1800000, isUtc: true)))));
+      await _app(tester, soon);
+      final ride = _needRow('Nobody is driving Zoe');
+      expect(ride, findsOneWidget);
+      expect(find.descendant(of: ride, matching: find.bySemanticsLabel('Not now')), findsNothing);
+      expect(tester.widget<ActionRow>(ride).onDecline, isNull);
     });
   });
 

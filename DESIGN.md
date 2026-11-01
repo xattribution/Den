@@ -470,7 +470,9 @@ Mail and Messages rows do on an iPhone (`SwipeActions`, `ActionRow.onApprove`/`o
   parent's own phone).
 - **Left is no** ("Decline" a reward, "Turn away" a device), or **"Not now"** on a row with no
   no (a ride, a list due, a grown-up's late chore, an AI connection, a notice): put off on this
-  device until tomorrow.
+  device until tomorrow. A ride comes back an hour before it leaves if nobody has taken it
+  ("Back at 3:30 PM if nobody is driving"), and one leaving within the hour can't be put off
+  (no ×, no swipe): a kid is never left without a ride.
 - **The ×**: a small quiet glyph on the title's line does what the swipe left does, for anyone
   who doesn't swipe. Rows whose own buttons already put them away (Got it, Remind me later) get
   the swipe and no ×.

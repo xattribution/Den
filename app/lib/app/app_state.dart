@@ -312,6 +312,10 @@ class AppState extends ChangeNotifier with FamilyReads {
     _savedSnoozed();
   }
 
+  /// How many things put off on this device have come back by [now]: it changes the moment one
+  /// does, so what reads them can look again.
+  int snoozesEnded(int now) => _snoozed.values.where((until) => until <= now).length;
+
   /// Takes back [snooze] for [key] (Undo).
   void unsnooze(String key) {
     if (_snoozed.remove(key) == null) return;

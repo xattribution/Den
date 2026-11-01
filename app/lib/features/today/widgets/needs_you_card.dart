@@ -174,7 +174,7 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
 
   @override
   Widget build(BuildContext context) {
-    final needs = context.view(NeedsModel(widget.now));
+    final needs = context.view(NeedsModel(widget.now, ended: DenScope.read(context).snoozesEnded(widget.now)));
     final app = DenScope.read(context);
     final live = <String, Need>{};
     for (final n in needs) {
@@ -429,9 +429,11 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
     // The swipes and the ×: a yes or no where the row asks one (the same calls as its buttons,
     // so the same rules decide who may), and "Not now" everywhere else. A row whose own buttons
     // already put it away ("Got it", "Remind me later") gets the swipe and no ×.
-    final (VoidCallback? yes, VoidCallback no, String noLabel, bool cross) = switch (need) {
+    final (VoidCallback? yes, VoidCallback? no, String noLabel, bool cross) = switch (need) {
       RewardNeed() => (() => _approve(app, need), () => _decline(app, need), 'Decline', true),
       DeviceNeed(:final device) => (() => _approveDevice(app, device), () => _turnAway(app, device), 'Turn away', true),
+      // A ride leaving within the hour can't be put off: it would come back at once.
+      RideNeed() when !canPutOff(app, need, now: widget.now) => (null, null, 'Not now', false),
       RideNeed() || LateNeed() || LateManyNeed() || ListNeed() || ConnectionNeed() => (null, () => _notNow(app, need), 'Not now', true),
       _ => (null, () => _notNow(app, need), 'Not now', false),
     };
@@ -465,8 +467,9 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
   /// "Not now": put off on this device until tomorrow, at once, with Undo for a few seconds.
   void _notNow(AppState app, Need need) {
     final key = need.key;
-    app.snooze(key, notNowUntil(app));
-    _putAway(key, notNowDone, undo: () => app.unsnooze(key));
+    final until = notNowUntil(app, need);
+    app.snooze(key, until);
+    _putAway(key, need is RideNeed ? rideBackAt(app.formats.time(until)) : notNowDone, undo: () => app.unsnooze(key));
   }
 
   /// No to a reward: sent once Undo has gone, so a swipe by mistake never reaches the kid.

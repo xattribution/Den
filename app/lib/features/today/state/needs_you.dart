@@ -19,6 +19,9 @@ final class RideNeed extends Need {
 
   @override
   String get key => 'ride:${occ.event.id}@${occ.start}:$leg';
+
+  /// When the ride leaves: the start for the way there, the end for the way back.
+  int get leaves => leg == 'from' ? occ.end : occ.start;
 }
 
 /// A kid asking to spend stars on a reward: "Approve".
@@ -249,8 +252,18 @@ bool putOff(AppState app, Need need, {required int now}) {
   return until != null && now < until;
 }
 
-/// When "Not now" brings [need]'s kind back: the start of tomorrow, in the family's time zone.
-int notNowUntil(AppState app) => app.den.dayStart(app.formats.addDays(app.today, 1));
+/// When "Not now" brings [need] back: a ride an hour before it leaves (a kid must never be
+/// left without one), anything else at the start of tomorrow, in the family's time zone.
+int notNowUntil(AppState app, Need need) => switch (need) {
+      RideNeed() => need.leaves - rideBackBefore.inMilliseconds,
+      _ => app.den.dayStart(app.formats.addDays(app.today, 1)),
+    };
+
+/// How long before a ride leaves a "Not now" on it ends.
+const Duration rideBackBefore = Duration(hours: 1);
+
+/// Whether "Not now" can put [need] off at all: not a ride that leaves within the hour.
+bool canPutOff(AppState app, Need need, {required int now}) => notNowUntil(app, need) > now;
 
 /// What shared screens said about wrong tries in the last [noticeDays] that this device hasn't
 /// put away: the newest for each screen and person.
@@ -268,7 +281,11 @@ List<SignInTries> _triesToTell(AppState app, int now) {
 
 /// [needsYou], computed again only when what it reads changes or the hour turns.
 class NeedsModel extends DenView<List<Need>> {
-  const NeedsModel(this.now);
+  const NeedsModel(this.now, {this.ended = 0});
+
+  /// How many put-off things have come back by [now] ([AppState.snoozesEnded]), so one coming
+  /// back mid-hour (a ride an hour before it leaves) shows at once.
+  final int ended;
 
   /// The current time; the view is kept for the hour it falls in.
   final int now;
@@ -291,7 +308,7 @@ class NeedsModel extends DenView<List<Need>> {
       };
 
   @override
-  Object get key => (NeedsModel, now ~/ 3600000);
+  Object get key => (NeedsModel, now ~/ 3600000, ended);
 
   @override
   List<Need> compute(AppState app) => needsYou(app, now: now);

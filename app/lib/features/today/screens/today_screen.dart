@@ -41,15 +41,17 @@ class TodayScreen extends StatefulWidget {
 class _TodayScreenState extends State<TodayScreen> {
   Timer? _tick;
   int? _hour;
+  int _ended = 0;
 
   @override
   void initState() {
     super.initState();
-    // The greeting and Tomorrow follow the clock even when nothing else changes.
+    // The greeting and Tomorrow follow the clock even when nothing else changes, and so does
+    // something put off coming back (a ride an hour before it leaves).
     _tick = Timer.periodic(const Duration(minutes: 1), (_) {
       final app = DenScope.read(context);
-      final hour = app.formats.at(app.den.now()).hour;
-      if (hour != _hour) setState(() {});
+      final now = app.den.now();
+      if (app.formats.at(now).hour != _hour || app.snoozesEnded(now) != _ended) setState(() {});
     });
   }
 
@@ -67,6 +69,7 @@ class _TodayScreenState extends State<TodayScreen> {
     final now = app.den.now();
     final hour = f.at(now).hour;
     _hour = hour;
+    _ended = app.snoozesEnded(now);
     final compact = DenLayout.of(context).isCompact;
     final tomorrow = showsTomorrow(hour) ? app.den.today(date: f.addDays(view.date, 1)) : null;
 
