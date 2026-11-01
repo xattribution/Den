@@ -33,7 +33,7 @@ DEN_PROJECT=denhub
 MIN_MEM_KB=850000          # a 1 GB computer (the firmware keeps some)
 MIN_DISK_KB=2000000        # Docker and two versions of Den
 COMPOSE_FALLBACK=v5.6.0    # the Compose plugin, when a Docker without it is already installed
-HEALTH_WAIT=240            # seconds an update has to come up healthy before it's undone
+HEALTH_WAIT=${DEN_HEALTH_WAIT:-240}            # seconds an update has to come up healthy before it's undone
 
 # Where things are. Tests point these somewhere else; nobody else needs to.
 DEN_DIR=${DEN_DIR:-/opt/den}
@@ -54,6 +54,7 @@ REPLACE_PODMAN=0
 TOKEN_ARG=
 NETWORK_MODE=      # lan | local; decided by detect_network unless --lan or --local-only
 MODE_FLAG=
+IMAGE_FLAG=
 IMAGE=${DEN_IMAGE:-$DEN_IMAGE_DEFAULT}
 CHANNEL=$DEN_CHANNEL_DEFAULT
 
@@ -98,11 +99,12 @@ quietly() {
     return 0
   fi
   quietly_log=${TMPDIR:-/tmp}/den-install.$$.log
-  if "$@" > "$quietly_log" 2>&1; then
+  "$@" > "$quietly_log" 2>&1
+  quietly_status=$?
+  if [ "$quietly_status" = 0 ]; then
     rm -f "$quietly_log"
     return 0
   fi
-  quietly_status=$?
   say "      This step failed. Its last words were:"
   tail -n 15 "$quietly_log" | sed 's/^/        | /'
   rm -f "$quietly_log"
@@ -559,6 +561,7 @@ write_files() {
   run chmod 755 "$DEN_DIR"
   run chmod 700 "$STATE_DIR"
   if [ -n "$MODE_FLAG" ]; then printf '%s\n' "$MODE_FLAG" | put "$STATE_DIR/network-mode" 600; fi
+  if [ -n "$IMAGE_FLAG" ]; then printf '%s\n' "$IMAGE:$CHANNEL" | put "$STATE_DIR/image" 600; fi
   if [ ! -d "$DATA_DIR" ]; then run mkdir -p "$DATA_DIR"; fi
   run mkdir -p "$HUB_DIR"
   # The hub runs as user 10001 in its container; the data is that user's alone.
@@ -643,7 +646,8 @@ json_get() { # json_get FILE KEY: a string value from one of Den's one-line JSON
 
 # update_policy: what the family chose in the app (<data>/hub/update-policy): auto or manual.
 update_policy() {
-  up_text=$(tr -d ' \t\r\n' < "$HUB_DIR/update-policy" 2>/dev/null)
+  up_text=
+  [ -f "$HUB_DIR/update-policy" ] && up_text=$(tr -d ' \t\r\n' < "$HUB_DIR/update-policy")
   if [ "$up_text" = manual ]; then echo manual; else echo auto; fi
 }
 
@@ -1174,7 +1178,7 @@ main() {
       --replace-podman) REPLACE_PODMAN=1 ;;
       --token) shift; TOKEN_ARG=${1:-} ;;
       --token=*) TOKEN_ARG=${1#--token=} ;;
-      --image) shift; IMAGE=${1:-$IMAGE} ;;
+      --image) shift; IMAGE_FLAG=${1:-} ;;
       --lan) NETWORK_MODE=lan MODE_FLAG=lan ;;
       --local-only) NETWORK_MODE=local MODE_FLAG=local ;;
       --from-timer) arg=--from-timer ;;
@@ -1188,7 +1192,14 @@ main() {
     esac
     shift
   done
-  # An image reference with a tag (--image ghcr.io/xattribution/den:v1.2.3) names the channel too.
+  # --image, once given to the installer, stays this computer's choice: nightly updates follow
+  # that tag (back to the default: --image ghcr.io/xattribution/den:stable).
+  if [ -z "$IMAGE_FLAG" ] && [ -s "$STATE_DIR/image" ]; then
+    IMAGE=$(head -n 1 "$STATE_DIR/image")
+  elif [ -n "$IMAGE_FLAG" ]; then
+    IMAGE=$IMAGE_FLAG
+  fi
+  # An image reference with a tag (ghcr.io/xattribution/den:v1.2.3) names the channel too.
   case "${IMAGE##*/}" in
     *:*) CHANNEL=${IMAGE##*:}; IMAGE=${IMAGE%:*} ;;
   esac
