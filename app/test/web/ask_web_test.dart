@@ -20,7 +20,8 @@ import 'ask_e2e_app.dart' show PageOriginLink;
 void main() {
   test('the helper asks the hub at the page\'s own origin and shows what it says', () async {
     tzdata.initializeTimeZones();
-    final den = await createDemoFamily();
+    // A fixed morning in the month the hub's answer below names, so the test reads the same any day.
+    final den = await createDemoFamily(now: DateTime(2026, 10, 16, 8));
     await den.updateFamily({'assistant': const AssistantPolicy(enabled: true).toJson()});
     final requests = <http.Request>[];
     final client = MockClient((request) async {

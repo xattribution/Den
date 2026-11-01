@@ -1,6 +1,8 @@
 /// A realistic sample family for screenshots, demos and tests. Pure Dart.
 library;
 
+import 'dart:math' as math;
+
 import 'den_core.dart';
 import 'src/time.dart';
 
@@ -21,7 +23,8 @@ const Map<String, String> demoSignIns = {
 ///
 /// [now] is the demo's present moment and becomes the engine's clock: a UTC [DateTime] is taken
 /// as that instant, and a local one (`DateTime(2026, 10, 16, 8)`) as that wall-clock time in
-/// [demoTimeZone], so "today" doesn't depend on the machine's zone. Without [now] the demo is
+/// [zone] ([demoTimeZone] by default, where the family lives), so "today" doesn't depend on the
+/// machine's zone. Without [now] the demo is
 /// seeded around the real time and the engine follows the real clock. [storage] must be empty.
 ///
 /// Two parents (Alex, who saved recovery words, and Priya), three kids (Maya 14, Leo 8, Zoe 4) and
@@ -30,8 +33,7 @@ const Map<String, String> demoSignIns = {
 /// a parents-only dinner, a swim lesson today with no driver, and a beach trip countdown; daily and
 /// rotating chores with steps and points, completions through the week, groceries across three
 /// stores, a packing list, a meal plan and a dated list; goals, rewards and a pending request.
-Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? now}) async {
-  const zone = demoTimeZone;
+Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? now, String zone = demoTimeZone}) async {
   final fixedNow = now == null
       ? null
       : now.isUtc
@@ -429,7 +431,10 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
   final glue = display.list(science)!.items.firstWhere((i) => i.text == 'Glue sticks').id;
   await as(maya, () => display.setItemChecked(glue, true));
 
-  moveTo(present - 20 * 60000);
+  // This morning's check-offs, a little before now, but never before today began where the
+  // family lives: a check-off clocked yesterday can't be for today (in the first minutes after
+  // midnight, twenty minutes ago was still yesterday).
+  moveTo(math.max(present - 20 * 60000, dayStartIn(zone, today)));
   await as(zoe, () => display.setChoreDone(beds[zoe]!, today, true));
   await as(leo, () => display.setChoreDone(cat, today, true));
   await toPhone();
