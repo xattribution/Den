@@ -939,8 +939,12 @@ it that name); to roll back, put the old version back.
 ## Backups
 
 A backup holds the hub's keys, the family's whole change log, the hub's own state (connected
-apps, the AI helper's and the reader's keys, signing in with Google and Apple, feeds), sealed with
-`DEN_BACKUP_PASSPHRASE` from `.env` (Argon2id, XChaCha20-Poly1305). It works while the hub runs:
+apps, the AI helper's and the reader's keys, signing in with Google and Apple, feeds), sealed so
+that any parent's recovery words open it ([how](hub-api.md#the-server-its-internet-backups-and-updates)).
+While `.env` still has `DEN_BACKUP_PASSPHRASE`, the passphrase opens it too, and older backups
+sealed with it alone need it. The hub also backs itself up every night to `<data>/backups/` and,
+once a parent sets one up in the app (Settings, Backups), to a NAS: nothing to add here. It works
+while the hub runs:
 
 ```sh
 docker compose run --rm backup

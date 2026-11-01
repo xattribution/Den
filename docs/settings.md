@@ -42,7 +42,9 @@ A setting that stays a file setting although someone might change it says why.
 | `DEN_CSP` | stays | Replaces the web app's Content-Security-Policy, for a web build someone changed to load from a CDN: a developer's escape hatch, never needed for a feature |
 | `DEN_RELAY`, `DEN_MAILBOX` | stays | A relay tunnel to reach a hub at home from anywhere (setup D). No setup in `deploy/` runs one; reaching the hub from anywhere is what the Cloudflare Tunnel phase brings, which replaces it |
 | `DEN_TOKEN` | (a) | `den_hub mcp --token`: a token the app made, for a local MCP client's command line |
-| `DEN_BACKUP_PASSPHRASE` | (a) | Made by `install.sh`; the backup service reads it |
+| `DEN_BACKUP_PASSPHRASE` | (b) | Not needed: backups open with a parent's recovery words ([hub-api.md](hub-api.md#the-server-its-internet-backups-and-updates)). Where an older install still sets it, new backups open with it too and older ones need it; the first-boot restore uses it for those |
+| `DEN_CONNECTOR`, `DEN_CONNECTOR_METRICS` | (a) | Set by the one-command install's compose file: the Cloudflare connector beside the hub. The tunnel token itself is pasted in a browser at first boot, or in Settings, Advanced, Server |
+| `DEN_BACKUP_DIR` | (a) | Where the server's own nightly backups go; `<data>/backups` by default. Backing up to a NAS is set up in the app (Settings, Backups) |
 
 ## The private setup (`deploy/private/.env`, `install.sh`)
 
