@@ -128,6 +128,8 @@ class NetScreenCode extends ScreenCodeSession {
           _set(ScreenStage.failed, error: 'A parent removed this screen. Start over to get a new code.');
       }
     } on HubException catch (e) {
+      // Out of reach for a moment (Wi-Fi on a kitchen tablet): ask again on the next tick.
+      if (e.code == null) return;
       if (_stage == ScreenStage.joining) {
         // The hub forgets the code once the approval reached it: the sync connection brings it.
         if (e.code == 'not_found') _timer?.cancel();
@@ -139,9 +141,8 @@ class NetScreenCode extends ScreenCodeSession {
       _timer?.cancel();
       _set(ScreenStage.failed, error: e.message);
     } on Object {
-      if (_stage == ScreenStage.joining) return;
-      _timer?.cancel();
-      _set(ScreenStage.failed, error: "Couldn't reach the family's hub. Check the connection, then get a new code.");
+      // Out of reach, or a reply that didn't arrive whole: ask again on the next tick.
+      return;
     } finally {
       _busy = false;
     }

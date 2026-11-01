@@ -81,8 +81,11 @@ class _ScreenCodeScreenState extends State<ScreenCodeScreen> {
 
   Future<void> _open() async {
     final old = _session;
-    old?.removeListener(_changed);
-    unawaited(old?.cancel());
+    if (old != null) {
+      old.removeListener(_changed);
+      unawaited(old.cancel());
+      if (!identical(old, widget.session)) old.dispose();
+    }
     setState(() {
       _session = null;
       _loading = true;
@@ -194,11 +197,15 @@ class _ScreenCodeScreenState extends State<ScreenCodeScreen> {
     final instructions = t.section(c.ink).regular;
     final left = Duration(milliseconds: session.expires - (widget.now ?? DateTime.now)().millisecondsSinceEpoch);
     final code = ScreenCode.format(session.code);
+    // Asked to join already (a code a parent took): a new code means starting over.
+    final asked = DenScope.read(context).den.hasFamily;
+    final again = asked ? _startOver : _open;
+    final againLabel = asked ? 'Start over' : 'Get a new code';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(tidy(KitchenScreenWords.howToAdd), style: instructions),
         if (_showsCode(session)) ...[
+          Text(tidy(KitchenScreenWords.howToAdd), style: instructions),
           const SizedBox(height: Sp.xl),
           Semantics(
             label: KitchenScreenWords.spelled(session.code),
@@ -215,8 +222,7 @@ class _ScreenCodeScreenState extends State<ScreenCodeScreen> {
             ),
           ),
           const SizedBox(height: Sp.xl),
-        ] else
-          const SizedBox(height: Sp.l),
+        ],
         switch (session.stage) {
           ScreenStage.starting => const NoticeLine(icon: PhosphorIconsRegular.hourglass, message: 'Getting a code'),
           ScreenStage.waiting when !left.isNegative => Column(
@@ -240,8 +246,8 @@ class _ScreenCodeScreenState extends State<ScreenCodeScreen> {
           ScreenStage.approved => const NoticeLine(icon: PhosphorIconsRegular.checkCircle, message: KitchenScreenWords.approved),
           ScreenStage.failed => ErrorState(
               message: session.error ?? "Adding this screen didn't finish. Get a new code and try again.",
-              actionLabel: 'Get a new code',
-              onAction: _open,
+              actionLabel: againLabel,
+              onAction: again,
             ),
           _ => Wrap(
               spacing: Sp.m,
@@ -249,7 +255,7 @@ class _ScreenCodeScreenState extends State<ScreenCodeScreen> {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 Text(KitchenScreenWords.ranOut, style: t.body(c.ink)),
-                OutlinedButton(onPressed: _open, child: const Text('Get a new code')),
+                OutlinedButton(onPressed: again, child: Text(againLabel)),
               ],
             ),
         },
