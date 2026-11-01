@@ -1841,7 +1841,7 @@ her own phone (Settings, Kitchen screen, Add a screen) and approves the screen t
 two: it never writes the screen's request or its approval, and nothing it keeps lets anyone in.
 
 The screen picks the code, 8 characters of Crockford's base32 (40 bits, `K7QM-3RXA`), and both
-ends stretch it with Argon2id salted with the family's address the screen opened (den_net's `ScreenCode`): the hub sees only its `slot` (64 hex) and
+ends stretch it with Argon2id (den_net's `ScreenCode`): the hub sees only its `slot` (64 hex) and
 two tags, HMAC-SHA256 under a key from the same stretch, so it can't learn the code or put
 another key under it. Waiting screens live in the hub's memory only, 10 minutes each, at most 20
 for the family and 3 per client. A code is the family's: it is found only among the screens that
@@ -1854,7 +1854,7 @@ has the headers); anyone else is `403 permission_denied`, unsigned `401`.
 | Method and path | Who | What |
 | --- | --- | --- |
 | `POST /api/v1/screens/code` `{slot, pubkey, xpub, name, kind, tag}` | The screen | Keeps it waiting for 10 minutes; `201 {secret, expires, expires_ms}`. `tag` is the code's over `[pubkey, xpub, name, kind]`. `409 conflict` (that slot is taken: pick another code), `409 known_device` (the family knows this device already), `429 rate_limited` (the client's share or the family's cap, and the browser link budget, see [Limits per client](#limits-per-client)), `503 not_ready` |
-| `POST /api/v1/screens/find` `{slots}` (up to 4: the code stretched at each address the phone knows the hub at; or `{slot}`) | A parent's own device | `{slot, device, pubkey, xpub, name, kind, tag, expires_ms}`, one try however many slots for the phone to check the tag before it asks. `404 not_found` alike for a wrong code, one another parent took and one that ran out; `429 rate_limited` after 10 wrong codes in 10 minutes from one client, or 50 for the whole family |
+| `POST /api/v1/screens/find` `{slot}` | A parent's own device | `{slot, device, pubkey, xpub, name, kind, tag, expires_ms}` for the phone to check the tag before it asks. `404 not_found` alike for a wrong code, one another parent took and one that ran out; `429 rate_limited` after 10 wrong codes in 10 minutes from one client, or 50 for the whole family |
 | `POST /api/v1/screens/accept` `{slot, family, founder, hub, name, tag}` | A parent's own device | After she said Add: what the screen joins with (this family, its founder's key, this hub, the name she chose) and the phone's tag over `[family, founder, hub, pubkey, name]`. From then on only this device goes on with the code. `400` when they aren't this family's |
 | `POST /api/v1/screens/code/status` `{slot, secret}` | The screen | `waiting`; `accepted` or `requested` with `family, founder, hub, name, tag`; `approved` or `declined` once the family's log says so. `404` once the code ran out or was settled (30 seconds after) |
 | `POST /api/v1/screens/code/join` `{slot, secret, change}` | The screen | Its own signed join request: its device record, by itself, for nobody, `approved: false`, `mode: shared`, the key the code was bound to and nothing else (den_net's `isScreenJoinRequest`). Kept, never written. `400` for any other change, `409 not_accepted` before a parent took the code |

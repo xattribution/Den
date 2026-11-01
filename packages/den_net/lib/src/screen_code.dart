@@ -14,9 +14,7 @@ import 'util.dart';
 /// the letters people mistake for digits (O for 0, I and L for 1) read as those digits.
 ///
 /// Both ends stretch it with Argon2id (memory [stretchMemoryKiB], [stretchIterations] passes,
-/// one lane, 32 bytes), salted with the family's address the screen opened ([origin]:
-/// `den/screen-code/v2 0x00 https://den.example.com`), so a table of every code's stretch is good
-/// for one family's address only, and derive from that, by HMAC-SHA256:
+/// one lane, 32 bytes, fixed salt `den/screen-code/v1`) and derive from that, by HMAC-SHA256:
 ///
 /// - the hub's [ScreenCodeKeys.slot] (`den/screen-code/v1/slot`), the only thing the hub keeps
 ///   the code under, so the hub never learns the code;
@@ -27,7 +25,8 @@ import 'util.dart';
 ///
 /// So the key a parent approves is the one the screen in front of her made, even if the hub
 /// in between lied: finding the code from the slot takes one Argon2id run per guess, 2^39 on
-/// average, in the code's ten minutes, or a table built for that one address beforehand.
+/// average, in the code's ten minutes. (A table of every code's stretch, built once beforehand, would
+/// find any code: an accepted risk for a family organizer's kitchen screen.)
 abstract final class ScreenCode {
   /// Crockford's base32: digits and letters with I, L, O and U left out.
   static const String alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -44,18 +43,8 @@ abstract final class ScreenCode {
   /// Argon2id passes.
   static const int stretchIterations = 3;
 
+  static final Uint8List _salt = utf8Bytes('den/screen-code/v1');
   static final Map<String, Future<ScreenCodeKeys>> _derived = {};
-
-  /// The family's address as both ends write it into the stretch: scheme and host in lower
-  /// case and the port only when it isn't the scheme's own (`https://den.example.com`,
-  /// `http://192.168.1.20:47733`), whatever path, query or case the address came with. A sync
-  /// address (`wss://.../ws`) is the same as the page's (`https://...`).
-  static String origin(Uri address) {
-    final scheme = switch (address.scheme.toLowerCase()) { 'wss' => 'https', 'ws' => 'http', final s => s };
-    final standard = (scheme == 'https' && address.port == 443) || (scheme == 'http' && address.port == 80);
-    final port = !address.hasPort || standard ? '' : ':${address.port}';
-    return '$scheme://${address.host.toLowerCase()}$port';
-  }
 
   /// A new random code, [length] characters of [alphabet], no dash.
   static String generate() {
@@ -94,22 +83,18 @@ abstract final class ScreenCode {
     return c.length == length ? '${c.substring(0, 4)}-${c.substring(4)}' : c;
   }
 
-  /// The slot and MAC key [code] stretches to at the family's address [at] ([origin]). The last
-  /// few are kept, so a code stretches once.
-  static Future<ScreenCodeKeys> derive(String code, {required Uri at}) {
+  /// The slot and MAC key [code] stretches to. The last few are kept, so a code stretches once.
+  static Future<ScreenCodeKeys> derive(String code) {
     final normalized = normalize(code);
     if (normalized == null) throw const FormatException("That isn't a screen's code");
-    final where = origin(at);
-    final cacheKey = '$normalized $where';
-    final known = _derived[cacheKey];
+    final known = _derived[normalized];
     if (known != null) return known;
     while (_derived.length >= 8) {
       _derived.remove(_derived.keys.first);
     }
-    return _derived[cacheKey] = () async {
+    return _derived[normalized] = () async {
       final kdf = Argon2id(parallelism: 1, memory: stretchMemoryKiB, iterations: stretchIterations, hashLength: 32);
-      final salt = [...utf8Bytes('den/screen-code/v2'), 0, ...utf8Bytes(where)];
-      final key = await kdf.deriveKey(secretKey: SecretKey(utf8Bytes(normalized)), nonce: salt);
+      final key = await kdf.deriveKey(secretKey: SecretKey(utf8Bytes(normalized)), nonce: _salt);
       final stretched = await key.extractBytes();
       return ScreenCodeKeys._(
         hexEncode(await hmacSha256(stretched, utf8Bytes('den/screen-code/v1/slot'))),

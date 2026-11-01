@@ -34,28 +34,12 @@ void main() {
       expect(ScreenCode.fromText('https://den.example.com/#/add-screen/K7QM3RXA'), isNull);
     });
 
-    test("the family's address is written the same however it came", () {
-      const want = 'https://den.example.com';
-      for (final a in ['https://Den.Example.com/', 'https://den.example.com:443/#/welcome', 'wss://den.example.com/ws']) {
-        expect(ScreenCode.origin(Uri.parse(a)), want, reason: a);
-      }
-      expect(ScreenCode.origin(Uri.parse('http://192.168.1.20:47733/ws')), 'http://192.168.1.20:47733');
-      expect(ScreenCode.origin(Uri.parse('ws://192.168.1.20:47733/ws')), 'http://192.168.1.20:47733');
-    });
-
-    test('the same code at another address stretches to another slot', () async {
-      final here = await ScreenCode.derive('K7QM-3RXA', at: Uri.parse('https://den.example.com'));
-      final there = await ScreenCode.derive('K7QM-3RXA', at: Uri.parse('https://other.example.com'));
-      expect(here.slot, isNot(there.slot));
-    });
-
     test('both ends derive the same slot and tags, and a tag covers the key it names', () async {
-      final at = Uri.parse('https://den.example.com');
-      final a = await ScreenCode.derive('K7QM-3RXA', at: at);
-      final b = await ScreenCode.derive('k7qm3rxa', at: Uri.parse('wss://DEN.example.com/ws'));
+      final a = await ScreenCode.derive('K7QM-3RXA');
+      final b = await ScreenCode.derive('k7qm3rxa');
       expect(a.slot, b.slot);
       expect(ScreenCode.isSlot(a.slot), isTrue);
-      final other = await ScreenCode.derive('K7QM-3RXB', at: at);
+      final other = await ScreenCode.derive('K7QM-3RXB');
       expect(other.slot, isNot(a.slot));
 
       final tag = await a.screenTag(pubkey: 'key-1', xpub: 'x-1', name: 'Kitchen iPad', kind: 'tablet');

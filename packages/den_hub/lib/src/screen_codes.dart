@@ -319,21 +319,15 @@ class ScreenCodes {
     return w;
   }
 
-  /// `POST /api/v1/screens/find {slots}` (or `{slot}`), signed by a parent's own device: the
-  /// screen waiting under the slot of the code they typed, `{slot, device, pubkey, xpub, name,
+  /// `POST /api/v1/screens/find {slot}`, signed by a parent's own device: the screen waiting
+  /// under the slot of the code they typed, `{slot, device, pubkey, xpub, name,
   /// kind, tag, expires_ms}`, for the phone to check the tag and ask. `404` for a wrong code, a used one or
   /// one that ran out, alike.
   Future<Response> find(Request request) async {
     final client = hub.clientOf(request);
     _checkWrong(client);
     final (_, b) = await _parent(request);
-    // The phone may know the family's hub at more than one address, and the code stretches to a
-    // slot per address: it sends each (a few at most), and they count as one try.
-    final slots = b.strings('slots', max: maxSlotsPerFind) ?? [_slot(b)];
-    if (slots.isEmpty || !slots.every(ScreenCode.isSlot)) throw ApiError.invalid("Those aren't screen codes' slots.", field: 'slots');
-    _prune();
-    final slot = slots.where((s) => _waiting.containsKey(s) && _waiting[s]!.acceptedBy == null).firstOrNull;
-    final w = _untaken(request, slot ?? slots.first);
+    final w = _untaken(request, _slot(b));
     return jsonResponse({
       'slot': w.slot,
       'device': w.device,
@@ -345,9 +339,6 @@ class ScreenCodes {
       'expires_ms': w.expires,
     });
   }
-
-  /// Most slots one `find` may send.
-  static const int maxSlotsPerFind = 4;
 
   /// `POST /api/v1/screens/accept {slot, family, founder, hub, name, tag}`, signed by a
   /// parent's own device, after they said Add: what the screen joins with, and the phone's tag

@@ -588,26 +588,18 @@ class NetPairing extends PairingService {
     if (network.hubDevice == null && !network.isHub) {
       throw const PairingException("Kitchen screens join through the family's hub. Add the hub first: Settings, Advanced, Hub and sync.");
     }
-    // The code is stretched with the family's address the screen opened. This phone may know the
-    // hub at more than one (its public address, the one at home): it asks with each, at once.
-    final origins = {for (final base in await network.hubBases()) net.ScreenCode.origin(base)}.take(4).toList();
-    if (origins.isEmpty) throw const PairingException("Den doesn't know the hub's address yet. Open Den at home once, then try again.");
-    final derived = {for (final o in origins) o: await net.ScreenCode.derive(normalized, at: Uri.parse(o))};
+    final keys = await net.ScreenCode.derive(normalized);
     final api = HubApi(network);
     final Map<String, Object?> json;
     try {
-      json = await api.send('POST', '/api/v1/screens/find', body: {
-        'slots': [for (final k in derived.values) k.slot],
-      });
+      json = await api.send('POST', '/api/v1/screens/find', body: {'slot': keys.slot});
     } on HubException catch (e) {
       throw PairingException(e.code == 'not_found' ? _wrongScreenCode : e.message);
     } finally {
       api.close();
     }
     final pubkey = json['pubkey'], xpub = json['xpub'], name = json['name'], kind = json['kind'], tag = json['tag'];
-    final origin = derived.entries.where((e) => e.value.slot == json['slot']).firstOrNull?.key;
-    final keys = origin == null ? null : derived[origin];
-    if (pubkey is! String || xpub is! String || name is! String || kind is! String || tag is! String || keys == null) {
+    if (pubkey is! String || xpub is! String || name is! String || kind is! String || tag is! String) {
       throw const PairingException("The hub's answer was missing something. Try again.");
     }
     final screenKind = DeviceKind.values.asNameMap()[kind];
@@ -623,7 +615,6 @@ class NetPairing extends PairingService {
       pubkey: pubkey,
       xpub: xpub,
       code: normalized,
-      origin: origin!,
       expires: (json['expires_ms'] as num?)?.toInt() ?? 0,
     );
   }
@@ -640,7 +631,7 @@ class NetPairing extends PairingService {
       throw const PairingException("Kitchen screens join through the family's hub. Add the hub first: Settings, Advanced, Hub and sync.");
     }
     final label = name.trim().isEmpty ? screen.name : name.trim();
-    final keys = await net.ScreenCode.derive(screen.code, at: Uri.parse(screen.origin));
+    final keys = await net.ScreenCode.derive(screen.code);
     final api = HubApi(network);
     try {
       await api.send('POST', '/api/v1/screens/accept', body: {

@@ -72,7 +72,7 @@ class NetScreenCode extends ScreenCodeSession {
     final keys = _den.keys;
     for (var tries = 0;; tries++) {
       final code = net.ScreenCode.generate();
-      final derived = await net.ScreenCode.derive(code, at: hub);
+      final derived = await net.ScreenCode.derive(code);
       final Map<String, Object?> made;
       try {
         made = await client.screen(hub, 'code', {

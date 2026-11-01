@@ -41,7 +41,6 @@ const _ipad = ScreenAsk(
   pubkey: 'pubkey',
   xpub: 'xpub',
   code: 'K7QM3RXA',
-  origin: 'https://den.example.com',
   expires: 0,
 );
 

@@ -128,7 +128,6 @@ class ScreenAsk {
     required this.pubkey,
     required this.xpub,
     required this.code,
-    required this.origin,
     required this.expires,
   });
 
@@ -141,9 +140,6 @@ class ScreenAsk {
   /// The code as typed, normalized (`K7QM3RXA`).
   final String code;
 
-  /// The family's address the screen opened, which its code is stretched with
-  /// (den_net's `ScreenCode.origin`).
-  final String origin;
 
   /// UTC milliseconds.
   final int expires;

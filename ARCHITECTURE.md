@@ -841,10 +841,8 @@ receive; the session's limit then applies.
   characters of Crockford's base32 (40 bits, `K7QM-3RXA`, shown big and as a QR code of
   `den://screen/<code>` for Den's own scanner: no link ever fills a code in, so typing or
   scanning the code on the screen in front of her is what says she is there). Both ends stretch
-  it with Argon2id (4 MiB, 3 passes), salted with the family's address the screen opened
-  (`den/screen-code/v2 0x00 <scheme://host[:port]>`, so a table of every code's stretch is good
-  for one address only; the phone tries each address it knows the hub at, a few at most, in one
-  try), into the hub's slot and a MAC key (den_net's `ScreenCode`). The
+  it with Argon2id (4 MiB, 3 passes, salt `den/screen-code/v1`) into the hub's slot and a MAC key
+  (den_net's `ScreenCode`). The
   screen leaves its device key, sealing key, name and kind at the hub under the slot with the
   code's tag over them; a parent types the code on her own phone (Settings, Kitchen screen, Add
   a screen), whose signed request finds it in her family's hub only, and the phone checks the tag
