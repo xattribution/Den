@@ -595,7 +595,7 @@ class _ChoreEditorScreenState extends State<ChoreEditorScreen> {
       const FieldLabel(
         'Steps',
         info:
-            'A chore with steps is done when every step is checked. Each step can belong to someone and carry its own points.',
+            'A chore with steps is done when every step is checked. Each step can belong to someone and carry its own stars.',
       ),
       if (_steps.isNotEmpty)
         ReorderableListView(

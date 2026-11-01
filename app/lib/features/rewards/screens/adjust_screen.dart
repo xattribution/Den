@@ -25,7 +25,7 @@ class AdjustScreen extends StatelessWidget {
     final app = context.watch(pointsReads);
     final Widget body;
     if (!(app.den.family?.pointsEnabled ?? true)) {
-      body = const EmptyState(message: 'Points are off for this family. A parent turns them on in Settings, under Family.');
+      body = const EmptyState(message: 'Stars are off for this family. A parent turns them on in Settings, under Family.');
     } else if (!app.allows(DenAction.managePoints)) {
       body = const EmptyState(message: 'Giving and taking stars is for parents.');
     } else {

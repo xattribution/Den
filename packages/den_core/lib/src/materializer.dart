@@ -703,7 +703,7 @@ String titleOf(Entry e, RecordStore store) {
       return event is String ? field(store.at(e.space, RecordType.event, event), 'title') : '';
     case RecordType.adjustment:
       final reason = field(e, 'reason');
-      return reason.isNotEmpty ? reason : 'Points';
+      return reason.isNotEmpty ? reason : 'Stars';
     case RecordType.redemption:
       final reward = e.fields['reward'];
       return reward is String ? field(store.at(e.space, RecordType.reward, reward), 'title') : '';

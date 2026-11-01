@@ -21,7 +21,7 @@ class PointsSwitch extends StatelessWidget {
     // A sentence and its switch, like every setting (SwitchLine), with what it means said
     // under it rather than behind an (i).
     return SwitchLine(
-      label: 'Points and rewards',
+      label: 'Stars and rewards',
       detail: on ? 'Stars for chores and goals, and rewards to spend them on' : 'Off: no stars show anywhere',
       value: on,
       onChanged: app.allows(DenAction.manageFamily)

@@ -191,7 +191,7 @@ class PersonButton extends StatelessWidget {
 }
 
 /// What opens from the person: Family, Invite someone (for a parent on their own phone),
-/// Points and rewards (when stars are on) and Settings. Search isn't here: it sits beside the
+/// Stars and rewards (when stars are on) and Settings. Search isn't here: it sits beside the
 /// person on Today and in the iPad sidebar.
 Future<void> showPersonMenu(BuildContext context) {
   final app = DenScope.read(context);
@@ -219,7 +219,7 @@ Future<void> showPersonMenu(BuildContext context) {
               showInviteSheet(context);
             },
           ),
-        if (pointsOn) NavRow(icon: PhosphorIconsRegular.star, label: 'Points and rewards', onTap: () => open(sheet, '/points')),
+        if (pointsOn) NavRow(icon: PhosphorIconsRegular.star, label: 'Stars and rewards', onTap: () => open(sheet, '/points')),
         NavRow(icon: PhosphorIconsRegular.gearSix, label: 'Settings', onTap: () => open(sheet, '/settings')),
       ];
       return Padding(

@@ -2,7 +2,7 @@
     "id": "./",
     "name": "Den",
     "short_name": "Den",
-    "description": "The family's calendar, chores, lists and points",
+    "description": "The family's calendar, chores, lists and stars",
     "start_url": "./",
     "scope": "./",
     "display": "standalone",

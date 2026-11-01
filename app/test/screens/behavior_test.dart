@@ -276,7 +276,7 @@ void main() {
     testWidgets('a parent turns points off and on in the family settings', (tester) async {
       final state = await _family(tester);
       await pumpScreen(tester, const FamilySettingsScreen(), state: state, size: _tall);
-      final toggle = findWords('Points and rewards');
+      final toggle = findWords('Stars and rewards');
       expect(toggle, findsOneWidget);
       await _tapAndWait(tester, toggle);
       expect(state.den.family!.pointsEnabled, isFalse);

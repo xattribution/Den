@@ -15,7 +15,7 @@ import '../state/reward_actions.dart';
 import '../widgets/give_stars.dart';
 import '../words/points_words.dart';
 
-/// Points and rewards, built from the same system as Chores (there is no board of its own):
+/// Stars and rewards, built from the same system as Chores (there is no board of its own):
 /// requests waiting for a parent, each person's stars and the bar toward their goal, the
 /// rewards to spend them on, the goals, and what came and went. Every one-tap action (Approve,
 /// Decline, Give, Ask for this) says what it did in place, with Undo. `/points`.
@@ -74,8 +74,8 @@ class _PointsScreenState extends State<PointsScreen> {
         appBar: AppBar(),
         body: EmptyState(
           message: canTurnOn
-              ? 'Points are off for this family. Turn them on in Settings, under Family.'
-              : 'Points are off for this family. A parent can turn them on.',
+              ? 'Stars are off for this family. Turn them on in Settings, under Family.'
+              : 'Stars are off for this family. A parent can turn them on.',
           actionLabel: canTurnOn ? 'Open Settings' : null,
           onAction: canTurnOn ? () => context.push('/settings') : null,
         ),
@@ -186,7 +186,7 @@ class _PointsScreenState extends State<PointsScreen> {
                   for (final (i, p) in parts.nonNulls.indexed) ...[if (i > 0) const SizedBox(height: DenLayout.sectionGap), p],
                 ],
               );
-          final header = PageHeader(title: 'Points and rewards', large: !compact);
+          final header = PageHeader(title: 'Stars and rewards', large: !compact);
           return ListView(
             padding: EdgeInsets.fromLTRB(side, 0, side, Sp.xxl),
             children: [

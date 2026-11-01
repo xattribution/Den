@@ -115,7 +115,7 @@ List<ActionSpec> readActions() => [
       ActionSpec(
         name: 'points.get',
         mcpName: 'get_points',
-        title: 'Points',
+        title: 'Stars and rewards',
         description: 'Star totals per person, goals with standings, recent points, rewards to spend stars on, '
             'and requests waiting for a parent.',
         input: S.input({
@@ -568,7 +568,7 @@ ActionResult points(ActionContext c, ActionInput a) {
   final data = c.wire.points(narrowed, recent: a.integer('recent') ?? 20);
   if (who != null) data['totals'] = {who: summary.totals[who] ?? 0};
   final totals = (data['totals'] as Map).cast<String, Object?>();
-  final text = StringBuffer(c.den.family?.pointsEnabled == false ? 'Points are turned off.\n' : '');
+  final text = StringBuffer(c.den.family?.pointsEnabled == false ? 'Stars are turned off.\n' : '');
   for (final e in totals.entries) {
     text.writeln('- ${c.people.name(e.key)}: ${stars(e.value! as int)}');
   }
