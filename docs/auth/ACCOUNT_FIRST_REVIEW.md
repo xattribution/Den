@@ -232,6 +232,7 @@ Tests: migration idempotence; demote parent → screen they authorized loses par
 ### Phase 3: grant-based flows in hub and app
 - [ ] `hub/invites.dart`: invites gain `email`; redeem = verified-email sign-in matching an active, unexpired, unused invite → hub signs account + device grants, burns invite. Remove `maxJoins` (`:66`).
 - [ ] `hub/setup.dart:417-470`: link grant posts a full grant (perms + label); a signed-in parent session may open the window.
+- [ ] `hub/screen_codes.dart` (kitchen screen codes, added after this review): the code already carries the screen's key to the parent's phone, bound by the code's tag, with no invite or invite key. Today the phone writes the screen's own join request and its approval; with grants it writes `grant {to: <that key's device>, by: <parent>, actsAs: null, perms}` instead, the screen sends no request at all (drop `screens/code/join` and `screens/request`), and nothing is pending.
 - [ ] `hub/device_auth.dart:142-148`: "parent's own device" becomes "holder of a grant from a parent account with the needed perm".
 - [ ] `hub/access.dart:38-45`, `hub/oauth.dart:486-533`: token → connection → grant → authorizer. Approve from a signed-in parent browser. Kids refused.
 - [ ] New `den_hub devices list|revoke` in `packages/den_hub/bin/den_hub.dart`.
