@@ -73,6 +73,9 @@ const Map<String, Set<String>> perFile = {
   'lib/features/family/state/picture_actions.dart': {'setPhoto'},
   // The app's actions layer itself: what a reviewed draft changed, and taking it back.
   'lib/app/actions.dart': {'recording', 'undo'},
+  // A kitchen screen's own signed join request, which its code carried to the parent's phone:
+  // received like a change from sync, and approved there with a trust decision (Add a screen).
+  'lib/platform/sync/net_pairing.dart': {'ingest'},
   // Mirroring this phone's own calendars is a sync, not something a person does.
   'lib/platform/calendars/phone_calendars.dart': {'addEvent', 'updateEvent', 'deleteEvent'},
 };
