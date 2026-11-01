@@ -18,6 +18,7 @@ import '../words/oversight.dart';
 import '../words/sitter.dart';
 import 'family_parts.dart';
 import 'invite_sheet.dart';
+import 'passkey_section.dart';
 import 'person_sheets.dart';
 import 'recovery_section.dart';
 import 'sitter_sheet.dart';
@@ -25,7 +26,9 @@ import 'sitter_sheet.dart';
 /// Everything about one person, written as sentences (Family.dc.html's card, then the rest of
 /// their page): their picture and who they are, what they may do as switches that say what they
 /// change before they save, their birthday and sign-in for shared screens, their devices each
-/// with Remove, and removing them from the family.
+/// with Remove, and removing them from the family. On their own page, on their own device in a
+/// browser that can: "Getting back in" with a passkey (Face ID on an iPhone), then their
+/// recovery words.
 ///
 /// Parents see it all; the trust decisions (who someone is, what a kid may do, PINs, devices,
 /// removing someone) change only on a parent's own device and say so elsewhere. Everyone else
@@ -86,6 +89,7 @@ class _PersonPageState extends State<PersonPage> {
     final trust = app.allowsTrust(DenAction.manageFamily);
     final isMe = app.me?.id == m.id;
     final ended = m.accessEndedOn(app.today);
+    final passkey = isMe && canMakePasskey(app);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -97,12 +101,14 @@ class _PersonPageState extends State<PersonPage> {
           const SizedBox(height: Sp.s),
         ],
         _card(context, app, m, manage: manage, trust: trust),
+        if (passkey && !manage) ...[sectionGap, PasskeySection(member: m)],
         if (manage) ...[
           sectionGap,
           _about(context, app, m, trust: trust, isMe: isMe),
           if (ended && trust) ...[sectionGap, AccessEndedNotice(member: m)],
           sectionGap,
           _devices(context, app, m, trust: trust && !ended),
+          if (passkey) ...[sectionGap, PasskeySection(member: m)],
           if (trust && isMe && m.isParent) ...[sectionGap, RecoverySection(member: m)],
           if (trust && !isMe && !_lastParent(den, m)) ...[sectionGap, _remove(context, m)],
         ],

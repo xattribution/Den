@@ -746,6 +746,58 @@ class NetPairing extends PairingService {
     return _HubRecovery(this, redeemed, proof, sync, deviceName(redeemed.memberName), kind);
   }
 
+  // ------------------------------------------------------------------ passkeys
+
+  @override
+  Future<Map<String, Object?>?> passkeySignInOptions() async {
+    final base = _servedBase;
+    if (base == null) return null;
+    try {
+      final json = await _client.passkeySignInOptions(base);
+      final options = json['options'];
+      return options is Map ? Map<String, Object?>.from(options) : null;
+    } on HubException {
+      return null;
+    }
+  }
+
+  @override
+  Future<JoinTicket> signInWithPasskey(
+    Map<String, Object?> credential, {
+    required String Function(String name) deviceName,
+    required DeviceKind kind,
+  }) async {
+    final base = _servedBase;
+    if (base == null) throw const PairingException("Open Den at your family's address to sign in.");
+    final RedeemedPasskey redeemed;
+    try {
+      redeemed = await _client.passkeySignIn(base, credential, network.den.keys.pubkey);
+    } on HubException catch (e) {
+      throw PairingException(e.message, reason: e.code == 'not_in_family' ? PairingException.notInFamily : null);
+    }
+    final net.Invite invite;
+    try {
+      invite = await net.Invite.parse(redeemed.invite);
+    } on FormatException {
+      throw const PairingException('That took too long. Try again.');
+    }
+    final proof = redeemed.proof == null ? null : RecoveryProof.parse(redeemed.proof);
+    final sync = HubClient.syncUri(base);
+    final channel = await _open(() => net.connectWebSocket(sync));
+    final name = deviceName(redeemed.memberName);
+    if (proof != null) {
+      // A parent the family lets the hub help: the hub's proof lets this device in at once.
+      final attempt = await _node.joinWithRecoveryProof(channel, invite, proof, deviceName: name, kind: kind);
+      await _joined(attempt, sync, invite.familyId, redeemed.familyName);
+      return JoinTicket(familyId: invite.familyId, familyName: redeemed.familyName, admitted: true, passkey: true);
+    }
+    // Anyone else asks as themselves; a parent lets them in with one tap.
+    final attempt = await _node.joinWithInvite(channel, invite, deviceName: name, kind: kind, memberId: redeemed.member);
+    await network.rememberJoin(invite.inviterDevice, sync);
+    _follow(attempt, hubs: [sync]);
+    return JoinTicket(familyId: invite.familyId, familyName: redeemed.familyName, passkey: true);
+  }
+
   Future<JoinTicket> _joined(net.JoinAttempt attempt, Uri sync, String familyId, String? familyName) async {
     await network.rememberJoin(attempt.peer.deviceId, sync);
     _follow(attempt, hubs: [sync]);

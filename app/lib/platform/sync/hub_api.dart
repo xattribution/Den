@@ -19,11 +19,20 @@ class HubApi {
   /// the endpoint (an older hub). With [secure] (a request carrying a secret) it goes only to the
   /// hub's `https` addresses this device was given ([DenNetwork.secureHubBases]): never over plain
   /// HTTP, never to a hub found on the home network.
-  Future<Map<String, Object?>> send(String method, String path, {Map<String, Object?>? body, String? missing, bool secure = false}) async {
+  ///
+  /// With [at], only to that address: a passkey belongs to the address the page is at.
+  Future<Map<String, Object?>> send(
+    String method,
+    String path, {
+    Map<String, Object?>? body,
+    String? missing,
+    bool secure = false,
+    Uri? at,
+  }) async {
     final den = network.den;
     final hub = network.isHub ? den.deviceId : network.hubDevice?.id;
     if (hub == null) throw const HubException('This family has no hub yet.');
-    final bases = secure ? await network.secureHubBases() : await network.hubBases();
+    final bases = at != null ? [at] : secure ? await network.secureHubBases() : await network.hubBases();
     if (bases.isEmpty) {
       throw secure
           ? const HubException('Open Den at its https address to set this up.', code: 'needs_https')

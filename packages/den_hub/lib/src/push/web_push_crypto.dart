@@ -65,6 +65,13 @@ Uint8List _publicOf(ECPrivateKey key) => (_p256.G * key.d)!.getEncoded(false);
 final BigInt _fieldPrime =
     (BigInt.one << 256) - (BigInt.one << 224) + (BigInt.one << 192) + (BigInt.one << 96) - BigInt.one;
 
+/// The point [encoded] (uncompressed, 65 bytes), checked to lie on P-256 as [_point] does; for
+/// checking a passkey's ES256 signatures (passkeys/webauthn.dart). Throws [FormatException].
+ECPoint p256Point(List<int> encoded) => _point(encoded);
+
+/// The P-256 curve's domain parameters.
+ECDomainParameters get p256Domain => _p256;
+
 /// The point [encoded] (uncompressed), checked to lie on P-256: pointycastle decodes any two
 /// numbers, and agreeing a secret with a point off the curve gives away bits of the key.
 ECPoint _point(List<int> encoded) {

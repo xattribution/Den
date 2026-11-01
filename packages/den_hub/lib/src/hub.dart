@@ -29,6 +29,7 @@ import 'mcp/http.dart';
 import 'mdns/responder.dart';
 import 'mcp/server.dart';
 import 'oauth.dart';
+import 'passkeys/passkeys.dart';
 import 'push/push_service.dart';
 import 'recovery.dart';
 import 'relay_watch.dart';
@@ -90,6 +91,7 @@ class DenHub implements RoutableLog {
   late final WebPushService _push;
   late final HubRecovery _recovery;
   late final HubAccounts _accounts;
+  late final HubPasskeys _passkeys;
   final Routes _routes = Routes();
   late final DeviceAuth _auth;
   RelayTunnel? _tunnel;
@@ -219,6 +221,9 @@ class DenHub implements RoutableLog {
   /// Signing in with Google and Apple, when configured.
   HubAccounts get accounts => _accounts;
 
+  /// Passkeys: how a family member gets back in on a browser.
+  HubPasskeys get passkeys => _passkeys;
+
   /// Where setup stands.
   SetupStage get setupStage => _setup.stage;
 
@@ -305,6 +310,7 @@ class DenHub implements RoutableLog {
     _screens = ScreenCodes(_ctx, _auth)..register(_routes);
     feedLinks.register(_routes);
     _recovery = HubRecovery(_ctx, _auth)..register(_routes);
+    _passkeys = HubPasskeys(_ctx, _auth, _recovery)..register(_routes);
     _push.register(_routes);
     _accounts = HubAccounts(_ctx, _auth)..register(_routes);
     HubSignInSetup(_ctx, _auth).register(_routes);

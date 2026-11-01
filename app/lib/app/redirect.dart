@@ -66,7 +66,8 @@ String? householdRedirect(Household home, GoRouterState route) {
 /// 2. A join request sent but not approved yet: the waiting screen, whatever was asked for (a
 ///    kitchen screen a parent just added keeps its own screen).
 /// 3. Right after creating a family: the short "Add people" step (recovery words wait in Needs
-///    you); any other onboarding route once the device is in the family goes to Today.
+///    you); right after joining, "Use Face ID to get back in" (`/welcome/passkey`); any other
+///    onboarding route once the device is in the family goes to Today.
 /// 4. A pre-reader or little kid acting on this device (its owner, or verified on a shared
 ///    screen): the kids' app instead of the shell's tabs.
 /// 5. A shared display, a hub with no owner, or this device set to "Use as wall display": the
@@ -115,7 +116,7 @@ String? familyRedirect(AppState state, GoRouterState route) {
   }
   // Right after starting a family: Add people. The recovery words wait in Needs you.
   if (loc == '/welcome/start') return '/welcome/people';
-  if (inWelcome && loc != '/welcome/people' && loc != '/welcome/words') return '/today';
+  if (inWelcome && loc != '/welcome/people' && loc != '/welcome/words' && loc != '/welcome/passkey') return '/today';
 
   final gate = _shellGate(state, loc);
   if (gate != null) return gate;

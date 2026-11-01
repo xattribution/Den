@@ -8,6 +8,7 @@ import '../kitchen_screen/kitchen_screen.dart' show ScreenCodeScreen;
 import 'screens/add_people_screen.dart';
 import 'screens/join_screen.dart';
 import 'screens/link_this_browser_screen.dart';
+import 'screens/passkey_offer_screen.dart';
 import 'screens/recover_screen.dart';
 import 'screens/recovery_words_screen.dart';
 import 'screens/start_family_screen.dart';
@@ -16,7 +17,8 @@ import 'screens/welcome_screen.dart';
 
 /// Getting a device into a family: `/welcome` with `start?setup=&hub=`, `words` (recovery
 /// words, offered later from Needs you), `people`, `join?code=`, `recover?code=` ("I lost my
-/// phone"), `link`, `screen` (set up as a kitchen screen) and `waiting`, and the links
+/// phone"), `link`, `screen` (set up as a kitchen screen), `waiting` and `passkey` ("Use Face ID
+/// to get back in", once in), and the links
 /// `/join/:code` (an invite), `/setup/:code/:hub` (a fresh hub's setup link) and `/recover/:code`
 /// (from whoever runs the hub), which the app's redirect sends on.
 final List<RouteBase> onboardingRoutes = [
@@ -40,6 +42,7 @@ final List<RouteBase> onboardingRoutes = [
       ),
       GoRoute(path: 'link', builder: (_, _) => const LinkThisBrowserScreen()),
       GoRoute(path: 'waiting', builder: (_, _) => const WaitingScreen()),
+      GoRoute(path: 'passkey', builder: (_, _) => const PasskeyOfferScreen()),
       GoRoute(path: 'screen', builder: (_, _) => const ScreenCodeScreen()),
     ],
   ),

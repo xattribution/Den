@@ -17,6 +17,8 @@
 //   the tap itself, which is the only time iOS allows it.
 // - What Settings, Advanced, Show screen info shows: the page's sizes, the keyboard, the focus
 //   and the last few viewport events.
+// - Passkeys (Face ID, a fingerprint, the screen lock): the browser's passkey sheet opens only
+//   from the person's own tap, so the click that opens it is a real button's, here.
 (function () {
   'use strict';
 
@@ -77,6 +79,8 @@
       permission: 'Notification' in window ? Notification.permission : 'unsupported',
       share: typeof nav.share === 'function',
       mobile: isIos() || /Android/.test(ua()),
+      android: /Android/.test(ua()),
+      passkeys: passkeysAvailable(),
       ready: registration !== null,
     });
   }
@@ -974,6 +978,146 @@
     });
   }
 
+  // ------------------------------------------------------------------ passkeys
+  //
+  // Safari (on an iPhone, iPad or Mac) opens the passkey sheet only for a call made while the
+  // page holds the person's tap ("transient user activation"); a call from anywhere else fails
+  // at once with NotAllowedError. Chrome and Firefox are kinder, but the same rule is safe in
+  // all of them. Two things can lose the tap on the way:
+  //
+  // - Flutter hears a tap through its own pointer pipeline and decides it was one only when the
+  //   finger lifts, inside `pointerup`. That counts on most browsers, but with a screen reader on
+  //   Flutter may hold the pointer events back and replay them from a timer (its ClickDebouncer).
+  // - Anything asynchronous between the tap and the call: an `await` before it (fetching the
+  //   challenge, say) loses the tap everywhere.
+  //
+  // So: the hub's options (with their challenge) are fetched before the tap and armed here
+  // (passkeyArm), and the tap lands on a real, invisible <button> laid over the button Flutter
+  // draws (passkeyBind: Flutter makes the element as a platform view, so it sits exactly over the
+  // button, scrolls with it, and is gone with it). Its own `click`, the browser's, calls
+  // navigator.credentials at once: the textbook user gesture, whatever Flutter does with the
+  // pointer events. A keyboard's Enter or a screen reader's double tap reaches Flutter's button
+  // instead, which calls passkeyGo straight from its handler (inside a keydown or click event,
+  // which count too). One ceremony at a time: a second call while one runs shares it, and an
+  // armed challenge is used once.
+  //
+  // To check on a real phone: Settings, Advanced, Show screen info lists "passkey get from click
+  // active=true" (or "from flutter") and, when it fails, the error's name.
+
+  var passkey = { create: null, get: null, pending: null };
+
+  /** WebAuthn needs a secure page with a host name: never an IP address. */
+  function passkeysAvailable() {
+    var host = (window.location && window.location.hostname) || '';
+    var named = host !== '' && !/^[0-9.]+$/.test(host) && host.indexOf(':') < 0 && host.charAt(0) !== '[';
+    return window.isSecureContext === true && typeof window.PublicKeyCredential === 'function' &&
+      !!nav.credentials && typeof nav.credentials.create === 'function' && named;
+  }
+
+  function b64u(buffer) {
+    var view = new Uint8Array(buffer);
+    var binary = '';
+    for (var i = 0; i < view.length; i++) binary += String.fromCharCode(view[i]);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  /** Keeps the hub's options for [kind] ('create' or 'get'), with their bytes decoded. */
+  function passkeyArm(kind, json) {
+    try {
+      var o = JSON.parse(json);
+      o.challenge = bytes(o.challenge);
+      if (kind === 'create') {
+        o.user.id = bytes(o.user.id);
+        (o.excludeCredentials || []).forEach(function (c) { c.id = bytes(c.id); });
+      } else {
+        (o.allowCredentials || []).forEach(function (c) { c.id = bytes(c.id); });
+      }
+      passkey[kind] = o;
+      return true;
+    } catch (e) {
+      passkey[kind] = null;
+      return false;
+    }
+  }
+
+  /**
+   * What the browser answered, as PublicKeyCredential.toJSON() writes it. Written out here:
+   * toJSON is newer than passkeys, and a password manager's extension may replace it.
+   */
+  function credentialJson(c) {
+    var r = c.response;
+    var out = {
+      id: c.id,
+      rawId: b64u(c.rawId),
+      type: c.type,
+      authenticatorAttachment: c.authenticatorAttachment || null,
+      response: { clientDataJSON: b64u(r.clientDataJSON) },
+      clientExtensionResults: {},
+    };
+    if (r.attestationObject) {
+      out.response.attestationObject = b64u(r.attestationObject);
+      if (typeof r.getTransports === 'function') out.response.transports = r.getTransports();
+    }
+    if (r.authenticatorData) {
+      out.response.authenticatorData = b64u(r.authenticatorData);
+      out.response.signature = b64u(r.signature);
+      out.response.userHandle = r.userHandle ? b64u(r.userHandle) : null;
+    }
+    return out;
+  }
+
+  /**
+   * Opens the browser's passkey sheet with the options armed for [kind], and answers JSON:
+   * {"credential": {...}} or {"error": "<the error's name>"} (NotAllowedError when the person
+   * cancelled or the tap didn't count, InvalidStateError when this device has one already,
+   * "not-ready" with nothing armed). Must be the first thing a tap does.
+   */
+  function passkeyGo(kind, via) {
+    if (passkey.pending) return passkey.pending;
+    var o = passkey[kind];
+    if (!o) return Promise.resolve(JSON.stringify({ error: 'not-ready' }));
+    passkey[kind] = null;
+    var active = nav.userActivation ? ' active=' + nav.userActivation.isActive : '';
+    note('passkey ' + kind + ' from ' + (via || 'flutter') + active);
+    var call;
+    try {
+      call = kind === 'create' ? nav.credentials.create({ publicKey: o }) : nav.credentials.get({ publicKey: o });
+    } catch (e) {
+      call = Promise.reject(e);
+    }
+    passkey.pending = call.then(
+      function (c) { return JSON.stringify({ credential: credentialJson(c) }); },
+      function (e) {
+        var name = (e && e.name) || 'Error';
+        note('passkey ' + kind + ' ' + name);
+        return JSON.stringify({ error: name });
+      }
+    ).then(function (answer) {
+      passkey.pending = null;
+      return answer;
+    });
+    return passkey.pending;
+  }
+
+  /**
+   * Makes [element] (a <button> Flutter made as a platform view over its own button) the
+   * invisible owner of the tap: its click calls passkeyGo for [kind] and hands the answer's
+   * promise to [onStart].
+   */
+  function passkeyBind(element, kind, onStart) {
+    element.type = 'button';
+    element.tabIndex = -1;
+    // Flutter's button underneath tells screen readers what it does; this one only takes taps.
+    element.setAttribute('aria-hidden', 'true');
+    element.style.cssText = 'display:block;width:100%;height:100%;margin:0;padding:0;border:0;outline:none;' +
+      'background:transparent;opacity:0;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation';
+    element.addEventListener('click', function () {
+      if (element.disabled) return;
+      onStart(passkeyGo(kind, 'click'));
+    });
+    return true;
+  }
+
   window.denWeb = {
     start: start,
     info: info,
@@ -996,6 +1140,9 @@
     diagnose: diagnose,
     screenInfo: screenInfo,
     keyboardNow: keyboardNow,
+    passkeyArm: passkeyArm,
+    passkeyGo: passkeyGo,
+    passkeyBind: passkeyBind,
     reload: function () { window.location.reload(); },
   };
 })();

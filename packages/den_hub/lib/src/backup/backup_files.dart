@@ -59,7 +59,7 @@ Future<List<File>> _filesIn(Directory dir) async {
 
 /// Everything a backup of the data directory [dir] holds, relative to it: keys, `notify.json`,
 /// the change log and the hub's own state (OAuth clients and refresh tokens, the capture reader,
-/// feeds, reminders sent, the server recovery key). Read so the copy is consistent even while a
+/// feeds, reminders sent, the server recovery key, the family's passkeys). Read so the copy is consistent even while a
 /// hub runs and writes, without its lock: the log's metadata before the log (what the metadata
 /// says the hub holds, the log copied after it holds too), the log cut after its last complete
 /// line (a change being appended right now waits for the next backup), and every other file

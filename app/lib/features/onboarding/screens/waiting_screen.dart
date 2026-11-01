@@ -11,11 +11,14 @@ import '../../../platform/capabilities.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../platform/web/web_app.dart';
 import '../../family/family.dart';
+import '../../family/widgets/passkey_section.dart' show canMakePasskey;
 
 /// After a join request: the matching words to compare with the parent's screen, and where the
 /// request stands. Approval arrives by sync, also after Den was closed and opened again; the
 /// router then moves on to Today. Start over withdraws the request, for a new invite. A device
-/// an invite let in by itself ([JoinTicket.admitted]) only catches up here, for a moment.
+/// an invite let in by itself ([JoinTicket.admitted]) only catches up here, for a moment. Once
+/// in, someone on their own phone in a browser that can is offered "Use Face ID to get back in"
+/// first, unless they just signed in with one.
 class WaitingScreen extends StatefulWidget {
   const WaitingScreen({super.key, this.ticket});
 
@@ -72,7 +75,9 @@ class _WaitingScreenState extends State<WaitingScreen> {
             final status = snap.data;
             if (status?.state == JoinState.approved) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (context.mounted) context.go('/today');
+                if (!context.mounted) return;
+                final offer = !(ticket?.passkey ?? false) && canMakePasskey(DenScope.read(context));
+                context.go(offer ? '/welcome/passkey' : '/today');
               });
             }
             // Still holding the family's request: the way out is to start over. Not holding it:

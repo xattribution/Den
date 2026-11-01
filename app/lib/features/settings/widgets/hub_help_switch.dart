@@ -10,9 +10,11 @@ import '../../family/family.dart';
 
 /// Settings → Family, on a parent's own device: "Let the hub help us get back in". Off by
 /// default. On, the hub's server recovery key goes into the family record, so whoever runs the
-/// hub can let in a new phone for a parent who lost theirs (`den_hub recover`); every device
-/// says when that happens. Off, the key comes out and the hub can't any more. Turning it on says
-/// what it means first.
+/// hub can let in a new phone for a parent who lost theirs (`den_hub recover`), and a parent's
+/// passkey lets them straight back in (the hub signs the same proof); every device says when
+/// that happens. Off, the key comes out and the hub can't any more: a parent's passkey then asks
+/// another parent instead. Turning it on says what it means first. A parent who makes a passkey
+/// on their own device turns it on in the same step, as the offer says.
 class HubHelpSwitch extends StatefulWidget {
   const HubHelpSwitch({super.key});
 
@@ -62,7 +64,8 @@ class _HubHelpSwitchState extends State<HubHelpSwitch> {
           SwitchLine(
             label: 'Let the hub help us get back in',
             detail: on
-                ? 'Whoever runs your hub can let in a new phone for a parent who lost theirs. Every device shows it when they do.'
+                ? 'Whoever runs your hub can let in a new phone for a parent who lost theirs, and a parent\'s Face ID or '
+                    'passkey lets them straight back in. Every device shows it when that happens.'
                 : 'If a parent loses their phone and no other parent has theirs, whoever runs your hub could let a new one in.',
             value: on || _asking,
             onChanged: _busy
