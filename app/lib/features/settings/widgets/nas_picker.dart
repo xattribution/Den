@@ -261,7 +261,7 @@ class _NasPickerState extends State<NasPicker> {
               GroupCard(
                 child: ChoiceRows<String>(
                   choices: [for (final s in _shares) Choice(s, s)],
-                  value: _share,
+                  value: _share ?? '',
                   onChanged: (s) => setState(() => _share = s),
                 ),
               ),

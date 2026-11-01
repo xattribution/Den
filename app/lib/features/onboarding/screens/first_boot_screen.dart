@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
+import '../../../design/words.dart';
 import '../../../platform/sync/hub_client.dart' show HubException;
 import '../../../platform/sync/server_setup.dart';
 import '../../settings/widgets/nas_picker.dart';

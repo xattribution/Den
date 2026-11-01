@@ -469,6 +469,19 @@ String sizeWords(int bytes) {
   return '${(bytes / 1024).ceil()} KB';
 }
 
+/// When a backup was, as a sentence ends: "last night", "today", "yesterday", "on Oct 28", for
+/// [at] seen at [now] (UTC ms), in this device's time.
+String backupWhen(int at, int now) {
+  final d = DateTime.fromMillisecondsSinceEpoch(at), n = DateTime.fromMillisecondsSinceEpoch(now);
+  final day = DateTime(d.year, d.month, d.day), today = DateTime(n.year, n.month, n.day);
+  final days = today.difference(day).inHours ~/ 24;
+  if ((days == 0 && d.hour < 6) || (days == 1 && d.hour >= 20)) return 'last night';
+  if (days == 0) return 'today';
+  if (days == 1) return 'yesterday';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return 'on ${months[d.month - 1]} ${d.day}';
+}
+
 /// What a backup problem says to a parent, in a sentence. [when] is "last night", "on Oct 28".
 String backupProblemWords(BackupProblem p, {required String when, String? nas}) => switch (p.kind) {
       'no_words' => 'No backup $when: save your recovery words first. A backup opens only with them.',
