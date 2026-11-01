@@ -92,27 +92,30 @@ class _BackupsScreenState extends State<BackupsScreen> {
     }
   }
 
-  void _setUpNas() {
+  /// Setting up the NAS, page by page, in place of this page (no route of its own).
+  bool _picking = false;
+
+  void _setUpNas() => setState(() => _picking = true);
+
+  Widget _picker() {
     final source = _source!;
-    Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (page) => NasPicker(
-        find: source.findNas,
-        shares: source.shares,
-        finishLabel: 'Use this folder',
-        initial: _state?.place,
-        onBack: () => Navigator.of(page).pop(),
-        finish: (place) async {
-          try {
-            final s = await source.setPlace(place);
-            _show(s);
-            if (page.mounted) Navigator.of(page).pop();
-            return null;
-          } on HubException catch (e) {
-            return e.message;
-          }
-        },
-      ),
-    ));
+    return NasPicker(
+      find: source.findNas,
+      shares: source.shares,
+      finishLabel: 'Use this folder',
+      initial: _state?.place,
+      onBack: () => setState(() => _picking = false),
+      finish: (place) async {
+        try {
+          final s = await source.setPlace(place);
+          _show(s);
+          if (mounted) setState(() => _picking = false);
+          return null;
+        } on HubException catch (e) {
+          return e.message;
+        }
+      },
+    );
   }
 
   int get _now => widget.now ?? DateTime.now().millisecondsSinceEpoch;
@@ -132,6 +135,7 @@ class _BackupsScreenState extends State<BackupsScreen> {
     final s = _state;
     final problem = s?.problem;
     final nas = s?.place;
+    if (_picking && _source != null) return _picker();
     return DenPage(
       title: 'Backups',
       children: [
