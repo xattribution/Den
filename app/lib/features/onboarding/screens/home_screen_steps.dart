@@ -13,9 +13,9 @@ import '../../../platform/web/web_app.dart';
 /// and only the Home Screen app can show reminders.
 ///
 /// Opened from an invite or setup [link], it keeps the link for the Home Screen app (see
-/// [Handoff]), which picks it up by itself on its first start, and offers Copy invite above the
-/// steps for someone who has Den on the Home Screen already: a tapped link always opens Safari,
-/// never the Home Screen app. The link's words (or setup code) stay at hand below, for typing.
+/// [Handoff]), which picks it up by itself on its first start, and offers Copy invite in one quiet
+/// line over the steps for someone who has Den on the Home Screen already: a tapped link always
+/// opens Safari, never the Home Screen app. The link's words (or setup code) stay at hand below, for typing.
 class HomeScreenSteps extends StatefulWidget {
   const HomeScreenSteps({super.key, this.ipad = false, this.code, this.link});
 
@@ -59,19 +59,33 @@ class _HomeScreenStepsState extends State<HomeScreenSteps> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // One quiet line under the page's heading for whoever has Den already: most people here
+        // don't, so the steps are the page.
         if (link != null) ...[
-          GroupCard(
-            child: ActionRow(
-              leading: SizedBox.square(dimension: 40, child: Icon(PhosphorIconsRegular.copy, size: 26, color: c.ink)),
-              title: 'Already have Den on this ${widget.ipad ? 'iPad' : 'iPhone'}?',
-              detail: setup ? 'Copy this link, open Den and tap Paste a link.' : 'Copy this invite, open Den and tap Paste an invite.',
-              action: OutlinedButton(
-                onPressed: () => _copy(link),
-                child: Text(_copied ? 'Copied' : (setup ? 'Copy link' : 'Copy invite'), maxLines: 1, softWrap: false),
-              ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: DenLayout.headingInset),
+            child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: Sp.xs,
+              children: [
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _copied
+                        ? (setup ? 'Copied. Open Den and tap Paste a link.' : 'Copied. Open Den and tap Paste an invite.')
+                        : 'Already have Den on this ${widget.ipad ? 'iPad' : 'iPhone'}?',
+                    style: t.meta(c.ink2),
+                  ),
+                ),
+                if (!_copied)
+                  TextButton(
+                    onPressed: () => _copy(link),
+                    child: Text(setup ? 'Copy link' : 'Copy invite', maxLines: 1, softWrap: false),
+                  ),
+              ],
             ),
           ),
-          const SizedBox(height: DenLayout.sectionGap),
+          const SizedBox(height: Sp.l),
         ],
         DenSection(
           title: 'Add Den to your Home Screen',

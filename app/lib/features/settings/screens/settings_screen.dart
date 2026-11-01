@@ -209,17 +209,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ], indent: 36),
           ),
         ),
-        DenSection(
-          title: 'Reminders on $thing',
-          child: web
-              ? const WebReminders()
-              : SwitchLine(
-                  label: 'Reminders',
-                  detail: _remindersError ?? 'Events and chores you set a reminder for',
-                  value: _reminders ?? true,
-                  onChanged: _reminders == null ? null : _setReminders,
-                ),
-        ),
+        // Said once: the browser's part says which device in its own words ("Turn on reminders
+        // on this iPhone"); elsewhere the switch says it.
+        if (web)
+          const DenSection(title: 'Reminders', child: WebReminders())
+        else
+          GroupCard(
+            child: SwitchLine(
+              label: 'Reminders on $thing',
+              detail: _remindersError ?? 'Events and chores you set a reminder for',
+              value: _reminders ?? true,
+              onChanged: _reminders == null ? null : _setReminders,
+            ),
+          ),
         ?_joinAnotherRow(context),
         if (parent)
           GroupCard(

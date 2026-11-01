@@ -60,7 +60,7 @@ void main() {
       await _asking(tester, state, 'Grandma Rosa');
       await shootWith(tester, 'family_phone', FamilyScreen(selected: _id(state, 'Maya')), state: state, pairing: FakePairing(now: demoNow), pushed: true);
       expect(find.text('Needs you'), findsOneWidget);
-      expect(find.text('Let Grandma Rosa in'), findsOneWidget);
+      expect(find.text('Approve'), findsOneWidget);
       expect(findWords('Can keep things private from parents'), findsOneWidget);
       expect(find.text('Manage points'), findsNothing);
     });
@@ -128,7 +128,7 @@ void main() {
       final state = await demo(tester);
       await _asking(tester, state, 'Grandma Rosa');
       await pumpScreen(tester, const FamilyScreen(), state: state, pairing: FakePairing(now: demoNow), pushed: true);
-      await _tapAndWait(tester, find.text('Let Grandma Rosa in'));
+      await _tapAndWait(tester, find.text('Approve'));
       final device = state.den.devices.firstWhere((d) => d.name == "Grandma Rosa's iPhone");
       expect(device.approved, isTrue);
       expect(device.member, _id(state, 'Grandma Rosa'));

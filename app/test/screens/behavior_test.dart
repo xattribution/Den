@@ -351,7 +351,7 @@ void main() {
         await den.ingest(tablet.changesSince(den.versionVector));
       });
       await pumpScreen(tester, const FamilyScreen(), state: state, size: _tall, pairing: FakePairing(now: demoNow));
-      await tester.tap(find.text('Let it in'));
+      await tester.tap(find.text('Approve'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Shared display'));
       await tester.pumpAndSettle();
