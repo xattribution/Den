@@ -18,6 +18,8 @@ import '../../../platform/notifications/reminder_scheduler.dart';
 import '../../advanced/advanced.dart';
 import '../../family/family.dart' show ConfirmPanel, MembershipActions, pasteAnotherFamily, sharedDisplays;
 import '../../onboarding/onboarding.dart';
+import '../../../platform/sync/server_setup.dart';
+import '../state/server_watch.dart';
 import '../widgets/text_size_choice.dart';
 import 'about_screen.dart';
 import 'appearance_screen.dart';
@@ -30,7 +32,10 @@ import 'web_reminders.dart';
 /// reminders on this device; Advanced for parents; and About, which says so here when the hub
 /// serves a newer Den.
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, this.version, this.web, this.hub});
+  const SettingsScreen({super.key, this.version, this.web, this.hub, this.server});
+
+  /// The server's own settings, for tests; by default the family's hub, asked once an hour.
+  final ServerSource? server;
 
   /// Overrides the version read from the platform, for tests.
   final String? version;
@@ -100,6 +105,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           })
           .catchError((Object _) {});
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ServerWatch.check(DenScope.read(context), source: widget.server, force: widget.server != null);
+    });
     SharedPreferences.getInstance()
         .then((prefs) {
           if (mounted) setState(() => _reminders = prefs.getBool(remindersPrefKey) ?? true);
@@ -132,7 +140,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch(const {RecordType.subscription, RecordType.member, Changes.prefs});
+    final app = context.watch(const {RecordType.subscription, RecordType.member, Changes.prefs, Changes.server});
     final den = app.den;
     final parent = app.allows(DenAction.manageFamily);
     final web = widget.web ?? Capabilities.web;
@@ -185,6 +193,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   label: 'AI helper',
                   value: helper ? 'On' : 'Off',
                   onTap: () => context.push('/settings/assistant'),
+                ),
+              // The server's backups, for a parent of its own family on their own phone; a failed one
+              // said here plainly.
+              if (app.serverFamily && app.allowsTrust(DenAction.manageFamily))
+                NavRow(
+                  icon: PhosphorIconsRegular.clockCounterClockwise,
+                  label: 'Backups',
+                  value: app.backupProblem == null ? 'Every night' : null,
+                  detail: app.backupProblem == null
+                      ? null
+                      : backupProblemWords(app.backupProblem!, when: backupWhen(app.backupProblem!.at, den.now())),
+                  onTap: () => context.push('/settings/backups'),
                 ),
               if (signIn)
                 NavRow(

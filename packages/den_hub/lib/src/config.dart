@@ -151,6 +151,36 @@ class HubConfig {
   /// up from a parent's phone (sign_in_setup.dart), never here.
   final Map<String, Uri> signInIssuers;
 
+  /// This configuration with the public URL [url]: the address the server learned at first boot.
+  HubConfig withPublicUrl(Uri? url) => HubConfig(
+        port: port,
+        host: host,
+        dataDir: dataDir,
+        webDir: webDir,
+        relay: relay,
+        name: name,
+        publicUrl: url,
+        allowedOrigins: allowedOrigins,
+        trustedProxies: trustedProxies,
+        public: public,
+        contentSecurityPolicy: contentSecurityPolicy,
+        mailbox: mailbox,
+        mdns: mdns,
+        log: log,
+        httpClient: httpClient,
+        fetchAllow: fetchAllow,
+        peerHubs: peerHubs,
+        resolver: resolver,
+        fetchClient: fetchClient,
+        feedInterval: feedInterval,
+        reminderInterval: reminderInterval,
+        accessTokenLifetime: accessTokenLifetime,
+        refreshTokenLifetime: refreshTokenLifetime,
+        onSetupCode: onSetupCode,
+        hostPush: hostPush,
+        signInIssuers: signInIssuers,
+      );
+
   /// The bind address as an [InternetAddress] or string for `HttpServer.bind`.
   Object get bindAddress => host ?? InternetAddress.anyIPv4;
 }

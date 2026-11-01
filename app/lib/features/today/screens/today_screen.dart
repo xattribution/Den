@@ -13,6 +13,7 @@ import '../../../platform/sync/den_network.dart';
 import '../../../app/household.dart';
 import '../../assistant/assistant.dart' show AskSetUpLine, AskTodayEntry;
 import '../../family/family.dart' show FamilySwitch;
+import '../../settings/state/server_watch.dart';
 import '../state/today_model.dart';
 import '../widgets/needs_you_card.dart';
 import '../widgets/today_chores.dart';
@@ -46,6 +47,11 @@ class _TodayScreenState extends State<TodayScreen> {
   @override
   void initState() {
     super.initState();
+    // A backup that failed is said once in Needs you, on a parent's own phone in the server's own
+    // family.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(ServerWatch.check(DenScope.read(context)));
+    });
     // The greeting and Tomorrow follow the clock even when nothing else changes, and so does
     // something put off coming back (a ride an hour before it leaves).
     _tick = Timer.periodic(const Duration(minutes: 1), (_) {

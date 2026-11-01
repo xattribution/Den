@@ -8,6 +8,7 @@ import '../design/layout.dart' show TextSize;
 import '../design/tokens.dart' show DenColors;
 import '../platform/calendars/phone_calendars.dart';
 import '../platform/sync/den_network.dart';
+import '../platform/sync/server_setup.dart' show BackupProblem;
 import '../platform/notifications/reminder_scheduler.dart';
 import '../design/photos.dart';
 import '../features/shared_screens/shared_screens.dart' show SignInGuard;
@@ -60,6 +61,9 @@ abstract final class Changes {
 
   /// Which notices this device has shown and its person put away ([AppState.seen]).
   static const notices = 'notices';
+
+  /// What the family's server said about itself ([AppState.backupProblem]).
+  static const server = 'server';
 }
 
 /// How this device looks and runs, whichever family it shows: Day, Night or Auto, the text
@@ -283,6 +287,27 @@ class AppState extends ChangeNotifier with FamilyReads {
     _listen();
     _keepPhotos();
     _changed(const {Changes.all});
+  }
+
+  /// Why the server's last backup didn't happen or didn't reach the NAS, as the server said it to
+  /// this phone (a parent of the server's own family, on their own phone), or null. Kept in
+  /// memory only; Today asks again (settings/state/server_watch.dart).
+  BackupProblem? get backupProblem => _backupProblem;
+  BackupProblem? _backupProblem;
+  set backupProblem(BackupProblem? p) {
+    if (p?.kind == _backupProblem?.kind && p?.at == _backupProblem?.at && p?.place == _backupProblem?.place) return;
+    _backupProblem = p;
+    _changed(const {Changes.server});
+  }
+
+  /// Whether the family's server said this family is its own (its parents see Backups), once
+  /// it has said.
+  bool get serverFamily => _serverFamily;
+  bool _serverFamily = false;
+  set serverFamily(bool on) {
+    if (on == _serverFamily) return;
+    _serverFamily = on;
+    _changed(const {Changes.server});
   }
 
   /// Notices (a privacy change, a sitter's access ending) this device's person put away with

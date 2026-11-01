@@ -1447,5 +1447,5 @@ proxy in front of the hub, where it has the hub as its own origin.
 | Plaintext API tokens with full authority | Hashed, scoped, expiring tokens | `den_hub` token tests |
 | Private titles leaked through History and search | Spaces: devices never receive records they can't read | `den_core` space tests |
 | Public member list | No unauthenticated data endpoints besides `/health` and pairing | `den_hub` tests |
-| Unencrypted backups with every secret | Backups sealed with a passphrase (Argon2id, XChaCha20-Poly1305) | `den_net` backup test |
+| Unencrypted backups with every secret | Backups sealed with a key wrapped for each parent's recovery words (X25519 twin of their recovery key, HKDF, XChaCha20-Poly1305); older ones with a passphrase (Argon2id) | `den_hub` sealed_backup_test, `den_net` backup test |
 | In-process master header | None exists | — |

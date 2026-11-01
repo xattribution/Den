@@ -1,6 +1,7 @@
 import 'package:den_core/den_core.dart';
 
 import '../../../app/app_state.dart';
+import '../../../platform/sync/server_setup.dart' show BackupProblem;
 import '../../calendar/calendar_words.dart';
 import '../../family/family.dart' show Invites, Recovery, RecoveryReminder;
 
@@ -140,6 +141,16 @@ final class RecoveryWordsNeed extends Need {
   String get key => RecoveryReminder.snoozeKey(member);
 }
 
+/// The server's last backup failed, said once on a parent's own phone in the server's own
+/// family: "Couldn't reach the NAS last night". "Got it"; the row opens Backups.
+final class BackupNeed extends Need {
+  const BackupNeed(this.problem);
+  final BackupProblem problem;
+
+  @override
+  String get key => 'backup:${problem.kind}:${problem.at}';
+}
+
 /// How long a privacy change or a sitter's ended access stays in Needs you unless put away.
 const int noticeDays = 14;
 
@@ -237,6 +248,9 @@ List<Need> needsYou(AppState app, {required int now}) {
       final need = AccessEndedNeed(m, until);
       if (!app.seen(need.key)) out.add(need);
     }
+    final backup = app.backupProblem;
+    // Said once: a failure "Got it" put away stays away; the next one comes again.
+    if (backup != null && backup.kind != 'no_words' && !app.seen(BackupNeed(backup).key)) out.add(BackupNeed(backup));
     if (RecoveryReminder.due(app, now: now)) out.add(RecoveryWordsNeed(me.id));
   }
   // What she swiped away or put off with the × ("Not now") waits until tomorrow.
@@ -305,6 +319,7 @@ class NeedsModel extends DenView<List<Need>> {
         RecordType.signInTries,
         RecordType.inviteKey,
         Changes.notices,
+        Changes.server,
       };
 
   @override

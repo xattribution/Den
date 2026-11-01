@@ -40,6 +40,8 @@ feed), and the mDNS advertisement.
 - [Actions: everything MCP and the app can do](#actions-everything-mcp-and-the-app-can-do):
   [`GET /api/v1/actions`](#get-apiv1actions) ·
   [`POST /api/v1/actions/{name}`](#post-apiv1actionsname)
+- [First boot: a fresh server, in a browser](#first-boot-a-fresh-server-in-a-browser)
+- [The server: its internet, backups and updates](#the-server-its-internet-backups-and-updates)
 - [Apps asking to connect (OAuth)](#apps-asking-to-connect-oauth):
   [`GET /api/v1/connections/requests`](#get-apiv1connectionsrequests) ·
   [`POST /api/v1/connections/requests/{id}`](#post-apiv1connectionsrequestsid) ·
@@ -1405,6 +1407,7 @@ No token. Where the hub is in joining a family, for the app's "Add a hub" screen
 | `removed` | With `stage` `removed`: what to tell its owner, also in the hub's log ("This hub was removed from the family on Oct 28; reset it to add it again"). The date is in the family's time zone |
 | `matching_words` | Present only while the pairing session with the inviting phone is up (`joining` through `syncing`): the three words both ends derive from that session's transcript (den_net's matching words). The phone shows its own three; a parent approves only if they're the same. The hub also logs them at info level and `den_hub status` prints them |
 | `last_error` | Why the last join didn't finish (`timed-out`, `unreachable`, or the phone's reason), until the hub is ready |
+| `first_boot` | On a server with a Cloudflare connector, while its own family isn't made yet: `{"next": "start"}` (the setup link opens the [first-boot pages](#first-boot-a-fresh-server-in-a-browser)) or `{"next": "family"}` (they handed the making of the family to a phone: the setup link goes straight to it) |
 
 In the public posture a hub already in a family answers only `paired`, `setup_needed` and
 `stage`.
@@ -1432,6 +1435,91 @@ The words are not a secret: a relay or anything else in the middle that ran two 
 produce two transcripts, so the two ends would show different words. This answer travels over
 plain HTTP on the home network, so it backs up, and doesn't replace, comparing with the hub's log
 when the network itself isn't trusted.
+
+## First boot: a fresh server, in a browser
+
+A server installed with the one-command installer ([install-technical.md](install-technical.md))
+prints its setup link, `http://<home address>:47733/#/setup/<code>/<hub>`. Opened in a browser,
+the app asks `GET /api/v1/hub/status`; with `first_boot.next` `start` it shows these pages before
+the start-family form: connect Den to the internet (a Cloudflare tunnel token), then make the
+family on a phone or restore it from a backup. Every endpoint here needs the setup code in
+`X-Den-Setup-Code` and answers only while the server's own family isn't made: a wrong code is
+`403 permission_denied` with `tries_left`, counted with `POST /api/v1/hub/setup`'s, and the family
+being there is `409 already_set_up`. What carries a secret (the token, a NAS's password, recovery
+words) is taken over HTTPS, from the server itself, or from the home network (a private address,
+with none of the headers a proxy or tunnel adds), else `403 needs_https`. The code is all the
+authorization there is: whoever has the link is the one setting the server up.
+
+| Endpoint | Body | Answer |
+| --- | --- | --- |
+| `GET /api/v1/hub/first-boot` | | The state, below. Once the tunnel is connected and its configuration names a public hostname, the server takes it as the family's address (`hub/address`) and answers it |
+| `PUT /api/v1/hub/first-boot/internet` | `{"token": "eyJ..."}`, or the whole `cloudflared service install eyJ...` Cloudflare shows | `202` and the state. The token goes to the connector (`hub/tunnel-token`, owner-only) and is never in an answer or the log (only the tunnel's id) |
+| `PUT /api/v1/hub/first-boot/address` | `{"address": "den.example.com"}` | The state, with the address: when the tunnel doesn't say it |
+| `POST /api/v1/hub/first-boot/choice` | `{"choice": "family"}` | The state. From now on the status says `first_boot.next` `family` |
+| `POST /api/v1/hub/first-boot/nas/find` | | `{"found": [{"name", "host"}]}`: NASes that answered an mDNS question for `_smb._tcp` (none on a bridge network: the pages then ask for the NAS's name or address) |
+| `POST /api/v1/hub/first-boot/nas/shares` | `{"place": {"host", "user", "password"}}` | `{"shares": [...]}`, or `422 place_problem` with `details.problem`: `unreachable`, `login`, `missing`, `readOnly`, `noTool`, `other` |
+| `POST /api/v1/hub/first-boot/backups` | `{"place": {...}}`, or none for this server's disk | `{"backups": [{"name", "size", "at"}]}`, newest first |
+| `POST /api/v1/hub/first-boot/upload` | The backup file itself (up to 256 MB) | `{"backup": {"version", "made_at", "family_name", "names", "passphrase"}}`: whose recovery words open it |
+| `POST /api/v1/hub/first-boot/restore` | `{"from": "upload" \| "disk" \| "nas", "name"?, "place"?, "words"?, "passphrase"?}` | `{"ok": true, "family_name"}` once the family serves. Words that don't open it: `422 backup_refused` saying whose do. An older backup opens with `passphrase`, or `DEN_BACKUP_PASSPHRASE` when the server still has it. From a NAS, that NAS becomes where backups go |
+
+The state:
+
+```json
+{
+  "internet": {"available": true, "token": true, "connected": true, "reachable": true, "found": ["den.example.com"], "problem": "..."},
+  "address": "https://den.example.com",
+  "setup_link": "https://den.example.com/#/setup/3JKN-BEKA/3uhgitwjccsopjlo",
+  "restore": {"passphrase_known": false}
+}
+```
+
+`problem` is the connector's own words when it reports an error (`tunnel-status.json`).
+`setup_link` is at the family's address once there is one, else at the address the page came
+to: the pages show it as a QR code, so the first parent's phone makes the family, as before.
+
+A restore puts the backup's files in place of the empty hub and starts it again in the same
+process: the restored hub has its old keys and device id, so the family's phones know it, and it
+waits for one of them to sync before it writes anything of its own, as after
+[`den_hub restore`](hosting.md#restore). What is the server's own (the tunnel token, the backup
+place, the updater's files, the address it learned) stays as it was.
+
+## The server: its internet, backups and updates
+
+Signed by a parent of the server's own family on their own personal phone, as
+[signing in with Google and Apple](#signing-in-with-google-and-apple) is; anyone else gets `403`
+(a parent of another family on the server `host_family_only`). No answer ever holds the tunnel
+token or a NAS's password; a request carrying one is taken as the first-boot pages' are.
+
+| Endpoint | Body | Answer |
+| --- | --- | --- |
+| `GET /api/v1/hub/server` | | `{"version", "internet": {...}, "address", "update"?}`; `update` is `{"current", "available"?, "checked"?, "state": "idle" \| "updating" \| "failed", "message"?}` and absent without the updater's `hub/update.json` |
+| `PUT /api/v1/hub/server/internet` | `{"token": "eyJ..."}` | `202` and the server |
+| `POST /api/v1/hub/server/update` | | `202`: the hub wrote `hub/update-request`; the host's updater takes it within seconds and the hub restarts on the new version. `409 up_to_date`, `409 no_updater` |
+| `GET /api/v1/hub/backups` | | `{"keep": 14, "running", "last": {"at", "size"}, "problem": {"kind", "at", "place"}, "place": {"kind", "host", "share", "folder", "user", "name", "has_password", "last_at"}, "opens_with": ["Alex"], "disk"}` |
+| `POST /api/v1/hub/backups/run` | | Backs every family on the server up now; the backups' state |
+| `POST /api/v1/hub/backups/find` | | As the first boot's |
+| `POST /api/v1/hub/backups/shares` | `{"place": {...}}` | As the first boot's; a place naming the saved NAS and user may leave the password out |
+| `PUT /api/v1/hub/backups/place` | `{"place": {"kind": "nas", "host", "share", "folder", "user", "password", "name"?}}` (or `"kind": "sftp"`, a computer over SFTP, with no share) | Makes the folder, writes a small file there and removes it, and only then keeps the place (`hub/backup-settings.json`, owner-only, never in a backup). `422 place_problem` otherwise |
+| `DELETE /api/v1/hub/backups/place` | | Backups stay on the server's disk only |
+
+**The nightly backup.** Every night between 2 and 5 in the family's time zone (or as soon as
+the last is more than 30 hours old), the server backs every family on it up to its own disk
+(`<data>/backups/`, another family's in a folder named by its address), keeps the newest 14, and
+copies each to the place, if any, keeping 14 there too. Copies go with rclone; nothing is in a
+config file, and the password reaches rclone through its environment, never its command line.
+`problem.kind` is `no_words` (no parent of the family has saved recovery words: nobody could open
+a backup, so none is made), `disk`, or the place's problem; `place: true` means the copy on the
+disk is there and only the NAS's failed. The app says it on Settings, Backups and once in Needs
+you.
+
+**Encryption without a passphrase.** Each backup is sealed (XChaCha20-Poly1305) with its own
+random key, and that key is wrapped for every parent who saved recovery words: their words
+stretch to an Ed25519 key whose public half the family's log holds (`member.recovery.key`), whose
+X25519 twin an ephemeral key agrees a wrapping key with (HKDF-SHA256). So any one parent's words
+open it, the server never needs them, and there is nothing else to keep. A backup made while an
+install still sets `DEN_BACKUP_PASSPHRASE` (`den_hub backup --passphrase-env`) is wrapped for the
+passphrase too, and older backups sealed with the passphrase alone still open with it. Format in
+`packages/den_hub/lib/src/backup/sealed_backup.dart`.
 
 ## Apps asking to connect (OAuth)
 

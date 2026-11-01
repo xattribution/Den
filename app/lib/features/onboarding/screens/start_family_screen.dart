@@ -11,10 +11,12 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/sync/pairing.dart';
+import '../../../platform/sync/server_setup.dart';
 import '../../../platform/time_zone.dart';
 import '../../../platform/web/web_app.dart';
 import '../state/onboarding_actions.dart';
 import '../state/this_device.dart';
+import 'first_boot_screen.dart';
 import 'home_screen_steps.dart';
 
 /// Starting a family: its name and time zone, and you (the first parent) with your picture.
@@ -26,8 +28,14 @@ import 'home_screen_steps.dart';
 /// people" shows how that goes. Opened from the hub's setup link (`den_hub setup-link`), the
 /// link brings the code and the hub's device id, so there's nothing to type and no words to
 /// compare: only the hub the link names is taken in.
+///
+/// A fresh server whose first boot hasn't happened yet (its status says `first_boot: start`)
+/// shows its first-boot pages first ([FirstBootScreen]): connecting it to the internet, then
+/// making the family on a phone or restoring one. The link they hand the phone comes back here
+/// with `first_boot: family`, and this form shows at once.
 class StartFamilyScreen extends StatefulWidget {
-  const StartFamilyScreen({super.key, this.initialTimeZone, this.hub, this.setupCode, this.hubDevice, this.web, this.browser});
+  const StartFamilyScreen(
+      {super.key, this.initialTimeZone, this.hub, this.setupCode, this.hubDevice, this.web, this.browser, this.firstBoot});
 
   /// Overrides the device's time zone, for tests and screenshots.
   final String? initialTimeZone;
@@ -46,6 +54,9 @@ class StartFamilyScreen extends StatefulWidget {
 
   /// Runs as a browser served by the hub, for tests; by default only on the web.
   final bool? browser;
+
+  /// The server's first-boot pages, for tests; by default the hub's own when its status says so.
+  final FirstBootSource? firstBoot;
 
   @override
   State<StartFamilyScreen> createState() => _StartFamilyScreenState();
@@ -68,6 +79,10 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
 
   /// Typing the setup code after all: the link named another hub than the one that answered.
   bool _typeCode = false;
+
+  /// "Make it on this device instead", from the first-boot pages.
+  bool _hereInstead = false;
+  FirstBootSource? _firstBoot;
 
   /// The link brought the setup code.
   bool get _linked => widget.setupCode != null && !_typeCode;
@@ -196,6 +211,11 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
     final name = _name.text.trim();
     final color = PersonColor.forMarker(_marker).color;
     final web = widget.web ?? WebApp.info;
+    final served = _hub;
+    if (_linked && !_hereInstead && (widget.firstBoot != null || (served?.firstBoot == 'start' && !served!.paired))) {
+      final source = _firstBoot ??= widget.firstBoot ?? HubFirstBoot(served!.base, widget.setupCode!);
+      return FirstBootScreen(source: source, onMakeHere: () => setState(() => _hereInstead = true));
+    }
     if ((widget.browser ?? Capabilities.web) && web.needsHomeScreen && !_inSafari) {
       return DenPage(
         title: 'Start your family',

@@ -15,6 +15,7 @@ import '../../chores/chores.dart';
 import '../../family/family.dart';
 import '../../rewards/rewards.dart';
 import '../state/needs_you.dart';
+import '../../../platform/sync/server_setup.dart' show backupProblemWords, backupWhen;
 import '../words/today_words.dart';
 
 /// Needs you (Main.dc.html): what waits for whoever is using the device, each with the one
@@ -408,6 +409,14 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
           gotIt(),
           null,
           () => context.push('/family/member/${told.member}'),
+        ),
+      BackupNeed(:final problem) => (
+          _glyph(context, PhosphorIconsRegular.hardDrives),
+          backupProblemWords(problem, when: backupWhen(problem.at, widget.now)),
+          null,
+          gotIt(),
+          null,
+          () => context.push('/settings/backups'),
         ),
       RecoveryWordsNeed() => (
           _glyph(context, PhosphorIconsRegular.key),

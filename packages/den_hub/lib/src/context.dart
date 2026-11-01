@@ -46,8 +46,9 @@ class HubContext {
   /// Serializes acting on [den].
   final DenGate gate;
 
-  /// How the hub runs.
-  final HubConfig config;
+  /// How the hub runs. Changes only when the server learns the family's address at first boot
+  /// ([HubConfig.withPublicUrl]).
+  HubConfig config;
 
   /// Where the hub logs.
   final HubLog log;

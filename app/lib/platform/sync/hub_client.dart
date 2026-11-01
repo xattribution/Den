@@ -16,7 +16,13 @@ class HubInfo {
     required this.stage,
     this.lastError,
     this.matchingWords = const [],
+    this.firstBoot,
   });
+
+  /// What a fresh server's first-boot pages say comes first: `start` (connect it to the
+  /// internet, then make or restore the family) or `family` (that was done: make the family
+  /// here). Null on a hub without them, where the setup link starts the family at once.
+  final String? firstBoot;
 
   /// The hub's HTTP base address, `http://192.168.1.20:47733`.
   final Uri base;
@@ -195,6 +201,7 @@ class HubClient {
       name: json['name'] as String? ?? 'Den hub',
       stage: json['stage'] as String? ?? 'waiting_for_code',
       lastError: json['last_error'] as String?,
+      firstBoot: json['first_boot'] is Map ? (json['first_boot']! as Map)['next'] as String? : null,
       matchingWords: [
         if (json['matching_words'] case final List<Object?> words)
           for (final w in words)
