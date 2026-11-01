@@ -17,7 +17,7 @@ import '../../../platform/sync/server_setup.dart';
 import '../../settings/widgets/nas_picker.dart';
 
 /// Where to read how to make a Cloudflare tunnel and get its token.
-final Uri tunnelHowTo = Uri.parse('https://github.com/xattribution/den-install#cloudflare');
+final Uri tunnelHowTo = Uri.parse('https://github.com/xattribution/Den#cloudflare');
 
 enum FirstBootStep {
   loading,
