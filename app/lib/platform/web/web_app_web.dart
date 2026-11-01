@@ -144,6 +144,18 @@ void diagnose(bool on) {
   web.callMethod<JSAny?>('diagnose'.toJS, on.toJS);
 }
 
+// Newer still: the keyboard at once.
+
+bool keyboardNow() {
+  final web = _denWeb;
+  if (web == null || !web.has('keyboardNow')) return false;
+  try {
+    return web.callMethod<JSBoolean>('keyboardNow'.toJS).toDart;
+  } on Object {
+    return false;
+  }
+}
+
 String? screenInfo() {
   final web = _denWeb;
   if (web == null || !web.has('screenInfo')) return null;

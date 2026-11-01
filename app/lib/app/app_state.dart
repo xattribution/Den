@@ -303,9 +303,22 @@ class AppState extends ChangeNotifier with FamilyReads {
   int? snoozedUntil(String key) => _snoozed[key];
   final Map<String, int> _snoozed;
 
-  /// Puts a reminder off until [until] (UTC milliseconds) on this device.
+  /// Puts a reminder off until [until] (UTC milliseconds) on this device. Whatever was put off
+  /// until a time already past is forgotten.
   void snooze(String key, int until) {
+    final now = _den.now();
+    _snoozed.removeWhere((k, at) => k != key && at <= now);
     _snoozed[key] = until;
+    _savedSnoozed();
+  }
+
+  /// Takes back [snooze] for [key] (Undo).
+  void unsnooze(String key) {
+    if (_snoozed.remove(key) == null) return;
+    _savedSnoozed();
+  }
+
+  void _savedSnoozed() {
     _changed(const {Changes.notices});
     final keep = [for (final e in _snoozed.entries) '${e.value} ${e.key}'];
     _save((p) => p.setStringList(_key(_snoozedKey), keep));

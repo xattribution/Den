@@ -143,13 +143,17 @@ const int noticeDays = 14;
 /// How many late chores Needs you lists one by one before it sums them up.
 const int lateShown = 3;
 
+/// How many things Needs you shows before "2 more", which opens the rest in place.
+const int needsShown = 3;
+
 /// What waits for whoever is using the device, most pressing first (HOUSEMOM_PASS.md): a change
 /// a parent made to their privacy; rides in the next 48 hours, soonest first; then whoever waits
 /// on an answer right now: a device asking to join, a kid asking for a reward (when stars are
-/// on); lists due, today's before tomorrow's; late chores (today's and yesterday's); AI
-/// connections asking to connect; then what only needs a "Got it" (devices an invite let in,
-/// recovered phones, sign-in tries, sitters whose access ended); and last the reminder to save
-/// recovery words. Each only for someone who may settle it.
+/// on); lists due, today's before tomorrow's; late chores (today's and yesterday's, a grown-up's
+/// or anyone's, never a kid's); AI connections asking to connect; then what only needs a "Got
+/// it" (devices an invite let in, recovered phones, sign-in tries, sitters whose access ended);
+/// and last the reminder to save recovery words. Each only for someone who may settle it, and
+/// none that was put off until tomorrow on this device ([putOff]).
 List<Need> needsYou(AppState app, {required int now}) {
   final den = app.den;
   if (app.me == null) return const [];
@@ -205,7 +209,12 @@ List<Need> needsYou(AppState app, {required int now}) {
   out.addAll(due.map((d) => d.$2));
 
   if (app.allows(DenAction.completeAnyChore)) {
-    final late = den.lateChores(days: 1);
+    // A kid's chore never nags a grown-up here ("she can go check them if she wants"): the
+    // Chores tab still shows it late. A grown-up's own, or one for anyone, still waits here.
+    final late = [
+      for (final d in den.lateChores(days: 1))
+        if (!(app.memberById(d.owner)?.isKid ?? false)) d,
+    ];
     if (late.length > lateShown) {
       out.add(LateManyNeed(late));
     } else {
@@ -227,8 +236,21 @@ List<Need> needsYou(AppState app, {required int now}) {
     }
     if (RecoveryReminder.due(app, now: now)) out.add(RecoveryWordsNeed(me.id));
   }
-  return out;
+  // What she swiped away or put off with the × ("Not now") waits until tomorrow.
+  return [
+    for (final n in out)
+      if (!putOff(app, n, now: now)) n,
+  ];
 }
+
+/// Whether [need] was put off ("Not now") on this device until a time still ahead.
+bool putOff(AppState app, Need need, {required int now}) {
+  final until = app.snoozedUntil(need.key);
+  return until != null && now < until;
+}
+
+/// When "Not now" brings [need]'s kind back: the start of tomorrow, in the family's time zone.
+int notNowUntil(AppState app) => app.den.dayStart(app.formats.addDays(app.today, 1));
 
 /// What shared screens said about wrong tries in the last [noticeDays] that this device hasn't
 /// put away: the newest for each screen and person.

@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
+import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../motion.dart';
@@ -12,6 +14,11 @@ import 'buttons.dart';
 /// the one action ("I'll drive", "Approve"). On a phone, and whenever the words need the room,
 /// the action sits under the words, lined up with them; with room to spare it sits at the end.
 /// The action never squeezes the words, and its label never wraps.
+///
+/// A row that asks a yes or no (a reward, a device asking to join) also answers by a swipe: to
+/// the right is [onApprove], to the left [onDecline] ([SwipeActions]). [onDecline] is also the
+/// small quiet × at the end of the title ([declineButton]), for a row with no other way to say
+/// no or not now; a row with no yes has only the swipe left and the ×, which put it off.
 class ActionRow extends StatelessWidget {
   const ActionRow({
     super.key,
@@ -21,6 +28,11 @@ class ActionRow extends StatelessWidget {
     this.action,
     this.onTap,
     this.actionBelow,
+    this.onApprove,
+    this.approveLabel = 'Approve',
+    this.onDecline,
+    this.declineLabel = 'Decline',
+    this.declineButton = true,
   });
 
   /// A 40 pt face or an ink glyph.
@@ -38,11 +50,25 @@ class ActionRow extends StatelessWidget {
   /// beside from 360 pt wide (a phone's card is 326; an iPad column 390 and up) at up to 135 % text.
   final bool? actionBelow;
 
+  /// A swipe to the right: the yes ([approveLabel], "Approve"), as the row's own button does.
+  final VoidCallback? onApprove;
+  final String approveLabel;
+
+  /// A swipe to the left, and the ×: the no ("Decline", "Turn away") or, for a row with no no,
+  /// "Not now".
+  final VoidCallback? onDecline;
+  final String declineLabel;
+
+  /// Whether [onDecline] also shows as the ×; false where the row's own buttons already say it
+  /// ("Got it", "Remind me later").
+  final bool declineButton;
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final t = context.text;
-    return LayoutBuilder(
+    final cross = onDecline != null && declineButton ? DeclineButton(label: declineLabel, onTap: onDecline!) : null;
+    final asking = LayoutBuilder(
       builder: (context, constraints) {
         final scale = MediaQuery.textScalerOf(context).scale(1);
         final below = actionBelow ?? (constraints.maxWidth < 360 || scale > 1.35);
@@ -60,17 +86,190 @@ class ActionRow extends StatelessWidget {
         final row = Padding(
           padding: const EdgeInsets.symmetric(vertical: Sp.l),
           child: Row(
-            crossAxisAlignment: below ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+            crossAxisAlignment: below || cross != null ? CrossAxisAlignment.start : CrossAxisAlignment.center,
             children: [
               if (leading != null) ...[leading!, const SizedBox(width: Sp.m)],
               Expanded(child: words),
               if (action != null && !below) ...[const SizedBox(width: Sp.m), action!],
+              // The × sits on the title's line, its 44 pt target reaching into the row's padding.
+              if (cross != null) ...[
+                const SizedBox(width: Sp.xs),
+                Transform.translate(offset: const Offset(0, -12), child: cross),
+              ],
             ],
           ),
         );
         if (onTap == null) return MergeSemantics(child: row);
         return DenPressable(onTap: onTap, scale: false, shape: const RoundedRectangleBorder(), child: row);
       },
+    );
+    if (onApprove == null && onDecline == null) return asking;
+    return SwipeActions(
+      onRight: onApprove,
+      rightLabel: approveLabel,
+      onLeft: onDecline,
+      leftLabel: declineLabel,
+      child: asking,
+    );
+  }
+}
+
+/// The small quiet × that says no, or not now, on a row that asks ([ActionRow.onDecline]): an
+/// 18 pt ink3 glyph in a 44 pt target, never a second big button.
+class DeclineButton extends StatelessWidget {
+  const DeclineButton({super.key, required this.label, required this.onTap});
+
+  /// What it does, for screen readers and a pointer's hover: "Decline", "Not now".
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+        message: label,
+        excludeFromSemantics: true,
+        child: DenPressable(
+          onTap: onTap,
+          shape: const CircleBorder(),
+          semanticLabel: label,
+          child: SizedBox.square(
+            dimension: Targets.adult,
+            child: Icon(PhosphorIconsRegular.x, size: 18, color: context.colors.ink3),
+          ),
+        ),
+      );
+}
+
+/// A row that also answers by a swipe (DESIGN.md, "Swipe to answer"): to the right for the yes
+/// ([onRight], "Approve"), to the left for the no or not now ([onLeft]). The row follows the
+/// finger 1:1 over the card; behind it, in ink on the card, the word and glyph of what letting
+/// go would do, turning bold once it's far enough. Let go past [DenMotion.dismissFraction] of
+/// the row (or flung faster than [DenMotion.dismissVelocity]) and it does that; either way the
+/// row springs back on the UI spring, and the caller turns its place into what happened, with
+/// Undo. Never the only way to anything: the row's button and its × do the same, and screen
+/// readers get both as actions on the row.
+class SwipeActions extends StatefulWidget {
+  const SwipeActions({super.key, required this.child, this.onRight, this.rightLabel = 'Approve', this.onLeft, this.leftLabel = 'Decline'});
+
+  final Widget child;
+  final VoidCallback? onRight;
+  final String rightLabel;
+  final VoidCallback? onLeft;
+  final String leftLabel;
+
+  @override
+  State<SwipeActions> createState() => _SwipeActionsState();
+}
+
+class _SwipeActionsState extends State<SwipeActions> with SingleTickerProviderStateMixin {
+  late final AnimationController _x = AnimationController.unbounded(vsync: this);
+  double _drag = 0;
+  double _width = 1;
+  bool _armed = false;
+
+  @override
+  void dispose() {
+    _x.dispose();
+    super.dispose();
+  }
+
+  double get _reach => _width * DenMotion.dismissFraction;
+
+  /// Past the row's width there's nothing more to show: the row slows to a stop.
+  double _resist(double d) {
+    final limit = _width * 0.6;
+    final a = d.abs();
+    return a <= limit ? d : d.sign * (limit + (a - limit) * 0.15);
+  }
+
+  void _start(DragStartDetails _) {
+    _x.stop();
+    _drag = _x.value;
+  }
+
+  void _update(DragUpdateDetails d) {
+    var next = _drag + (d.primaryDelta ?? 0);
+    if (next > 0 && widget.onRight == null) next = 0;
+    if (next < 0 && widget.onLeft == null) next = 0;
+    _drag = next;
+    _x.value = _resist(next);
+    final armed = _x.value.abs() >= _reach;
+    if (armed != _armed) {
+      setState(() => _armed = armed);
+      if (armed) HapticFeedback.selectionClick();
+    }
+  }
+
+  void _end(DragEndDetails d) {
+    final v = d.primaryVelocity ?? 0;
+    final x = _x.value;
+    final flung = x != 0 && v.sign == x.sign && v.abs() > DenMotion.dismissVelocity;
+    final run = _armed || flung ? (x > 0 ? widget.onRight : (x < 0 ? widget.onLeft : null)) : null;
+    if (_armed) setState(() => _armed = false);
+    _drag = 0;
+    if (DenMotion.reduced(context)) {
+      _x.value = 0;
+    } else {
+      _x.springTo(0, velocity: v);
+    }
+    run?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final t = context.text;
+    final actions = <CustomSemanticsAction, VoidCallback>{
+      if (widget.onRight != null) CustomSemanticsAction(label: widget.rightLabel): widget.onRight!,
+      if (widget.onLeft != null) CustomSemanticsAction(label: widget.leftLabel): widget.onLeft!,
+    };
+    Widget side(IconData icon, String label, {required bool start}) {
+      final style = _armed ? t.label(c.ink) : t.control(c.ink);
+      final parts = [Icon(icon, size: 20, color: c.ink), const SizedBox(width: Sp.s), Text(label, style: style, maxLines: 1, softWrap: false)];
+      return Row(
+        mainAxisAlignment: start ? MainAxisAlignment.start : MainAxisAlignment.end,
+        children: start ? parts : parts.reversed.toList(),
+      );
+    }
+
+    return Semantics(
+      customSemanticsActions: actions,
+      child: LayoutBuilder(
+        builder: (context, box) {
+          _width = box.maxWidth.isFinite && box.maxWidth > 0 ? box.maxWidth : 1;
+          return GestureDetector(
+            onHorizontalDragStart: _start,
+            onHorizontalDragUpdate: _update,
+            onHorizontalDragEnd: _end,
+            onHorizontalDragCancel: () => _end(DragEndDetails(primaryVelocity: 0)),
+            child: ClipRect(
+              child: AnimatedBuilder(
+                animation: _x,
+                child: ColoredBox(color: c.card, child: widget.child),
+                builder: (context, row) {
+                  final x = _x.value;
+                  final shown = (x.abs() / _reach).clamp(0.0, 1.0);
+                  return Stack(
+                    children: [
+                      if (x != 0)
+                        Positioned.fill(
+                          child: ExcludeSemantics(
+                            child: Opacity(
+                              opacity: shown,
+                              child: x > 0
+                                  ? side(PhosphorIconsBold.check, widget.rightLabel, start: true)
+                                  : side(PhosphorIconsBold.x, widget.leftLabel, start: false),
+                            ),
+                          ),
+                        ),
+                      Transform.translate(offset: Offset(x, 0), child: row),
+                    ],
+                  );
+                },
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }

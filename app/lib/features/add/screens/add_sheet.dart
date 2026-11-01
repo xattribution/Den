@@ -47,6 +47,10 @@ bool _canCapture(AppState app) =>
 Future<void> showAddSheet(BuildContext context) {
   final router = GoRouter.of(context);
   final home = Household.maybeOf(context);
+  // The field takes the focus as the sheet opens, so the keyboard comes up with it. In a
+  // browser that has to start in this tap, the only time Safari raises the keyboard.
+  final app = DenScope.read(context);
+  if (_canCapture(app) || helperOn(app, linked: Assistant.linkFor(context, app) != null)) WebApp.keyboardNow();
   if (home != null && home.showingAll && SheetScope.of(context) == null) {
     return showDenSheet<void>(
       context,
@@ -467,7 +471,8 @@ class _Entry extends StatelessWidget {
           TextField(
             controller: controller,
             focusNode: focus,
-            autofocus: false,
+            // Add is for typing: the keyboard comes up with the sheet (showAddSheet).
+            autofocus: true,
             minLines: 1,
             maxLines: 4,
             textCapitalization: TextCapitalization.sentences,
