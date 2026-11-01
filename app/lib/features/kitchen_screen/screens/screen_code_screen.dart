@@ -11,6 +11,7 @@ import '../../../app/app_state.dart';
 import '../../../design/layout.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
+import '../../../design/words.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../platform/web/web_app.dart';
@@ -196,7 +197,7 @@ class _ScreenCodeScreenState extends State<ScreenCodeScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(KitchenScreenWords.howToAdd, style: instructions),
+        Text(tidy(KitchenScreenWords.howToAdd), style: instructions),
         if (_showsCode(session)) ...[
           const SizedBox(height: Sp.xl),
           Semantics(

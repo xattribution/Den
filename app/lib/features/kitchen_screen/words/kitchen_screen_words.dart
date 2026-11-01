@@ -40,7 +40,7 @@ abstract final class KitchenScreenWords {
   /// "Add Kitchen iPad as a kitchen screen?"
   static String confirm(String name) => 'Add ${name.trim().isEmpty ? 'this screen' : name.trim()} as a kitchen screen?';
 
-  static const whatItDoes = "It shows the family's week and today's chores to everyone at home. It's nobody's own device.";
+  static const whatItDoes = "It shows the family's week and today's chores to everyone at home.";
 
   /// After it was added.
   static String added(String name) => '$name is a kitchen screen now';

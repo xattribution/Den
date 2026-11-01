@@ -116,14 +116,14 @@ void main() {
       expect(taps.count, 2);
     });
 
-    testWidgets('set up the kitchen screen: 3 taps to its invite, no Advanced', (tester) async {
+    testWidgets('set up the kitchen screen: 3 taps to Add a screen, no Advanced', (tester) async {
       final state = await _family(tester);
       await _app(tester, state);
       final taps = _Taps(tester);
       await taps.on(find.byType(PersonButton));
       await taps.on(find.text('Settings'));
       await taps.on(find.text('Kitchen screen'));
-      expect(find.text('Invite a screen'), findsOneWidget);
+      expect(find.text('Add a screen'), findsOneWidget);
       expect(taps.count, 3);
     });
 
