@@ -4,10 +4,15 @@
 # Build from the repository root:  docker build -f deploy/hub/Dockerfile -t den-hub .
 # Compiling the web app is the heavy part: about 1.5 GB of memory at its peak (docs/hosting.md,
 # "Building on a small server").
+#
+# The same file makes the published image, ghcr.io/xattribution/den, for x86 and ARM at once
+# (tools/release.sh): the web app builds once, on the machine that builds (it is the same for
+# both), and the hub compiles for each. The image also carries cloudflared, which the
+# installer's `tunnel` service runs (den-connector.sh), and rclone, for backups to a NAS.
 
 # 3.38.6 and later keep the app's size while a keyboard is up on Android (flutter/flutter#175074);
 # 3.38.5 left the app a keyboard short after the keyboard's down arrow.
-FROM ghcr.io/cirruslabs/flutter:3.38.10 AS web
+FROM --platform=$BUILDPLATFORM ghcr.io/cirruslabs/flutter:3.38.10 AS web
 WORKDIR /src
 COPY packages packages
 COPY app app
@@ -33,6 +38,10 @@ RUN built="${DEN_BUILT:-$(date -u +%Y-%m-%dT%H:%MZ)}" \
  && printf '{"commit":"%s","built":"%s"}\n' "$DEN_COMMIT" "$built" > build/web/build.json \
  && sh /usr/local/bin/fallback_fonts.sh build/web "$DEN_FALLBACK_FONTS"
 
+# The hub for the image's own platform. `dart compile exe --target-arch` would compile it for the
+# other one from here, but it refuses packages with build hooks (sqlite3, for den_sett_import),
+# and `dart build cli`, which runs them, can't cross-compile yet (Dart 3.10): so a multi-platform
+# build compiles the ARM hub under emulation, or on an ARM builder node (docs/install-technical.md).
 FROM dart:3.10 AS hub
 WORKDIR /src
 # Resolve dependencies first so source edits don't invalidate the pub cache layer.
@@ -55,6 +64,11 @@ RUN cd packages/den_hub_cli \
  && dart build cli -t bin/den_hub.dart -o /out \
  && mkdir -p /out/data
 
+# The tunnel's connector and the NAS backups' copier, from their makers' own images (both are
+# static binaries, for every platform the image is). Pinned; change the tags on purpose.
+FROM cloudflare/cloudflared:2026.10.0 AS cloudflared
+FROM rclone/rclone:1.75.2 AS rclone
+
 FROM debian:bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
@@ -64,6 +78,19 @@ RUN apt-get update \
 COPY --from=hub /out/bundle/ /app/
 COPY --from=web /src/app/build/web /app/web
 COPY --chmod=755 deploy/hub/den-backup.sh /app/bin/den-backup
+COPY --from=cloudflared /usr/local/bin/cloudflared /usr/local/bin/cloudflared
+COPY --from=rclone /usr/local/bin/rclone /usr/local/bin/rclone
+COPY --chmod=755 deploy/hub/den-connector.sh /app/bin/den-connector
+# The installer (deploy/install.sh) copies itself out of the image it runs, as the server's
+# `den` command, so the command and the image are always the same release.
+COPY --chmod=755 deploy/install.sh /app/install.sh
+# The release, for the installer and its updates (tools/release.sh passes it): vX.Y.Z, or dev
+# for an image built from a checkout.
+ARG DEN_VERSION=dev
+LABEL org.opencontainers.image.title="Den" \
+      org.opencontainers.image.source="https://github.com/xattribution/den" \
+      org.opencontainers.image.version="$DEN_VERSION"
+RUN printf '%s\n' "$DEN_VERSION" > /app/VERSION
 USER den
 VOLUME /data
 EXPOSE 47733
