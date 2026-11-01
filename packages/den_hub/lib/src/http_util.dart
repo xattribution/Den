@@ -262,6 +262,16 @@ Uri requestBase(Request request, Uri? configured, {List<IpNetwork> trusted = con
   return Uri.parse('$scheme://$host');
 }
 
+/// Whether [request] itself came over HTTPS: to the hub directly over TLS, or to a [trusted]
+/// reverse proxy that says so in `X-Forwarded-Proto`. Unlike [requestBase], the configured
+/// public URL doesn't count: a request to the hub's LAN port is plain HTTP whatever the family's
+/// address is.
+bool arrivedOverHttps(Request request, List<IpNetwork> trusted) {
+  if (request.requestedUri.scheme == 'https' && !request.headers.containsKey('x-forwarded-proto')) return true;
+  if (!viaTrustedProxy(request, trusted)) return false;
+  return request.headers['x-forwarded-proto']?.split(',').first.trim().toLowerCase() == 'https';
+}
+
 /// [base] and [path] joined as a string without a trailing slash.
 String urlOf(Uri base, String path) {
   final text = base.toString();

@@ -52,8 +52,19 @@ class DataDir {
       if (!backupPath(e.key)) continue;
       final f = file(e.key);
       await f.parent.create(recursive: true);
-      await f.writeAsBytes(e.value, flush: true);
-      if (e.key == 'keys.json' || e.key.startsWith('hub/')) restrictToOwner(f.path);
+      if (e.key == 'keys.json' || e.key.startsWith('hub/')) {
+        // Owner-only from the start: an empty temporary file made 0600 before anything secret
+        // goes in, then renamed over the old one, so the keys and the hub's secrets are never
+        // readable by others, not even for a moment.
+        final temp = File('${f.path}.restore.tmp');
+        if (await temp.exists()) await temp.delete();
+        await temp.create(exclusive: true);
+        restrictToOwner(temp.path);
+        await temp.writeAsBytes(e.value, flush: true);
+        await temp.rename(f.path);
+      } else {
+        await f.writeAsBytes(e.value, flush: true);
+      }
       written++;
     }
     return written;

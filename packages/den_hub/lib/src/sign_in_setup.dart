@@ -24,10 +24,12 @@ import 'package:shelf/shelf.dart';
 import 'context.dart';
 import 'device_auth.dart';
 import 'edge.dart';
+import 'host.dart' show DenHost;
 import 'host_state.dart' show HostState;
 import 'http_util.dart';
 import 'log.dart';
 import 'oidc.dart';
+import 'setup.dart' show restrictToOwner;
 
 /// The file in a family's `hub/` directory that holds the host's sign-in settings.
 const String signInFile = 'sign-in.json';
@@ -120,6 +122,28 @@ class HostSignIn {
   /// attached.
   String? get hostFamily => _hub;
 
+  final Map<String, int> _generations = {googleProvider: 0, appleProvider: 0};
+
+  /// How many times [provider] was turned on, changed or off (or the host's own family came or
+  /// went) since the host started. Sign-ins, sessions and bindings remember the generation they
+  /// began under and end when it moves on, so turning a provider off or changing its client
+  /// ends everything that came through the old one, in every family.
+  int generationOf(String provider) => _generations[provider] ?? 0;
+
+  void _bump(String provider) => _generations[provider] = generationOf(provider) + 1;
+
+  void _bumpAll() {
+    _bump(googleProvider);
+    _bump(appleProvider);
+  }
+
+  /// Throws [StateError] while the host's own family isn't attached: nothing is kept then, so a
+  /// change that was on its way when the family stopped can't turn a provider back on or write
+  /// over what is saved.
+  void _requireAttached() {
+    if (_hub == null) throw StateError('The host\'s own family isn\'t attached');
+  }
+
   /// The providers on now, Google first; null when none is.
   SignInProviders? get providers => _google == null && _apple == null ? null : SignInProviders(google: _google, apple: _apple);
 
@@ -146,6 +170,8 @@ class HostSignIn {
     _hub = hubDevice;
     _dir = dataDir;
     _log = log;
+    _bumpAll();
+    _ownerOnly();
     _doc = _read();
     _google = _googleFrom(_doc[googleProvider]);
     _apple = _appleFrom(_doc[appleProvider]);
@@ -157,9 +183,11 @@ class HostSignIn {
   void detach(String hubDevice) {
     if (_hub != hubDevice) return;
     _hub = null;
+    _dir = null;
     _google = null;
     _apple = null;
     _doc = const {};
+    _bumpAll();
   }
 
   /// The provider [c] makes (it isn't on until [setGoogle]).
@@ -175,17 +203,20 @@ class HostSignIn {
 
   /// Turns Google on with [c] (or changes it), as [by] did at [now], and keeps it.
   Future<void> setGoogle(GoogleClient c, {String? by, required int now}) async {
+    _requireAttached();
     final provider = googleFor(c);
     await _write({
       ..._doc,
       googleProvider: {'client_id': c.clientId, 'client_secret': c.clientSecret, 'set_at': now, 'set_by': ?by},
     });
     _google = provider;
+    _bump(googleProvider);
   }
 
   /// Turns Apple on with [c] (or changes it), as [by] did at [now], and keeps it. Throws
   /// [FormatException] for a key that isn't a `.p8`.
   Future<void> setApple(AppleClient c, {String? by, required int now}) async {
+    _requireAttached();
     final provider = appleFor(c);
     await _write({
       ..._doc,
@@ -199,14 +230,28 @@ class HostSignIn {
       },
     });
     _apple = provider;
+    _bump(appleProvider);
   }
 
   /// Turns [provider] off and forgets what it was set up with.
   Future<void> turnOff(String provider) async {
+    _requireAttached();
     final next = {..._doc}..remove(provider);
     await _write(next);
     if (provider == googleProvider) _google = null;
     if (provider == appleProvider) _apple = null;
+    _bump(provider);
+  }
+
+  /// A settings file others can read (copied in by hand, or from a restore on a system without
+  /// `chmod`) is made its owner's alone as the host starts; when that fails, the log says so.
+  void _ownerOnly() {
+    final file = _file;
+    if (file == null || Platform.isWindows || !file.existsSync()) return;
+    if (file.statSync().mode & 0x3f == 0) return;
+    if (restrictToOwner(file.path, warn: _log?.warn)) {
+      _log?.warn('${file.path} could be read by other users on this machine; it is its owner\'s alone now.');
+    }
   }
 
   OidcProvider? _googleFrom(Object? entry) {
@@ -352,9 +397,15 @@ class HubSignInSetup {
     return jsonResponse(_describe(), headers: const {'cache-control': 'no-store'});
   }
 
-  /// `PUT /api/v1/hub/sign-in/<provider>`.
+  /// `PUT /api/v1/hub/sign-in/<provider>`. Only over HTTPS (at a trusted proxy that says so) or
+  /// from this machine itself: what it carries is a secret.
   Future<Response> turnOn(Request r, String provider) async {
     if (provider != googleProvider && provider != appleProvider) throw ApiError.notFound();
+    if (!arrivedOverHttps(r, hub.config.trustedProxies) && !DenHost.local(r)) {
+      hub.failed(r);
+      throw ApiError(403, 'needs_https',
+          'Open Den at its https address to set this up: what you paste here is a secret, and this connection isn\'t encrypted.');
+    }
     final signed = await auth.withBody(r, limit: 16 * 1024);
     final c = _allowed(signed.check);
     hub.limit(r, 'sign-in-setup', Limits.signInSetup, message: 'Too many tries. Wait a few minutes, then try again.');
@@ -378,6 +429,7 @@ class HubSignInSetup {
       final secretProblem = googleSecretProblem(client.clientSecret);
       if (secretProblem != null) throw ApiError.invalid(secretProblem, field: 'client_secret');
       await _check(s.googleFor(client), back, now);
+      _stillHost(s);
       await s.setGoogle(client, by: actor.id, now: now);
     } else {
       final client = AppleClient(
@@ -402,11 +454,20 @@ class HubSignInSetup {
         throw ApiError.invalid('${e.message}. Choose the .p8 file Apple gave you for Sign in with Apple.', field: 'key');
       }
       await _check(candidate, back, now);
+      _stillHost(s);
       await s.setApple(client, by: actor.id, now: now);
     }
     final name = provider == googleProvider ? 'Google' : 'Apple';
     hub.log.info('${actor.name} ${wasOn ? 'changed' : 'turned on'} signing in with $name');
     return jsonResponse(_describe(), headers: const {'cache-control': 'no-store'});
+  }
+
+  /// Throws unless this family is still the host's own, attached: it may have stopped while the
+  /// provider was asked, and then nothing may be kept.
+  void _stillHost(HostSignIn s) {
+    if (s.hostFamily != hub.den.deviceId) {
+      throw ApiError(503, 'not_ready', 'The hub is restarting, so nothing changed. Try again in a minute.', details: {'retry': true});
+    }
   }
 
   /// Reads [p]'s discovery document and asks its token endpoint whether it knows the client;
@@ -430,6 +491,12 @@ class HubSignInSetup {
                 field: 'client_id')
             : ApiError.invalid('Apple didn\'t take that Services ID, Team ID, Key ID and key together. Check each one, and that '
                 'the key is for Sign in with Apple.', field: 'services_id');
+      case ClientCheck.unconfirmed:
+        throw p.id == googleProvider
+            ? ApiError.invalid('Google didn\'t confirm that client ID and secret, so nothing changed. Check that the addresses above '
+                'are added to the client, then try again in a few minutes.', field: 'client_id')
+            : ApiError.invalid('Apple didn\'t confirm that Services ID and key, so nothing changed. Check that the addresses above '
+                'are added to the Services ID, then try again in a few minutes.', field: 'services_id');
       case ClientCheck.wrongKind:
         throw p.id == googleProvider
             ? ApiError.invalid('That client can\'t sign in on a website. Make one of the type Web application.', field: 'client_id')
@@ -443,6 +510,7 @@ class HubSignInSetup {
     if (provider != googleProvider && provider != appleProvider) throw ApiError.notFound();
     final c = _allowed(await auth.check(r));
     final s = _settings!;
+    _stillHost(s);
     if (s.isOn(provider)) {
       await s.turnOff(provider);
       hub.log.info('${c.actor!.name} turned off signing in with ${provider == googleProvider ? 'Google' : 'Apple'}');

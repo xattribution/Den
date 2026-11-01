@@ -65,6 +65,10 @@ enum ClientCheck {
 
   /// It knows the client, which can't sign people in on a website.
   wrongKind,
+
+  /// Its answer confirmed nothing (a page, a redirect, too many tries, a redirect address it
+  /// doesn't know): nothing is kept.
+  unconfirmed,
 }
 
 /// A sign-in the hub refused. [reason] is for the log: never a token, a code, a claim's value
@@ -618,8 +622,9 @@ class OidcProvider {
   /// Whether the token endpoint knows this client, its secret and (Apple) its key, asked the
   /// only way a provider answers it: a made-up code is exchanged, which it refuses either way,
   /// with `invalid_client` when it doesn't know the client or its secret, `unauthorized_client`
-  /// when the client can't sign in on a website, and something else (`invalid_grant`) when all
-  /// is well but the code. Throws [OidcRefused] when the provider can't be reached.
+  /// when the client can't sign in on a website, and `400 invalid_grant` when all is well but
+  /// the code; anything else is [ClientCheck.unconfirmed]. Throws [OidcRefused] when the
+  /// provider can't be reached.
   Future<ClientCheck> checkClient(http.Client client, {required String redirectUri, required int now}) async {
     final at = await endpoints(client, now);
     final request = http.Request('POST', at.token)
@@ -637,10 +642,15 @@ class OidcProvider {
     if (answer.status >= 500) {
       throw OidcRefused('the token endpoint answered ${answer.status}', kind: OidcRefusal.unavailable);
     }
-    return switch (answer.json['error']) {
+    final error = answer.json['error'];
+    // Only the answer a provider gives a client it knows, about a code it doesn't, confirms the
+    // client: anything else (a page, a redirect, too many tries, a redirect address it doesn't
+    // have, no JSON at all) confirms nothing.
+    if (answer.status == 400 && error == 'invalid_grant') return ClientCheck.known;
+    return switch (error) {
       'invalid_client' => ClientCheck.unknown,
       'unauthorized_client' => ClientCheck.wrongKind,
-      _ => ClientCheck.known,
+      _ => ClientCheck.unconfirmed,
     };
   }
 

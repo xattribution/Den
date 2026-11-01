@@ -221,7 +221,7 @@ class HubAssistant {
 
   void _restrict() {
     final dir = hub.config.dataDir;
-    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json');
+    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json', warn: hub.log.warn);
   }
 
   /// `POST /api/v1/assistant/model`: one model request from a device, in the provider's format,

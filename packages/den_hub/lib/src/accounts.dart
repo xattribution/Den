@@ -33,11 +33,15 @@ class _Flow {
     required this.browser,
     required this.created,
     required this.client,
+    required this.generation,
     this.binding,
   });
 
   final String provider;
   final String nonce;
+
+  /// The provider's generation it began under ([HostSignIn.generationOf]).
+  final int generation;
 
   /// The client it came from ([HubContext.clientOf]): each keeps only a few plain sign-ins.
   final String client;
@@ -62,9 +66,13 @@ class _Flow {
 
 /// A browser signed in as a member, kept by the hub under its cookie's hash.
 class _Session {
-  _Session({required this.member, required this.account, required this.created});
+  _Session({required this.member, required this.account, required this.created, required this.generation});
 
   final String member;
+
+  /// The provider's generation it signed in under: turning the provider off or changing its
+  /// client ends it.
+  final int generation;
 
   /// The account it signed in with: the session ends when the member no longer has it.
   final AccountRef account;
@@ -90,6 +98,7 @@ class _Binding {
     required this.member,
     required this.provider,
     required this.created,
+    required this.generation,
   });
 
   /// SHA-256 of the id the phone reads it back by.
@@ -101,6 +110,9 @@ class _Binding {
   final String member;
   final String provider;
   final int created;
+
+  /// The provider's generation it began under.
+  final int generation;
 
   /// Whether a browser has opened the start link: a second one spoils it.
   bool started = false;
@@ -180,6 +192,9 @@ class HubAccounts {
   final Map<String, _Session> _sessions = {};
   final Map<String, _Binding> _bindings = {};
   final Map<String, _Binding> _tickets = {};
+
+  /// [provider]'s generation now: what a flow, a session or a binding must still match.
+  int _generation(String provider) => hub.host?.signIn.generationOf(provider) ?? 0;
 
   /// The providers on for this hub now: the host's.
   SignInProviders? get providers => hub.host?.signIn.providers;
@@ -261,7 +276,13 @@ class HubAccounts {
   Response _confirm(OidcProvider p, String ticket, int now) {
     final binding = _tickets[_sha(ticket)];
     final member = binding == null ? null : hub.den.member(binding.member);
-    if (binding == null || member == null || binding.expired(now) || binding.provider != p.id || binding.failure != null || binding.started) {
+    if (binding == null ||
+        member == null ||
+        binding.expired(now) ||
+        binding.provider != p.id ||
+        binding.generation != _generation(p.id) ||
+        binding.failure != null ||
+        binding.started) {
       return _expired();
     }
     final family = hub.den.family?.name;
@@ -296,7 +317,9 @@ class HubAccounts {
     final now = hub.now();
     _prune(now);
     final binding = ticket == null ? null : _tickets[_sha(ticket)];
-    if (binding == null || binding.expired(now) || binding.provider != p.id || binding.failure != null) return _expired();
+    if (binding == null || binding.expired(now) || binding.provider != p.id || binding.generation != _generation(p.id) || binding.failure != null) {
+      return _expired();
+    }
     return _begin(r, p, binding, now);
   }
 
@@ -324,7 +347,16 @@ class HubAccounts {
     final state = randomToken(), nonce = randomToken(), verifier = randomToken(), browser = randomToken();
     _keep(
       _sha(state),
-      _Flow(provider: p.id, nonce: nonce, verifier: verifier, browser: _sha(browser), created: now, client: hub.clientOf(r), binding: binding),
+      _Flow(
+        provider: p.id,
+        nonce: nonce,
+        verifier: verifier,
+        browser: _sha(browser),
+        created: now,
+        client: hub.clientOf(r),
+        generation: _generation(p.id),
+        binding: binding,
+      ),
     );
     final to = p.authorizeUrl(endpoints, redirectUri: redirectUri(p), state: state, nonce: nonce, challenge: pkceChallenge(verifier));
     return Response.found(to, headers: {'set-cookie': _cookie(flowCookie, browser, flowLifetime), 'cache-control': 'no-store'});
@@ -367,7 +399,7 @@ class HubAccounts {
     }
     final state = form['state'];
     final flow = state == null ? null : _flows[_sha(state)];
-    if (flow == null || flow.provider != p.id || flow.expired(hub.now())) return _expired();
+    if (flow == null || flow.provider != p.id || flow.generation != _generation(p.id) || flow.expired(hub.now())) return _expired();
     if (flow.posted) {
       // A second post for one sign-in: a replay, or someone else's code. It finishes nothing.
       _flows.remove(_sha(state!));
@@ -397,6 +429,11 @@ class HubAccounts {
     final flow = state == null ? null : _flows.remove(_sha(state));
     if (flow == null || flow.provider != p.id || flow.expired(now)) return _expired();
     final binding = flow.binding;
+    if (flow.generation != _generation(p.id)) {
+      // The provider was turned off or changed since this sign-in began: it finishes nothing.
+      binding?.fail('Sign-in with ${p.name} was changed while you were signing in. Start again in Den.');
+      return _expired();
+    }
     final browser = cookie(r, flowCookie);
     if (browser == null || !textEqual(_sha(browser), flow.browser)) {
       binding?.fail('The sign-in finished in another browser, so it doesn\'t bind anything. Start again in Den.');
@@ -468,7 +505,7 @@ class HubAccounts {
       _sessions.remove(_sha(old));
     }
     final token = randomToken();
-    _sessions[_sha(token)] = _Session(member: member.id, account: member.account!, created: hub.now());
+    _sessions[_sha(token)] = _Session(member: member.id, account: member.account!, created: hub.now(), generation: _generation(p.id));
     while (_sessions.length > maxSessions) {
       _sessions.remove(_sessions.keys.first);
     }
@@ -491,7 +528,7 @@ class HubAccounts {
   Future<Response> _bind(_Binding b, OidcIdentity who, OidcProvider p) async {
     final family = hub.den.familyId;
     final member = hub.den.member(b.member);
-    bool over() => _bindings[b.id] != b || b.expired(hub.now()) || b.failure != null;
+    bool over() => _bindings[b.id] != b || b.expired(hub.now()) || b.failure != null || b.generation != _generation(p.id);
     if (over() || !hub.ready || family == null || member == null) return _expired();
     if (b.result != null) {
       b.fail('That sign-in came back twice, so it doesn\'t bind anything. Start again in Den.');
@@ -564,7 +601,12 @@ class HubAccounts {
     final s = _sessions[key];
     if (s == null) return null;
     final m = hub.ready ? hub.den.member(s.member) : null;
-    if (hub.now() >= s.expires || m == null || m.account != s.account || !m.isParent) {
+    if (hub.now() >= s.expires ||
+        m == null ||
+        m.account != s.account ||
+        !m.isParent ||
+        s.generation != _generation(s.account.provider) ||
+        providers?.byId(s.account.provider) == null) {
       _sessions.remove(key);
       return null;
     }
@@ -617,7 +659,15 @@ class HubAccounts {
     }
     if (_bindings.length >= maxBindings) throw ApiError(429, 'busy', 'The hub is busy. Try again in a few minutes.');
     final id = randomToken(), ticket = randomToken();
-    final b = _Binding(id: _sha(id), ticket: _sha(ticket), device: device, member: c.actor!.id, provider: provider.id, created: now);
+    final b = _Binding(
+      id: _sha(id),
+      ticket: _sha(ticket),
+      device: device,
+      member: c.actor!.id,
+      provider: provider.id,
+      created: now,
+      generation: _generation(provider.id),
+    );
     _bindings[b.id] = b;
     _tickets[b.ticket] = b;
     return jsonResponse({
@@ -639,6 +689,11 @@ class HubAccounts {
       if (b != null && b.expired(now)) _drop(b);
       throw ApiError.notFound(type: 'binding', message: 'That sign-in expired. Start again.');
     }
+    if (b.generation != _generation(b.provider)) {
+      _drop(b);
+      final name = b.provider == appleProvider ? 'Apple' : 'Google';
+      return jsonResponse({'state': 'failed', 'message': 'Sign-in with $name was changed or turned off. Start again.'});
+    }
     final failure = b.failure;
     if (failure != null) {
       _drop(b);
@@ -656,8 +711,8 @@ class HubAccounts {
   }
 
   void _prune(int now) {
-    _flows.removeWhere((_, f) => f.expired(now));
-    _sessions.removeWhere((_, s) => now >= s.expires);
+    _flows.removeWhere((_, f) => f.expired(now) || f.generation != _generation(f.provider));
+    _sessions.removeWhere((_, s) => now >= s.expires || s.generation != _generation(s.account.provider));
     final gone = [for (final b in _bindings.values) if (b.expired(now)) b];
     gone.forEach(_drop);
   }

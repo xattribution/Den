@@ -166,7 +166,7 @@ class HubRecovery {
   Future<void> _save(String doc) async {
     await hub.state.save(doc);
     final dir = _dir;
-    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$doc.json');
+    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$doc.json', warn: hub.log.warn);
   }
 
   /// The hub's server recovery key, made and kept on first use.
