@@ -3,7 +3,7 @@
 This page is for Jared, not for James. James's whole manual is one line:
 
 ```sh
-curl -fsSL https://get.kotvas.app | sudo sh -s -- --token eyJhIjoi...
+curl -fsSL https://github.com/xattribution/Den/releases/latest/download/install.sh | sudo sh -s -- --token eyJhIjoi...
 ```
 
 That line works on any 64-bit Linux computer (an old PC, a mini PC, a Raspberry Pi 4 or 5 with
@@ -284,25 +284,14 @@ somewhat bigger, with cloudflared and rclone in it.
 
 ## Where the script is served from
 
-The repository is private, so its raw GitHub URL doesn't work for James, and a container
-registry can't serve a script. The recommendation is **`https://get.kotvas.app` as a Cloudflare
-redirect rule to a release asset on a small public repository**:
+From a release of this repository, once it's public:
+`https://github.com/xattribution/Den/releases/latest/download/install.sh`. Until then that
+link doesn't work for anyone without access.
 
-1. Make a public repository, `xattribution/den-install`, holding only a README (and the
-   license). It never gets code.
-2. Each release uploads `deploy/install.sh` to a release there:
-   `tools/release.sh vX.Y.Z --publish-script` (that's `gh release create vX.Y.Z deploy/install.sh
-   --repo xattribution/den-install`). Tags there don't start this repository's CI.
-3. In Cloudflare, for kotvas.app: a proxied DNS record `get` (an `AAAA` to `100::` is the usual
-   placeholder), and a Redirect Rule: hostname equals `get.kotvas.app`, a static 302 to
-   `https://github.com/xattribution/den-install/releases/latest/download/install.sh`.
-   `curl -fsSL` follows it.
-
-Why this way: no server to keep up, the script and the image come out of the same release, the
-URL never changes, and if kotvas.app is ever in trouble the GitHub URL works by itself. A
-Cloudflare Pages project serving the one file would work as well, at the price of one more
-deploy step per release. The script keeps the address it prints in one constant
-(`DEN_GET_URL`).
+Each release attaches `deploy/install.sh`: `tools/release.sh vX.Y.Z --publish-script` runs
+`gh release create release/vX.Y.Z deploy/install.sh --verify-tag`. The tag is `release/…`, never
+`v*`, because a `v*` tag starts the paid release workflow in `.github/workflows/ci.yml`. No other
+repository and no domain of Jared's is involved.
 
 ## Moving the VPS to the new installer
 
@@ -321,7 +310,7 @@ VPS, with the same address, `den.kotvas.app`.
    drops inbound traffic only, and the tunnel goes out. To retire them as well:
    `sudo systemctl disable --now den-allowlist.timer den-firewall.service && sudo nft delete table inet den_fw`,
    but only once SSH works the way you want without them.
-4. **Install:** `curl -fsSL https://get.kotvas.app | sudo sh -s -- --token eyJ...`
+4. **Install:** `curl -fsSL https://github.com/xattribution/Den/releases/latest/download/install.sh | sudo sh -s -- --token eyJ...`
    (until the script is published: `sudo sh deploy/install.sh --token eyJ...` from a checkout).
    It sees a public address, so it publishes only on 127.0.0.1, and it ends with the https setup
    link.

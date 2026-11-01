@@ -10,7 +10,7 @@ the device too, so Den keeps working while the hub is down; it just doesn't sync
 > Cloudflare Tunnel:
 >
 > ```sh
-> curl -fsSL https://get.kotvas.app | sudo sh
+> curl -fsSL https://github.com/xattribution/Den/releases/latest/download/install.sh | sudo sh
 > ```
 >
 > [install-technical.md](install-technical.md) says how it works, how releases are made, and

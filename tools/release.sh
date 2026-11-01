@@ -25,7 +25,7 @@ IMAGE=ghcr.io/xattribution/den
 PLATFORMS=linux/amd64,linux/arm64
 BUILDER=den-release
 BINFMT=tonistiigi/binfmt:qemu-v10.2.3
-SCRIPT_REPO=xattribution/den-install   # public: serves install.sh (docs/install-technical.md)
+SCRIPT_REPO=xattribution/Den   # serves install.sh as a release asset once the repo is public
 
 version='' stable=1 dry=0 dirty=0 promote=0 publish_script=0
 while [ $# -gt 0 ]; do
@@ -150,11 +150,11 @@ say "   To share the tag: git push origin release/$version"
 step "The install script"
 if [ "$publish_script" = 1 ]; then
   command -v gh > /dev/null || stop "--publish-script needs the GitHub CLI (gh), signed in."
-  run gh release create "$version" deploy/install.sh --repo "$SCRIPT_REPO" --title "Den $version" \
-    --notes "deploy/install.sh at $commit. Install: curl -fsSL https://get.kotvas.app | sudo sh"
+  run gh release create "release/$version" deploy/install.sh --verify-tag --repo "$SCRIPT_REPO" --title "Den $version" \
+    --notes "deploy/install.sh at $commit. Install: curl -fsSL https://github.com/xattribution/Den/releases/latest/download/install.sh | sudo sh"
 else
-  say "   deploy/install.sh changes only with a release; to publish it where get.kotvas.app points:"
-  say "     tools/release.sh $version --publish-script   (or: gh release create $version deploy/install.sh --repo $SCRIPT_REPO)"
+  say "   deploy/install.sh changes only with a release; to publish it where the install link points:"
+  say "     tools/release.sh $version --publish-script   (or: gh release create release/$version deploy/install.sh --verify-tag --repo $SCRIPT_REPO)"
 fi
 
 say ""

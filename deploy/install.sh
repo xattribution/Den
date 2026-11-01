@@ -2,8 +2,8 @@
 # Den's installer: makes any Linux computer (an old PC, a mini PC, a Raspberry Pi 4 or 5 with the
 # 64-bit system, a VPS) the family's Den server, with one command and nothing to edit:
 #
-#   curl -fsSL https://get.kotvas.app | sudo sh
-#   curl -fsSL https://get.kotvas.app | sudo sh -s -- --token eyJ...   (with the tunnel's token)
+#   curl -fsSL https://github.com/xattribution/Den/releases/latest/download/install.sh | sudo sh
+#   curl -fsSL https://github.com/xattribution/Den/releases/latest/download/install.sh | sudo sh -s -- --token eyJ...   (with the tunnel's token)
 #
 # Once installed it is also the server's `den` command (sudo den help). Run the installer again
 # any time: it repairs what's broken and updates Den. docs/install-technical.md says how it works.
@@ -23,7 +23,7 @@
 # POSIX sh, so `curl ... | sudo sh` works with dash, bash or busybox. Everything is inside
 # functions and the last line calls main, so a download cut short runs nothing.
 
-DEN_GET_URL=https://get.kotvas.app
+DEN_GET_URL=https://github.com/xattribution/Den/releases/latest/download/install.sh
 DEN_IMAGE_DEFAULT=ghcr.io/xattribution/den
 DEN_CHANNEL_DEFAULT=stable
 DEN_PORT=47733
