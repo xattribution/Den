@@ -33,6 +33,7 @@ import 'push/push_service.dart';
 import 'recovery.dart';
 import 'relay_watch.dart';
 import 'reminders.dart';
+import 'screen_codes.dart';
 import 'setup.dart';
 import 'sign_in_setup.dart';
 import 'state.dart';
@@ -65,6 +66,7 @@ class DenHub implements RoutableLog {
   late final HubSetup _setup;
   late final LinkSlots _links;
   late final HubInvites _invites;
+  late final ScreenCodes _screens;
   late final HubFeedLinks _feedLinks;
   late final EventStream _stream;
   late final RestApi _api;
@@ -157,6 +159,9 @@ class DenHub implements RoutableLog {
 
   /// Invites by message, for the host's lookups across families.
   HubInvites get invites => _invites;
+
+  /// Kitchen screens waiting for a parent to type their code.
+  ScreenCodes get screens => _screens;
 
   /// Whether [request]'s signature checks out for this hub from its headers alone: signed for
   /// this hub, with the body hash it covers, by an approved device of this family, fresh. No side
@@ -288,6 +293,7 @@ class DenHub implements RoutableLog {
     _capture.register(_routes);
     _assistant = HubAssistant(_ctx, _auth, usage)..register(_routes);
     _invites = HubInvites(_ctx)..register(_routes);
+    _screens = ScreenCodes(_ctx, _auth)..register(_routes);
     feedLinks.register(_routes);
     _recovery = HubRecovery(_ctx, _auth)..register(_routes);
     _push.register(_routes);

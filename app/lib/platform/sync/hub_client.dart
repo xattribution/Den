@@ -324,6 +324,17 @@ class HubClient {
     );
   }
 
+  /// `POST /api/v1/screens/{path}` from a kitchen screen with no family: `code` (show a code),
+  /// `code/status` and `code/join`. Answers the hub's JSON.
+  Future<Map<String, Object?>> screen(Uri base, String path, Map<String, Object?> body) => _send(
+        () => _http.post(
+          base.replace(path: '/api/v1/screens/$path'),
+          headers: const {'content-type': 'application/json'},
+          body: jsonEncode(body),
+        ),
+        base,
+      );
+
   void close() => _http.close();
 
   Future<Map<String, Object?>> _send(Future<http.Response> Function() request, Uri base) async {

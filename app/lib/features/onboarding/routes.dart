@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/household.dart';
 import '../../platform/sync/pairing.dart';
 import '../family/family.dart' show AnotherFamilyPairing, MissingFamilyScreen;
+import '../kitchen_screen/kitchen_screen.dart' show ScreenCodeScreen;
 
 import 'screens/add_people_screen.dart';
 import 'screens/join_screen.dart';
@@ -15,9 +16,9 @@ import 'screens/welcome_screen.dart';
 
 /// Getting a device into a family: `/welcome` with `start?setup=&hub=`, `words` (recovery
 /// words, offered later from Needs you), `people`, `join?code=`, `recover?code=` ("I lost my
-/// phone"), `link` and `waiting`, and the links `/join/:code` (an invite), `/setup/:code/:hub`
-/// (a fresh hub's setup link) and `/recover/:code` (from whoever runs the hub), which the app's
-/// redirect sends on.
+/// phone"), `link`, `screen` (set up as a kitchen screen) and `waiting`, and the links
+/// `/join/:code` (an invite), `/setup/:code/:hub` (a fresh hub's setup link) and `/recover/:code`
+/// (from whoever runs the hub), which the app's redirect sends on.
 final List<RouteBase> onboardingRoutes = [
   GoRoute(
     path: '/welcome',
@@ -39,6 +40,7 @@ final List<RouteBase> onboardingRoutes = [
       ),
       GoRoute(path: 'link', builder: (_, _) => const LinkThisBrowserScreen()),
       GoRoute(path: 'waiting', builder: (_, _) => const WaitingScreen()),
+      GoRoute(path: 'screen', builder: (_, _) => const ScreenCodeScreen()),
     ],
   ),
   GoRoute(path: '/join/:code', redirect: (_, _) => '/welcome/join'),

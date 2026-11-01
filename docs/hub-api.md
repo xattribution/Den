@@ -52,6 +52,7 @@ feed), and the mDNS advertisement.
   [`PUT /api/v1/assistant`](#put-apiv1assistant) ·
   [`POST /api/v1/assistant/model`](#post-apiv1assistantmodel)
 - [Invites by message](#invites-by-message)
+- [Kitchen screens that join with a code](#kitchen-screens-that-join-with-a-code)
 - [Calendar links: Den in a phone's calendar](#calendar-links-den-in-a-phones-calendar):
   [`GET /api/v1/feeds`](#get-apiv1feeds) ·
   [`POST /api/v1/feeds`](#post-apiv1feeds) ·
@@ -196,10 +197,12 @@ The hub counts what each client does, by IP address (an IPv6 address by its /64)
 | What | Budget |
 | --- | --- |
 | Requests without a working token or device signature (health, status, the web app's files, OAuth metadata and polling, and any request whose token the hub doesn't know or whose signature doesn't verify; a device signature counts as working only with `X-Den-Body-SHA256`, which lets the hub check it before the body) | 600 a minute. Requests from this machine itself (loopback, not through a proxy) aren't counted |
-| Tokens or device signatures that don't work, link codes that don't match | 30 in 5 minutes; then every authenticated request from that client gets `429` until the budget refills |
-| Browser link slots and link grants, invite and recovery redemptions | 20 in 10 minutes |
+| Tokens or device signatures that don't work, link codes that don't match, a kitchen screen's secret that doesn't match | 30 in 5 minutes; then every authenticated request from that client gets `429` until the budget refills |
+| Browser link slots and link grants, invite and recovery redemptions, kitchen screens' codes | 20 in 10 minutes |
 | Wrong setup codes | 5, then that client waits a minute, doubling to an hour with each further wrong code |
 | Wrong invite words or slots, wrong recovery codes | 10 in 10 minutes for each (and 200 in 10 minutes from all clients together) |
+| Wrong kitchen screen codes (a parent's phone) | 10 in 10 minutes from one client, and 50 for the whole family |
+| Kitchen screens waiting with a code | 3 from one client, 20 for the family |
 | Invite keys on `/ws` that name nothing (`pair` kind `key`) | 10 in 10 minutes from one client, 200 from all clients together; then `pair_fail` `rate-limited` |
 | Devices on `/ws` that aren't approved yet (proving an invite or code, or waiting for a parent) | 4 at once, of 64 for everyone |
 | OAuth: registrations, sign-in requests, token requests | 10 an hour, 10 in 15 minutes, 60 in 5 minutes |
@@ -1830,6 +1833,33 @@ client (see [Limits per client](#limits-per-client)).
 Redeeming needs no open "Add a device" window in the public posture: the invite is a parent's
 consent already.
 
+## Kitchen screens that join with a code
+
+A tablet or old laptop opened at the family's address shows a short code; a parent types it on
+her own phone (Settings, Kitchen screen, Add a screen) and approves the screen there
+(ARCHITECTURE.md, "Pairing", "Kitchen screen code"). The hub only carries messages between the
+two: it never writes the screen's request or its approval, and nothing it keeps lets anyone in.
+
+The screen picks the code, 8 characters of Crockford's base32 (40 bits, `K7QM-3RXA`), and both
+ends stretch it with Argon2id (den_net's `ScreenCode`): the hub sees only its `slot` (64 hex) and
+two tags, HMAC-SHA256 under a key from the same stretch, so it can't learn the code or put
+another key under it. Waiting screens live in the hub's memory only, 10 minutes each, at most 20
+for the family and 3 per client. A code is the family's: it is found only among the screens that
+asked at this family's address.
+
+The screen's requests take no token or signature (it has no family yet); they carry the `secret`
+the hub gave it. The parent's are signed by a parent's own device ([Capture](#capture-reading-for-every-device)
+has the headers); anyone else is `403 permission_denied`, unsigned `401`.
+
+| Method and path | Who | What |
+| --- | --- | --- |
+| `POST /api/v1/screens/code` `{slot, pubkey, xpub, name, kind, tag}` | The screen | Keeps it waiting for 10 minutes; `201 {secret, expires, expires_ms}`. `tag` is the code's over `[pubkey, xpub, name, kind]`. `409 conflict` (that slot is taken: pick another code), `409 known_device` (the family knows this device already), `429 rate_limited` (the client's share or the family's cap, and the browser link budget, see [Limits per client](#limits-per-client)), `503 not_ready` |
+| `POST /api/v1/screens/find` `{slot}` | A parent's own device | `{slot, device, pubkey, xpub, name, kind, tag, expires_ms}` for the phone to check the tag before it asks. `404 not_found` alike for a wrong code, one another parent took and one that ran out; `429 rate_limited` after 10 wrong codes in 10 minutes from one client, or 50 for the whole family |
+| `POST /api/v1/screens/accept` `{slot, family, founder, hub, name, tag}` | A parent's own device | After she said Add: what the screen joins with (this family, its founder's key, this hub, the name she chose) and the phone's tag over `[family, founder, hub, pubkey, name]`. From then on only this device goes on with the code. `400` when they aren't this family's |
+| `POST /api/v1/screens/code/status` `{slot, secret}` | The screen | `waiting`; `accepted` or `requested` with `family, founder, hub, name, tag`; `approved` or `declined` once the family's log says so. `404` once the code ran out or was settled (30 seconds after) |
+| `POST /api/v1/screens/code/join` `{slot, secret, change}` | The screen | Its own signed join request: its device record, by itself, for nobody, `approved: false`, `mode: shared`, the key the code was bound to and nothing else (den_net's `isScreenJoinRequest`). Kept, never written. `400` for any other change, `409 not_accepted` before a parent took the code |
+| `POST /api/v1/screens/request` `{slot}` | The parent's device that took the code | `accepted` (no request yet), `requested` with `change`, or `approved`. The phone checks the change again, writes it into the family's log with its own approval (shared, nobody's) and syncs both to the hub |
+
 ## Calendar links: Den in a phone's calendar
 
 "Show Den in iPhone Calendar": a parent's own device makes a read-only address for the
@@ -2370,6 +2400,7 @@ records alone.
 | `GET`/`POST /api/v1/link/{slot}` | The family that gave the browser that link code |
 | `POST /api/v1/invites` | The hub the grant's invite names |
 | `POST /api/v1/hub/setup` | The address's family only (the setup link names it); at an address that is no family's, `404 no_family` |
+| `POST /api/v1/screens/code...` (a kitchen screen with no family) | The address's family only: a screen's code is found only by that family's parents, whose signed requests go to their own hub, so a parent of another family on the host finds nothing, the same as a wrong code |
 | `/auth/*`, `GET /api/v1/me` | The address's family only: each family's sign-in comes back to its own address (its own redirect), with cookies only that address holds (`__Host-`). At an address that is no family's, `404 no_family`, before any sign-in starts |
 | Anything else | The address's family |
 

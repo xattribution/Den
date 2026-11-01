@@ -847,6 +847,30 @@ receive; the session's limit then applies.
   self-admitting change (`Den.requestInviteJoin`) and sends it as its `join`; validity decides.
   Proofs naming no live key count against the client, 10 in 10 minutes each and 200 from all
   together, since a key from four words could otherwise be guessed at the door.
+- **Kitchen screen code** (a tablet or old laptop for the counter, no invite to get onto it):
+  opened at the family's address with no family, the screen makes its keys and picks a code, 8
+  characters of Crockford's base32 (40 bits, `K7QM-3RXA`, shown big and as a QR code of
+  `den://screen/<code>` for Den's own scanner: no link ever fills a code in, so typing or
+  scanning the code on the screen in front of her is what says she is there). Both ends stretch
+  it with Argon2id (4 MiB, 3 passes, salt `den/screen-code/v1`) into the hub's slot and a MAC key
+  (den_net's `ScreenCode`). The
+  screen leaves its device key, sealing key, name and kind at the hub under the slot with the
+  code's tag over them; a parent types the code on her own phone (Settings, Kitchen screen, Add
+  a screen), whose signed request finds it in her family's hub only, and the phone checks the tag
+  before it asks "Add Kitchen iPad as a kitchen screen?". On Add, the phone sends the family, its
+  founder key, the hub and the chosen name with its own tag; the screen checks that tag, writes
+  its own join request (unapproved, shared, for nobody) and hands it to the hub; the phone takes
+  it, checks it is that key asking for that and nothing else (the kind the code was tagged with, never a hub, under the name she chose), writes it into its log with its
+  approval (`approveDevice`, shared, nobody's) and syncs both. The screen waits on the hub,
+  pinned to its device id, like any device that asked to join. So the trust decision is the
+  ordinary approval, signed on a parent's own device; the hub never writes the request or the
+  approval, and finding the code from the slot to swap in another key takes 2^39 Argon2id runs
+  on average in its ten minutes. A code is used once and works 10 minutes; the hub keeps waiting
+  screens in memory only, 20 for a family and 3 per client, and stops looking after 10 wrong
+  codes in 10 minutes from one client or 50 for the family (`den_hub`'s `ScreenCodes`, the API
+  in docs/hub-api.md). Nothing here uses an invite or an invite key: with account grants it
+  becomes the parent's phone writing a grant for the key the code carried, with no pending
+  request at all.
 - **Recovery words** ("I lost my phone"): the joiner connects to a device that serves sessions
   (the hub) with no family, and sends `pair {kind: recovery, key, proof}`: `key` is hex SHA-256
   of its recovery key's public half, `proof` that key's signature over `den/pair/v1/recovery` 0x00
@@ -948,6 +972,8 @@ Scopes: `read`, `calendar`, `chores`, `lists`, `points`, `admin`. `read` covers 
 | `POST /api/v1/capture/read` | signed by a device whose member may add things | Reads what was shared with the family's reader; returns den_capture's JSON |
 | `POST /api/v1/invites` | an `InviteGrant` from a parent's own device | Keeps the invite under the slot of the app's own words (with the invite key's public half, once it synced), or under four words it picks; returns the slot or the words, and a link |
 | `POST /api/v1/invites/redeem` | the slot, or the four words | The invite, who it is for, the family's name, and whether its key lets the device in at once |
+| `POST /api/v1/screens/code`, `.../code/status`, `.../code/join` | a kitchen screen with no family: the code's slot, then the secret the hub gave it | Its code's slot, keys and tag kept in memory for 10 minutes; how it stands; its own join request, kept for the parent's phone |
+| `POST /api/v1/screens/find`, `.../accept`, `.../request` | signed by a parent's own device | The screen under a typed code's slot; what it joins with; its join request, which the phone writes into the log with its approval |
 | `GET`/`PUT`/`DELETE /api/v1/push`, `POST /api/v1/push/test` | signed by a personal device | The hub's VAPID key; this device's Web Push subscription; a test notification |
 | `GET /ics/<secret>/family.ics`, `GET /ics/<secret>/<memberId>.ics` | a calendar link's secret in the path (never an API token) | Read-only ICS feed for other calendar apps, read as the parent who made the link; it ends when they turn it off, leave the family, or the device they made it on is removed. Weak `ETag`, `304` |
 | `GET /ics/<secret>/shared.ics`, `GET /ics/<secret>/watch` | a `shared` calendar link's secret | A calendar for another family: the family's Everyone events only (never Parents-only, Just-me, or events copied in from a Den feed), UIDs `<eventId>@<familyId>.den`; the watch is server-sent events (`hello`, `changed`, `revoked`) for the other family's hub |
