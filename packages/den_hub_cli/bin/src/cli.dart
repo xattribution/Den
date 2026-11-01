@@ -255,7 +255,27 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
     throw CliUsage('DEN_PEER_HUBS: ${e.message}');
   }
   final public = opt('public-url', 'DEN_PUBLIC_URL');
-  final publicUrl = public == null || public.isEmpty ? null : Uri.parse(public);
+  final configuredUrl = public == null || public.isEmpty ? null : Uri.parse(public);
+  // The family's address as the server learned it at first boot (from its Cloudflare tunnel),
+  // when the compose file doesn't name one.
+  Uri? learnedUrl() {
+    final file = File([data.path, 'hub', addressFile].join(Platform.pathSeparator));
+    if (!file.existsSync()) return null;
+    return familyAddressOf(file.readAsStringSync());
+  }
+
+  final publicUrl = configuredUrl ?? learnedUrl();
+  // The Cloudflare tunnel's connector, when the image runs one beside the hub (plumbing the
+  // compose file sets: DEN_CONNECTOR=cloudflared, DEN_CONNECTOR_METRICS=http://tunnel:20241).
+  final connectorOn = env['DEN_CONNECTOR'] == 'cloudflared';
+  final metrics = env['DEN_CONNECTOR_METRICS'];
+  final connector = CloudflaredConnector(
+    dataDir: data.path,
+    available: connectorOn,
+    metrics: metrics == null || metrics.isEmpty ? null : Uri.tryParse(metrics.contains('://') ? metrics : 'http://$metrics'),
+  );
+  final backupPassphrase = env['DEN_BACKUP_PASSPHRASE'];
+  final backupDir = env['DEN_BACKUP_DIR'];
   final exposed = a['public'] as bool? ?? _envFlag(env['DEN_PUBLIC']);
   final publicPosture = exposed ?? (publicUrl?.scheme == 'https');
   final relay = opt('relay', 'DEN_RELAY');
@@ -344,6 +364,28 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
       expected: [?publicUrl?.host],
       // A family that doesn't open is tried again this often (DEN_HOST_RETRY, seconds).
       retryInterval: Duration(seconds: int.tryParse(env['DEN_HOST_RETRY'] ?? '')?.clamp(1, 3600) ?? 30),
+      connector: connector,
+      backupPassphrase: backupPassphrase == null || backupPassphrase.isEmpty ? null : backupPassphrase,
+      backupDir: backupDir == null || backupDir.isEmpty ? null : backupDir,
+      // The first-boot pages restored a backup into the data directory: open the first family
+      // again, under the lock, at the address the server has now.
+      reopenOwn: () async {
+        await data.lock();
+        try {
+          final den = await data.open();
+          return (
+            den: den,
+            config: configFor(data, address: configuredUrl ?? learnedUrl()),
+            close: () async {
+              await den.close();
+              await data.unlock();
+            },
+          );
+        } catch (_) {
+          await data.unlock();
+          rethrow;
+        }
+      },
     ));
     try {
       final den = await data.open();
