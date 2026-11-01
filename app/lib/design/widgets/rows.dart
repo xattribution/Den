@@ -344,9 +344,13 @@ class InfoRow extends StatelessWidget {
               final scale = MediaQuery.textScalerOf(context).scale(1);
               final label = Text(this.label, style: t.meta(c.ink2));
               if (constraints.maxWidth < 360 || scale > 1.35) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [label, const SizedBox(height: 2), child],
+                // Full width, so the words start at the card's edge rather than being centred.
+                return SizedBox(
+                  width: double.infinity,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [label, const SizedBox(height: 2), child],
+                  ),
                 );
               }
               return Row(
