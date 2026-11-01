@@ -73,7 +73,8 @@ die() {
   exit 1
 }
 
-can_ask() { [ "$ASSUME_YES" = 0 ] && { : < /dev/tty; } 2>/dev/null; }
+# In a subshell: a failed redirection on `:` (a special builtin) would end the whole script in dash.
+can_ask() { [ "$ASSUME_YES" = 0 ] && (: < /dev/tty) 2>/dev/null; }
 
 # ask PROMPT: reads a line from the terminal (stdin is the script itself under curl | sh).
 ask() {
@@ -883,7 +884,7 @@ print_setup() {
     # A server on the internet with no tunnel yet: nothing but this computer can open Den.
     say "(it opens only once the tunnel is set up):"
     say ""
-    say "    sudo den tunnel        (then paste the tunnel token you were given)"
+    say "    sudo den tunnel        (then paste your tunnel token from Cloudflare)"
     say ""
     say "On this computer itself it's already: $ps_any"
   fi
@@ -972,10 +973,10 @@ cmd_install() {
 
   if [ -n "$TOKEN_ARG" ]; then
     save_token "$TOKEN"
-  elif [ "$NETWORK_MODE" = local ] && ! has_token && can_ask; then
+  elif ! has_token && can_ask; then
     say ""
-    say "This computer is on the internet, so the family reaches Den through a Cloudflare Tunnel."
-    ask "Paste the tunnel token you were given, then press Enter (or just Enter to do it later): "
+    say "The family reaches Den from anywhere through your Cloudflare Tunnel (step 1 of the guide)."
+    ask "Paste your tunnel token (or the whole command from Cloudflare), then press Enter (or just Enter to do it later): "
     TOKEN=$(clean_token "$ANSWER")
     if [ -n "$TOKEN" ]; then save_token "$TOKEN"; elif [ -n "$ANSWER" ]; then
       say "That doesn't look like a tunnel token (they start with eyJ). Later: sudo den tunnel"
