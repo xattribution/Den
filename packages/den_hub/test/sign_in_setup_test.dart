@@ -154,7 +154,7 @@ void main() {
       }
 
       await f.hub.stop();
-      final again = await DenHub.start(f.hubDen, f.hub.config);
+      final again = await DenHub.start(f.hubDen, configFor(HubConfig(), dataDir: dir.path));
       addTearDown(again.stop);
       expect(again.accounts.providers!.all.map((p) => p.id), [googleProvider, appleProvider]);
       expect((await Browser(again.localUrl).go('GET', '/auth/oidc/apple/start')).status, 302);
@@ -192,7 +192,7 @@ void main() {
 
       final swapped = await put('google', googleBody(id: googleSecret, secret: googleId));
       expect(swapped.status, 400);
-      expect(error(swapped)['field'], 'client_id');
+      expect((error(swapped)['details'] as Map)['field'], 'client_id');
       expect(error(swapped)['message'], contains('client secret'));
       final typo = await put('google', googleBody(id: 'den-client.apps.example'));
       expect(error(typo)['message'], contains('apps.googleusercontent.com'));
@@ -218,9 +218,9 @@ void main() {
 
       final notKey = await put('apple', appleBody(key: 'not a key'));
       expect(notKey.status, 400);
-      expect(error(notKey)['field'], 'key');
+      expect((error(notKey)['details'] as Map)['field'], 'key');
       final team = await put('apple', {...appleBody(), 'team_id': 'abc'});
-      expect(error(team)['field'], 'team_id');
+      expect((error(team)['details'] as Map)['field'], 'team_id');
       final otherKey = await put('apple', appleBody(key: otherP8));
       expect(otherKey.status, 400, reason: 'Apple refused the client secret it signs');
       expect(error(otherKey)['message'], contains('Apple didn\'t take'));
