@@ -73,8 +73,8 @@ abstract interface class SignInSetupSource {
 }
 
 /// [SignInSetupSource] through the family's hub, signed by this phone.
-class HubSignInSetup implements SignInSetupSource {
-  HubSignInSetup(DenNetwork network) : _api = HubApi(network);
+class HubSignInSetupSource implements SignInSetupSource {
+  HubSignInSetupSource(DenNetwork network) : _api = HubApi(network);
 
   final HubApi _api;
 

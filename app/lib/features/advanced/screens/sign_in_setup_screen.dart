@@ -63,7 +63,7 @@ class _SignInSetupScreenState extends State<SignInSetupScreen> {
     _started = true;
     final network = context.watch(const {}).network;
     final hasHub = network != null && (network.isHub || network.hubDevice != null);
-    _source = widget.source ?? (hasHub ? HubSignInSetup(network) : null);
+    _source = widget.source ?? (hasHub ? HubSignInSetupSource(network) : null);
     _load();
   }
 
