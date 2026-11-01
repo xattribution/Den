@@ -230,8 +230,8 @@ void main() {
     expect(smith.den.deviceId, hubId);
     expect(smith.catchingUp, isTrue);
     await fresh.stop();
-    final backup = jsonDecode(utf8.decode(await decryptBackup(await File(file).readAsBytes(), env.values.single))) as Map;
-    expect((backup['files'] as Map).keys, isNot(contains(startsWith('host/'))), reason: "one family's files only");
+    final backup = backupFilesOf(await openBackup(await File(file).readAsBytes(), passphrase: env.values.single));
+    expect(backup.keys, isNot(contains(startsWith('host/'))), reason: "one family's files only");
   });
 
   test('adopt: never the host\'s own directories, by any path, nor a hub it has or had; run again, it is done', () async {

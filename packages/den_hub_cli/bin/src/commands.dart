@@ -428,19 +428,26 @@ Map<String, Object?>? _object(String text) {
   }
 }
 
-String _passphrase(ArgResults a, CliIo io) {
-  final variable = _required(a, 'passphrase-env');
+/// The passphrase in the variable `--passphrase-env` names, or null when none is named or it is
+/// unset. Backups don't need one: they open with a parent's recovery words. A passphrase still
+/// opens backups made before (sealed with it alone), and is added to new ones while an install
+/// sets one, so its own scripts keep working.
+String? _passphrase(ArgResults a, CliIo io) {
+  final variable = a['passphrase-env'] as String?;
+  if (variable == null || variable.isEmpty) return null;
   final value = io.environment[variable];
-  if (value == null || value.length < 8) throw StateError('Set $variable to a passphrase of 8 characters or more.');
+  if (value == null || value.isEmpty) return null;
+  if (value.length < 8) throw StateError('Set $variable to a passphrase of 8 characters or more.');
   return value;
 }
 
-/// `den_hub backup --out FILE --passphrase-env VAR`: keys, the change log, the hub's own state
-/// and `notify.json`, sealed. Works while the hub runs (`docker compose exec hub
-/// /app/bin/den_hub backup ...`): [DataDir.readBackup] reads in an order that is consistent
-/// while the hub writes, so it doesn't need the hub's lock. With no hub running it holds the
-/// lock, so none starts halfway through. On a Den host, `--family ADDRESS` backs up that family
-/// alone, from its own directory; without it, the first family.
+/// `den_hub backup --out FILE [--passphrase-env VAR]`: keys, the change log, the hub's own state
+/// and `notify.json`, sealed so the recovery words of any parent in the family who saved theirs
+/// open it (sealed_backup.dart), and the passphrase too when one is given. Works while the hub
+/// runs (`docker compose exec hub /app/bin/den_hub backup ...`): [DataDir.readBackup] reads in an
+/// order that is consistent while the hub writes, so it doesn't need the hub's lock. With no hub
+/// running it holds the lock, so none starts halfway through. On a Den host, `--family ADDRESS`
+/// backs up that family alone, from its own directory; without it, the first family.
 Future<int> backup(ArgResults a, FamilyTarget target, CliIo io) async {
   final data = target.data;
   final out = _required(a, 'out');
@@ -455,20 +462,70 @@ Future<int> backup(ArgResults a, FamilyTarget target, CliIo io) async {
   }
   try {
     final files = await data.readBackup();
-    final sealed = await encryptBackup(
-      utf8.encode(jsonEncode({
-        'v': 1,
-        'kind': 'den_hub',
-        'files': {for (final e in files.entries) e.key: base64.encode(e.value)},
-      })),
-      passphrase,
+    final about = await backupAbout(files);
+    if (about.to.isEmpty && passphrase == null) {
+      throw StateError('Nobody could open this backup: no parent in the family has saved their recovery words yet. '
+          'Save them in Den first (Today shows how), or give a passphrase with --passphrase-env.');
+    }
+    final sealed = await sealBackup(
+      backupPlaintext(files),
+      to: about.to,
+      passphrase: passphrase,
+      madeAt: DateTime.now().toUtc().millisecondsSinceEpoch,
+      familyName: about.familyName,
+      familyId: about.familyId,
     );
     await File(out).writeAsBytes(sealed, flush: true);
     restrictToOwner(out);
-    io.out.writeln('Backed up ${files.length} files to $out. Keep a copy somewhere other than this machine.');
+    final opens = [
+      if (about.to.isNotEmpty) 'the recovery words of ${about.to.map((r) => r.name).join(' or ')}',
+      if (passphrase != null) 'the passphrase',
+    ].join(', or ');
+    io.out.writeln('Backed up ${files.length} files to $out. It opens with $opens. Keep a copy somewhere other than this machine.');
     return 0;
   } finally {
     if (locked) await data.unlock();
+  }
+}
+
+/// Opens the backup [bytes] with the passphrase or recovery words `restore` was given: words
+/// from `--words-env`, else typed at the prompt when the backup needs them.
+Future<Map<String, List<int>>> _openForRestore(ArgResults a, CliIo io, List<int> bytes) async {
+  final passphrase = _passphrase(a, io);
+  final BackupInfo info;
+  try {
+    info = readBackupInfo(bytes);
+  } on BackupException {
+    throw StateError('That isn\'t a Den backup, or it is damaged.');
+  }
+  List<String>? words;
+  final wordsVar = a['words-env'] as String?;
+  if (wordsVar != null && wordsVar.isNotEmpty) {
+    words = RecoveryWords.parse(io.environment[wordsVar] ?? '');
+    if (words == null) throw StateError('$wordsVar doesn\'t hold twelve recovery words.');
+  } else if (info.words && (passphrase == null || !info.passphrase)) {
+    io.out.writeln('This backup opens with the recovery words of ${info.names.join(' or ')}. Type them, then press Enter:');
+    String line;
+    try {
+      line = await io.input.transform(utf8.decoder).transform(const LineSplitter()).first;
+    } on Object {
+      line = '';
+    }
+    words = RecoveryWords.parse(line);
+    if (words == null) throw StateError('Those aren\'t twelve recovery words.');
+  }
+  try {
+    return backupFilesOf(await openBackup(bytes, words: words, passphrase: passphrase));
+  } on BackupOpenException catch (e) {
+    throw StateError(switch (e.reason) {
+      BackupRefusal.wrongWords => 'Those recovery words don\'t open this backup. It opens with ${info.names.join(' or ')}\'s words.',
+      BackupRefusal.wrongPassphrase => 'That backup doesn\'t open with that passphrase.',
+      BackupRefusal.needsPassphrase => 'That backup was made by an older Den and opens with its passphrase: --passphrase-env.',
+      BackupRefusal.needsWords => 'That backup opens with the recovery words of ${info.names.join(' or ')}: --words-env.',
+      BackupRefusal.damaged => 'That backup is damaged.',
+    });
+  } on FormatException catch (e) {
+    throw StateError(e.message);
   }
 }
 
@@ -478,7 +535,9 @@ const String restoreAdvice = 'Start the hub, then open Den on a phone or tablet 
     'nothing of its own: calendar feeds wait, and apps and assistants are told to try again shortly. '
     '`den_hub status` says when it has caught up.';
 
-/// `den_hub restore --in FILE --passphrase-env VAR [--force]`. Refuses while a hub runs on the
+/// `den_hub restore --in FILE [--passphrase-env VAR | --words-env VAR] [--force]`: a backup opens
+/// with a parent's recovery words (typed at the prompt, or from `--words-env`), or, for one made
+/// with a passphrase, with that. Refuses while a hub runs on the
 /// directory (stop it, then `docker compose run --rm hub restore ...`); with `--force` it first
 /// removes the hub that is there, so nothing of it mixes with the one restored. On a Den host,
 /// `--family ADDRESS` restores that family alone, into its own directory (a family the host
@@ -486,19 +545,12 @@ const String restoreAdvice = 'Start the hub, then open Den on a phone or tablet 
 /// since it holds every family's data.
 Future<int> restore(ArgResults a, DataDir root, CliIo io) async {
   final input = _required(a, 'in');
-  final passphrase = _passphrase(a, io);
   final family = a['family'] as String?;
   final known = family == null ? familyTarget(root, null, io.environment) : null;
   if (known != null && known.data.exists && a['force'] != true) {
     throw StateError('${known.data.path} already holds a hub. Use --force to replace it.');
   }
-  final Map<String, Object?> json;
-  try {
-    json = (jsonDecode(utf8.decode(await decryptBackup(await File(input).readAsBytes(), passphrase))) as Map).cast<String, Object?>();
-  } on BackupException {
-    throw StateError('That backup doesn\'t open with that passphrase.');
-  }
-  if (json['kind'] != 'den_hub') throw StateError('That isn\'t a den_hub backup.');
+  final files = await _openForRestore(a, io, await File(input).readAsBytes());
   try {
     await root.lock();
   } on StateError {
@@ -516,26 +568,19 @@ Future<int> restore(ArgResults a, DataDir root, CliIo io) async {
     rethrow;
   }
   try {
-    final files = (json['files'] as Map).cast<String, String>();
     // A backup goes back to its own family: never over another family's place on this host, with
     // that family's hub still in its own.
     final keys = files['keys.json'];
-    final device = keys == null ? null : await deviceInKeys(base64.decode(keys));
+    final device = keys == null ? null : await deviceInKeys(keys);
     final elsewhere = device == null ? null : await hubElsewhere(root, data, device, primaryUrl(root, io.environment));
     if (elsewhere != null) {
       throw StateError('That backup is of the hub of $elsewhere on this host, not of the family it would replace. '
           'Restore it with --family set to that family\'s address.');
     }
-    if (data.exists) await data.clearForRestore();
-    final written = await data.writeFiles({for (final e in files.entries) e.key: base64.decode(e.value)});
-    // The hub writes nothing of its own until a device of the family has synced with it.
-    final marker = data.file('hub/$restoreMarkerDoc.json');
-    await marker.parent.create(recursive: true);
-    await marker.writeAsString(
-      jsonEncode({'at': DateTime.now().toUtc().millisecondsSinceEpoch, 'from': File(input).uri.pathSegments.last}),
-      flush: true,
-    );
-    restrictToOwner(marker.path);
+    // The hub writes nothing of its own until a device of the family has synced with it; what
+    // belongs to this server (its connection, its backup place) stays.
+    final written = await restoreBackupFiles(data.path, files,
+        from: File(input).uri.pathSegments.last, now: DateTime.now().toUtc().millisecondsSinceEpoch);
     io.out.writeln('Restored $written files into ${data.path}.');
     io.out.writeln(restoreAdvice);
     return 0;

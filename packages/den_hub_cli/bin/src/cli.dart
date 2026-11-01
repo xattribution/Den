@@ -76,10 +76,11 @@ ArgParser cliParser() {
       .addOption('person', help: 'The parent who lost their phone, by their name in Den (in quotes if it has a space)');
   _family(_common(root.addCommand('backup')))
     ..addOption('out', help: 'Backup file to write')
-    ..addOption('passphrase-env', help: 'Environment variable holding the passphrase');
+    ..addOption('passphrase-env', help: 'Environment variable holding a passphrase that opens it too (optional)');
   _family(_common(root.addCommand('restore')))
     ..addOption('in', help: 'Backup file to read')
-    ..addOption('passphrase-env', help: 'Environment variable holding the passphrase')
+    ..addOption('passphrase-env', help: 'Environment variable holding the passphrase, for a backup made with one')
+    ..addOption('words-env', help: "Environment variable holding a parent's recovery words (else they're asked for)")
     ..addFlag('force', help: 'Replace an existing hub in the data directory', negatable: false);
   _common(root.addCommand('add-family'))
     ..addOption('hostname', help: "The new family's own address, den-smith.example.com")
@@ -157,8 +158,8 @@ String _usage(ArgParser parser) => [
       '  status            Say what the hub is doing',
       '  recover --person NAME   A one-time link and four words that let a parent\'s new phone in',
       '                    (only if the family turned on "Let the hub help us get back in")',
-      '  backup --out FILE --passphrase-env VAR',
-      '  restore --in FILE --passphrase-env VAR [--force]',
+      '  backup --out FILE [--passphrase-env VAR]',
+      '  restore --in FILE [--passphrase-env VAR | --words-env VAR] [--force]',
       '',
       'One host, several families (each at its own address, with its own keys and data):',
       '  add-family --hostname ADDRESS   Another family on this host; prints its setup link',

@@ -435,4 +435,40 @@ void main() {
     expect(forced, 0, reason: forcedErr);
     expect(File('$target${Platform.pathSeparator}hub${Platform.pathSeparator}stale.json').existsSync(), isFalse);
   });
+
+  test('with no passphrase, a backup opens with a parent\'s recovery words, given or typed', () async {
+    final alex = phone.members.firstWhere((m) => m.name == 'Alex');
+    Future<void> setWords(String? key) async {
+      await phone.setRecoveryKey(alex.id, key);
+      final hub = await DataDir(dataPath).open();
+      await hub.ingest(phone.changesSince(const {}));
+      await hub.close();
+    }
+
+    await setWords(null);
+    final noWords = '${tmp.path}${Platform.pathSeparator}nobody.denbackup';
+    final (refused, _, refusedErr) = await run(['backup', '--out', noWords, '--data', dataPath]);
+    expect(refused, 1, reason: 'nobody could open it');
+    expect(refusedErr, contains('recovery words'));
+    expect(File(noWords).existsSync(), isFalse);
+
+    final words = RecoveryWords.generate();
+    await setWords((await RecoveryWords.key(words)).publicKey);
+
+    final file = '${tmp.path}${Platform.pathSeparator}words.denbackup';
+    final (code, out, err) = await run(['backup', '--out', file, '--data', dataPath]);
+    expect(code, 0, reason: err);
+    expect(out, contains('recovery words of Alex'));
+    final target = '${tmp.path}${Platform.pathSeparator}words-restored';
+    final (wrong, _, wrongErr) = await run(['restore', '--in', file, '--words-env', 'W', '--data', target],
+        env: {'W': RecoveryWords.generate().join(' ')});
+    expect(wrong, 1);
+    expect(wrongErr, contains("don't open this backup"));
+    final (typed, typedOut, typedErr) = await run(['restore', '--in', file, '--data', target], input: [words.join(' ')]);
+    expect(typed, 0, reason: typedErr);
+    expect(typedOut, contains('Alex'));
+    final restored = await DataDir(target).open();
+    addTearDown(restored.close);
+    expect(restored.isApproved, isTrue);
+  });
 }

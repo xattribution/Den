@@ -43,6 +43,8 @@ export 'src/sign_in_setup.dart'
         googleSecretProblem,
         signInFile;
 export 'src/assistant.dart' show HubAssistant;
+export 'src/backup/backup_files.dart';
+export 'src/backup/sealed_backup.dart';
 export 'src/capture.dart' show HubCapture;
 export 'src/config.dart';
 export 'src/edge.dart' show IpNetwork;
