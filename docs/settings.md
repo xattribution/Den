@@ -13,6 +13,12 @@ Each setting below is in one of three classes:
   at start (never its value).
 - **(c) dead**: deleted.
 
+The one-command install (`deploy/install.sh`, [install-technical.md](install-technical.md)) has
+no `.env` at all. Its compose file is generated on each run, from constants in the script and
+what it finds on the computer. What the family can change (the tunnel token, "Update now",
+manual updates) lives in files in the hub's data directory, which the hub writes. The tables
+below are for the older setups.
+
 A setting that stays a file setting although someone might change it says why.
 
 ## The hub (`den_hub serve`)

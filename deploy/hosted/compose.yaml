@@ -1,3 +1,4 @@
+# The older, advanced setup: deploy/install.sh (docs/install-technical.md) is the one-command way.
 # One family's hub on a server, reachable over HTTPS from anywhere, so phones can use the web
 # app from their Home Screen. docs/hosting.md walks through it. From this folder:
 #

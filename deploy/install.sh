@@ -811,6 +811,11 @@ wait_tunnel() {
   while :; do
     TUNNEL_STATE=$(json_get "$HUB_DIR/tunnel-status.json" state)
     TUNNEL_HOST=$(json_get "$HUB_DIR/tunnel-status.json" hostname)
+    # The address the hub settled on (from the tunnel, or typed on the first-boot page) wins.
+    if [ -s "$HUB_DIR/address" ]; then
+      wt_addr=$(head -n 1 "$HUB_DIR/address" | sed -e 's|^https\{0,1\}://||' -e 's|/.*$||' | tr -cd 'A-Za-z0-9.:-')
+      [ -n "$wt_addr" ] && TUNNEL_HOST=$wt_addr
+    fi
     if [ "$TUNNEL_STATE" = connected ] || [ "$TUNNEL_STATE" = error ] || [ "$(date +%s)" -ge "$wt_end" ]; then
       return 0
     fi

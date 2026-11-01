@@ -258,6 +258,14 @@ expect_eq "token: with spaces and a newline around it" "$(clean "  $tok
 ")" "$tok"
 expect_eq "token: not a token" "$(clean "hello there")" ""
 
+tunnel_host() { in_scenario sh -c '. "$1"; wait_tunnel 0; echo "$TUNNEL_STATE $TUNNEL_HOST"' sh "$INSTALL"; }
+scenario tunnelhost
+mkdir -p "$S/opt/den/data/hub"
+echo '{"state":"connected","hostname":"den.kotvas.app","service":"http://hub:47733","connections":4,"message":"","since":"x","updated":"x"}' > "$S/opt/den/data/hub/tunnel-status.json"
+expect_eq "links: the tunnel's hostname" "$(tunnel_host)" "connected den.kotvas.app"
+echo "https://den.smith.family/" > "$S/opt/den/data/hub/address"
+expect_eq "links: the address the hub settled on wins" "$(tunnel_host)" "connected den.smith.family"
+
 # --- the compose file ---------------------------------------------------------------------------
 
 compose_for() { # mode
