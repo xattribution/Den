@@ -1,7 +1,8 @@
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
-import 'package:den_core/den_core.dart' show b64e, canonicalJson, randomBytes;
+import 'package:den_core/den_core.dart'
+    show Change, DeviceMode, RecordType, Space, b64e, canonicalJson, deviceIdOf, randomBytes, verifySignature;
 
 import 'util.dart';
 
@@ -150,3 +151,28 @@ class ScreenCodeKeys {
     return a != null && b != null && constantTimeEquals(a, b);
   }
 }
+
+/// Whether [change] is the join request of the screen with [pubkey] and [xpub], as a screen's
+/// code may carry it: its own device record, written by itself for nobody, unapproved, as a
+/// shared screen, nothing else in it, and signed by that key. The hub checks it before keeping
+/// it, and the parent's phone again before it writes it with its approval.
+Future<bool> isScreenJoinRequest(Change change, {required String pubkey, required String xpub}) async {
+  final device = deviceIdOf(pubkey);
+  final f = change.fields;
+  final fits = device != null &&
+      change.type == RecordType.device &&
+      change.space == Space.family &&
+      change.rid == device &&
+      change.device == device &&
+      change.actor == null &&
+      f['pubkey'] == pubkey &&
+      f['xpub'] == xpub &&
+      f['approved'] == false &&
+      f['mode'] == DeviceMode.shared.name &&
+      f['member'] == null &&
+      f['name'] is String &&
+      f.keys.every(_screenJoinFields.contains);
+  return fits && await verifySignature(change.signedBytes, change.sig, pubkey);
+}
+
+const Set<String> _screenJoinFields = {'name', 'kind', 'pubkey', 'xpub', 'member', 'mode', 'approved'};

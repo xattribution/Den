@@ -53,5 +53,6 @@ export 'src/ics/write.dart' show icsEtag, isDenUid;
 export 'src/ics/parse.dart' show parseIcs, parseIcsDuration, zoneForTzid, IcsCalendar, IcsEvent, IcsTime, IcsFormatException;
 export 'src/recovery.dart' show HubRecovery, RecoveryRefused, RecoveryTicket, recoveryCliFile, recoveryTicketsDoc;
 export 'src/reminders.dart' show ReminderService, Notice;
+export 'src/screen_codes.dart' show ScreenCodes;
 export 'src/mdns/dns.dart' show DnsMessage, DnsQuestion, DnsRecord, DnsType;
 export 'src/mdns/responder.dart' show MdnsAdvert, MdnsResponder, denServiceName;
