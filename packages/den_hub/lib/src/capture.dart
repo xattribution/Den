@@ -181,7 +181,7 @@ class HubCapture {
     }
     await hub.state.save(_doc, next);
     final dir = hub.config.dataDir;
-    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json');
+    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json', warn: hub.log.warn);
     hub.log.info('${c.actor!.name} set what the hub reads with: ${kind.name}');
     return jsonResponse(describe().toJson());
   }

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -317,9 +318,11 @@ class _SignInAccountScreenState extends State<SignInAccountScreen> {
         else if (providers == null)
           const NoticeLine(icon: PhosphorIconsRegular.hourglass, message: 'Asking the hub')
         else if (providers.isEmpty)
-          const NoticeLine(
+          NoticeLine(
             icon: PhosphorIconsRegular.info,
-            message: 'Your family\'s hub doesn\'t offer signing in with Google or Apple yet. Whoever runs it can turn it on.',
+            message: 'Your family\'s hub doesn\'t offer signing in with Google or Apple yet. Whoever runs your server turns it '
+                'on, in Settings, Advanced.',
+            action: TextButton(onPressed: () => context.push('/settings/advanced/sign-in'), child: const Text('Set it up')),
           )
         else if (waiting == null && found == null)
           Wrap(

@@ -320,14 +320,21 @@ keys and data apart on the phone, syncing each through the one address, where th
 each to its family. Nothing on the server is needed for that.
 
 Reminders on an iPhone's Home Screen app need one thing: a browser holds one push subscription,
-bound to one key, and each family sends with its own key only. So the host keeps a key of its
-own for families that opt in, and the app subscribes once with it and registers that with each
-family. Turn it on for the families on this host with **`DEN_HOST_PUSH=all`** in `.env` (or name
-them: `DEN_HOST_PUSH=den.example.com,den-smith.example.com`), then `docker compose up -d`. A
-family signs only the subscriptions made with the host's key with it, and its own with its own;
-never another family's. Without it, such a person gets reminders from one of their families
-(Settings says which can't reach them). Phones and computers with the Den app need none of it:
-they plan reminders themselves.
+bound to one key, and each family sends with its own key. So the host keeps a key of its own
+(`host/push.json`) that every family on it also hands out, and a browser holding several of them
+subscribes once with it and registers that with each family; a browser holding one family keeps
+using that family's own key. Nothing to turn on. A family signs only the subscriptions made with
+the host's key with it, and its own with its own; never another family's. Phones and computers
+with the Den app need none of it: they plan reminders themselves.
+
+Why sharing the host's key is safe: every family on the host runs in the one process, which holds
+every key already, so nobody gains a key they didn't have. A key only lets its holder push to a
+subscription it knows, and a family knows only the subscriptions its own approved devices
+registered with it in signed requests; no answer ever shows one. Before this was the default it
+was `DEN_HOST_PUSH=all`; an old `.env` line is ignored, and the log says so once. What is
+accepted: should a browser's host-key subscription leak (someone with that browser, or with the
+server's disk), another family on the same host could send that browser its reminders. No data
+reaches it that way, and each push names the family it is from.
 
 **What it costs.** One process: a crash or a bad update stops every family at once (Docker's
 restart brings them all back together). Whoever runs the server can read every family's data, as
@@ -920,7 +927,7 @@ it that name); to roll back, put the old version back.
 ## Backups
 
 A backup holds the hub's keys, the family's whole change log, the hub's own state (connected
-apps, the AI helper's and the reader's keys, feeds) and `notify.json`, sealed with
+apps, the AI helper's and the reader's keys, signing in with Google and Apple, feeds), sealed with
 `DEN_BACKUP_PASSPHRASE` from `.env` (Argon2id, XChaCha20-Poly1305). It works while the hub runs:
 
 ```sh
@@ -1381,111 +1388,54 @@ they are families on the same host, which answers in-process, or `DEN_PEER_HUBS`
 
 ## Setting up Google and Apple sign-in
 
-Optional. With it, a parent can sign in to the family's Den in a browser with their Google or
-Apple account. For now that does one thing: each parent binds their own account from their own
-phone (Settings, **Google or Apple sign-in**), and a browser that signs in with it is signed in
-as them ([docs/hub-api.md](hub-api.md), "Signing in with Google and Apple"). Devices, invites and
-approvals work as before. Without it nothing changes, and the hub has no `/auth` addresses at all.
+Optional, and done in the Den app: no file to edit, nothing to restart. With it, a parent can
+sign in to the family's Den in a browser with their Google or Apple account. For now that does
+one thing: each parent binds their own account from their own phone (Settings, **Google or Apple
+sign-in**), and a browser that signs in with it is signed in as them
+([docs/hub-api.md](hub-api.md), "Signing in with Google and Apple"). Devices, invites and
+approvals work as before.
 
-You need the hub at an `https` address (`DEN_PUBLIC_URL`): Google and Apple send the browser back
-there. Neither of them ever calls your server; the browser goes to them and comes back, and the
-hub fetches their keys and exchanges the sign-in over HTTPS, outbound. So it works with every
-setup, the private one too, from wherever the family reaches the hub. Each family on a server
-has its own address, and each address needs its own redirect at Google and at Apple; one set of
-`DEN_GOOGLE_*` and `DEN_APPLE_*` serves them all.
+**Where.** On a parent's own phone: Settings, Advanced, **Sign in with Google or Apple**. The
+screen walks through Google's console (and Apple's) step by step, shows the exact addresses to
+paste there with a Copy button, and takes the client ID and secret (for Apple: the Services ID,
+Team ID, Key ID and the `.p8` key, picked as a file or pasted). The hub checks them with Google or
+Apple before it keeps them, and turns sign-in on at once.
 
-The redirect URLs, for a family at `den.example.com`:
+**Who.** A parent of the server's own family (the one `install.sh` set up, in the data directory
+itself) on their own personal phone. Sign-in is one set for every family on the server, so only
+whoever runs the server sets it up: another family's parents see "whoever runs this server" and
+nothing else, and a shared screen, a kid's phone or a token can't change it.
 
-| Provider | Redirect (return) URL |
-| --- | --- |
-| Google | `https://den.example.com/auth/oidc/google/callback` |
-| Apple | `https://den.example.com/auth/oidc/apple/callback` (Apple posts a form to it) |
+**What is kept.** The hub keeps what was pasted in its own data (`hub/sign-in.json`, readable by
+the hub's user only, in its backups), never in the family's log, and never shows it again: the
+screen says only whether each one is on, with **Change** and **Turn off**. It goes to the hub
+only over HTTPS (open Den at its https address to set it up, not at the server's LAN address),
+and turning a provider off or changing it signs out everyone who signed in through it.
 
-### Google
+**Several families.** Each family's address needs its own way back registered at Google and at
+Apple. The screen lists every family the server has (from `host.json`), the server's own first;
+after `install.sh add-family`, open it again and add the new address in Google's console. That
+means the server's own parents see every family's address on the server there; other families'
+parents see none of them.
 
-Google comes first: it needs only a Google account.
+It needs the hub at an `https` address: Google and Apple send the browser back there. Neither of
+them ever calls your server; the browser goes to them and comes back, and the hub fetches their
+keys and exchanges the sign-in over HTTPS, outbound. So it works with every setup, the private one
+too. A hub at home without an https address (setup D) can't offer it, and the screen says so.
 
-1. In the [Google Cloud console](https://console.cloud.google.com/), make a project (Den, say).
-2. **Google Auth Platform** (what used to be the "OAuth consent screen"): **Branding**, an app
-   name (Den) and a support email; **Audience**, user type **External**. Den asks only for
-   `openid` and `email`, so it needs no verification by Google, and while the app is in
-   **Testing** anyone can still sign in with just those scopes; publishing it (**In production**)
-   only takes away the "unverified app" notes. **Data access**: nothing to add beyond
-   `openid` and `.../auth/userinfo.email`.
-3. **Clients**, **Create client**, type **Web application**. Under **Authorized redirect URIs**,
-   add the Google redirect above, one for each family's address. Leave **Authorized JavaScript
-   origins** empty.
-4. Copy the **Client ID** and **Client secret**, and set them for the hub:
-
-   ```sh
-   DEN_GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
-   DEN_GOOGLE_CLIENT_SECRET=GOCSPX-...
-   ```
-
-### Apple (optional until the membership is approved)
-
-Sign in with Apple needs a paid **Apple Developer Program** membership ($99 a year; a free Apple
-Account can't make the identifiers and keys below). Leave Apple out until the membership is
-approved: Google works on its own, and the hub offers only what is set up. In
-[Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources):
-
-1. **Identifiers**, **+**, **App IDs**: an App ID (`family.den`, say) with **Sign in with Apple**
-   turned on, as a primary App ID. It needs no published app: the form asks only for the App ID.
-2. **Identifiers**, **+**, **Services IDs**: a Services ID (`family.den.signin`, say). This is
-   the client id. Turn on **Sign in with Apple**, **Configure**: choose the App ID, and under
-   **Website URLs** enter each family's domain (`den.example.com`) and the Apple redirect above.
-   An individual membership takes up to 10 website URLs per Services ID.
-3. **Keys**, **+**: a key with **Sign in with Apple**, configured for the App ID. Download the
-   `.p8` (Apple lets you download it once) and note its **Key ID** and your **Team ID** (top
-   right of the account page).
-4. Put the `.p8` on the server where only the hub can read it, and set:
-
-   ```sh
-   DEN_APPLE_SERVICES_ID=family.den.signin
-   DEN_APPLE_TEAM_ID=ABCDE12345
-   DEN_APPLE_KEY_ID=XYZ987ABCD
-   DEN_APPLE_KEY_FILE=/run/secrets/apple-signin.p8
-   ```
-
-   In the container the hub runs as uid 10001: `chown 10001 apple-signin.p8 && chmod 600
-   apple-signin.p8` on the host. The hub warns when other users can read it, and signs a fresh
-   client secret with it for every sign-in, so nothing expires.
-
-Den refuses Apple's **Hide My Email** addresses: when Apple asks, choose **Share My Email**.
-Someone who chose Hide My Email before removes Den under Sign in with Apple in their Apple
-Account settings and signs in again.
-
-### Turning it on
-
-The hub reads these from its environment (or `den_hub serve --google-client-id` and so on). A
-provider set up in part, or a key file that isn't a `.p8`, stops the hub at start with the
-reason, rather than leaving sign-in half on. With none set, the hub runs exactly as before.
-
-The compose files don't pass these through yet (the deploy files change in a later step of
-the plan). Until they do, add these lines to the hub's `environment:` in
-`deploy/hosted/compose.yaml` (or `deploy/private/compose.yaml`), and the values to `.env`:
-
-```yaml
-      DEN_GOOGLE_CLIENT_ID: ${DEN_GOOGLE_CLIENT_ID:-}
-      DEN_GOOGLE_CLIENT_SECRET: ${DEN_GOOGLE_CLIENT_SECRET:-}
-      DEN_APPLE_SERVICES_ID: ${DEN_APPLE_SERVICES_ID:-}
-      DEN_APPLE_TEAM_ID: ${DEN_APPLE_TEAM_ID:-}
-      DEN_APPLE_KEY_ID: ${DEN_APPLE_KEY_ID:-}
-      DEN_APPLE_KEY_FILE: ${DEN_APPLE_KEY_FILE:-}
-```
-
-and, for Apple, the key under the hub's `volumes:`:
-
-```yaml
-      - ./apple-signin.p8:/run/secrets/apple-signin.p8:ro
-```
-
-Empty values count as unset. Then `docker compose up -d`; the hub's log says
-`Signing in with Google at https://den.example.com/auth`.
+Google needs only a Google account. Sign in with Apple needs a paid **Apple Developer Program**
+membership ($99 a year); leave Apple off until it is approved, Google works on its own. Den
+refuses Apple's **Hide My Email** addresses: when Apple asks, choose **Share My Email**. Someone
+who chose Hide My Email before removes Den under Sign in with Apple in their Apple Account settings
+and signs in again. Changing Apple's Team ID later makes every parent bind their Apple account
+again (Apple's ids for people are per team); Google's don't change.
 
 ## Settings
 
-The hosted compose file sets these from `.env`; the hub reads them from its environment.
+Nothing here turns a feature on: features are set up in the Den app, on a parent's phone.
+[docs/settings.md](settings.md) lists every setting, where it lives, and why the few that are
+still in `.env` are there. The hosted compose file sets these from `.env`; the hub reads them from
+its environment.
 
 | Variable | What |
 | --- | --- |
@@ -1504,9 +1454,6 @@ The hosted compose file sets these from `.env`; the hub reads them from its envi
 | `DEN_ALLOWED_ORIGINS` | Extra browser origins for `/mcp` and OAuth (`https://claude.ai` is allowed already) |
 | `DEN_FETCH_ALLOW` | Private networks the hub may fetch calendar feeds from; by default only the public internet |
 | `DEN_HOST_RETRY` | Seconds between tries at a family of a Den host that didn't open when the hub started (30) |
-| `DEN_HOST_PUSH` | The families of a Den host that share the host's own Web Push key, so one Home Screen app holding several of them gets every family's reminders: `all`, or their addresses, comma-separated. None by default: each family hands out and signs with its own key only ([One app, several families](#one-app-several-families)) |
-| `DEN_GOOGLE_CLIENT_ID`, `DEN_GOOGLE_CLIENT_SECRET` | Sign in with Google: the OAuth client's id and secret ([Setting up Google and Apple sign-in](#setting-up-google-and-apple-sign-in)). Both or neither |
-| `DEN_APPLE_SERVICES_ID`, `DEN_APPLE_TEAM_ID`, `DEN_APPLE_KEY_ID`, `DEN_APPLE_KEY_FILE` | Sign in with Apple: the Services ID, the team, the key's id and the `.p8` file. All four or none |
 | `DEN_PEER_HUBS` | The other families' addresses on this server in hubs of their own (names or `https://` addresses), whose shared calendars this hub may fetch through the server's own reverse proxy on loopback. Only these names (and the addresses of the families this hub serves), only over `https`. Families on the same Den host need none of it. The private setup's `install.sh` sets it while any family has a container of its own ([Calendars shared between families on this server](#calendars-shared-between-families-on-this-server)) |
 
 **The public posture.** A hub whose `DEN_PUBLIC_URL` is `https` assumes strangers can reach it:

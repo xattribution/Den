@@ -135,6 +135,16 @@ class FakeIdp {
   /// How long the token endpoint takes.
   Duration tokenDelay = Duration.zero;
 
+  /// False: the client isn't one that may sign in on a website (Google's Desktop app client).
+  bool webClient = true;
+
+  /// The status the token endpoint answers with instead, when set (a provider in trouble).
+  int? tokenStatus;
+
+  /// What the token endpoint answers instead, as it is, when set: a page, a redirect, too many
+  /// tries.
+  ({int status, String body, String type})? tokenRaw;
+
   /// Changes each ID token's header and claims before it is signed.
   void Function(Map<String, Object?> header, Map<String, Object?> claims)? shape;
 
@@ -214,11 +224,26 @@ class FakeIdp {
       case '/token':
         tokenCalls++;
         if (tokenDelay > Duration.zero) await Future<void>.delayed(tokenDelay);
+        if (tokenStatus != null) return json({'error': 'server_error'}, status: tokenStatus!);
+        final raw = tokenRaw;
+        if (raw != null) {
+          response.statusCode = raw.status;
+          response.headers.contentType = ContentType.parse(raw.type);
+          if (raw.status >= 300 && raw.status < 400) response.headers.set('location', 'https://elsewhere.test/');
+          response.write(raw.body);
+          await response.close();
+          return;
+        }
         final form = Uri.splitQueryString(await utf8.decoder.bind(r).join());
         final problem = _checkToken(form);
         if (problem != null) {
           refusals.add(problem);
-          return json({'error': 'invalid_grant', 'error_description': problem}, status: 400);
+          // As Google and Apple answer: a client (or its secret) they don't know is
+          // `invalid_client`, a client that can't sign in on a website `unauthorized_client`, and
+          // anything wrong with the code itself `invalid_grant`.
+          final client = problem == 'client_id' || problem.startsWith('client_secret');
+          if (webClient == false && !client) return json({'error': 'unauthorized_client'}, status: 400);
+          return json({'error': client ? 'invalid_client' : 'invalid_grant', 'error_description': problem}, status: client ? 401 : 400);
         }
         final grant = _codes[form['code']]!..used = true;
         final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;

@@ -34,6 +34,7 @@ import 'recovery.dart';
 import 'relay_watch.dart';
 import 'reminders.dart';
 import 'setup.dart';
+import 'sign_in_setup.dart';
 import 'state.dart';
 import 'tenant_router.dart';
 import 'usage.dart';
@@ -291,6 +292,7 @@ class DenHub implements RoutableLog {
     _recovery = HubRecovery(_ctx, _auth)..register(_routes);
     _push.register(_routes);
     _accounts = HubAccounts(_ctx, _auth)..register(_routes);
+    HubSignInSetup(_ctx, _auth).register(_routes);
     _changes = den.onChange.listen((_) {
       _setup.refresh();
       final m = _mdns;

@@ -89,6 +89,15 @@ void main() {
     expect(lastSigner(), ka);
   });
 
+  test("by default every family on a host also hands out the host's key, for a browser holding several", () async {
+    final host = b64url(f.host.pushKey.publicKey);
+    for (final (family, name) in [(a, 'den-a.test'), (b, 'den-b.test')]) {
+      final r = await f.signed(family.phone, 'GET', '/api/v1/push', hub: family.hubDen.deviceId, hostname: name);
+      expect(r.body['host_key'], host, reason: name);
+      expect(r.body['key'], isNot(host), reason: 'beside its own, which a browser holding one family keeps using');
+    }
+  });
+
   test("a family's own browsers keep its own key, older subscriptions and any key a record names included", () async {
     final ka = await keyAt(a, 'den-a.test');
     final kb = await keyAt(b, 'den-b.test');
@@ -273,7 +282,8 @@ void main() {
       await h.host.remove(x.hub);
       final again = await h.host.add(
         x.hubDen,
-        HubConfig(mdns: false, publicUrl: Uri.parse('https://den-x.test'), log: HubLog.silent(), dataDir: '${shared.path}/den-x.test'),
+        HubConfig(
+            mdns: false, publicUrl: Uri.parse('https://den-x.test'), log: HubLog.silent(), dataDir: '${shared.path}/den-x.test', hostPush: false),
       );
       final family = HostedFamily('den-x.test', x.phone, x.hubDen, again);
       final s = await h.signed(family.phone, 'GET', '/api/v1/push', hub: family.hubDen.deviceId, hostname: 'den-x.test');

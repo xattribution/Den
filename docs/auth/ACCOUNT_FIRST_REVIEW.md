@@ -270,7 +270,7 @@ Deletions in this phase:
 ### Phase 5: deploy move to Cloudflare Tunnel
 Do not start until phases 1-4 are merged and live.
 - [ ] Use `deploy/hosted/compose.yaml` with the `tunnel` profile (`:75-87`, `TUNNEL_TOKEN`), `DEN_PUBLIC_URL` (`:37`) and `DEN_TRUSTED_PROXIES` (`:40`). This is setup B in `docs/hosting.md:35`.
-- [ ] Env: `DEN_GOOGLE_CLIENT_ID/SECRET`, `DEN_APPLE_SERVICES_ID/TEAM_ID/KEY_ID/KEY_FILE`, `TUNNEL_TOKEN`, `COMPOSE_PROFILES=tunnel`. Redirects: `https://den.kotvas.app/auth/oidc/google/callback`, `.../auth/oidc/apple/callback` (form_post).
+- [ ] Env: `TUNNEL_TOKEN`, `COMPOSE_PROFILES=tunnel` (and, per docs/settings.md, these too move out of files where they can). Google and Apple sign-in are set up in the app (Settings, Advanced, Sign in with Google or Apple), not in env: there are no `DEN_GOOGLE_*`/`DEN_APPLE_*` variables. Redirects, which that screen lists with Copy buttons: `https://den.kotvas.app/auth/oidc/google/callback`, `.../auth/oidc/apple/callback` (form_post).
 - [ ] Cloudflare WAF rules on `/auth/*`, `/api/v1/invites/redeem`, `/api/v1/recovery/redeem`, `/api/v1/hub/setup*`.
 - [ ] Same domain, same data volume, so no device re-pairs [INF: confirm with `docker volume ls` on the server].
 - [ ] **Dual-run**: run the tunnel alongside the private setup for an agreed period [INF: suggest 2 weeks]; every family device must have connected through the tunnel at least once before removal.

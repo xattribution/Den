@@ -34,11 +34,9 @@ services:
       # DEN_RELAY: "https://relay.den.family"        # reach the hub from anywhere
       # DEN_PUBLIC_URL: "https://den.example.com"    # behind a TLS proxy, for OAuth (claude.ai)
       # DEN_TRUSTED_PROXIES: "127.0.0.1"             # that proxy, so the hub believes its X-Forwarded-* headers
-      # DEN_HA_URL: "http://homeassistant.local:8123"
-      # DEN_HA_TOKEN: "${DEN_HA_TOKEN}"               # Home Assistant long-lived token, for reminders
       # DEN_LOG: "info"
-    # Reminder targets per person go in notify.json in the volume:
-    #   {"members": {"Alex": {"ha": "mobile_app_alex_phone", "ntfy": "https://ntfy.sh/den-alex-7f3k"}}}
+    # Home Assistant, signing in with Google or Apple and the AI helper are set up in the Den app
+    # on a parent's phone (docs/settings.md), not here.
     volumes:
       - den-hub:/data
     logging: *logging

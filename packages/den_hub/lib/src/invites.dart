@@ -108,7 +108,7 @@ class HubInvites {
   Future<void> _save() async {
     await hub.state.save(_doc);
     final dir = hub.config.dataDir;
-    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json');
+    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json', warn: hub.log.warn);
   }
 
   void _prune(int now) => _invites.removeWhere((_, v) => v is! Map || (v['expires'] as num? ?? 0) <= now);

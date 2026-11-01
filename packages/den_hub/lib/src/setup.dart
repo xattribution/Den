@@ -557,17 +557,33 @@ class LinkSlots {
   }
 }
 
-/// Makes [path] readable and writable by its owner only, where the system supports it.
-void restrictToOwner(String path) {
+/// Makes [path] readable and writable by its owner only, where the system supports it. Returns
+/// whether it did; when it couldn't, [warn] hears why (standard error by default), so a file
+/// that stays readable by others never goes unnoticed. Never throws.
+bool restrictToOwner(String path, {void Function(String message)? warn}) {
+  String? problem;
   try {
     if (Platform.isWindows) {
       final user = Platform.environment['USERNAME'];
-      if (user == null) return;
-      Process.runSync('icacls', [path, '/inheritance:r', '/grant:r', '$user:F']);
+      if (user == null) {
+        problem = 'no USERNAME to give it to';
+      } else {
+        final done = Process.runSync('icacls', [path, '/inheritance:r', '/grant:r', '$user:F']);
+        if (done.exitCode != 0) problem = 'icacls: ${'${done.stderr}'.trim()}';
+      }
     } else {
-      Process.runSync('chmod', ['600', path]);
+      final done = Process.runSync('chmod', ['600', path]);
+      if (done.exitCode != 0) problem = 'chmod 600: ${'${done.stderr}'.trim()}';
     }
-  } on Object {
-    return;
+  } on Object catch (e) {
+    problem = '${e.runtimeType}';
   }
+  if (problem == null) return true;
+  final message = 'Couldn\'t make $path readable by its owner only ($problem). Other users on this machine may read it.';
+  if (warn != null) {
+    warn(message);
+  } else {
+    stderr.writeln('WARN  $message');
+  }
+  return false;
 }

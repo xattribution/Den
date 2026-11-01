@@ -2045,11 +2045,12 @@ the same budget as invites and browser links, see [Limits per client](#limits-pe
 A parent's Google or Apple account signs in to the hub, in a browser, as their member: phase 1
 of [docs/auth/ACCOUNT_FIRST_REVIEW.md](auth/ACCOUNT_FIRST_REVIEW.md). Nothing else about devices
 changes yet; a browser that is signed in can read `GET /api/v1/me` and no more. These routes
-exist only when the owner set up a provider (`DEN_GOOGLE_*`, `DEN_APPLE_*`; docs/hosting.md,
-"Setting up Google and Apple sign-in") **and** `DEN_PUBLIC_URL` is an `https` address, where the
-provider sends people back. Otherwise every path in this section answers `404` like any path the
-hub doesn't know, and nothing else changes. A provider that isn't set up (Apple, say) has no
-routes either.
+answer only while a provider is on ([Setting up signing in with Google and
+Apple](#setting-up-signing-in-with-google-and-apple), from a parent's phone) **and** the family's
+public URL is an `https` address, where the provider sends people back. Otherwise every path in
+this section answers `404` like any path the hub doesn't know, and nothing else changes. A
+provider that isn't on (Apple, say) answers none of its routes either. Turning one on or off takes
+effect with the next request: nothing restarts.
 
 **Who an account is.** `member.account` is `{"provider": "google" | "apple", "hash": "<64 hex>",
 "hub", "key", "nonce", "expires", "sig"}`. `hash` is lowercase hex HMAC-SHA256, keyed by the UTF-8 bytes of the family id, over
@@ -2195,6 +2196,70 @@ comes back once, to the browser that began it, and a start link used twice binds
 `GET /api/v1/account/providers`, signed the same way, answers `{"providers": [{"id": "google",
 "name": "Google"}]}`: what the hub offers.
 
+## Setting up signing in with Google and Apple
+
+From the app (Settings, Advanced, **Sign in with Google or Apple**); nothing in the environment.
+One set of providers serves every family on a Den host, as Google and Apple see one client with
+each family's address registered as a place to come back to.
+
+**Who.** Every request here is signed by a device (`DeviceRequest`) and must come from a parent
+of the **host's own family** (the family in the host's data directory itself: the one
+`install.sh` or `den_hub serve` set up, whoever runs the server) on their own **personal**
+device. A kid, a shared screen, a parent's hub-mode device: `403 permission_denied`. A parent of
+any other family on the host: `403 host_family_only`, for reading as well as changing, with no
+more said. Unsigned, a token, a signature for another family's hub: `401`. There is no cookie, so
+nothing here can be forged from another site; each signature covers the method, the path, the
+body's hash, the hub it is for and a nonce used once.
+
+**What is kept.** `<data>/hub/sign-in.json` of the host's own family: written owner-only from the
+start (`hub/` 0700, the file 0600 before anything goes in, then renamed into place), in its
+backups, never in the family's log. No answer ever holds a client id, a secret, a Team ID, a Key
+ID or a key, and the hub's log says only who turned what on or off.
+
+### `GET /api/v1/hub/sign-in`
+
+```json
+{
+  "google": {"on": true, "set_at": 1793245320000, "set_by": "Alex",
+             "redirect_urls": ["https://den.example.com/auth/oidc/google/callback",
+                               "https://den-smith.example.com/auth/oidc/google/callback"]},
+  "apple": {"on": false,
+            "domains": ["den.example.com", "den-smith.example.com"],
+            "return_urls": ["https://den.example.com/auth/oidc/apple/callback",
+                            "https://den-smith.example.com/auth/oidc/apple/callback"]},
+  "https": true
+}
+```
+
+The addresses are every family's the host knows (those it serves and those `host.json` lists,
+the host's own first), `https` ones only: each must be registered at Google (Authorized redirect
+URIs) and at Apple (the Services ID's domains and return URLs). `https: false` (and
+`without_https`, the families' names that aren't `https`): no family can sign in until it has an
+https address.
+
+### `PUT /api/v1/hub/sign-in/google`, `PUT /api/v1/hub/sign-in/apple`
+
+Turns one on, or changes it: `{"client_id", "client_secret"}` for Google; `{"services_id",
+"team_id", "key_id", "key"}` for Apple, `key` the `.p8` file's text. Before anything is kept the
+hub checks the shape of each (`400 invalid_input` with the `field`: a Google client ID ends in
+`.apps.googleusercontent.com`, Team and Key IDs are 10 letters and digits, the key a P-256 `.p8`),
+reads the provider's discovery document, and exchanges a made-up code at its token endpoint with
+the client: `invalid_client` there is `400 invalid_input` ("Google doesn't know that client ID and
+secret together"), `unauthorized_client` `400` (not a web client), and only a `400 invalid_grant`
+confirms the client: anything else (a page, a redirect, `429`, `redirect_uri_mismatch`, no JSON)
+is `400 invalid_input` ("didn't confirm"), a provider that can't be reached `502
+provider_unreachable`. Ten tries per client in ten minutes (`429 rate_limited`), as each asks the
+provider. No https family address: `409 needs_https`. The request itself must come over HTTPS (at
+a trusted proxy that says so in `X-Forwarded-Proto`) or from the hub's own machine; otherwise
+`403 needs_https` before the body is read ("Open Den at its https address"). If the host's own
+family stopped while the provider was asked, nothing is kept: `503 not_ready`. Turning a provider
+on again, changing it or turning it off ends every session, sign-in on its way and binding that
+began through it, in every family. Answers the same status as `GET`.
+
+### `DELETE /api/v1/hub/sign-in/{google|apple}`
+
+Turns it off and forgets what it was set up with. Answers the status.
+
 ## Web Push: reminders in browsers
 
 Den in a browser (on an iPhone, a Home Screen web app on iOS 16.4 or later) gets its reminders
@@ -2210,7 +2275,7 @@ pushes. It is always this family's own key, on a Den host too, whatever address 
 to: no family's subscriptions are ever signed with another family's key. The hub records the key
 with the subscription.
 
-On a Den host whose family opts into the host's own key (`DEN_HOST_PUSH`, see
+On a Den host, where every family also hands out the host's own key (see
 [Several families in one app](#several-families-in-one-app)), the answer also has `host_key`, and,
 once this device subscribed, `with`: `"host"` or `"family"`, the key its subscription was made
 with.
@@ -2270,8 +2335,8 @@ one key that every one of those families sends with, while no family may ever se
 family's key. The host keeps one of its own for that, `<data>/host/push.json` (its user only:
 `host/` is made 0700 and the key file 0600 before the key is written; a host that can't make
 them so, or can't read the key it has, refuses to start the families that use it rather than
-quietly making another; no family's key), and a family uses it only when the operator opted that
-family in (`DEN_HOST_PUSH`):
+quietly making another; no family's key), and every family on the host uses it (an app embedding
+the hub may turn that off per family, `HubConfig.hostPush`):
 
 - the family hands out `host_key` beside its own `key`;
 - the app, holding several families that all hand out the same `host_key`, subscribes once with

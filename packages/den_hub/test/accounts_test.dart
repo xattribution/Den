@@ -12,6 +12,7 @@ import 'support/fake_idp.dart';
 import 'support/fixture.dart';
 import 'support/host_fixture.dart';
 import 'support/oidc_keys.dart';
+import 'support/sign_in.dart';
 import 'support/test.dart';
 
 /// Signing in to the hub with Google and Apple, sessions, and binding a parent's account
@@ -20,18 +21,7 @@ import 'support/test.dart';
 void main() {
   final public = Uri.parse('https://den.test');
 
-  SignInProviders providersFor({FakeIdp? google, FakeIdp? apple}) => SignInProviders(
-        google: google == null ? null : OidcProvider.google(clientId: google.clientId, clientSecret: google.clientSecret, issuer: google.issuerUri),
-        apple: apple == null
-            ? null
-            : OidcProvider.apple(
-                servicesId: apple.clientId,
-                key: AppleKey(teamId: apple.teamId, keyId: apple.keyId, privateKey: readP8(appleP8)),
-                issuer: apple.issuerUri,
-              ),
-      );
-
-  HubConfig configFor(HubConfig base, {SignInProviders? signIn, Uri? url, List<IpNetwork> proxies = const []}) => HubConfig(
+  HubConfig configFor(HubConfig base, {FakeIdp? google, FakeIdp? apple, Uri? url, List<IpNetwork> proxies = const []}) => HubConfig(
         port: 0,
         host: InternetAddress.loopbackIPv4,
         mdns: false,
@@ -39,8 +29,16 @@ void main() {
         publicUrl: url ?? public,
         trustedProxies: proxies,
         fetchClient: fakeProviderGuard().client(),
-        signIn: signIn,
+        signInIssuers: issuersOf(google: google, apple: apple),
       );
+
+  /// A hub over the demo family whose host signs in with [google] and [apple], as a parent of
+  /// its own family turned them on in the app.
+  Future<HubFixture> started({FakeIdp? google, FakeIdp? apple, Uri? url, List<IpNetwork> proxies = const [], String appleKey = appleP8}) async {
+    final f = await HubFixture.start(configure: (base) => configFor(base, google: google, apple: apple, url: url, proxies: proxies));
+    await turnOnSignIn(f.hub.host, google: google, apple: apple, appleKey: appleKey);
+    return f;
+  }
 
   Future<Answer> signed(HubFixture f, Den den, String method, String path, {Object? body}) =>
       signedCall(f.base, den, method, path, hub: f.hubDen.deviceId, body: body);
@@ -83,8 +81,7 @@ void main() {
     test('a provider without an https public URL to come back to stays off', () async {
       final google = await FakeIdp.start();
       addTearDown(google.stop);
-      final f = await HubFixture.start(
-          configure: (base) => configFor(base, signIn: providersFor(google: google), url: Uri.parse('http://den.local:47733')));
+      final f = await started(google: google, url: Uri.parse('http://den.local:47733'));
       addTearDown(f.stop);
       expect(f.hub.accounts.enabled, isFalse);
       expect((await Browser(f.base).go('GET', '/auth/oidc/google/start')).status, 404);
@@ -98,7 +95,7 @@ void main() {
 
     setUp(() async {
       google = await FakeIdp.start();
-      f = await HubFixture.start(configure: (base) => configFor(base, signIn: providersFor(google: google)));
+      f = await started(google: google);
       alex = f.id('Alex');
     });
 
@@ -181,7 +178,8 @@ void main() {
       await bind(f, f.phone, google, '108812345');
       // A hub that isn't in a family yet, signing in with the same provider.
       final lonelyDen = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
-      final lonely = await DenHub.start(lonelyDen, configFor(HubConfig(log: f.hub.config.log), signIn: providersFor(google: google)));
+      final lonely = await DenHub.start(lonelyDen, configFor(HubConfig(log: f.hub.config.log), google: google));
+      await turnOnSignIn(lonely.host, google: google);
       addTearDown(() async {
         await lonely.stop();
         await lonelyDen.close();
@@ -319,6 +317,36 @@ void main() {
       await f.toHub();
       expect((await b.go('GET', '/api/v1/me')).status, 401);
       expect(f.hub.accounts.sessionCount, 0);
+    });
+
+    test('turning Google off or changing its client ends its sessions, its sign-ins on their way and its bindings', () async {
+      await bind(f, f.phone, google, '108812345');
+      final b = Browser(f.base);
+      await b.signIn(google, sub: '108812345');
+      expect((await b.go('GET', '/api/v1/me')).status, 200);
+      // A sign-in on its way, and a binding waiting.
+      final waiting = Browser(f.base);
+      final started = await waiting.go('GET', '/auth/oidc/google/start');
+      final at = Uri.parse(started.location!);
+      final binding = (await signed(f, f.phone, 'POST', '/api/v1/account/bindings', body: {'provider': 'google'})).json! as Map;
+
+      // Changed (the same client set again counts: whatever was set up before is over).
+      await turnOnSignIn(f.hub.host, google: google);
+      expect((await b.go('GET', '/api/v1/me')).status, 401, reason: 'the session ended');
+      expect(f.hub.accounts.sessionCount, 0);
+      final code = google.signIn(at, sub: '108812345');
+      expect((await waiting.go('GET', '/auth/oidc/google/callback?code=$code&state=${at.queryParameters['state']}')).status, 400);
+      expect(waiting.cookies[HubAccounts.sessionCookie], isNull);
+      final polled = await signed(f, f.phone, 'GET', '/api/v1/account/bindings/${binding['id']}');
+      expect((polled.json! as Map)['state'], 'failed');
+      expect((await Browser(f.base).go('GET', binding['start_url'] as String)).body, contains('expired'));
+
+      // Signed in again, then turned off and on: over again.
+      await b.signIn(google, sub: '108812345');
+      expect((await b.go('GET', '/api/v1/me')).status, 200);
+      await f.hub.host.signIn.turnOff(googleProvider);
+      await turnOnSignIn(f.hub.host, google: google);
+      expect((await b.go('GET', '/api/v1/me')).status, 401);
     });
 
     test('a cookie sent twice counts for nothing', () async {
@@ -504,8 +532,7 @@ void main() {
 
     test('/auth is budgeted per client, through a trusted proxy by the real client', () async {
       await f.stop();
-      f = await HubFixture.start(
-          configure: (base) => configFor(base, signIn: providersFor(google: google), proxies: [IpNetwork.parse('127.0.0.1/32')]));
+      f = await started(google: google, proxies: [IpNetwork.parse('127.0.0.1/32')]);
       final b = Browser(f.base);
       final headers = {'x-forwarded-for': '203.0.113.7'};
       // What cloudflared sends: whatever the client claimed first, the real client last. Making
@@ -530,7 +557,7 @@ void main() {
 
     setUp(() async {
       apple = await FakeIdp.start(apple: true, clientId: 'family.den.signin');
-      f = await HubFixture.start(configure: (base) => configFor(base, signIn: providersFor(apple: apple)));
+      f = await started(apple: apple);
     });
 
     tearDown(() async {
@@ -601,16 +628,7 @@ void main() {
 
     test('a client secret signed with another key is refused by Apple, and nobody signs in', () async {
       await f.stop();
-      f = await HubFixture.start(
-        configure: (base) => configFor(base,
-            signIn: SignInProviders(
-              apple: OidcProvider.apple(
-                servicesId: apple.clientId,
-                key: AppleKey(teamId: apple.teamId, keyId: apple.keyId, privateKey: readP8(otherP8)),
-                issuer: apple.issuerUri,
-              ),
-            )),
-      );
+      f = await started(apple: apple, appleKey: otherP8);
       final page = await Browser(f.base).signIn(apple, sub: '001234.abc', email: 'alex@icloud.com');
       expect(page.status, 400);
       expect(apple.refusals, ['client_secret signature']);
@@ -620,15 +638,15 @@ void main() {
   group('one host, two families', () {
     late FakeIdp google;
     late HostFixture host;
-    late SignInProviders providers;
 
     setUp(() async {
       google = await FakeIdp.start();
-      providers = providersFor(google: google);
       host = await HostFixture.start(
-        configure: (c) => HostConfig(port: c.port, host: c.host, log: c.log, fetchClient: fakeProviderGuard().client()),
-        hub: (name, base) => HubConfig(mdns: false, publicUrl: Uri.parse('https://$name'), log: base.log, signIn: providers),
+        configure: (c) => HostConfig(
+            port: c.port, host: c.host, log: c.log, fetchClient: fakeProviderGuard().client(), signInIssuers: issuersOf(google: google)),
+        hub: (name, base) => HubConfig(mdns: false, publicUrl: Uri.parse('https://$name'), log: base.log),
       );
+      await turnOnSignIn(host.host, google: google);
     });
 
     tearDown(() async {

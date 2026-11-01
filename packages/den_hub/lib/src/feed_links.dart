@@ -124,7 +124,7 @@ class HubFeedLinks {
   Future<void> _save() async {
     await hub.state.save(_doc);
     final dir = hub.config.dataDir;
-    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json');
+    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json', warn: hub.log.warn);
   }
 
   /// Whether [link] still works: its maker is in the family and the device it was made on

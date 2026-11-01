@@ -139,7 +139,7 @@ class WebPushService implements HubService, ReminderSink {
   Future<void> _save() async {
     await hub.state.save(_doc);
     final dir = hub.config.dataDir;
-    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json');
+    if (dir != null) restrictToOwner('$dir${Platform.pathSeparator}hub${Platform.pathSeparator}$_doc.json', warn: hub.log.warn);
   }
 
   /// Adds the push routes.

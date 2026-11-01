@@ -327,6 +327,20 @@ class DenNetwork extends ChangeNotifier {
     }.toList();
   }
 
+  /// The family hub's `https` addresses this device was given: the server a browser page came
+  /// from and saved addresses. Never a plain `http` address, and never a hub that only answered
+  /// on the home network (anyone there can answer as one). Where requests carrying a secret go.
+  Future<List<Uri>> secureHubBases() async {
+    if (!den.hasFamily || (!isHub && hubDevice == null)) return const [];
+    return secureBasesOf([...?_servingHub(), ..._hubs]);
+  }
+
+  /// The `https` addresses among sync endpoints [sync] (`wss://.../ws`), in order, once each.
+  static List<Uri> secureBasesOf(Iterable<Uri> sync) => <Uri>{
+        for (final s in sync)
+          if (s.scheme == 'wss' && s.host.isNotEmpty && s.userInfo.isEmpty) Uri(scheme: 'https', host: s.host, port: s.hasPort ? s.port : null),
+      }.toList();
+
   /// Turns "192.168.1.20", "hub.local:47733" or "https://den.example.com" into the hub's sync
   /// WebSocket address.
   static Uri? syncUriFor(String address) {

@@ -6,8 +6,10 @@ import 'package:den_core/storage_io.dart';
 import 'package:den_hub/den_hub.dart';
 
 /// The hub's data directory: `keys.json` (device keys, owner-only), `log/` (the change log),
-/// `hub/` (the hub's own state), `notify.json` (reminder targets, optional) and `hub.lock`
-/// (held while a process uses it).
+/// `hub/` (the hub's own state, with what the app set up on the hub: the reader's and the AI
+/// helper's keys, signing in with Google and Apple), `notify.json` (reminder targets older hubs
+/// read; nothing reads it now, but backups keep it so an old backup restores whole) and
+/// `hub.lock` (held while a process uses it).
 ///
 /// On a Den host this is the first family's, unchanged, and it also holds `logs/<id>/`, each
 /// other family's data directory in the same layout ([log]), and `host/`, the host's own state
@@ -50,8 +52,19 @@ class DataDir {
       if (!backupPath(e.key)) continue;
       final f = file(e.key);
       await f.parent.create(recursive: true);
-      await f.writeAsBytes(e.value, flush: true);
-      if (e.key == 'keys.json' || e.key.startsWith('hub/')) restrictToOwner(f.path);
+      if (e.key == 'keys.json' || e.key.startsWith('hub/')) {
+        // Owner-only from the start: an empty temporary file made 0600 before anything secret
+        // goes in, then renamed over the old one, so the keys and the hub's secrets are never
+        // readable by others, not even for a moment.
+        final temp = File('${f.path}.restore.tmp');
+        if (await temp.exists()) await temp.delete();
+        await temp.create(exclusive: true);
+        restrictToOwner(temp.path);
+        await temp.writeAsBytes(e.value, flush: true);
+        await temp.rename(f.path);
+      } else {
+        await f.writeAsBytes(e.value, flush: true);
+      }
       written++;
     }
     return written;
