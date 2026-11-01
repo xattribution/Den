@@ -123,6 +123,10 @@ class HubSetup {
   /// The current stage.
   SetupStage get stage => _stage;
 
+  /// Where the first-boot pages stand (first_boot.dart), for the status: what a phone opening
+  /// the setup link shows first. Null on a hub without them.
+  Map<String, Object?>? Function()? firstBoot;
+
   /// The current setup code (shown as `ABCD-EFGH`), or null once the hub is in a family.
   String? get code => _code;
 
@@ -220,6 +224,7 @@ class HubSetup {
         if (_stage == SetupStage.removed) 'removed': removedNotice(hub.den),
         'matching_words': ?matchingWords,
         if (_lastError != null && !hub.ready) 'last_error': _lastError,
+        if (!hub.ready && _stage == SetupStage.waitingForCode) 'first_boot': ?firstBoot?.call(),
       });
 
   /// A setup code as typed: upper case, no spaces or dashes.
@@ -272,6 +277,36 @@ class HubSetup {
       ..level = min(t.level + 1, 8);
     _log.warn('$setupTries wrong setup codes from one address; it waits ${wait ~/ 60000} min. The code stays the same.');
     return 0;
+  }
+
+  /// The header the first-boot pages send the setup code in.
+  static const String codeHeader = 'x-den-setup-code';
+
+  /// Throws unless [request] carries this hub's setup code ([codeHeader]) while it waits for its
+  /// family: `409 already_set_up` once it has one, `403 permission_denied` for a wrong code
+  /// (counted as wrong codes for `POST /api/v1/hub/setup` are), `429` while the client waits.
+  /// What only the setup code's holder may do before the family exists (the first-boot pages:
+  /// connecting the server to the internet, restoring a backup) checks it here.
+  void requireCode(Request request) {
+    if (hub.ready || _stage == SetupStage.ready) {
+      throw ApiError(409, 'already_set_up', 'This server already has its family. Change its settings in Den, on a parent\'s phone.');
+    }
+    final key = hub.clientOf(request);
+    _checkWaiting(key);
+    final given = request.headers[codeHeader] ?? '';
+    if (given.isEmpty || !_codeMatches(given)) {
+      final left = given.isEmpty ? setupTries : _wrongCode(key);
+      throw ApiError(
+        403,
+        'permission_denied',
+        _code == null
+            ? 'This server is joining a family now. Finish on the phone.'
+            : left == 0
+                ? 'That setup code isn\'t right. Wait a minute, then open the setup link again.'
+                : 'That setup code isn\'t right. Open the setup link the server printed again.',
+        details: {'tries_left': left},
+      );
+    }
   }
 
   /// `POST /api/v1/hub/setup {code, invite, direct?}`. Wrong codes are limited per client

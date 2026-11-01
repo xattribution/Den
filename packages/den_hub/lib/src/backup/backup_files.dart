@@ -30,8 +30,17 @@ const String addressFile = 'address';
 
 /// What in `hub/` belongs to this server rather than to the family: how it reaches the internet
 /// and where its backups go. Never in a backup, and kept as it is through a restore, so a family
-/// restored onto a new server keeps that server's connection and backup place.
-const Set<String> serverFiles = {tunnelTokenFile, backupSettingsFile, backupStatusFile};
+/// restored onto a new server keeps that server's connection, backup place and updater's files
+/// (server/updater.dart).
+const Set<String> serverFiles = {
+  tunnelTokenFile,
+  'tunnel-status.json',
+  backupSettingsFile,
+  backupStatusFile,
+  'update.json',
+  'update-request',
+  'update-policy',
+};
 
 String _join(String dir, String relative) => [dir, ...relative.split('/')].join(Platform.pathSeparator);
 

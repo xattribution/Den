@@ -34,6 +34,8 @@ import 'recovery.dart';
 import 'relay_watch.dart';
 import 'reminders.dart';
 import 'screen_codes.dart';
+import 'server/first_boot.dart';
+import 'server/server_api.dart';
 import 'setup.dart';
 import 'sign_in_setup.dart';
 import 'state.dart';
@@ -51,13 +53,20 @@ import 'usage.dart';
 /// requests ([handle]) and sync connections ([serveSocket]) that are its family's.
 /// [DenHub.start] runs a host with this one family, as a hub always ran.
 class DenHub implements RoutableLog {
-  DenHub._(this.den, this.config, this._ctx, this._feed, this._host);
+  DenHub._(this.den, this._ctx, this._feed, this._host);
 
   /// The hub's engine. A fresh one with no family waits for setup.
   final Den den;
 
   /// How the hub runs.
-  final HubConfig config;
+  HubConfig get config => _ctx.config;
+
+  /// Gives the hub the family's [address], learned at first boot (first_boot.dart): links, OAuth
+  /// and the public posture follow it from the next request on.
+  void setPublicUrl(Uri address) {
+    _ctx.config = _ctx.config.withPublicUrl(address);
+    if (identical(_host.ownFamily, this)) _host.state.notePrimary(address);
+  }
 
   final HubContext _ctx;
   final ChangeFeed _feed;
@@ -128,7 +137,7 @@ class DenHub implements RoutableLog {
       feedFetch: host.fetchFor(den.deviceId),
       host: host,
     );
-    final hub = DenHub._(den, config, ctx, ChangeFeed(den), host);
+    final hub = DenHub._(den, ctx, ChangeFeed(den), host);
     await hub._start();
     return hub;
   }
@@ -299,6 +308,11 @@ class DenHub implements RoutableLog {
     _push.register(_routes);
     _accounts = HubAccounts(_ctx, _auth)..register(_routes);
     HubSignInSetup(_ctx, _auth).register(_routes);
+    final firstBoot = FirstBoot(_ctx, _setup, _host,
+        setAddress: setPublicUrl, isOwn: () => identical(_host.ownFamily, this) && _host.idOf(this) == null)
+      ..register(_routes);
+    _setup.firstBoot = firstBoot.statusPart;
+    ServerApi(_ctx, _auth, _host).register(_routes);
     _changes = den.onChange.listen((_) {
       _setup.refresh();
       final m = _mdns;
@@ -466,6 +480,7 @@ class DenHub implements RoutableLog {
   int _bodyLimit(Request request) => switch (request.url.path) {
         'api/v1/capture/read' => HubCapture.maxBody,
         'api/v1/assistant/model' => HubAssistant.maxBody,
+        'api/v1/hub/first-boot/upload' => maxBackupUpload,
         _ => maxBodyBytes,
       };
 

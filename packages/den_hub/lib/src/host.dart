@@ -11,6 +11,10 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
 import 'access.dart';
+import 'backup/backup_files.dart' show restoreBackupFiles;
+import 'backup/backups.dart';
+import 'backup/nas_finder.dart';
+import 'backup/rclone.dart';
 import 'config.dart';
 import 'device_auth.dart';
 import 'edge.dart';
@@ -22,6 +26,8 @@ import 'log.dart';
 import 'net_guard.dart';
 import 'push/web_push_crypto.dart' show VapidKeys;
 import 'recovery.dart';
+import 'server/connector.dart';
+import 'server/updater.dart';
 import 'sign_in_setup.dart';
 import 'tenant_router.dart';
 import 'web.dart';
@@ -54,6 +60,14 @@ class HostConfig {
     this.expected = const [],
     this.retryInterval = const Duration(seconds: 30),
     this.signInIssuers = const {},
+    this.backupDir,
+    this.rclone,
+    this.nasFinder,
+    this.connector,
+    this.updater,
+    this.backupPassphrase,
+    this.reopenOwn,
+    this.clock,
   });
 
   /// The host-wide part of [config], for a host serving that one hub ([DenHub.start]).
@@ -142,6 +156,35 @@ class HostConfig {
   /// Where the sign-in providers are (`{'google': ..., 'apple': ...}`): tests point them at
   /// fakes. Empty, Google's and Apple's own. Whether each is on is set up in the app.
   final Map<String, Uri> signInIssuers;
+
+  /// Where the server's own backups go on its disk ([HostBackups]); null: `<dataDir>/backups`,
+  /// or none for a host in memory.
+  final String? backupDir;
+
+  /// rclone, for copying backups to a NAS; null runs the `rclone` on the PATH (tests fake it).
+  final Rclone? rclone;
+
+  /// Finds NASes on the home network; null asks by mDNS (tests fake it).
+  final NasFinder? nasFinder;
+
+  /// The Cloudflare tunnel's connector beside the hub ([TunnelConnector]); null: this server has
+  /// none, and the first-boot pages don't ask for a token.
+  final TunnelConnector? connector;
+
+  /// The server's updater ([ServerUpdater]); null reads its files in the data directory's `hub/`.
+  final ServerUpdater? updater;
+
+  /// The passphrase older backups were sealed with (`DEN_BACKUP_PASSPHRASE`, when an install
+  /// still sets it), tried on a backup restored from the first-boot pages that needs one.
+  final String? backupPassphrase;
+
+  /// Opens the server's own family again after the first-boot pages restored a backup into its
+  /// data directory: its engine, how it runs, and how to close it. Null: restoring from the
+  /// browser isn't offered (a host in memory).
+  final Future<HostedTenant> Function()? reopenOwn;
+
+  /// The clock for the nightly backups (UTC ms); null is the system's (tests move it).
+  final int Function()? clock;
 }
 
 /// The Den host: one process serving several families' logs (docs/hosting.md, "One host for
@@ -202,6 +245,21 @@ class DenHost implements HostLink {
 
   @override
   late final HostSignIn signIn = HostSignIn(issuers: config.signInIssuers);
+
+  /// The server's own backups: nightly to its disk, and to a NAS when a parent set one up.
+  late final HostBackups backups = HostBackups(
+    dir: config.backupDir ?? (config.dataDir == null ? null : [config.dataDir!, 'backups'].join(Platform.pathSeparator)),
+    rclone: config.rclone ?? const ProcessRclone(),
+    finder: config.nasFinder ?? const MdnsNasFinder(),
+    now: config.clock,
+  );
+
+  /// The Cloudflare tunnel's connector, when the server has one.
+  TunnelConnector? get connector => config.connector;
+
+  /// The server's updater: [HostConfig.updater], or its files in the data directory's `hub/`.
+  late final ServerUpdater? updater =
+      config.updater ?? (config.dataDir == null ? null : FileUpdater([config.dataDir!, 'hub'].join(Platform.pathSeparator)));
 
   /// The host's own family: the first one added without a log id of its own, the family in the
   /// host's data directory itself (the one `install.sh` or `den_hub serve` set up, whoever runs
@@ -367,6 +425,7 @@ class DenHost implements HostLink {
       _ownTaken = true;
       _own = tenant;
       signIn.attach(hubDevice: den.deviceId, dataDir: config.dataDir, log: tenant.context.log);
+      backups.attach(tenant, families: () => List.of(_tenants), log: tenant.context.log);
     }
     if (onClosed != null) _opened[tenant] = (den: den, config: config, close: onClosed);
     return tenant;
@@ -385,6 +444,31 @@ class DenHost implements HostLink {
     if (identical(tenant, _own)) {
       _own = null;
       signIn.detach(tenant.den.deviceId);
+      backups.detach(tenant);
+    }
+  }
+
+  /// Puts the family in a backup's [files] in place of the server's own family, which has none
+  /// yet (the first-boot pages' "Restore from a backup"): stops it, writes the files into its
+  /// data directory ([restoreBackupFiles], which keeps what is the server's), and opens it again
+  /// with [HostConfig.reopenOwn]; the restored family takes the server's own place. [from] names
+  /// the backup in the restore marker. Throws [StateError] when the host can't.
+  Future<DenHub> restoreOwn(Map<String, List<int>> files, {required String from}) async {
+    final own = _own;
+    final reopen = config.reopenOwn;
+    final dir = own?.config.dataDir;
+    if (own == null || reopen == null || dir == null || own.ready) {
+      throw StateError('This server can\'t restore a family from here');
+    }
+    _ownTaken = false;
+    await own.stop();
+    await restoreBackupFiles(dir, files, from: from, now: DateTime.now().toUtc().millisecondsSinceEpoch);
+    final opened = await reopen();
+    try {
+      return await add(opened.den, opened.config, onClosed: opened.close);
+    } catch (_) {
+      await opened.close();
+      rethrow;
     }
   }
 
@@ -988,6 +1072,7 @@ class DenHost implements HostLink {
     if (_stopped) return;
     _stopped = true;
     _retry?.cancel();
+    backups.stop();
     for (final t in List.of(_tenants).reversed) {
       await t.stop();
     }
