@@ -116,7 +116,7 @@ class ActionRunner {
         DenAction.completeOwnChore => '$who can\'t complete chores',
         DenAction.completeAnyChore => '$who can\'t complete someone else\'s chore',
         DenAction.swapChore => '$who can\'t swap chores',
-        DenAction.managePoints => '$who can\'t give or take points, or change goals and rewards',
+        DenAction.managePoints => '$who can\'t give or take stars, or change goals and rewards',
         DenAction.requestReward => '$who can\'t ask for rewards',
         DenAction.manageFamily => 'Only a parent can change the family\'s people and settings',
       };

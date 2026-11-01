@@ -330,3 +330,9 @@ The before and after renders (all under `app/test/goldens/`; befores of this rou
    no flash of the page scrolling.
 2. **On her iPhone**: swipe a Needs you row while scrolling Today; a mostly vertical swipe
    should scroll, a sideways one answer.
+3. **Undo in the row, not a bar at the bottom.** Kept to "Undo in place, never a toast"; say if
+   you'd rather have the bar.
+4. **"Not now" on a ride is until tomorrow**, which for a ride later today means it doesn't come
+   back. A few hours instead?
+5. **The AI line's "Not now" is this phone's.** Following her to her other devices needs a
+   per-person setting in the family's records.
