@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:den_core/den_core.dart'
-    show Change, DeviceMode, RecordType, Space, b64e, canonicalJson, deviceIdOf, randomBytes, verifySignature;
+    show Change, DeviceKind, DeviceMode, RecordType, Space, b64e, canonicalJson, deviceIdOf, randomBytes, verifySignature;
 
 import 'util.dart';
 
@@ -14,7 +14,9 @@ import 'util.dart';
 /// the letters people mistake for digits (O for 0, I and L for 1) read as those digits.
 ///
 /// Both ends stretch it with Argon2id (memory [stretchMemoryKiB], [stretchIterations] passes,
-/// one lane, 32 bytes, fixed salt `den/screen-code/v1`) and derive from that, by HMAC-SHA256:
+/// one lane, 32 bytes), salted with the family's address the screen opened ([origin]:
+/// `den/screen-code/v2 0x00 https://den.example.com`), so a table of every code's stretch is good
+/// for one family's address only, and derive from that, by HMAC-SHA256:
 ///
 /// - the hub's [ScreenCodeKeys.slot] (`den/screen-code/v1/slot`), the only thing the hub keeps
 ///   the code under, so the hub never learns the code;
@@ -25,7 +27,7 @@ import 'util.dart';
 ///
 /// So the key a parent approves is the one the screen in front of her made, even if the hub
 /// in between lied: finding the code from the slot takes one Argon2id run per guess, 2^39 on
-/// average, in the code's ten minutes.
+/// average, in the code's ten minutes, or a table built for that one address beforehand.
 abstract final class ScreenCode {
   /// Crockford's base32: digits and letters with I, L, O and U left out.
   static const String alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -42,8 +44,18 @@ abstract final class ScreenCode {
   /// Argon2id passes.
   static const int stretchIterations = 3;
 
-  static final Uint8List _salt = utf8Bytes('den/screen-code/v1');
   static final Map<String, Future<ScreenCodeKeys>> _derived = {};
+
+  /// The family's address as both ends write it into the stretch: scheme and host in lower
+  /// case and the port only when it isn't the scheme's own (`https://den.example.com`,
+  /// `http://192.168.1.20:47733`), whatever path, query or case the address came with. A sync
+  /// address (`wss://.../ws`) is the same as the page's (`https://...`).
+  static String origin(Uri address) {
+    final scheme = switch (address.scheme.toLowerCase()) { 'wss' => 'https', 'ws' => 'http', final s => s };
+    final standard = (scheme == 'https' && address.port == 443) || (scheme == 'http' && address.port == 80);
+    final port = !address.hasPort || standard ? '' : ':${address.port}';
+    return '$scheme://${address.host.toLowerCase()}$port';
+  }
 
   /// A new random code, [length] characters of [alphabet], no dash.
   static String generate() {
@@ -82,18 +94,22 @@ abstract final class ScreenCode {
     return c.length == length ? '${c.substring(0, 4)}-${c.substring(4)}' : c;
   }
 
-  /// The slot and MAC key [code] stretches to. The last few are kept, so a code stretches once.
-  static Future<ScreenCodeKeys> derive(String code) {
+  /// The slot and MAC key [code] stretches to at the family's address [at] ([origin]). The last
+  /// few are kept, so a code stretches once.
+  static Future<ScreenCodeKeys> derive(String code, {required Uri at}) {
     final normalized = normalize(code);
     if (normalized == null) throw const FormatException("That isn't a screen's code");
-    final known = _derived[normalized];
+    final where = origin(at);
+    final cacheKey = '$normalized $where';
+    final known = _derived[cacheKey];
     if (known != null) return known;
     while (_derived.length >= 8) {
       _derived.remove(_derived.keys.first);
     }
-    return _derived[normalized] = () async {
+    return _derived[cacheKey] = () async {
       final kdf = Argon2id(parallelism: 1, memory: stretchMemoryKiB, iterations: stretchIterations, hashLength: 32);
-      final key = await kdf.deriveKey(secretKey: SecretKey(utf8Bytes(normalized)), nonce: _salt);
+      final salt = [...utf8Bytes('den/screen-code/v2'), 0, ...utf8Bytes(where)];
+      final key = await kdf.deriveKey(secretKey: SecretKey(utf8Bytes(normalized)), nonce: salt);
       final stretched = await key.extractBytes();
       return ScreenCodeKeys._(
         hexEncode(await hmacSha256(stretched, utf8Bytes('den/screen-code/v1/slot'))),
@@ -107,12 +123,17 @@ abstract final class ScreenCode {
 
   static final RegExp _slotRe = RegExp(r'^[0-9a-f]{64}$');
 
-  /// The code in a link or QR code (`https://<hub>/#/add-screen/K7QM3RXA`), or in typed text;
-  /// null when there is none.
+  /// What a screen's QR code holds: `den://screen/K7QM3RXA`. Only Den's own scanner reads it
+  /// (seeing the screen is the point); no link opens Add a screen with a code in it.
+  static String qr(String code) => '$qrPrefix${normalize(code) ?? code}';
+
+  /// What every screen's QR code starts with.
+  static const String qrPrefix = 'den://screen/';
+
+  /// The code in a screen's QR code ([qr]) or in typed text; null when there is none.
   static String? fromText(String text) {
-    final at = text.indexOf('add-screen/');
-    final rest = at < 0 ? text : text.substring(at + 'add-screen/'.length).split(RegExp(r'[?#/&]')).first;
-    return normalize(Uri.decodeComponent(rest));
+    final t = text.trim();
+    return normalize(t.startsWith(qrPrefix) ? t.substring(qrPrefix.length) : t);
   }
 }
 
@@ -154,9 +175,16 @@ class ScreenCodeKeys {
 
 /// Whether [change] is the join request of the screen with [pubkey] and [xpub], as a screen's
 /// code may carry it: its own device record, written by itself for nobody, unapproved, as a
-/// shared screen, nothing else in it, and signed by that key. The hub checks it before keeping
-/// it, and the parent's phone again before it writes it with its approval.
-Future<bool> isScreenJoinRequest(Change change, {required String pubkey, required String xpub}) async {
+/// shared screen of the [kind] its code was tagged with (never a hub) and called [name] (the
+/// name the parent chose), nothing else in it, and signed by that key. The hub checks it before
+/// keeping it, and the parent's phone again before it writes it with its approval.
+Future<bool> isScreenJoinRequest(
+  Change change, {
+  required String pubkey,
+  required String xpub,
+  required String name,
+  required String kind,
+}) async {
   final device = deviceIdOf(pubkey);
   final f = change.fields;
   final fits = device != null &&
@@ -170,7 +198,10 @@ Future<bool> isScreenJoinRequest(Change change, {required String pubkey, require
       f['approved'] == false &&
       f['mode'] == DeviceMode.shared.name &&
       f['member'] == null &&
-      f['name'] is String &&
+      f['name'] == name &&
+      f['kind'] == kind &&
+      kind != DeviceKind.hub.name &&
+      DeviceKind.values.any((k) => k.name == kind) &&
       f.keys.every(_screenJoinFields.contains);
   return fits && await verifySignature(change.signedBytes, change.sig, pubkey);
 }

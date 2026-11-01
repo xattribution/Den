@@ -91,7 +91,7 @@ void main() {
     final den = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
     addTearDown(den.close);
     final c = code ?? ScreenCode.generate();
-    final keys = await ScreenCode.derive(c);
+    final keys = await ScreenCode.derive(c, at: f.base);
     final made = await anon('/api/v1/screens/code', {
       'slot': keys.slot,
       'pubkey': den.keys.pubkey,
@@ -105,7 +105,7 @@ void main() {
   }
 
   Future<ApiResult> find(String code, {Den? by, String? actor, String? from}) async =>
-      signed(by ?? f.phone, '/api/v1/screens/find', {'slot': (await ScreenCode.derive(code)).slot}, actor: actor, from: from);
+      signed(by ?? f.phone, '/api/v1/screens/find', {'slot': (await ScreenCode.derive(code, at: f.base)).slot}, actor: actor, from: from);
 
   Future<ApiResult> accept(Screen s, {String name = Screen.name, Den? by, String? actor}) async => signed(by ?? f.phone, '/api/v1/screens/accept', {
         'slot': s.keys.slot,
@@ -174,7 +174,7 @@ void main() {
     final asked = await signed(f.phone, '/api/v1/screens/request', {'slot': s.keys.slot});
     expect(asked.body['state'], 'requested');
     final change = Change.fromJson((asked.body['change']! as Map).cast<String, Object?>());
-    expect(await isScreenJoinRequest(change, pubkey: s.pubkey, xpub: s.xpub), isTrue);
+    expect(await isScreenJoinRequest(change, pubkey: s.pubkey, xpub: s.xpub, name: 'Kitchen', kind: 'tablet'), isTrue);
 
     // On Alex's phone: the request and the approval, a shared screen that is nobody's.
     await f.phone.ingest([change]);
@@ -256,7 +256,7 @@ void main() {
     }
     final den = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
     addTearDown(den.close);
-    final keys = await ScreenCode.derive(ScreenCode.generate());
+    final keys = await ScreenCode.derive(ScreenCode.generate(), at: f.base);
     final over = await anon('/api/v1/screens/code', {
       'slot': keys.slot,
       'pubkey': den.keys.pubkey,
@@ -313,7 +313,7 @@ void main() {
       memberId: f.id('Alex'),
     );
     final personal = mine.changesSince(const {}).single;
-    expect(await isScreenJoinRequest(personal, pubkey: s.pubkey, xpub: s.xpub), isFalse);
+    expect(await isScreenJoinRequest(personal, pubkey: s.pubkey, xpub: s.xpub, name: Screen.name, kind: 'tablet'), isFalse);
     final asSomeone = await anon('/api/v1/screens/code/join', {'slot': s.keys.slot, 'secret': s.secret, 'change': personal.toJson()});
     expect(asSomeone.status, 400, reason: 'a code is only ever for a shared screen, never someone\'s own device');
 
@@ -328,6 +328,50 @@ void main() {
     );
 
     expect((await sendJoin(s)).status, 200, reason: "the screen's own request still goes");
+  });
+
+  test('the join request must be the kind the code was tagged with, under the name the parent chose, never a hub', () async {
+    final s = await showCode();
+    expect((await accept(s, name: 'Kitchen')).status, 200);
+    Future<ApiResult> sendAs({required String name, required DeviceKind kind}) async {
+      final den = await Den.open(storage: MemoryStorage(), keys: s.den.keys);
+      addTearDown(den.close);
+      await den.requestJoin(
+        familyId: f.phone.familyId!,
+        founderPubkey: f.phone.founderPubkey!,
+        deviceName: name,
+        kind: kind,
+        mode: DeviceMode.shared,
+      );
+      final change = den.changesSince(const {}).single;
+      return anon('/api/v1/screens/code/join', {'slot': s.keys.slot, 'secret': s.secret, 'change': change.toJson()});
+    }
+
+    expect((await sendAs(name: 'Kitchen', kind: DeviceKind.display)).status, 400, reason: 'another kind than the code said');
+    expect((await sendAs(name: 'Hall', kind: DeviceKind.tablet)).status, 400, reason: 'another name than the parent chose');
+    expect((await sendAs(name: 'Kitchen', kind: DeviceKind.hub)).status, 400, reason: 'never a hub');
+    expect((await sendAs(name: 'Kitchen', kind: DeviceKind.tablet)).status, 200);
+
+    final hubCode = await ScreenCode.derive(ScreenCode.generate(), at: f.base);
+    final asHub = await anon('/api/v1/screens/code', {
+      'slot': hubCode.slot,
+      'pubkey': (await DeviceKeys.generate()).pubkey,
+      'xpub': 'x',
+      'name': 'Closet',
+      'kind': 'hub',
+      'tag': 'x',
+    }, from: nextClient());
+    expect(asHub.status, 400, reason: 'a code is never for a hub');
+  });
+
+  test('a phone that knows the hub at two addresses sends both slots, and they count as one try', () async {
+    final s = await showCode();
+    final elsewhere = await ScreenCode.derive(s.code, at: Uri.parse('https://den.example.com'));
+    final found = await signed(f.phone, '/api/v1/screens/find', {
+      'slots': [elsewhere.slot, s.keys.slot],
+    }, from: nextClient());
+    expect(found.status, 200, reason: found.text);
+    expect(found.body['slot'], s.keys.slot);
   });
 
   test("a kid's phone and a shared screen can't add a screen, and a shared screen's approval counts for nothing", () async {
@@ -364,7 +408,7 @@ void main() {
       final den = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
       addTearDown(den.close);
       final code = ScreenCode.generate();
-      final keys = await ScreenCode.derive(code);
+      final keys = await ScreenCode.derive(code, at: Uri.parse('https://den-a.test'));
       final made = await h.call('POST', '/api/v1/screens/code', hostname: 'den-a.test', body: {
         'slot': keys.slot,
         'pubkey': den.keys.pubkey,
@@ -375,7 +419,7 @@ void main() {
       });
       expect(made.status, 201, reason: made.text);
 
-      final nobodys = await ScreenCode.derive(ScreenCode.generate());
+      final nobodys = await ScreenCode.derive(ScreenCode.generate(), at: Uri.parse('https://den-b.test'));
       final nowhere = await h.signed(b.phone, 'POST', '/api/v1/screens/find', hub: b.hubDen.deviceId, body: {'slot': nobodys.slot});
       final crossed = await h.signed(b.phone, 'POST', '/api/v1/screens/find', hub: b.hubDen.deviceId, body: {'slot': keys.slot});
       expect(crossed.status, 404, reason: "b's parent finds nothing under a's code");
