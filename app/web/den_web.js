@@ -13,6 +13,8 @@
 // - The screen's safe areas (the home indicator, the notch), which Flutter doesn't report.
 // - The page stays put around the keyboard, a keyboard closed with its own button ends the
 //   editing, and the app learns how much of the screen the keyboard really covers.
+// - The keyboard at once: a tap that opens a field a frame later (Add) raises the keyboard in
+//   the tap itself, which is the only time iOS allows it.
 // - What Settings, Advanced, Show screen info shows: the page's sizes, the keyboard, the focus
 //   and the last few viewport events.
 (function () {
@@ -756,6 +758,54 @@
     nav.virtualKeyboard.addEventListener('geometrychange', onEvent('keyboard moved', true));
   }
 
+  // ------------------------------------------------------------------ the keyboard, at once
+  //
+  // Safari on an iPhone or iPad raises the keyboard only for a field focused inside the tap that
+  // asked for it (Chrome on Android, much the same), and Add builds its field a frame after the
+  // tap, in a sheet that is still rising. So the tap focuses a stand-in field here, at once, and
+  // the keyboard comes up with the sheet; Flutter's own field then takes the focus from it, which
+  // keeps the keyboard up. If nothing has taken the focus by then, the stand-in lets go and the
+  // keyboard goes back down. Only on a phone or tablet: elsewhere there's no keyboard to raise.
+
+  /** How long the stand-in waits for the app's own field. */
+  var STAND_IN_MS = 1500;
+  var standIn = null;
+
+  function keyboardNow() {
+    if (!mobile() || !document.body || typeof document.createElement !== 'function') return false;
+    try {
+      if (!standIn) {
+        standIn = document.createElement('input');
+        standIn.type = 'text';
+        standIn.setAttribute('aria-label', 'Add');
+        standIn.setAttribute('tabindex', '-1');
+        standIn.setAttribute('autocomplete', 'off');
+        standIn.setAttribute('autocapitalize', 'sentences');
+        // Off to the side of nothing: no size, no color, nothing to tap, and 17 px so iOS
+        // doesn't zoom in on it.
+        standIn.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;margin:0;padding:0;border:0;' +
+          'opacity:0;background:transparent;color:transparent;caret-color:transparent;font-size:17px;pointer-events:none';
+      }
+      // Inside Flutter's view: focus that leaves the view makes Flutter take it back for the
+      // view itself (its ViewFocusBinding), a plain element, and the keyboard would go.
+      var host = document.querySelector('flutter-view') || document.body;
+      if (standIn.parentNode !== host) host.appendChild(standIn);
+      standIn.value = '';
+      standIn.focus({ preventScroll: true });
+      note('keyboard at once');
+      var mine = standIn;
+      setTimeout(function () {
+        if (document.activeElement === mine) {
+          note('stand-in let go');
+          mine.blur();
+        }
+      }, STAND_IN_MS);
+      return document.activeElement === standIn;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /** Calls [callback] with [viewport]'s answer now and whenever it changes. */
   function onViewport(callback) {
     viewportListener = callback;
@@ -945,6 +995,7 @@
     onViewport: onViewport,
     diagnose: diagnose,
     screenInfo: screenInfo,
+    keyboardNow: keyboardNow,
     reload: function () { window.location.reload(); },
   };
 })();

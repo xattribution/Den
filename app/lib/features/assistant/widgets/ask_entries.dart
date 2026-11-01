@@ -72,7 +72,9 @@ class AskTodayEntry extends StatelessWidget {
 }
 
 /// A parent's quiet way to set the helper up while it's off: one row at the end of Today, "Ask
-/// in your own words", to Settings, AI helper. Nothing for anyone else, or once it's on.
+/// in your own words", to Settings, AI helper, with a quiet "Not now" that puts it away for this
+/// person on this device. Only in the family's first weeks ([askSetUpLineShows]); nothing for
+/// anyone else, or once it's on.
 class AskSetUpLine extends StatelessWidget {
   const AskSetUpLine({super.key, this.padding = EdgeInsets.zero});
 
@@ -80,16 +82,30 @@ class AskSetUpLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch(const {});
-    if (askEntryOf(context, app) != AskEntry.setUp) return const SizedBox.shrink();
+    final app = context.watch(const {Changes.notices});
+    final me = app.me;
+    final linked = Assistant.linkFor(context, app) != null;
+    if (me == null || !askSetUpLineShows(app, linked: linked, now: app.den.now())) return const SizedBox.shrink();
     return Padding(
       padding: padding,
       child: GroupCard(
-        child: NavRow(
-          icon: askIcon,
-          label: askSetUpLabel,
-          detail: askSetUpDetail,
-          onTap: () => context.push('/settings/assistant'),
+        child: Row(
+          children: [
+            Expanded(
+              child: NavRow(
+                icon: askIcon,
+                label: askSetUpLabel,
+                detail: askSetUpDetail,
+                chevron: false,
+                onTap: () => context.push('/settings/assistant'),
+              ),
+            ),
+            const SizedBox(width: Sp.xs),
+            TextButton(
+              onPressed: () => app.markSeen(askSetUpSeenKey(me.id)),
+              child: const Text(askSetUpLater, maxLines: 1, softWrap: false),
+            ),
+          ],
         ),
       ),
     );

@@ -182,7 +182,16 @@ void main() {
     testWidgets('in a browser, reminders come from the hub', (tester) async {
       final state = await connected(tester);
       await pumpScreen(tester, const SettingsScreen(version: '1.0.0', web: true), state: state, size: _tall);
-      expect(findWords('Reminders on this browser'), findsOneWidget);
+      // The heading says it once; what's under it names the device.
+      expect(find.text('Reminders'), findsOneWidget);
+      expect(find.text('Reminders on this browser'), findsNothing);
+    });
+
+    testWidgets('in the app, one switch says reminders on this device', (tester) async {
+      final state = await connected(tester);
+      await pumpScreen(tester, const SettingsScreen(version: '1.0.0', web: false), state: state, size: _tall);
+      expect(findWords('Reminders on this device'), findsOneWidget);
+      expect(find.text('Reminders'), findsNothing, reason: 'no heading saying it again');
     });
 
     testWidgets('a kid sees no family, AI or Advanced', (tester) async {
@@ -203,9 +212,9 @@ void main() {
     testWidgets('a parent turns stars off and on', (tester) async {
       final state = await connected(tester);
       await pumpScreen(tester, const FamilySettingsScreen(), state: state, size: _tall);
-      await _tapAndWait(tester, findWords('Points and rewards'));
+      await _tapAndWait(tester, findWords('Stars and rewards'));
       expect(state.den.family!.pointsEnabled, isFalse);
-      await _tapAndWait(tester, findWords('Points and rewards'));
+      await _tapAndWait(tester, findWords('Stars and rewards'));
       expect(state.den.family!.pointsEnabled, isTrue);
     });
 

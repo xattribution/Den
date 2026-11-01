@@ -247,3 +247,92 @@ Things that would help her that change a decision of yours, so they're here and 
 10. **"Reminders on this device" over a switch called "Reminders"** says it twice. It could be
     one switch, "Reminders on this iPhone", with no heading; it was left because the browser's
     version of that section has more in it.
+
+## Round 2
+
+Jared answered the list above: 1, 3, 4, 5, 7 and 8 as asked, and 2, 6 and 10 left to the
+defaults suggested there. Item 9 (the kitchen screen joining by a code) is its own change.
+
+| Change | Job | Taps before → after |
+| --- | --- | --- |
+| Add opens with the field focused and the keyboard up | Add milk, an event, anything | 3 → 2 (Add, type, "Add to Groceries") |
+| Needs you shows three, then "2 more", which opens the rest in place | Glance at today with five things waiting | The day's events start on the first screen; a fourth thing waiting is 0 → 1 tap away |
+| A kid's late chore never shows in a grown-up's Needs you | (nothing nags her about the kids' chores) | Checking them: the Chores tab, 1, as before |
+| Swipe right to approve, left (or a small ×) to decline, with Undo in place | Say no to a reward | 3 (her face, Stars and rewards, Decline) → 1 |
+| | Turn away a device asking to join | 3 (her face, Family, Turn it away) → 1 |
+| | Approve a reward or a device | 1 → 1 (the button, or a swipe) |
+| | Put off "Nobody is driving Zoe" until an hour before it leaves | not possible → 1 |
+| The AI helper line at the end of Today: "Not now", and only in the family's first three weeks | Put it away | not possible → 1; after three weeks 0 |
+| "Stars and rewards", not "Points and rewards" | Open it | 2 → 2 |
+| "Approve" for a device on Family too (it said "Let Grandma Rosa in") | Let a device in | 1 → 1 |
+| "Already have Den on this iPhone? Copy invite" is one quiet line under the heading | Follow the Home Screen steps | The steps start a card higher |
+| Settings: one switch, "Reminders on this device", no heading saying it again (in a browser, the heading "Reminders" over what names the device) | Reminders | 3 → 3 |
+
+### How each works
+
+- **The keyboard with Add.** iOS raises the keyboard for a Home Screen web app only when a field
+  is focused inside the tap itself, and Add's field is built a frame after the tap, in a sheet
+  still rising. So the tap on + focuses a stand-in field in the page (`den_web.js`,
+  `keyboardNow`), at once, and the field in the sheet (`autofocus`) takes the focus from it as the
+  sheet opens, which keeps the keyboard up. If nothing takes it within 1.5 s the stand-in lets
+  go and the keyboard goes down. Only on a phone or tablet, and only when Add has a field for
+  the person. In the app (not the web) autofocus alone does it.
+- **Three, then "2 more".** The count by the heading still says how many things wait ("5
+  things"). Settled rows keep their place with Undo, as before; "2 more" is a quiet row with a
+  caret that opens the rest in place, in the same order (rides, a device waiting, rewards,
+  lists, a grown-up's late chores, connections, notices).
+- **Kids' chores.** Needs you leaves out every late chore whose owner is a kid; a grown-up's
+  own, and one for anyone, still show. Nothing else nagged her about them: the hub's pushes
+  about chores go only to whoever's turn it is, and a phone's own reminders are only for its
+  person's chores (and chores for anyone).
+- **Swipe to answer** (DESIGN.md, "Swipe to answer"). Right approves, calling exactly what the
+  Approve button calls, so a device is still let in only from a parent's own phone. Left, or
+  the ×, declines a reward or turns a device away; on a row with no no it means "Not now",
+  which puts it off on this phone until tomorrow; a ride only until an hour before it leaves
+  (it comes back then if nobody has taken it), and a ride leaving within the hour has no × or
+  swipe at all, so a kid is never left without one. What happened shows in the row with Undo for
+  five seconds; a decline or a turn-away is only sent once those pass (or Today closes), so a
+  swipe by mistake never reaches the kid or the person holding the device; then the row folds
+  away. Rows that already have Got it (notices) or Remind me later get the swipe and no ×.
+  The × is an 18 pt gray glyph on the title's line, with a 44 pt target. This keeps Den's
+  "Undo in place, never a toast" (DESIGN.md): the Undo is where her finger was, not in a bar
+  at the bottom.
+- **The AI helper line.** "Not now" is kept with the other things she put away on this phone
+  (per person, per family); there's no synced per-person place for it without a change to the
+  family's records, and it's one tap on another phone. The line shows only for 21 days from
+  when the family was made; after that the helper lives in Settings, AI helper, and ⌘K still
+  says what it does.
+- **Stars and rewards.** The menu, the page's title, Settings, Family's switch, the empty
+  states and editors, the web app's description, the hub's sign-in page and its push ("Approve
+  it in Stars and rewards"), and what the assistant and MCP tools call it. Routes (`/points`)
+  and code names stay.
+
+The before and after renders (all under `app/test/goldens/`; befores of this round in
+`housemom/round2/`):
+
+| Screen | Before | After |
+| --- | --- | --- |
+| Today, Needs you with five waiting | `housemom/round2/today_needs_more_phone_before.png` | `housemom/today_needs_more_phone.png` |
+| Today, a device asking to join | `housemom/round2/today_needs_device_phone_before.png`, `_night_before` | `housemom/today_needs_device_phone.png`, `_night` |
+| A reward mid-swipe; declined with Undo | (new) | `housemom/today_needs_swiping_phone.png`, `housemom/today_needs_declined_phone.png` |
+| Today, the whole page | `housemom/round2/today_phone_full_before.png` | `today_phone_full.png` |
+| Today's AI helper line | `housemom/round2/ask_set_up_today_phone_before.png` | `ask_set_up_today_phone.png` |
+| Add, as it opens | `housemom/round2/add_open_phone_before.png` | `housemom/add_open_phone.png` |
+| Stars and rewards | `housemom/round2/points_phone_before.png` | `points_phone.png` |
+| The menu under her face | `housemom/round2/person_menu_phone_before.png` | `housemom/person_menu_phone.png` |
+| Settings | `housemom/round2/settings_phone_before.png` | `housemom/settings_phone.png` |
+| Family, a device asking to join | `housemom/round2/family_phone_before.png` | `family_phone.png` |
+| An invite opened in Safari | `housemom/round2/onboarding_v2_safari_invite_phone_before.png` | `onboarding_v2_safari_invite_phone.png` |
+
+### For Jared, round 2
+
+1. **On her iPhone**: tap + and check the keyboard rises with the sheet, in the Home Screen
+   app (Chrome here can't show an on-screen keyboard; it checks the focus lands in the tap and
+   ends in Add's field). Also: the keyboard staying up when the sheet's field takes over, and
+   no flash of the page scrolling.
+2. **On her iPhone**: swipe a Needs you row while scrolling Today; a mostly vertical swipe
+   should scroll, a sideways one answer.
+3. **Undo in the row, not a bar at the bottom.** Kept to "Undo in place, never a toast"; say if
+   you'd rather have the bar.
+4. **The AI line's "Not now" is this phone's.** Following her to her other devices needs a
+   per-person setting in the family's records.

@@ -121,6 +121,21 @@ String itemsLeft(int n) => '$n ${n == 1 ? 'thing' : 'things'} left';
 /// The count by Needs you's heading: "2 things", "1 thing", "All done".
 String needCount(int open) => open == 0 ? 'All done' : '$open ${open == 1 ? 'thing' : 'things'}';
 
+/// Under the first few in Needs you: "2 more", which opens the rest in place.
+String needsMore(int n) => '$n more';
+
+/// What "Not now" (the × or a swipe to the left) did: back tomorrow.
+const String notNowDone = 'Hidden until tomorrow';
+
+/// What "Not now" on a ride did: back an hour before it leaves, unless someone takes it.
+String rideBackAt(String time) => 'Back at $time if nobody is driving';
+
+/// A reward request declined, as one approved says it: "$5 declined for Maya".
+String rewardDeclined(String title, String name) => '$title declined for $name';
+
+/// A device turned away from Needs you: "Rosa's iPad was turned away".
+String deviceTurnedAway(String device) => '$device was turned away';
+
 /// Chores' count: "2 of 5 done".
 String choresDone(List<ChoreDay> days) => '${days.where((d) => d.done).length} of ${days.length} done';
 

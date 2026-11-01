@@ -113,7 +113,7 @@ String _pollScript(String requestId, String nonce) => '''
 
 String _scopeWords(List<String> scopes) {
   const words = {
-    'read': 'see the calendar, chores, lists and points',
+    'read': 'see the calendar, chores, lists and stars',
     'calendar': 'change events',
     'chores': 'check off chores',
     'lists': 'change lists',

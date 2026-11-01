@@ -6,7 +6,7 @@
 /// open Ask directly ([openAsk]), each showing only what [askEntry] allows the person.
 library;
 
-export 'state/ask_access.dart' show AskEntry, askEntry;
+export 'state/ask_access.dart' show AskEntry, askEntry, askSetUpLineShows, askSetUpSeenKey, askSetUpWeeks;
 export 'state/ask_request.dart' show AskRequest;
 export 'state/helper_link.dart' show Assistant, AssistantScope, HelperLink, HelperStatus, helperOn;
 export 'widgets/ask_entries.dart'

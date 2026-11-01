@@ -161,7 +161,7 @@ class _GoalEditorScreenState extends State<GoalEditorScreen> {
         appBar: AppBar(title: const Text('Edit goal')),
         body: EmptyLine(
           message: 'This goal was deleted.',
-          actionLabel: 'Go to points',
+          actionLabel: 'Go to stars and rewards',
           onAction: () => context.go('/points'),
         ),
       );

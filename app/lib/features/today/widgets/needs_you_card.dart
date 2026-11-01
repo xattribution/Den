@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../../app/app_state.dart';
+import '../../../design/motion.dart';
 import '../../../design/pictograms.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
@@ -17,6 +20,13 @@ import '../words/today_words.dart';
 /// Needs you (Main.dc.html): what waits for whoever is using the device, each with the one
 /// action that settles it. Settling one turns its row into what it did, with Undo, in place;
 /// the row stays until Today is left. Nothing waiting, no section.
+///
+/// The first [needsShown] show; "2 more" under them opens the rest in place. A row that asks a
+/// yes or no (a reward, a device asking to join) also answers by a swipe, to the right for yes
+/// and to the left for no, and its small × says no too; a row with no no is put off until
+/// tomorrow by the swipe left or the × ("Not now"). What a swipe or the × did shows in the row's
+/// place with Undo for [undoWindow]; a no is only sent once that has passed (or Today closes),
+/// and then the row folds away.
 class NeedsYouSection extends StatefulWidget {
   const NeedsYouSection({super.key, required this.now, this.carded = false, this.gap = 0, this.title = 'Needs you'});
 
@@ -32,15 +42,21 @@ class NeedsYouSection extends StatefulWidget {
   /// Room under the section, when there is one.
   final double gap;
 
+  /// How long Undo stays after a swipe or the ×, before a no is sent and the row folds away.
+  @visibleForTesting
+  static Duration undoWindow = const Duration(seconds: 5);
+
   @override
   State<NeedsYouSection> createState() => _NeedsYouSectionState();
 }
 
-/// What a settled row says, and the receipt Undo takes back.
+/// What a settled row says, and how Undo takes it back: the receipt of what was written, or
+/// [undo] for something only this device did or a no that hasn't been sent yet.
 class _Settled {
-  const _Settled(this.message, this.receipt);
+  const _Settled(this.message, this.receipt, {this.undo});
   final String message;
   final Receipt? receipt;
+  final VoidCallback? undo;
 }
 
 class _NeedsYouSectionState extends State<NeedsYouSection> {
@@ -51,6 +67,30 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
   final _settled = <String, _Settled>{};
   final _failed = <String, String>{};
   final _busy = <String>{};
+
+  /// What a failed no tries again, by key.
+  final _again = <String, VoidCallback>{};
+
+  /// The rows a swipe or the × put away, waiting out Undo: their timers, and the no to send
+  /// when it ends (null for "Not now", which this device already did).
+  final _waiting = <String, (Timer, Future<void> Function()?)>{};
+
+  /// Rows put away for good, folding out of the list.
+  final _gone = <String>{};
+
+  /// "2 more" was tapped: every row shows.
+  bool _all = false;
+
+  @override
+  void dispose() {
+    // Today closing ends Undo: what was declined is sent now.
+    for (final (timer, send) in _waiting.values) {
+      timer.cancel();
+      if (send != null) unawaited(tryWrite(send));
+    }
+    _waiting.clear();
+    super.dispose();
+  }
 
   Future<void> _settle(String key, Future<ActionResult> Function() write, String message) async {
     setState(() {
@@ -71,7 +111,16 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
   }
 
   Future<void> _undo(String key) async {
-    final receipt = _settled[key]?.receipt;
+    final settled = _settled[key];
+    if (settled == null) return;
+    final local = settled.undo;
+    if (local != null) {
+      _waiting.remove(key)?.$1.cancel();
+      local();
+      setState(() => _settled.remove(key));
+      return;
+    }
+    final receipt = settled.receipt;
     if (receipt == null) return;
     setState(() => _busy.add(key));
     final result = await context.actions.undo(receipt);
@@ -86,9 +135,46 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
     });
   }
 
+  /// Puts [key]'s row away with [message] and Undo, for [NeedsYouSection.undoWindow]: then
+  /// [send] (a no, written only now) and the row folds away. [undo] takes back what this device
+  /// did at once (a "Not now").
+  void _putAway(String key, String message, {Future<void> Function()? send, VoidCallback? undo}) {
+    _waiting.remove(key)?.$1.cancel();
+    final timer = Timer(NeedsYouSection.undoWindow, () => _undoEnded(key));
+    setState(() {
+      _failed.remove(key);
+      _again.remove(key);
+      _waiting[key] = (timer, send);
+      _settled[key] = _Settled(message, null, undo: undo ?? () {});
+    });
+  }
+
+  Future<void> _undoEnded(String key) async {
+    final waiting = _waiting.remove(key);
+    if (waiting == null || !mounted) return;
+    final send = waiting.$2;
+    if (send != null) {
+      final problem = await tryWrite(send);
+      if (!mounted) return;
+      if (problem != null) {
+        // Not sent: the row comes back, saying why, with Try again.
+        setState(() {
+          _settled.remove(key);
+          _failed[key] = problem;
+        });
+        return;
+      }
+    }
+    setState(() {
+      final s = _settled[key];
+      if (s != null) _settled[key] = _Settled(s.message, null);
+      _gone.add(key);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final needs = context.view(NeedsModel(widget.now));
+    final needs = context.view(NeedsModel(widget.now, ended: DenScope.read(context).snoozesEnded(widget.now)));
     final app = DenScope.read(context);
     final live = <String, Need>{};
     for (final n in needs) {
@@ -96,33 +182,92 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
       _seen[n.key] = n;
       if (!_order.contains(n.key)) _order.add(n.key);
     }
-    final rows = <Widget>[];
+    final first = <Widget>[];
+    final rest = <Widget>[];
+    var shown = 0;
     for (final key in _order) {
       final settled = _settled[key];
       final need = live[key] ?? (settled != null ? _seen[key] : null);
       if (need == null) continue;
+      final gone = _gone.contains(key);
       final receipt = settled?.receipt;
-      rows.add(KeyedSubtree(
+      final waiting = _waiting.containsKey(key);
+      final undo = !_busy.contains(key) && (waiting || (receipt != null && receipt.undoable)) ? () => _undo(key) : null;
+      final row = KeyedSubtree(
         key: ValueKey(key),
-        child: DoneSwap(
-          done: settled == null
-              ? null
-              : DoneRow(
-                  message: settled.message,
-                  onUndo: receipt != null && receipt.undoable && !_busy.contains(key) ? () => _undo(key) : null,
-                ),
-          child: _ask(context, app, need),
+        child: DenReveal(
+          visible: !gone,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // A hairline over every row but the first.
+              if (shown > 0 || gone && first.isNotEmpty) const RowRule(indent: RowRule.afterFace),
+              DoneSwap(
+                done: settled == null ? null : DoneRow(message: settled.message, onUndo: gone ? null : undo),
+                child: _ask(context, app, need),
+              ),
+            ],
+          ),
         ),
-      ));
+      );
+      if (gone || shown < needsShown) {
+        first.add(row);
+      } else {
+        rest.add(row);
+      }
+      if (!gone) shown++;
     }
-    if (rows.isEmpty) return const SizedBox.shrink();
+    if (first.isEmpty) return const SizedBox.shrink();
     final open = [for (final k in live.keys) if (!_settled.containsKey(k)) k].length;
-    final body = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: ruled(rows, indent: RowRule.afterFace));
-    return Padding(
-      padding: EdgeInsets.only(bottom: widget.gap),
-      child: widget.carded
-          ? _carded(context, body, open)
-          : DenSection(title: widget.title, trailing: SectionCount(needCount(open)), child: body),
+    final c = context.colors;
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ...first,
+        if (rest.isNotEmpty) ...[
+          DenReveal(visible: _all, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rest)),
+          DenReveal(
+            visible: !_all,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const RowRule(indent: RowRule.afterFace),
+                DenPressable(
+                  onTap: () => setState(() => _all = true),
+                  scale: false,
+                  shape: const RoundedRectangleBorder(),
+                  semanticLabel: 'Show ${needsMore(rest.length)}',
+                  child: ExcludeSemantics(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 52),
+                      child: Padding(
+                        padding: const EdgeInsetsDirectional.only(start: RowRule.afterFace),
+                        child: Row(
+                          children: [
+                            Text(needsMore(rest.length), style: context.text.label(c.ink)),
+                            const SizedBox(width: Sp.xs),
+                            Icon(PhosphorIconsBold.caretDown, size: 16, color: c.ink),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+    // Once the last row has folded away, the section folds with it.
+    return DenReveal(
+      visible: shown > 0,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: widget.gap),
+        child: widget.carded
+            ? _carded(context, body, open)
+            : DenSection(title: widget.title, trailing: SectionCount(needCount(open)), child: body),
+      ),
     );
   }
 
@@ -281,6 +426,17 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
           null,
         ),
     };
+    // The swipes and the ×: a yes or no where the row asks one (the same calls as its buttons,
+    // so the same rules decide who may), and "Not now" everywhere else. A row whose own buttons
+    // already put it away ("Got it", "Remind me later") gets the swipe and no ×.
+    final (VoidCallback? yes, VoidCallback? no, String noLabel, bool cross) = switch (need) {
+      RewardNeed() => (() => _approve(app, need), () => _decline(app, need), 'Decline', true),
+      DeviceNeed(:final device) => (() => _approveDevice(app, device), () => _turnAway(app, device), 'Turn away', true),
+      // A ride leaving within the hour can't be put off: it would come back at once.
+      RideNeed() when !canPutOff(app, need, now: widget.now) => (null, null, 'Not now', false),
+      RideNeed() || LateNeed() || LateManyNeed() || ListNeed() || ConnectionNeed() => (null, () => _notNow(app, need), 'Not now', true),
+      _ => (null, () => _notNow(app, need), 'Not now', false),
+    };
     final row = ActionRow(
       leading: leading,
       title: title,
@@ -289,18 +445,68 @@ class _NeedsYouSectionState extends State<NeedsYouSection> {
       onTap: open,
       // Two buttons beside the words would leave the words a sliver of an iPad column.
       actionBelow: need is RecoveryWordsNeed ? true : null,
+      onApprove: busy ? null : yes,
+      onDecline: busy ? null : no,
+      declineLabel: noLabel,
+      declineButton: cross,
     );
-    if (failed == null || retry == null) return row;
+    final again = _again[key] ?? retry;
+    if (failed == null || again == null) return row;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         row,
         Padding(
           padding: const EdgeInsetsDirectional.only(start: RowRule.afterFace),
-          child: ErrorState(message: failed, actionLabel: 'Try again', onAction: retry),
+          child: ErrorState(message: failed, actionLabel: 'Try again', onAction: again),
         ),
       ],
     );
+  }
+
+  /// "Not now": put off on this device until tomorrow, at once, with Undo for a few seconds.
+  void _notNow(AppState app, Need need) {
+    final key = need.key;
+    final until = notNowUntil(app, need);
+    app.snooze(key, until);
+    _putAway(key, need is RideNeed ? rideBackAt(app.formats.time(until)) : notNowDone, undo: () => app.unsnooze(key));
+  }
+
+  /// No to a reward: sent once Undo has gone, so a swipe by mistake never reaches the kid.
+  void _decline(AppState app, RewardNeed need) {
+    final rewards = context.rewardActions;
+    final name = app.memberById(need.request.member)?.name ?? 'them';
+    final id = need.request.id;
+    _putAway(
+      need.key,
+      rewardDeclined(need.reward?.title ?? 'Reward', name),
+      send: () async {
+        // Someone else may have answered meanwhile.
+        if (!app.den.points().pending.any((r) => r.id == id)) return;
+        final result = await rewards.decide(need.request, approve: false);
+        if (result.isError) throw InvalidInput(result.message ?? result.text);
+      },
+    );
+    _again[need.key] = () => _decline(app, need);
+  }
+
+  /// A device asking to join turned away, as Family's "Turn it away": it can ask again with a
+  /// new invite, and that can't be taken back, so it is sent only once Undo has gone. Only ever
+  /// shown on a parent's own device, as Approve is.
+  void _turnAway(AppState app, Device device) {
+    final trust = context.trustActions;
+    final id = device.id;
+    _putAway(
+      'device:$id',
+      deviceTurnedAway(device.name),
+      send: () async {
+        // Approved or removed meanwhile (another parent, Family): leave it be.
+        final now = app.den.device(id);
+        if (now == null || now.approved || now.revoked) return;
+        await trust.revokeDevice(id);
+      },
+    );
+    _again['device:$id'] = () => _turnAway(app, device);
   }
 
   Widget _face(AppState app, String? member, IconData otherwise) {

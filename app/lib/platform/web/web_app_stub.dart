@@ -37,6 +37,8 @@ void diagnose(bool on) {}
 
 String? screenInfo() => null;
 
+bool keyboardNow() => false;
+
 Future<String?> fetchFresh(String path) async => null;
 
 void reload() {}

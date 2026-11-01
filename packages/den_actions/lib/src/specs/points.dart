@@ -185,7 +185,7 @@ Future<ActionResult> _adjust(ActionContext c, ActionInput a) async {
   final delta = a.integer('delta', required: true)!;
   if (delta == 0) throw ActionError('"delta" can\'t be zero.', field: 'delta');
   final reason = a.str('reason', required: true)!.trim();
-  if (c.den.family?.pointsEnabled == false) throw ActionError('Points are turned off for this family.');
+  if (c.den.family?.pointsEnabled == false) throw ActionError('Stars are turned off for this family.');
   final warning = adjustmentWarning(c.den, member, delta);
   await c.den.adjustPoints(member, delta, reason);
   final balance = c.den.points().totals[member] ?? 0;

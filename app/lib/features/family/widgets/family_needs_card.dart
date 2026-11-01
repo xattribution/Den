@@ -143,7 +143,7 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
             if (words.isNotEmpty) 'Their screen shows ${words.join(' ')}',
           ].join('. '),
           TwoButtons(
-            primary: member == null ? 'Let it in' : 'Let ${member.name} in',
+            primary: 'Approve',
             onPrimary: busy ? null : () => _letIn(app, need),
             secondary: member == null ? 'Turn it away' : "That's not ${member.name}",
             onSecondary: busy ? null : () => _turnAway(app, need),
@@ -295,7 +295,7 @@ class _FamilyNeedsCardState extends State<FamilyNeedsCard> {
     Receipt? receipt;
     final problem = await tryWrite(
       () async => receipt = await actions.record(
-        'Let ${need.name} in',
+        'Approved ${need.name}',
         () => trust.approveDevice(need.device, member: who.id, mode: DeviceMode.personal),
       ),
     );

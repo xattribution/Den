@@ -240,6 +240,8 @@ void main() {
       final smith = home.logs[1];
       final router = await pumpHome(tester, home);
       await tester.scrollUntilVisible(find.text('Pottery class'), 300, scrollable: vertical());
+      await tester.ensureVisible(find.text('Pottery class'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Pottery class'));
       await tester.pumpAndSettle();
       expect(router.state.uri.path, startsWith('/l/${smith.id}/event/'));

@@ -421,7 +421,8 @@ From the canvas; phase 2 builds them in `app/lib/design/` on the pieces above.
 - **"Needs you"**: first on Today and Family. Each row is the person's face (or an ink icon),
   one sentence ("Nobody is driving Leo", "Soccer, 3:30 PM at Field 4") and its action under the
   text on phones ("I'll drive", "Approve"). Done in place: a check, "You're driving Leo at
-  3:30 PM" and an underlined Undo.
+  3:30 PM" and an underlined Undo. On Today, at most three rows, then a quiet "2 more" that
+  opens the rest in place; rows answer by a swipe too (see "Swipe to answer").
 - **Buttons**: primary is an ink pill, 44 tall, 20 side padding, `label`, one per region.
   Secondary is a `card` pill with a 1.5 `line` edge. Quiet is text only (Undo is underlined).
   Round: Add is a 52 ink circle; More is a 44 `card` circle. Destructive is `destructive` text
@@ -459,6 +460,34 @@ From the canvas; phase 2 builds them in `app/lib/design/` on the pieces above.
   way out.
 - **Focus** is a 2 pt ink ring with a gap on everything focusable.
 
+### Swipe to answer
+
+On Needs you, a row that asks a yes or no answers by a swipe as well as by its button, the way
+Mail and Messages rows do on an iPhone (`SwipeActions`, `ActionRow.onApprove`/`onDecline`):
+
+- **Right is yes** ("Approve": a reward, a device asking to join). It calls exactly what the
+  row's Approve button calls, so the same rules decide who may (a device is let in only from a
+  parent's own phone).
+- **Left is no** ("Decline" a reward, "Turn away" a device), or **"Not now"** on a row with no
+  no (a ride, a list due, a grown-up's late chore, an AI connection, a notice): put off on this
+  device until tomorrow. A ride comes back an hour before it leaves if nobody has taken it
+  ("Back at 3:30 PM if nobody is driving"), and one leaving within the hour can't be put off
+  (no ×, no swipe): a kid is never left without a ride.
+- **The ×**: a small quiet glyph on the title's line does what the swipe left does, for anyone
+  who doesn't swipe. Rows whose own buttons already put them away (Got it, Remind me later) get
+  the swipe and no ×.
+- **Following the finger**: the row moves 1:1 over the card, slowing past 60 % of its width;
+  behind it, in ink on the card (never a green or red wash), the glyph and word of what letting
+  go would do, bold once it's far enough, with a selection click. Let go past 35 % of the row
+  (`DenMotion.dismissFraction`) or flung faster than 700 pt/s and it does that; either way the
+  row springs back on the UI spring. Under Reduce Motion it returns at once.
+- **Undo, in place**: what a swipe or the × did shows in the row's place (`DoneRow`) with Undo
+  for five seconds. A no that would reach someone else or can't be taken back (a declined
+  reward, a device turned away) is only sent once those seconds pass, or when Today closes;
+  then the row folds away. "Not now" is this device's own and is undone at once.
+- **Never the only way** (ANTI-SLOP 19): the button and the × do the same, and screen readers
+  get both as actions on the row.
+
 ### Using the shared pieces
 
 Every screen builds from these (`import 'design/widgets.dart'`, which exports them all). They
@@ -468,7 +497,8 @@ take plain values and den_core model types, never the app's state, so any featur
 | --- | --- | --- |
 | `DenSection` (+ `SectionCount`, `SectionLink`) | A heading over one grouped card | `carded: false` for a row of fields or chips. Sections sit `DenLayout.sectionGap` apart. A `SectionLink` keeps the heading's height (its tap area reaches 16 pt before the words) so the card stays 10 pt under the heading. |
 | `GroupCard`, `RowRule`, `ruled()` | The card itself; hairlines between rows | `RowRule(indent: RowRule.afterFace)` after 40 pt faces. Never a card in a card. |
-| `ActionRow` | A row that asks for one thing (Needs you, requests) | Face, bold sentence, detail, one action. The action sits under the words below 360 pt (a phone's card) and past 135 % text, at the end otherwise (an iPad column). |
+| `ActionRow` | A row that asks for one thing (Needs you, requests) | Face, bold sentence, detail, one action. The action sits under the words below 360 pt (a phone's card) and past 135 % text, at the end otherwise (an iPad column). `onApprove` and `onDecline` make it a `SwipeActions` row; `onDecline` is also its × (`declineButton: false` where its buttons already say Got it). |
+| `SwipeActions`, `DeclineButton` | Answering a row by a swipe; the small × that says no or not now | See "Swipe to answer". The × is an 18 pt `ink3` glyph in a 44 target on the title's line, never a second big button. |
 | `DoneRow`, `DoneSwap` | What a row did, with Undo in place | `DoneSwap(done: …, child: row)` crossfades on the UI spring; pass a receipt's undo as `onUndo`. Never a toast. |
 | `InfoRow` | One fact on a detail page (Repeats, Due, Who sees it) | Label in meta beside the value, or over it on a narrow card and at large text. |
 | `NavRow` | A row that goes somewhere (menus, "Or add one thing", settings) | Optional glyph or face, label, detail, what it's set to (`value`: "Off"), chevron; 56 tall. |
@@ -520,20 +550,23 @@ tap happened, and shows it in a `DoneRow`.
   family's events in one card by time with their tags, and says Chores and stars stay with each
   family. Someone in one family sees none of it, except Settings' **Join another family**.
 - **Today**: the date and the greeting for the time of day, the person's face at the right
-  (it opens Family, Invite someone, Points and rewards and Settings; Search is the glass beside
+  (it opens Family, Invite someone, Stars and rewards and Settings; Search is the glass beside
   it); "Ask about your day" while the AI helper is on
   for them (see "AI helper"); Needs you, for whoever may settle each thing, most pressing first
   (rides in the next 48 hours, soonest first; then whoever waits on an answer now: a device
-  asking to join, a reward request while points are on; lists due; late chores from today and
-  yesterday; AI connections asking to connect; then notices that only need "Got it"), one
-  action each, which
-  turns into what it did with Undo in place; Today's events (time column, title, who and
+  asking to join, a reward request while points are on; lists due; a grown-up's or anyone's
+  late chores from today and yesterday, never a kid's (they stay late on Chores); AI
+  connections asking to connect; then notices that only need "Got it"), three at most and "2
+  more" for the rest, one action each, which turns into what it did with Undo in place, and a
+  swipe or a small × for no or not now; Today's events (time column, title, who and
   whether anyone is driving, faces); from 5 PM, Tomorrow too; Chores by person (face, pills; a
   pill's name opens its steps, Give to… and Details in place); Groceries with the add bar. With
   room for two columns (an iPad in landscape, beside the sidebar), Needs you and the events on
   the left, chores as rows and groceries on the right. Every part draws its empty state with
   the way to start, and Today says when the device can't reach the hub.
-- **Add** (one sheet from the tab bar, the sidebar or ⌘N): type or say anything; Den's own
+- **Add** (one sheet from the tab bar, the sidebar or ⌘N): the field has the focus and the
+  keyboard is up as it opens (on the web, `den_web.js` raises it inside the tap, the only time
+  iOS allows it); type or say anything; Den's own
   reader shows what it found as you type, with When, Who and Repeats chips to adjust, and one
   button that says where it goes ("Add to calendar", "Add to Groceries"). What was added stays
   in the sheet with Undo, and Undo brings the words back. Photo of a flyer (a phone's camera),
@@ -567,7 +600,7 @@ tap happened, and shows it in a `DoneRow`.
   words open it in place (steps, Give to…, Details), and nothing else sits on the row; "Give
   to…" there hands it on for the day, and its old section says so with Undo. iPad: the people in two columns. The editor asks
   only for name, picture, who, when and stars; the rest is under More options.
-- **Points and rewards** (no board; built from Chores): requests waiting for a parent with
+- **Stars and rewards** (no board; built from Chores): requests waiting for a parent with
   Approve and Decline in place, each person's stars and goal bar (tap to give or take),
   the rewards as cards (a kid asks for one, or gets it when it needs no asking, with Undo),
   goals as one kind ("reach 25 stars by Saturday, each week"), and Recent. Points on or off
@@ -609,8 +642,9 @@ keeps its four places and Add (`features/assistant`).
   your day", on the card color, 52 tall); "Ask" in the iPad sidebar after Search; "Open Ask" in
   Add under "Or add one thing" (Add's round button is on every phone tab); ⌘K (Ctrl+K) with a
   keyboard, the field ready to type. While it's off, a parent gets one quiet row at the end of
-  Today ("Ask in your own words", "Set up the AI helper in Settings") and ⌘K opens Ask saying what
-  it does, with "Set up the helper"; nobody else sees anything, and ⌘K stays the browser's.
+  Today ("Ask in your own words", "Set up the AI helper in Settings", and a quiet "Not now" that
+  puts it away for them on that device), only in the family's first three weeks; ⌘K opens Ask
+  saying what it does, with "Set up the helper"; nobody else sees anything, and ⌘K stays the browser's.
 - **An empty chat** greets the person ("Hi Alex. What can I help with?") with what can be asked
   and three or four chips from the family's own day: what's on today (tomorrow from 5 PM), who's
   driving to the next event with a ride to sort out, "Add milk to Costco" (the store most of the
@@ -701,15 +735,16 @@ why.
   events over the app, for a screenshot when something looks wrong; Settings, About says which
   build this is and which the hub serves.
 - Getting in: [onboarding](docs/design/onboarding.md). A link opens the step it is for; Safari
-  shows the Home Screen steps with a picture of where Share is, and Copy invite above them; the
+  shows the Home Screen steps with a picture of where Share is, and "Already have Den on this
+  iPhone? Copy invite" as one quiet line under the heading; the
   welcome screen has Paste an invite.
 - `MediaQuery.disableAnimations` must follow Reduce Motion (read `prefers-reduced-motion` if it
   doesn't). Dynamic Type doesn't reach web apps, so the Text size setting lives in Settings.
 
 ## Copy
 
-- Verb and object on buttons: "Add event", "I'll drive", "Approve", "Let her in". The
-  confirmation uses the same verb.
+- Verb and object on buttons: "Add event", "I'll drive", "Approve". Letting a device in is
+  "Approve" everywhere (Today and Family). The confirmation uses the same verb.
 - Plain words, no system nouns (hub, relay, sync, token, scope, admin) outside Settings,
   Advanced. "Stars", never "points". "Color", not "marker".
 - No explainer text under headings, no exclamation marks, no emoji, no "Oops", no invented

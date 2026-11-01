@@ -434,7 +434,7 @@ class WebPushService implements HubService, ReminderSink {
         final who = den.member(r.member)?.name ?? 'Someone';
         final what = points.rewards.firstWhereOrNull((w) => w.id == r.reward)?.title ?? 'a reward';
         final deciders = {for (final m in den.members) if (m.id != r.member && can(m, DenAction.managePoints)) m.id};
-        out.add((deciders, {'title': '$who asked for $what', 'body': 'Approve it in Points.', 'route': '/points', 'tag': 'reward:${r.id}'}));
+        out.add((deciders, {'title': '$who asked for $what', 'body': 'Approve it in Stars and rewards.', 'route': '/points', 'tag': 'reward:${r.id}'}));
       }
     }
     if (types.contains(RecordType.completion) || types.contains(RecordType.chore)) {

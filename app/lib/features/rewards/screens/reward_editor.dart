@@ -103,7 +103,7 @@ class _RewardEditorScreenState extends State<RewardEditorScreen> {
         appBar: AppBar(title: const Text('Edit reward')),
         body: EmptyLine(
           message: 'This reward was removed.',
-          actionLabel: 'Go to points',
+          actionLabel: 'Go to stars and rewards',
           onAction: () => context.go('/points'),
         ),
       );
@@ -164,7 +164,7 @@ class _RewardEditorScreenState extends State<RewardEditorScreen> {
                 const SizedBox(height: Sp.l),
                 SwitchRow(
                   label: 'A parent approves each request',
-                  info: 'When off, asking for it spends the points right away.',
+                  info: 'When off, asking for it spends the stars right away.',
                   value: _needsApproval,
                   onChanged: (v) => setState(() => _needsApproval = v),
                 ),

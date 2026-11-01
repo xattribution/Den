@@ -380,6 +380,13 @@ abstract final class WebApp {
     }
   }
 
+  /// Raises the on-screen keyboard now, for a field the tap is about to open (Add's): Safari on
+  /// an iPhone or iPad raises it only inside the tap, and the field is built a frame later. A
+  /// stand-in field in the page holds the keyboard until the app's own field takes the focus,
+  /// and lets it go if none does. Call it straight from the tap. Does nothing off the web, or
+  /// off a phone or tablet; true when the stand-in has the focus.
+  static bool keyboardNow() => impl.keyboardNow();
+
   /// [path] fetched fresh from the server the app came from (past the service worker and any
   /// cache), relative to the page: the hub's `build.json` or `health`. Null off the web, or when
   /// it can't be had.
