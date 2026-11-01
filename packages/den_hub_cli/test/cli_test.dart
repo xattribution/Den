@@ -162,6 +162,15 @@ void main() {
     // An address given on the command line wins.
     final (_, given, _) = await run(['setup-link', '--data', dir.path, '--port', '${hub.port}', '--url', 'https://den.smith.family']);
     expect(given, contains('https://den.smith.family/#/setup/$code/${den.deviceId}'));
+    // --bare, for deploy/install.sh: the link alone on the first line, then the QR code.
+    final (bareStatus, bare, _) =
+        await run(['setup-link', '--data', dir.path, '--port', '${hub.port}', '--url', 'http://192.168.1.50:47733', '--bare']);
+    expect(bareStatus, 0);
+    expect(bare.split('\n').first, 'http://192.168.1.50:47733/#/setup/$code/${den.deviceId}');
+    expect(bare, contains('▀'));
+    expect(bare, isNot(contains('iPhone')));
+    final (noUrl, _, _) = await run(['setup-link', '--data', dir.path, '--port', '${hub.port}', '--bare']);
+    expect(noUrl, 1);
   });
 
   test('status of a hub the family removed says so, running or not', () async {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# The older, advanced setup: deploy/install.sh (docs/install-technical.md) is the one-command way.
 # Den, private setup: makes a fresh Ubuntu 24.04 or 26.04, or Debian 12, server into the family's private
 # hub, reachable only from the family's homes and over Tailscale (docs/hosting.md, "Private: home
 # networks plus Tailscale"). From den/deploy/private:

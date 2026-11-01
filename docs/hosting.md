@@ -5,6 +5,18 @@ to their iPhone Home Screen, keeps the family's devices in sync, and runs the AP
 assistants, calendar feeds and reminders. One hub per family. Phones keep the whole family on
 the device too, so Den keeps working while the hub is down; it just doesn't sync until it's back.
 
+> **The simple way now:** one command on any 64-bit Linux computer (an old PC, a mini PC, a
+> Raspberry Pi 4 or 5, a VPS), with nothing to edit, reachable from anywhere through a
+> Cloudflare Tunnel:
+>
+> ```sh
+> curl -fsSL https://get.kotvas.app | sudo sh
+> ```
+>
+> [install-technical.md](install-technical.md) says how it works, how releases are made, and
+> how to move a server onto it. Everything below is the older, advanced way: the private,
+> hosted and at-home setups, built from a checkout. It still works, and nothing in it changed.
+
 This guide assumes you're comfortable with SSH and a Linux shell. Every task is a command to
 paste, run as root (or with `sudo`) on the server.
 

@@ -194,10 +194,16 @@ Future<int> setupCode(FamilyTarget target, int port, CliIo io) async {
 /// id (the phone knows the hub by it), in the fragment, which browsers never send. Its address
 /// is `--url` or `DEN_PUBLIC_URL`, which the compose files set; on a Den host, `--family` names
 /// another family by its address.
+///
+/// With `--bare` (what `deploy/install.sh` runs) it prints only the link, on the first line, and
+/// its QR code under it, so the installer can say the rest in its own words; it exits 3 for a
+/// hub that is already in a family and 1 when there is no link to print.
 Future<int> setupLinkCommand(ArgResults a, FamilyTarget target, int port, CliIo io) async {
   final data = target.data;
+  final bare = a['bare'] as bool? ?? false;
   final status = await getJsonAt(Uri.parse('http://127.0.0.1:$port/api/v1/hub/status'), target.hostname);
   if (status != null && status['paired'] == true) {
+    if (bare) return 3;
     io.out.writeln('This hub is already part of a family. Invite people from the Den app.');
     return 0;
   }
@@ -211,8 +217,19 @@ Future<int> setupLinkCommand(ArgResults a, FamilyTarget target, int port, CliIo 
   final url = a['url'] as String? ?? (target.first ? io.environment['DEN_PUBLIC_URL'] : target.publicUrl?.toString());
   final base = url == null || url.isEmpty ? null : Uri.tryParse(url);
   if (base == null || !base.hasScheme || base.host.isEmpty) {
+    if (bare) {
+      io.err.writeln("No address for the link: add --url (the hub's address).");
+      return 1;
+    }
     io.out.writeln('Setup code: $code');
     io.out.writeln("Add --url https://den.example.com (the hub's address) for a link to open on the phone.");
+    return 0;
+  }
+  if (bare) {
+    final link = setupLink(base, code, device).toString();
+    io.out
+      ..writeln(link)
+      ..writeln(terminalQr(link));
     return 0;
   }
   printSetupLink(io, base, code, device);
