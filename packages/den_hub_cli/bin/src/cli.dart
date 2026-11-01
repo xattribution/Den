@@ -66,7 +66,10 @@ ArgParser cliParser() {
     ..addOption('hub', help: 'A running hub to bridge to (default http://127.0.0.1:<port>)');
   _common(root.addCommand('import-sett')).addOption('as', help: 'The parent the import acts as (by name)');
   _family(_common(root.addCommand('setup-code')));
-  _family(_common(root.addCommand('setup-link'))).addOption('url', help: "The hub's address, https://den.example.com (env DEN_PUBLIC_URL)");
+  _family(_common(root.addCommand('setup-link')))
+    ..addOption('url', help: "The hub's address, https://den.example.com (env DEN_PUBLIC_URL)")
+    ..addFlag('bare',
+        help: 'Only the link, then its QR code, for an installer to frame (exit 3: already in a family)', negatable: false);
   _family(_common(root.addCommand('open-linking'))).addOption('minutes', help: 'How long browsers may ask to link (default 10)');
   _family(_common(root.addCommand('status')));
   _family(_common(root.addCommand('recover')))
@@ -149,7 +152,7 @@ String _usage(ArgParser parser) => [
       '  mcp --token T     MCP over standard input and output',
       '  import-sett DB --as NAME   Import a Sett coord.db as that parent',
       '  setup-code        Print a fresh hub\'s setup code',
-      '  setup-link [--url U]   A link and QR code that start the family on the first parent\'s phone',
+      '  setup-link [--url U] [--bare]   A link and QR code that start the family on the first parent\'s phone',
       '  open-linking      Let browsers ask to link to a public hub for 10 minutes',
       '  status            Say what the hub is doing',
       '  recover --person NAME   A one-time link and four words that let a parent\'s new phone in',
