@@ -287,6 +287,9 @@ const String askTodayLabel = 'Ask about your day';
 const String askSetUpLabel = 'Ask in your own words';
 const String askSetUpDetail = 'Set up the AI helper in Settings';
 
+/// Puts Today's set-up line away, for this person on this device.
+const String askSetUpLater = 'Not now';
+
 /// The button to Settings, AI helper.
 const String askSetUpAction = 'Set up the helper';
 
