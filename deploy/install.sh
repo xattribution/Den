@@ -461,6 +461,10 @@ services:
       DEN_MDNS: "0"
       # The tunnel's connector, on this network, passes on who's really asking.
       DEN_TRUSTED_PROXIES: "$DEN_SUBNET"
+      # The tunnel's connector is there (the first-boot page asks for its token), and where its
+      # cloudflared answers /ready and /config.
+      DEN_CONNECTOR: "cloudflared"
+      DEN_CONNECTOR_METRICS: "http://tunnel:20241"
       DEN_LOG: "info"
     ports:
       # $NETWORK_MODE: $( [ "$BIND" = 0.0.0.0 ] && echo "this computer and its home network (IPv4), never the internet" || echo "this computer only; the family comes in through the tunnel" )
@@ -1003,7 +1007,8 @@ cmd_status() {
     *) say "Den: not well ($cs_health). Run the installer again to repair it: sudo den" ;;
   esac
   if [ "$cs_health" = healthy ] || [ "$cs_health" = starting ]; then
-    cs_hub=$(compose exec -T hub /app/bin/den_hub status 2>/dev/null | sed 's/^/  /')
+    # Only what the hub says that matters here: a restore it's catching up from, a removal.
+    cs_hub=$(compose exec -T hub /app/bin/den_hub status 2>/dev/null | grep -E 'Catching up|removed' | sed 's/^/  /')
     if hub_paired; then say "Family: set up"; else say "Family: not made yet (the link: sudo den setup-link)"; fi
     [ -n "$cs_hub" ] && printf '%s\n' "$cs_hub"
   fi

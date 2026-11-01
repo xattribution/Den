@@ -22,7 +22,10 @@ set -u
 DATA=${DEN_DATA:-/data}
 TOKEN_FILE=$DATA/hub/tunnel-token
 STATUS_FILE=$DATA/hub/tunnel-status.json
-METRICS=${DEN_CONNECTOR_METRICS:-127.0.0.1:20241}   # cloudflared's own, inside this container
+# cloudflared's metrics server: on the compose network too, so the hub reads /ready and /config
+# at http://tunnel:20241 (DEN_CONNECTOR_METRICS in the hub's environment). Nothing publishes it.
+LISTEN=${DEN_CONNECTOR_LISTEN:-0.0.0.0:20241}
+METRICS=127.0.0.1:${LISTEN##*:}
 LOG=${TMPDIR:-/tmp}/cloudflared.log
 CLOUDFLARED=${DEN_CLOUDFLARED:-cloudflared}
 TICK=${DEN_CONNECTOR_TICK:-3}
@@ -86,7 +89,7 @@ start_cloudflared() { # start_cloudflared TOKEN FINGERPRINT
   shown=0
   # The token goes in the environment (only this container's user can read it there), not on
   # the command line, where `ps` on the server would show it.
-  TUNNEL_TOKEN=$1 "$CLOUDFLARED" tunnel --no-autoupdate --metrics "$METRICS" --loglevel info run >> "$LOG" 2>&1 &
+  TUNNEL_TOKEN=$1 "$CLOUDFLARED" tunnel --no-autoupdate --metrics "$LISTEN" --loglevel info run >> "$LOG" 2>&1 &
   pid=$!
   running_fp=$2
   set_state starting "Connecting to Cloudflare"

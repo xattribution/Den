@@ -273,6 +273,8 @@ expect_contains "compose: the connector runs from the same image" "$lan_compose"
 expect_contains "compose: the public posture" "$lan_compose" 'DEN_PUBLIC: "1"'
 expect_contains "compose: the connector's network is trusted" "$lan_compose" 'DEN_TRUSTED_PROXIES: "172.30.74.0/24"'
 expect_contains "compose: never pulled by name" "$lan_compose" 'pull_policy: never'
+expect_contains "compose: the hub knows a connector is there" "$lan_compose" 'DEN_CONNECTOR: "cloudflared"'
+expect_contains "compose: and where its metrics answer" "$lan_compose" 'DEN_CONNECTOR_METRICS: "http://tunnel:20241"'
 expect_not_contains "compose: nothing read from an .env" "$lan_compose" '${'
 if docker compose version > /dev/null 2>&1; then
   printf '%s\n' "$lan_compose" > "$T/compose-lan.yaml"
