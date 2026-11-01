@@ -785,8 +785,11 @@
         // doesn't zoom in on it.
         standIn.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;margin:0;padding:0;border:0;' +
           'opacity:0;background:transparent;color:transparent;caret-color:transparent;font-size:17px;pointer-events:none';
-        document.body.appendChild(standIn);
       }
+      // Inside Flutter's view: focus that leaves the view makes Flutter take it back for the
+      // view itself (its ViewFocusBinding), a plain element, and the keyboard would go.
+      var host = document.querySelector('flutter-view') || document.body;
+      if (standIn.parentNode !== host) host.appendChild(standIn);
       standIn.value = '';
       standIn.focus({ preventScroll: true });
       note('keyboard at once');
