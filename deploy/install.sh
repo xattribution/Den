@@ -69,7 +69,7 @@ die() {
   printf '\n' >&2
   printf 'Den stopped. ' >&2
   for die_line in "$@"; do printf '%s\n' "$die_line" >&2; done
-  printf '\nIf you are stuck, send a photo of this screen to the person who gave you the link.\n' >&2
+  printf '\nIf you are stuck, look up this message in the "If something goes wrong" part of the Den setup guide.\n' >&2
   exit 1
 }
 
