@@ -16,13 +16,19 @@ class HubApi {
 
   /// Sends [method] [path] with [body] as JSON and answers the JSON the hub sent back. Throws
   /// [HubException] with words for people; [missing] is the message when the hub doesn't know
-  /// the endpoint (an older hub).
-  Future<Map<String, Object?>> send(String method, String path, {Map<String, Object?>? body, String? missing}) async {
+  /// the endpoint (an older hub). With [secure] (a request carrying a secret) it goes only to the
+  /// hub's `https` addresses this device was given ([DenNetwork.secureHubBases]): never over plain
+  /// HTTP, never to a hub found on the home network.
+  Future<Map<String, Object?>> send(String method, String path, {Map<String, Object?>? body, String? missing, bool secure = false}) async {
     final den = network.den;
     final hub = network.isHub ? den.deviceId : network.hubDevice?.id;
     if (hub == null) throw const HubException('This family has no hub yet.');
-    final bases = await network.hubBases();
-    if (bases.isEmpty) throw const HubException("Den doesn't know the hub's address yet.");
+    final bases = secure ? await network.secureHubBases() : await network.hubBases();
+    if (bases.isEmpty) {
+      throw secure
+          ? const HubException('Open Den at its https address to set this up.', code: 'needs_https')
+          : const HubException("Den doesn't know the hub's address yet.");
+    }
     final bytes = body == null ? const <int>[] : utf8.encode(jsonEncode(body));
     HubException? last;
     for (final base in bases) {

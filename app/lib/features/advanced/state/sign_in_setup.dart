@@ -82,19 +82,19 @@ class HubSignInSetupSource implements SignInSetupSource {
   static const String _old = 'Your family\'s hub is too old to set this up. Update it first.';
 
   @override
-  Future<SignInSetupStatus> status() async => SignInSetupStatus.fromJson(await _api.send('GET', _path, missing: _old));
+  Future<SignInSetupStatus> status() async => SignInSetupStatus.fromJson(await _api.send('GET', _path, missing: _old, secure: true));
 
   @override
   Future<SignInSetupStatus> turnOnGoogle({required String clientId, required String clientSecret}) async => SignInSetupStatus.fromJson(
-      await _api.send('PUT', '$_path/google', body: {'client_id': clientId, 'client_secret': clientSecret}, missing: _old));
+      await _api.send('PUT', '$_path/google', body: {'client_id': clientId, 'client_secret': clientSecret}, missing: _old, secure: true));
 
   @override
   Future<SignInSetupStatus> turnOnApple(
           {required String servicesId, required String teamId, required String keyId, required String key}) async =>
       SignInSetupStatus.fromJson(await _api.send('PUT', '$_path/apple',
-          body: {'services_id': servicesId, 'team_id': teamId, 'key_id': keyId, 'key': key}, missing: _old));
+          body: {'services_id': servicesId, 'team_id': teamId, 'key_id': keyId, 'key': key}, missing: _old, secure: true));
 
   @override
   Future<SignInSetupStatus> turnOff(String provider) async =>
-      SignInSetupStatus.fromJson(await _api.send('DELETE', '$_path/$provider', missing: _old));
+      SignInSetupStatus.fromJson(await _api.send('DELETE', '$_path/$provider', missing: _old, secure: true));
 }

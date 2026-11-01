@@ -1,12 +1,13 @@
 import 'package:den_app/app/app_state.dart';
 import 'package:den_app/features/advanced/screens/sign_in_setup_screen.dart';
+import 'package:den_app/platform/sync/den_network.dart';
 import 'package:den_app/platform/sync/hub_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../helpers/shots.dart' show phone;
+import '../helpers/shots.dart' show demoState, phone;
 import 'family_fakes.dart';
 
 const String _clientId = '1234567890-abc123def456.apps.googleusercontent.com';
@@ -199,6 +200,46 @@ void main() {
     expect(words('Whoever runs your family\'s server sets this up'), findsOneWidget);
     expect(find.text('Turn on Google'), findsNothing);
     expect(words('auth/oidc'), findsNothing);
+  });
+
+  testWidgets('what is pasted goes only to the hub\'s https addresses this device was given, never plain HTTP or the home network',
+      (tester) async {
+    expect(
+      DenNetwork.secureBasesOf([
+        Uri.parse('ws://192.168.1.20:47733/ws'),
+        Uri.parse('wss://den.example.com/ws'),
+        Uri.parse('wss://den.example.com/ws'),
+        Uri.parse('wss://user@evil.test/ws'),
+        Uri.parse('wss://den.example.com:8443/ws'),
+      ]),
+      [Uri.parse('https://den.example.com'), Uri.parse('https://den.example.com:8443')],
+    );
+    final network = await real(tester, () async {
+      final state = await demoState();
+      await approveHub(state.den);
+      return DenNetwork(
+        state.den,
+        localHub: FakeLocalHub(),
+        hubs: [Uri.parse('ws://192.168.1.20:47733/ws'), Uri.parse('wss://den.example.com/ws')],
+      );
+    });
+    expect(await real(tester, network.secureHubBases), [Uri.parse('https://den.example.com')]);
+    final plainOnly = await real(tester, () async {
+      final state = await demoState();
+      await approveHub(state.den);
+      return DenNetwork(state.den, localHub: FakeLocalHub(), hubs: [Uri.parse('ws://192.168.1.20:47733/ws')]);
+    });
+    final source = HubSignInSetupSource(plainOnly);
+    final refused = await real(tester, () async {
+      try {
+        await source.turnOnGoogle(clientId: _clientId, clientSecret: _secret);
+        return null;
+      } on HubException catch (e) {
+        return e;
+      }
+    });
+    expect(refused?.code, 'needs_https', reason: 'nothing was sent to the plain address');
+    expect(refused?.message, contains('Open Den at its https address'));
   });
 
   group('shots', () {
