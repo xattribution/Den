@@ -14,16 +14,14 @@ import '../../../platform/capabilities.dart';
 import '../../../platform/sync/pairing.dart';
 import '../words/kitchen_screen_words.dart';
 
-/// Settings, Kitchen screen, Add a screen (`/settings/advanced/displays/add?code=`), on a
-/// parent's own phone: the code the screen shows (typed, any case, dashes and spaces or not, or
-/// scanned where Den has a camera scanner), then one question, "Add Kitchen iPad as a kitchen
+/// Settings, Kitchen screen, Add a screen (`/settings/advanced/displays/add`), on a parent's own
+/// phone: the code the screen shows, typed (any case, dashes and spaces or not), or scanned where
+/// Den has a camera scanner. No link fills it in: typing what the screen in front of her shows
+/// is what says she is there, then one question, "Add Kitchen iPad as a kitchen
 /// screen?", with the name she can change. Add approves it here, signed by this phone, as a
 /// shared screen nobody owns, the same as approving a display that asked to join.
 class AddScreenScreen extends StatefulWidget {
-  const AddScreenScreen({super.key, this.code, this.scan, this.found, this.added = false});
-
-  /// The code, from the link a screen's QR code opens.
-  final String? code;
+  const AddScreenScreen({super.key, this.scan, this.found, this.added = false});
 
   /// Forces the camera on or off, for tests; by default phones with a camera scan.
   final bool? scan;
@@ -41,7 +39,7 @@ class AddScreenScreen extends StatefulWidget {
 enum _Step { code, confirm, done }
 
 class _AddScreenScreenState extends State<AddScreenScreen> {
-  late final _code = TextEditingController(text: widget.code == null ? '' : ScreenCode.format(widget.code!));
+  final _code = TextEditingController();
   late final _name = TextEditingController(text: widget.found?.name ?? '');
   late _Step _step = widget.found == null ? _Step.code : (widget.added ? _Step.done : _Step.confirm);
   late ScreenAsk? _found = widget.found;
@@ -55,11 +53,6 @@ class _AddScreenScreenState extends State<AddScreenScreen> {
   void initState() {
     super.initState();
     _name.addListener(() => setState(() {}));
-    if (widget.code != null && widget.found == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _find();
-      });
-    }
   }
 
   @override
@@ -208,7 +201,7 @@ class _AddScreenScreenState extends State<AddScreenScreen> {
             error: _error,
             child: TextField(
               controller: _code,
-              autofocus: widget.code == null,
+              autofocus: true,
               autocorrect: false,
               enableSuggestions: false,
               textCapitalization: TextCapitalization.characters,
@@ -339,8 +332,6 @@ class ScreenCodeFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
     final raw = newValue.text.toUpperCase().replaceAll(RegExp('[^0-9A-Z]'), '');
-    // A whole link pasted in: keep it, so the code can be read out of it.
-    if (newValue.text.contains('/')) return newValue;
     final kept = raw.length > ScreenCode.length ? raw.substring(0, ScreenCode.length) : raw;
     final text = kept.length > 4 ? '${kept.substring(0, 4)}-${kept.substring(4)}' : kept;
     return TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));

@@ -11,7 +11,7 @@ abstract final class KitchenScreenWords {
   static const joining = 'A parent added this screen. Joining the family';
   static const approved = 'Opening the family';
   static const ranOut = 'This code ran out.';
-  static const scanInstead = "Or scan it with a parent's phone";
+  static const scanInstead = "Or scan it in the Den app on a parent's phone";
 
   /// On a parent's phone, before a code is typed: where the code comes from.
   static const whereTheCodeIs =

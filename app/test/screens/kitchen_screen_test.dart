@@ -41,6 +41,7 @@ const _ipad = ScreenAsk(
   pubkey: 'pubkey',
   xpub: 'xpub',
   code: 'K7QM3RXA',
+  origin: 'https://den.example.com',
   expires: 0,
 );
 
@@ -166,12 +167,18 @@ void main() {
       expect(find.textContaining(RegExp(r'8\sletters\sand\snumbers')), findsOneWidget);
     });
 
-    testWidgets('a code from the QR link goes straight to the question', (tester) async {
+    testWidgets('opens with an empty code and asks the hub nothing until she types one', (tester) async {
       final state = await demo(tester);
       final pairing = ScreenPairing();
-      await pumpScreen(tester, const AddScreenScreen(code: 'K7QM3RXA', scan: false), state: state, pairing: pairing, pushed: true);
-      expect(pairing.found, ['K7QM3RXA']);
-      expect(find.text('Add Kitchen iPad as a kitchen screen?'), findsOneWidget);
+      await pumpScreen(tester, const AddScreenScreen(scan: false), state: state, pairing: pairing, pushed: true);
+      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
+      expect(pairing.found, isEmpty, reason: 'no link fills in a code or looks one up');
+    });
+
+    test("a screen's QR code is for Den's own scanner, not a link anyone can send", () {
+      final qr = FakeScreenCode().qr;
+      expect(qr, 'den://screen/K7QM3RXA');
+      expect(qr, isNot(contains('http')));
     });
 
     testWidgets('the question', (tester) async {

@@ -74,7 +74,7 @@ void main() {
     addTearDown(session.dispose);
     expect(session.stage, ScreenStage.waiting);
     expect(session.code, hasLength(8));
-    expect(session.link, 'http://127.0.0.1:${hub.port}/#/add-screen/${session.code}');
+    expect(session.qr, 'den://screen/${session.code}');
     expect(screen.hasFamily, isFalse, reason: 'nothing is written on the screen before a parent adds it');
 
     // Typed the way people type it: lower case, with a space.

@@ -43,7 +43,7 @@ final List<RouteBase> advancedSettingsRoutes = [
       GoRoute(
         path: 'displays',
         builder: (_, _) => const DisplaysScreen(),
-        routes: [GoRoute(path: 'add', builder: (_, s) => AddScreenScreen(code: s.uri.queryParameters['code']))],
+        routes: [GoRoute(path: 'add', builder: (_, _) => const AddScreenScreen())],
       ),
       GoRoute(path: 'data', builder: (_, _) => const DataScreen()),
     ],

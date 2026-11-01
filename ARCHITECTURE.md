@@ -839,15 +839,19 @@ receive; the session's limit then applies.
 - **Kitchen screen code** (a tablet or old laptop for the counter, no invite to get onto it):
   opened at the family's address with no family, the screen makes its keys and picks a code, 8
   characters of Crockford's base32 (40 bits, `K7QM-3RXA`, shown big and as a QR code of
-  `https://<hub>/#/add-screen/<code>`). Both ends stretch it with Argon2id (4 MiB, 3 passes,
-  salt `den/screen-code/v1`) into the hub's slot and a MAC key (den_net's `ScreenCode`). The
+  `den://screen/<code>` for Den's own scanner: no link ever fills a code in, so typing or
+  scanning the code on the screen in front of her is what says she is there). Both ends stretch
+  it with Argon2id (4 MiB, 3 passes), salted with the family's address the screen opened
+  (`den/screen-code/v2 0x00 <scheme://host[:port]>`, so a table of every code's stretch is good
+  for one address only; the phone tries each address it knows the hub at, a few at most, in one
+  try), into the hub's slot and a MAC key (den_net's `ScreenCode`). The
   screen leaves its device key, sealing key, name and kind at the hub under the slot with the
   code's tag over them; a parent types the code on her own phone (Settings, Kitchen screen, Add
   a screen), whose signed request finds it in her family's hub only, and the phone checks the tag
   before it asks "Add Kitchen iPad as a kitchen screen?". On Add, the phone sends the family, its
   founder key, the hub and the chosen name with its own tag; the screen checks that tag, writes
   its own join request (unapproved, shared, for nobody) and hands it to the hub; the phone takes
-  it, checks it is that key asking for that and nothing else, writes it into its log with its
+  it, checks it is that key asking for that and nothing else (the kind the code was tagged with, never a hub, under the name she chose), writes it into its log with its
   approval (`approveDevice`, shared, nobody's) and syncs both. The screen waits on the hub,
   pinned to its device id, like any device that asked to join. So the trust decision is the
   ordinary approval, signed on a parent's own device; the hub never writes the request or the

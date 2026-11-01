@@ -276,7 +276,7 @@ class _ScreenCodeScreenState extends State<ScreenCodeScreen> {
           padding: const EdgeInsets.all(Sp.l),
           decoration: BoxDecoration(color: day.card, borderRadius: BorderRadius.circular(Radii.section)),
           child: QrImageView(
-            data: session.link,
+            data: session.qr,
             size: size,
             padding: EdgeInsets.zero,
             backgroundColor: day.card,

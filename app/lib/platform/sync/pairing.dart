@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:den_core/den_core.dart';
+import 'package:den_net/den_net.dart' show ScreenCode;
 import 'package:flutter/widgets.dart';
 import 'package:intl/intl.dart';
 
@@ -127,6 +128,7 @@ class ScreenAsk {
     required this.pubkey,
     required this.xpub,
     required this.code,
+    required this.origin,
     required this.expires,
   });
 
@@ -138,6 +140,10 @@ class ScreenAsk {
 
   /// The code as typed, normalized (`K7QM3RXA`).
   final String code;
+
+  /// The family's address the screen opened, which its code is stretched with
+  /// (den_net's `ScreenCode.origin`).
+  final String origin;
 
   /// UTC milliseconds.
   final int expires;
@@ -178,9 +184,9 @@ abstract class ScreenCodeSession extends ChangeNotifier {
   ScreenStage get stage;
   String? get error;
 
-  /// What the QR code holds: the link that opens Add a screen with this code on a parent's
-  /// phone (`https://<hub>/#/add-screen/K7QM3RXA`).
-  String get link => '${Uri(scheme: hub.scheme, host: hub.host, port: hub.hasPort ? hub.port : null)}/#/add-screen/$code';
+  /// What the QR code holds: the code for Den's own scanner (`den://screen/K7QM3RXA`), never a
+  /// link, so only a phone in front of the screen can use it.
+  String get qr => ScreenCode.qr(code);
 
   Future<void> cancel();
 }

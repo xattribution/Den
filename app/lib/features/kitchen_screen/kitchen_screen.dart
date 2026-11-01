@@ -2,7 +2,6 @@
 /// side (`/welcome/screen`) and the parent's (Settings, Kitchen screen, Add a screen).
 library;
 
-export 'screens/add_screen_elsewhere_screen.dart';
 export 'screens/add_screen_screen.dart';
 export 'screens/screen_code_screen.dart';
 export 'words/kitchen_screen_words.dart';

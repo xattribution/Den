@@ -60,7 +60,7 @@ String? householdRedirect(Household home, GoRouterState route) {
 ///    (`/setup/<code>/<hub>`): starting the family with that hub. A recovery link from whoever
 ///    runs the hub (`/recover/<words>`): "I lost my phone" with its words, unless this device is
 ///    already in. A Home Screen app with no family yet first takes the link Safari kept for it
-///    ([Handoff]). A kitchen screen's QR code (`/add-screen/<code>`): Add a screen with it.
+///    ([Handoff]).
 /// 1. No family on this device: onboarding (`/welcome`). A sitter's device past their last day:
 ///    that their access ended (`/ended`).
 /// 2. A join request sent but not approved yet: the waiting screen, whatever was asked for (a
@@ -102,14 +102,6 @@ String? familyRedirect(AppState state, GoRouterState route) {
     if (den.isApproved) return '/today';
     final words = path.substring('/recover/'.length);
     return Uri(path: '/welcome/recover', queryParameters: {'code': words}).toString();
-  }
-
-  // A kitchen screen's QR code: Add a screen with its code on a parent's phone; where Den
-  // holds no family (the camera opened it in Safari), where to type it instead.
-  if (path.startsWith('/add-screen/')) {
-    final code = path.substring('/add-screen/'.length);
-    if (den.isApproved) return Uri(path: '/settings/advanced/displays/add', queryParameters: {'code': code}).toString();
-    if (!den.hasFamily) return Uri(path: '/welcome/add-screen', queryParameters: {'code': code}).toString();
   }
 
   if (!den.hasFamily) return inWelcome ? null : '/welcome';
