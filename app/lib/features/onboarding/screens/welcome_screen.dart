@@ -19,7 +19,8 @@ import 'home_screen_steps.dart';
 ///
 /// In a browser the hub served, the rows follow the hub: a fresh hub offers to start the family
 /// here (this browser becomes the founding parent's device and takes the hub in with its setup
-/// code); a hub already in a family offers to join it. Paste an invite takes a link copied in
+/// code); a hub already in a family offers to join it, or to set this device up as a kitchen
+/// screen with a code a parent types on their phone. Paste an invite takes a link copied in
 /// Safari, which is how a link reaches a Home Screen app that is already there. Safari on an
 /// iPhone or iPad first shows how to put Den on the Home Screen, where the family should live.
 class WelcomeScreen extends StatefulWidget {
@@ -142,6 +143,13 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                     label: 'Join your family',
                     detail: 'With the invite a parent sent you',
                     onTap: () => context.go('/welcome/join'),
+                  ),
+                if (canJoin)
+                  NavRow(
+                    icon: PhosphorIconsRegular.monitor,
+                    label: 'Set up as a kitchen screen',
+                    detail: 'A parent adds it with a code',
+                    onTap: () => context.go('/welcome/screen'),
                   ),
                 NavRow(
                   icon: PhosphorIconsRegular.clipboardText,

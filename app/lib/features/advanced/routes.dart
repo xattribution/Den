@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import '../kitchen_screen/kitchen_screen.dart' show AddScreenScreen;
 import 'screens/add_hub_screen.dart';
 import 'screens/advanced_screen.dart';
 import 'screens/computer_link_screen.dart';
@@ -39,7 +40,11 @@ final List<RouteBase> advancedSettingsRoutes = [
           GoRoute(path: 'nearby', builder: (_, _) => const NearbyDeviceScreen()),
         ],
       ),
-      GoRoute(path: 'displays', builder: (_, _) => const DisplaysScreen()),
+      GoRoute(
+        path: 'displays',
+        builder: (_, _) => const DisplaysScreen(),
+        routes: [GoRoute(path: 'add', builder: (_, s) => AddScreenScreen(code: s.uri.queryParameters['code']))],
+      ),
       GoRoute(path: 'data', builder: (_, _) => const DataScreen()),
     ],
   ),
