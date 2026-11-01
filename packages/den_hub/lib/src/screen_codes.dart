@@ -132,14 +132,23 @@ class ScreenCodes {
       ..add('POST', '/api/v1/screens/request', (r, _) => requestOf(r));
   }
 
-  /// How many screens are waiting, for tests and status.
+  /// How many screens are waiting to be let in, for tests and status.
   int get waiting {
     _prune();
-    return _waiting.length;
+    return _waiting.values.where((w) => _settled(w) == null).length;
   }
 
+  /// How long a screen the family's log let in (or removed) is still answered, so it hears so
+  /// on its next ask before the hub forgets it.
+  static const Duration settledFor = Duration(seconds: 30);
+
+  /// Forgets screens whose code ran out, and soon after, those the family's log settled: a
+  /// code is used once, whether or not the screen asks again.
   void _prune() {
     final now = clock();
+    for (final w in _waiting.values) {
+      if (w.accepted != null && _settled(w) != null) w.expires = min(w.expires, now + settledFor.inMilliseconds);
+    }
     _waiting.removeWhere((_, w) => w.expires <= now);
   }
 
@@ -187,7 +196,7 @@ class ScreenCodes {
     final known = DeviceKind.values.asNameMap()[kind];
     if (known == null || known == DeviceKind.hub) throw ApiError.invalid("That isn't a kind of screen.", field: 'kind');
     if (hub.den.device(device) != null) {
-      throw ApiError(409, 'conflict', 'This screen asked to join before. Start over on it to get a new code.');
+      throw ApiError(409, 'known_device', 'This screen asked to join before. Start over on it to get a new code.');
     }
     _prune();
     final client = hub.clientOf(request);

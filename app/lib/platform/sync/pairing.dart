@@ -116,6 +116,75 @@ class InvitePeek {
   final bool letsIn;
 }
 
+/// A kitchen screen a parent's typed code found ([PairingService.findScreen]), before anything
+/// is written: the name it suggests, its kind, and its device id. The key behind [device] is the
+/// one the screen made: its code's tag over it checked out on this phone.
+class ScreenAsk {
+  const ScreenAsk({
+    required this.name,
+    required this.kind,
+    required this.device,
+    required this.pubkey,
+    required this.xpub,
+    required this.code,
+    required this.expires,
+  });
+
+  final String name;
+  final DeviceKind kind;
+  final String device;
+  final String pubkey;
+  final String xpub;
+
+  /// The code as typed, normalized (`K7QM3RXA`).
+  final String code;
+
+  /// UTC milliseconds.
+  final int expires;
+}
+
+/// Where a kitchen screen showing its code stands.
+enum ScreenStage {
+  /// Getting a code from the hub.
+  starting,
+
+  /// Showing the code; waiting for a parent to type it.
+  waiting,
+
+  /// A parent added it; it is asking to join and catching up.
+  joining,
+
+  /// In the family: it shows the family next.
+  approved,
+
+  /// The code ran out before anyone typed it.
+  expired,
+
+  /// Something went wrong; [ScreenCodeSession.error] says what and what to do.
+  failed,
+}
+
+/// A kitchen screen's code at the family's hub, while it waits for a parent's phone.
+abstract class ScreenCodeSession extends ChangeNotifier {
+  /// The code, `K7QM3RXA` (empty while [ScreenStage.starting]).
+  String get code;
+
+  /// The family's hub, whose address the screen opened.
+  Uri get hub;
+
+  /// UTC milliseconds when the code stops working.
+  int get expires;
+
+  ScreenStage get stage;
+  String? get error;
+
+  /// What the QR code holds: the link that opens Add a screen with this code on a parent's
+  /// phone (`https://<hub>/#/add-screen/K7QM3RXA`).
+  String get link => '${Uri(scheme: hub.scheme, host: hub.host, port: hub.hasPort ? hub.port : null)}/#/add-screen/$code';
+
+  Future<void> cancel();
+}
+
 /// A device asking to join, as the inviting device sees it, with the matching words to compare.
 class PendingJoin {
   const PendingJoin({required this.deviceId, required this.deviceName, required this.kind, this.words = const []});
@@ -216,6 +285,23 @@ abstract class PairingService {
   /// nobody in between to compare against. With [expectDevice] (from the setup link) it checks
   /// the hub's device id instead, as [setUpHub] does.
   HubSetupSession adoptServingHub(HubInfo hub, String code, {String? expectDevice}) =>
+      throw const PairingException(LocalOnlyPairing.message);
+
+  // ------------------------------------------------------------------ kitchen screens
+
+  /// On a screen with no family, opened at the family's hub (or at [hubUrl]): makes this
+  /// device's code and shows it until a parent types it on their phone, then asks to join as a
+  /// shared screen nobody owns and waits to be let in. [deviceName] is the name it suggests.
+  Future<ScreenCodeSession> showScreenCode({String? hubUrl, required String deviceName, required DeviceKind kind}) async =>
+      throw const PairingException(LocalOnlyPairing.message);
+
+  /// On a parent's own phone: the screen showing [code] at the family's hub. Throws with words
+  /// for people when the code is wrong, used or ran out (all alike).
+  Future<ScreenAsk> findScreen(String code) async => throw const PairingException(LocalOnlyPairing.message);
+
+  /// On a parent's own phone, after they said Add: lets [screen] in as a shared screen called
+  /// [name], approved and signed here, the same as approving a display that asked to join.
+  Future<void> addScreen(ScreenAsk screen, {required String name}) async =>
       throw const PairingException(LocalOnlyPairing.message);
 
   // ------------------------------------------------------------------ recovery

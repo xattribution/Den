@@ -9,6 +9,7 @@ import 'hub_client.dart';
 import 'hub_flows.dart';
 import 'local_stub.dart' if (dart.library.io) 'local_io.dart' as local;
 import 'pairing.dart';
+import 'screen_code_flow.dart';
 import '../capabilities.dart';
 
 /// The parent's own 12 recovery words, checked by the family's hub: confirming signs this
@@ -562,6 +563,122 @@ class NetPairing extends PairingService {
     await network.rememberJoin(invite.inviterDevice, sync);
     _follow(attempt, hubs: [sync]);
     return JoinTicket(familyId: invite.familyId, familyName: redeemed.familyName);
+  }
+
+  // ------------------------------------------------------------------ kitchen screens
+
+  @override
+  Future<ScreenCodeSession> showScreenCode({String? hubUrl, required String deviceName, required DeviceKind kind}) async {
+    final typed = hubUrl == null || hubUrl.trim().isEmpty ? null : HubClient.baseFor(hubUrl);
+    final base = typed ?? _servedBase;
+    if (base == null) throw const PairingException("Type your family's Den address. A parent can see it in Settings.");
+    final session = NetScreenCode(network: network, client: _client, hub: base, deviceName: deviceName, kind: kind);
+    await session.start();
+    return session;
+  }
+
+  static const _wrongScreenCode = "That code isn't right, or it ran out. Check the code on the screen and try again.";
+
+  @override
+  Future<ScreenAsk> findScreen(String code) async {
+    final normalized = net.ScreenCode.normalize(code);
+    if (normalized == null) {
+      throw const PairingException("That isn't a screen's code. It's 8 letters and numbers, like K7QM-3RXA.");
+    }
+    if (network.hubDevice == null && !network.isHub) {
+      throw const PairingException("Kitchen screens join through the family's hub. Add the hub first: Settings, Advanced, Hub and sync.");
+    }
+    final keys = await net.ScreenCode.derive(normalized);
+    final api = HubApi(network);
+    final Map<String, Object?> json;
+    try {
+      json = await api.send('POST', '/api/v1/screens/find', body: {'slot': keys.slot});
+    } on HubException catch (e) {
+      throw PairingException(e.code == 'not_found' ? _wrongScreenCode : e.message);
+    } finally {
+      api.close();
+    }
+    final pubkey = json['pubkey'], xpub = json['xpub'], name = json['name'], kind = json['kind'], tag = json['tag'];
+    if (pubkey is! String || xpub is! String || name is! String || kind is! String || tag is! String) {
+      throw const PairingException("The hub's answer was missing something. Try again.");
+    }
+    // The key is the one the screen showing this code made, whatever the hub says.
+    final expected = await keys.screenTag(pubkey: pubkey, xpub: xpub, name: name, kind: kind);
+    final device = deviceIdOf(pubkey);
+    if (!net.ScreenCodeKeys.same(tag, expected) || device == null) throw const PairingException(_wrongScreenCode);
+    return ScreenAsk(
+      name: name,
+      kind: DeviceKind.values.asNameMap()[kind] ?? DeviceKind.display,
+      device: device,
+      pubkey: pubkey,
+      xpub: xpub,
+      code: normalized,
+      expires: (json['expires_ms'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// How long the parent's phone waits for the screen's join request after Add.
+  static const screenAnswerWait = Duration(seconds: 90);
+
+  @override
+  Future<void> addScreen(ScreenAsk screen, {required String name}) async {
+    final den = network.den;
+    final hub = network.isHub ? den.deviceId : network.hubDevice?.id;
+    final family = den.familyId, founder = den.founderPubkey;
+    if (hub == null || family == null || founder == null) {
+      throw const PairingException("Kitchen screens join through the family's hub. Add the hub first: Settings, Advanced, Hub and sync.");
+    }
+    final label = name.trim().isEmpty ? screen.name : name.trim();
+    final keys = await net.ScreenCode.derive(screen.code);
+    final api = HubApi(network);
+    try {
+      await api.send('POST', '/api/v1/screens/accept', body: {
+        'slot': keys.slot,
+        'family': family,
+        'founder': founder,
+        'hub': hub,
+        'name': label,
+        'tag': await keys.familyTag(family: family, founder: founder, hub: hub, pubkey: screen.pubkey, name: label),
+      });
+      // The screen checks the answer, asks to join and hands its request to the hub.
+      final deadline = DateTime.now().add(screenAnswerWait);
+      Change? request;
+      while (request == null) {
+        final json = await api.send('POST', '/api/v1/screens/request', body: {'slot': keys.slot});
+        final raw = json['change'];
+        if (json['state'] == 'requested' && raw is Map) {
+          try {
+            request = Change.fromJson(raw.cast<String, Object?>());
+          } on Object {
+            throw const PairingException("The screen's answer wasn't one Den can use. Get a new code on the screen and try again.");
+          }
+          break;
+        }
+        if (DateTime.now().isAfter(deadline)) {
+          throw const PairingException("The screen didn't answer. Check it's on and online, get a new code there, and try again.");
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+      }
+      // Only the key the parent saw, asking for nothing but a shared screen nobody owns.
+      if (!await net.isScreenJoinRequest(request, pubkey: screen.pubkey, xpub: screen.xpub)) {
+        throw const PairingException("The screen's answer didn't match its code. Get a new code on the screen and try again.");
+      }
+      await den.ingest([request]);
+      final asked = den.device(screen.device);
+      if (asked == null || asked.pubkey != screen.pubkey || asked.revoked) {
+        throw const PairingException("Den couldn't take the screen's request. Get a new code on the screen and try again.");
+      }
+      if (!asked.approved) await den.approveDevice(screen.device, mode: DeviceMode.shared);
+      if (den.device(screen.device)?.name != label) await den.updateDevice(screen.device, {'name': label});
+    } on HubException catch (e) {
+      throw PairingException(e.code == 'not_found' ? 'This code ran out. Get a new one on the screen and try again.' : e.message);
+    } on PermissionDenied catch (e) {
+      throw PairingException(e.message);
+    } on InvalidInput catch (e) {
+      throw PairingException(e.message);
+    } finally {
+      api.close();
+    }
   }
 
   // ------------------------------------------------------------------ recovery
