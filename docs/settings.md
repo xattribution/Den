@@ -62,6 +62,23 @@ A setting that stays a file setting although someone might change it says why.
 | `DEN_BACKUP_PASSPHRASE`, `DEN_BACKUP_KEEP`, `DEN_IMAGE`, `DEN_PORT`, `DEN_NAME` | as above | |
 | `FAMILY_A_*`, `FAMILY_B_*` (two-families example) | (a) | The two families' addresses, set once |
 
+## What the in-app settings accept, knowingly
+
+- **The host's push key is shared by the families on the host.** A browser subscription made
+  with it can be pushed to by any family on the host that knows the subscription. A family only
+  learns one when its own approved device registers it in a signed request, and no answer ever
+  shows one, so this matters only if a subscription leaks (someone with that browser, or with the
+  server's disk). Then another family on the same host could send that browser its own
+  reminders, nothing more: no data reaches it, and each push names the family it is from. That
+  is accepted, so that someone in two families on one server gets both families' reminders in
+  one Home Screen app.
+- **The sign-in setup screen shows every family's address on the host** to the parents of the
+  host's own family: Google and Apple need each one registered as a way back. Whoever runs the
+  server knows them already (`install.sh families`). Other families' parents see none of it.
+- **Secrets travel only over HTTPS.** The hub takes the sign-in settings only over HTTPS (at a
+  trusted proxy that says so) or from its own machine, and the app sends them only to the hub's
+  https addresses it was given, never to one that answered on the home network.
+
 ## Existing installs
 
 `git pull && sudo ./install.sh` needs no edits. An old `.env` line for any (b) or (c) setting

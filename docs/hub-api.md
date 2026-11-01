@@ -2245,10 +2245,16 @@ hub checks the shape of each (`400 invalid_input` with the `field`: a Google cli
 `.apps.googleusercontent.com`, Team and Key IDs are 10 letters and digits, the key a P-256 `.p8`),
 reads the provider's discovery document, and exchanges a made-up code at its token endpoint with
 the client: `invalid_client` there is `400 invalid_input` ("Google doesn't know that client ID and
-secret together"), `unauthorized_client` `400` (not a web client), a provider that can't be
-reached `502 provider_unreachable`. Ten tries per client in ten minutes (`429 rate_limited`), as
-each asks the provider. No https family address: `409 needs_https`. Answers the same status as
-`GET`.
+secret together"), `unauthorized_client` `400` (not a web client), and only a `400 invalid_grant`
+confirms the client: anything else (a page, a redirect, `429`, `redirect_uri_mismatch`, no JSON)
+is `400 invalid_input` ("didn't confirm"), a provider that can't be reached `502
+provider_unreachable`. Ten tries per client in ten minutes (`429 rate_limited`), as each asks the
+provider. No https family address: `409 needs_https`. The request itself must come over HTTPS (at
+a trusted proxy that says so in `X-Forwarded-Proto`) or from the hub's own machine; otherwise
+`403 needs_https` before the body is read ("Open Den at its https address"). If the host's own
+family stopped while the provider was asked, nothing is kept: `503 not_ready`. Turning a provider
+on again, changing it or turning it off ends every session, sign-in on its way and binding that
+began through it, in every family. Answers the same status as `GET`.
 
 ### `DELETE /api/v1/hub/sign-in/{google|apple}`
 

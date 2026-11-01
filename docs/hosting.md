@@ -331,7 +331,10 @@ Why sharing the host's key is safe: every family on the host runs in the one pro
 every key already, so nobody gains a key they didn't have. A key only lets its holder push to a
 subscription it knows, and a family knows only the subscriptions its own approved devices
 registered with it in signed requests; no answer ever shows one. Before this was the default it
-was `DEN_HOST_PUSH=all`; an old `.env` line is ignored, and the log says so once.
+was `DEN_HOST_PUSH=all`; an old `.env` line is ignored, and the log says so once. What is
+accepted: should a browser's host-key subscription leak (someone with that browser, or with the
+server's disk), another family on the same host could send that browser its reminders. No data
+reaches it that way, and each push names the family it is from.
 
 **What it costs.** One process: a crash or a bad update stops every family at once (Docker's
 restart brings them all back together). Whoever runs the server can read every family's data, as
@@ -1405,11 +1408,15 @@ nothing else, and a shared screen, a kid's phone or a token can't change it.
 
 **What is kept.** The hub keeps what was pasted in its own data (`hub/sign-in.json`, readable by
 the hub's user only, in its backups), never in the family's log, and never shows it again: the
-screen says only whether each one is on, with **Change** and **Turn off**.
+screen says only whether each one is on, with **Change** and **Turn off**. It goes to the hub
+only over HTTPS (open Den at its https address to set it up, not at the server's LAN address),
+and turning a provider off or changing it signs out everyone who signed in through it.
 
 **Several families.** Each family's address needs its own way back registered at Google and at
 Apple. The screen lists every family the server has (from `host.json`), the server's own first;
-after `install.sh add-family`, open it again and add the new address in Google's console.
+after `install.sh add-family`, open it again and add the new address in Google's console. That
+means the server's own parents see every family's address on the server there; other families'
+parents see none of them.
 
 It needs the hub at an `https` address: Google and Apple send the browser back there. Neither of
 them ever calls your server; the browser goes to them and comes back, and the hub fetches their
