@@ -141,6 +141,10 @@ class FakeIdp {
   /// The status the token endpoint answers with instead, when set (a provider in trouble).
   int? tokenStatus;
 
+  /// What the token endpoint answers instead, as it is, when set: a page, a redirect, too many
+  /// tries.
+  ({int status, String body, String type})? tokenRaw;
+
   /// Changes each ID token's header and claims before it is signed.
   void Function(Map<String, Object?> header, Map<String, Object?> claims)? shape;
 
@@ -221,6 +225,15 @@ class FakeIdp {
         tokenCalls++;
         if (tokenDelay > Duration.zero) await Future<void>.delayed(tokenDelay);
         if (tokenStatus != null) return json({'error': 'server_error'}, status: tokenStatus!);
+        final raw = tokenRaw;
+        if (raw != null) {
+          response.statusCode = raw.status;
+          response.headers.contentType = ContentType.parse(raw.type);
+          if (raw.status >= 300 && raw.status < 400) response.headers.set('location', 'https://elsewhere.test/');
+          response.write(raw.body);
+          await response.close();
+          return;
+        }
         final form = Uri.splitQueryString(await utf8.decoder.bind(r).join());
         final problem = _checkToken(form);
         if (problem != null) {

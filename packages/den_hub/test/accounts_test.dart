@@ -319,6 +319,36 @@ void main() {
       expect(f.hub.accounts.sessionCount, 0);
     });
 
+    test('turning Google off or changing its client ends its sessions, its sign-ins on their way and its bindings', () async {
+      await bind(f, f.phone, google, '108812345');
+      final b = Browser(f.base);
+      await b.signIn(google, sub: '108812345');
+      expect((await b.go('GET', '/api/v1/me')).status, 200);
+      // A sign-in on its way, and a binding waiting.
+      final waiting = Browser(f.base);
+      final started = await waiting.go('GET', '/auth/oidc/google/start');
+      final at = Uri.parse(started.location!);
+      final binding = (await signed(f, f.phone, 'POST', '/api/v1/account/bindings', body: {'provider': 'google'})).json! as Map;
+
+      // Changed (the same client set again counts: whatever was set up before is over).
+      await turnOnSignIn(f.hub.host, google: google);
+      expect((await b.go('GET', '/api/v1/me')).status, 401, reason: 'the session ended');
+      expect(f.hub.accounts.sessionCount, 0);
+      final code = google.signIn(at, sub: '108812345');
+      expect((await waiting.go('GET', '/auth/oidc/google/callback?code=$code&state=${at.queryParameters['state']}')).status, 400);
+      expect(waiting.cookies[HubAccounts.sessionCookie], isNull);
+      final polled = await signed(f, f.phone, 'GET', '/api/v1/account/bindings/${binding['id']}');
+      expect((polled.json! as Map)['state'], 'failed');
+      expect((await Browser(f.base).go('GET', binding['start_url'] as String)).body, contains('expired'));
+
+      // Signed in again, then turned off and on: over again.
+      await b.signIn(google, sub: '108812345');
+      expect((await b.go('GET', '/api/v1/me')).status, 200);
+      await f.hub.host.signIn.turnOff(googleProvider);
+      await turnOnSignIn(f.hub.host, google: google);
+      expect((await b.go('GET', '/api/v1/me')).status, 401);
+    });
+
     test('a cookie sent twice counts for nothing', () async {
       await bind(f, f.phone, google, '108812345');
       final b = Browser(f.base);

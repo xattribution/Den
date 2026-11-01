@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
 import 'package:den_hub/src/edge.dart' show Limits;
+import 'package:den_net/den_net.dart' show DeviceRequest;
 
 import 'support/browser.dart';
 import 'support/fake_idp.dart';
@@ -38,19 +39,28 @@ void main() {
     await apple.stop();
   });
 
-  HubConfig configFor(HubConfig base, {Uri? url, String? dataDir}) => HubConfig(
+  HubConfig configFor(HubConfig base, {Uri? url, String? dataDir, List<IpNetwork> proxies = const []}) => HubConfig(
         port: 0,
         host: InternetAddress.loopbackIPv4,
         mdns: false,
         dataDir: dataDir,
         log: HubLog(level: LogLevel.debug, sink: logged.add),
         publicUrl: url ?? public,
+        trustedProxies: proxies,
         fetchClient: fakeProviderGuard().client(),
         signInIssuers: issuersOf(google: google, apple: apple),
       );
 
   Future<Answer> signed(HubFixture f, Den den, String method, String path, {Object? body}) =>
       signedCall(f.base, den, method, path, hub: f.hubDen.deviceId, body: body);
+
+  /// A request [den] signs for [f]'s hub, sent with [headers] too (what a proxy adds).
+  Future<ApiResult> signedWith(HubFixture f, Den den, String method, String path, Map<String, String> headers, {Object? body}) async {
+    final bytes = body == null ? <int>[] : utf8.encode(jsonEncode(body));
+    final signature = await DeviceRequest.sign(
+        keys: den.keys, method: method, url: f.base.resolve(path), body: bytes, hub: f.hubDen.deviceId, actorId: den.actor?.id);
+    return f.call(method, path, body: body, headers: {...signature, ...headers});
+  }
 
   Map<String, Object?> googleBody({String id = googleId, String secret = googleSecret}) => {'client_id': id, 'client_secret': secret};
   Map<String, Object?> appleBody({String key = appleP8}) =>
@@ -313,6 +323,93 @@ void main() {
       final status = await at('den-a.test', a.phone, 'GET', '/api/v1/hub/sign-in');
       expect(((status.json! as Map)['google'] as Map)['redirect_urls'], contains('https://den-c.test/auth/oidc/google/callback'));
     });
+  });
+
+  group('the transport', () {
+    late HubFixture f;
+
+    setUp(() async {
+      f = await HubFixture.start(configure: (base) => configFor(base, proxies: [IpNetwork.parse('127.0.0.1/32')]));
+    });
+
+    tearDown(() => f.stop());
+
+    test('secrets go to the hub only over HTTPS at its proxy, or from its own machine', () async {
+      final plain = await signedWith(f, f.phone, 'PUT', '/api/v1/hub/sign-in/google', {'x-forwarded-for': '192.168.1.30', 'x-forwarded-proto': 'http'},
+          body: googleBody());
+      expect(plain.status, 403, reason: plain.text);
+      expect(plain.error['code'], 'needs_https');
+      expect(plain.error['message'], contains('Open Den at its https address'));
+      expect(f.hub.host.signIn.isOn(googleProvider), isFalse);
+      // A client that says https itself, without the trusted proxy: not believed.
+      final f2 = await HubFixture.start(configure: (base) => configFor(base));
+      addTearDown(f2.stop);
+      final claimed = await signedWith(f2, f2.phone, 'PUT', '/api/v1/hub/sign-in/google', {'x-forwarded-for': '192.168.1.30', 'x-forwarded-proto': 'https'},
+          body: googleBody());
+      expect(claimed.status, 403, reason: claimed.text);
+      expect(f2.hub.host.signIn.isOn(googleProvider), isFalse);
+
+      final secure = await signedWith(f, f.phone, 'PUT', '/api/v1/hub/sign-in/google', {'x-forwarded-for': '192.168.1.30', 'x-forwarded-proto': 'https'},
+          body: googleBody());
+      expect(secure.status, 200, reason: secure.text);
+      expect(f.hub.host.signIn.isOn(googleProvider), isTrue);
+    });
+  });
+
+  test('a change on its way when the host family stops keeps nothing, and nothing is changed while it is away', () async {
+    final dir = await Directory.systemTemp.createTemp('den_sign_in_detach');
+    addTearDown(() => dir.delete(recursive: true));
+    final f = await HubFixture.start(dataDir: dir.path, configure: (base) => configFor(base, dataDir: dir.path));
+    addTearDown(f.stop);
+    final s = f.hub.host.signIn;
+    await s.setApple(AppleClient(servicesId: apple.clientId, teamId: apple.teamId, keyId: apple.keyId, key: appleP8),
+        now: DateTime.now().millisecondsSinceEpoch);
+    final saved = File('${dir.path}/hub/$signInFile').readAsStringSync();
+
+    google.tokenDelay = const Duration(milliseconds: 600);
+    final put = signed(f, f.phone, 'PUT', '/api/v1/hub/sign-in/google', body: googleBody());
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    s.detach(f.hubDen.deviceId);
+    final answer = await put;
+    expect(answer.status, 503, reason: answer.body);
+    expect(s.isOn(googleProvider), isFalse);
+    expect(File('${dir.path}/hub/$signInFile').readAsStringSync(), saved, reason: "Apple's settings are as they were");
+    await expectLater(s.setGoogle(const GoogleClient(clientId: googleId, clientSecret: googleSecret), now: 0), throwsStateError);
+    await expectLater(s.turnOff(appleProvider), throwsStateError);
+    expect(File('${dir.path}/hub/$signInFile').readAsStringSync(), saved);
+  });
+
+  test('what the provider\'s answer doesn\'t confirm keeps nothing, and says so', () async {
+    final f = await HubFixture.start(configure: (base) => configFor(base));
+    addTearDown(f.stop);
+    for (final raw in [
+      (status: 302, body: '', type: 'text/html'),
+      (status: 429, body: '{"error": "rate_limit_exceeded"}', type: 'application/json'),
+      (status: 400, body: '{"error": "redirect_uri_mismatch"}', type: 'application/json'),
+      (status: 400, body: '<html>no</html>', type: 'text/html'),
+    ]) {
+      google.tokenRaw = raw;
+      final a = await signed(f, f.phone, 'PUT', '/api/v1/hub/sign-in/google', body: googleBody());
+      expect(a.status, 400, reason: '$raw ${a.body}');
+      expect(a.body, contains('didn\'t confirm'));
+      expect(f.hub.host.signIn.isOn(googleProvider), isFalse);
+    }
+  });
+
+  test('a settings file others can read is made its owner\'s alone at start, and the log says so', () async {
+    if (Platform.isWindows) return;
+    final dir = await Directory.systemTemp.createTemp('den_sign_in_mode');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/hub/$signInFile')
+      ..createSync(recursive: true)
+      ..writeAsStringSync(jsonEncode({'google': {'client_id': googleId, 'client_secret': googleSecret}}));
+    await Process.run('chmod', ['644', file.path]);
+    final f = await HubFixture.start(dataDir: dir.path, configure: (base) => configFor(base, dataDir: dir.path));
+    addTearDown(f.stop);
+    expect(file.statSync().mode & 0x1ff, 0x180);
+    expect(logged.any((l) => l.contains('could be read by other users')), isTrue);
+    expect(f.hub.host.signIn.isOn(googleProvider), isTrue);
+    neverSays(logged.join('\n'));
   });
 
   test('settings that can\'t be read leave sign-in off and say so, never what they hold', () async {

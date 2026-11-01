@@ -207,6 +207,9 @@ void main() {
   test('backup and restore round-trip under a passphrase', () async {
     final file = '${tmp.path}${Platform.pathSeparator}hub.denbackup';
     final env = {'DEN_PASS': 'correct horse battery'};
+    File('$dataPath${Platform.pathSeparator}hub${Platform.pathSeparator}$signInFile')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('{"v": 1}');
     final (code, out, err) = await run(['backup', '--out', file, '--passphrase-env', 'DEN_PASS', '--data', dataPath], env: env);
     expect(code, 0, reason: err);
     expect(out, contains('Backed up'));
@@ -218,6 +221,14 @@ void main() {
     final (ok, okOut, okErr) = await run(['restore', '--in', file, '--passphrase-env', 'DEN_PASS', '--data', target], env: env);
     expect(ok, 0, reason: okErr);
     expect(okOut, contains('open Den on a phone or tablet in the family'));
+    // The keys and the hub's secrets come back owner-only, written that way from the start.
+    if (!Platform.isWindows) {
+      for (final name in ['keys.json', 'hub${Platform.pathSeparator}$signInFile']) {
+        final restoredFile = File('$target${Platform.pathSeparator}$name');
+        expect(restoredFile.statSync().mode & 0x1ff, 0x180, reason: name);
+      }
+    }
+    expect(Directory(target).listSync(recursive: true).where((e) => e.path.endsWith('.restore.tmp')), isEmpty);
     // The restored hub writes nothing of its own until a device has synced with it, and says so.
     final marker = File('$target${Platform.pathSeparator}hub${Platform.pathSeparator}$restoreMarkerDoc.json');
     expect(marker.existsSync(), isTrue);

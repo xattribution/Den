@@ -411,6 +411,23 @@ void main() {
       expect(await appleWith(appleP8, team: 'OTHER12345').checkClient(client, redirectUri: back, now: now), ClientCheck.unknown);
     });
 
+    test('only a 400 invalid_grant confirms the client: a page, a redirect, too many tries or a stray error confirm nothing', () async {
+      final p = googleWith(google.clientId, google.clientSecret);
+      for (final raw in [
+        (status: 302, body: '', type: 'text/html'),
+        (status: 200, body: '{"id_token": "x"}', type: 'application/json'),
+        (status: 400, body: '<html>Bad request</html>', type: 'text/html'),
+        (status: 400, body: '{"error": "redirect_uri_mismatch"}', type: 'application/json'),
+        (status: 429, body: '{"error": "rate_limit_exceeded"}', type: 'application/json'),
+        (status: 401, body: '{"error": "invalid_grant"}', type: 'application/json'),
+      ]) {
+        google.tokenRaw = raw;
+        expect(await p.checkClient(client, redirectUri: back, now: now), ClientCheck.unconfirmed, reason: '$raw');
+      }
+      google.tokenRaw = null;
+      expect(await p.checkClient(client, redirectUri: back, now: now), ClientCheck.known);
+    });
+
     test('a provider in trouble is a refusal of its own, not an answer about the client', () async {
       google.tokenStatus = 503;
       await expectLater(googleWith(google.clientId, google.clientSecret).checkClient(client, redirectUri: back, now: now),
