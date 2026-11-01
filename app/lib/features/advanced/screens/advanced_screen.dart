@@ -12,8 +12,8 @@ import '../../../platform/capabilities.dart';
 import '../../../platform/web/web_app.dart';
 
 /// Settings → Advanced, for parents: what someone sets up once and the family never sees in
-/// daily use. The hub and sync, assistants and automations, Home Assistant, and the family's
-/// data; and Show screen info, for reporting a problem with the screen. The kitchen screen is on
+/// daily use. The hub and sync, assistants and automations, Home Assistant, signing in with
+/// Google or Apple, and the family's data; and Show screen info, for reporting a problem with the screen. The kitchen screen is on
 /// Settings itself, where a parent looks for it.
 class AdvancedScreen extends StatelessWidget {
   const AdvancedScreen({super.key, this.web});
@@ -58,6 +58,12 @@ class AdvancedScreen extends StatelessWidget {
                 icon: PhosphorIconsRegular.houseLine,
                 label: 'Home Assistant',
                 onTap: () => context.push('/settings/home-assistant'),
+              ),
+              NavRow(
+                icon: PhosphorIconsRegular.signIn,
+                label: 'Sign in with Google or Apple',
+                detail: 'Parents sign in to Den in a browser',
+                onTap: () => context.push('/settings/advanced/sign-in'),
               ),
               NavRow(
                 icon: PhosphorIconsRegular.database,

@@ -15,6 +15,7 @@ import 'screens/link_browser_screen.dart';
 import 'screens/nearby_device_screen.dart';
 import 'screens/reader_screen.dart';
 import 'screens/search_screen.dart';
+import 'screens/sign_in_setup_screen.dart';
 
 /// What changed and finding things: `/history?q=`, `/search?q=`.
 final List<RouteBase> advancedRoutes = [
@@ -22,8 +23,8 @@ final List<RouteBase> advancedRoutes = [
   GoRoute(path: '/search', builder: (_, s) => SearchScreen(query: s.uri.queryParameters['q'])),
 ];
 
-/// Under `/settings`: `advanced` (with `hub`, its `add`, `computer`, `browser` and `nearby`, `displays` and
-/// `data`), `connections` (with `new?label=`, `guide` and `reader`) and `home-assistant`.
+/// Under `/settings`: `advanced` (with `hub`, its `add`, `computer`, `browser` and `nearby`, `displays`,
+/// `sign-in` and `data`), `connections` (with `new?label=`, `guide` and `reader`) and `home-assistant`.
 final List<RouteBase> advancedSettingsRoutes = [
   GoRoute(
     path: 'advanced',
@@ -40,6 +41,7 @@ final List<RouteBase> advancedSettingsRoutes = [
         ],
       ),
       GoRoute(path: 'displays', builder: (_, _) => const DisplaysScreen()),
+      GoRoute(path: 'sign-in', builder: (_, _) => const SignInSetupScreen()),
       GoRoute(path: 'data', builder: (_, _) => const DataScreen()),
     ],
   ),
