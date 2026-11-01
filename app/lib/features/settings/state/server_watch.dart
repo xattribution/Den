@@ -31,7 +31,9 @@ abstract final class ServerWatch {
     _asked[family] = now;
     try {
       final state = await (source ?? HubServerSource(app.network!)).backups();
-      app.backupProblem = state.problem;
+      app
+        ..serverFamily = true
+        ..backupProblem = state.problem;
     } on HubException catch (e) {
       if (e.code == 'host_family_only' || e.code == 'not_found') _notHost.add(family);
     }

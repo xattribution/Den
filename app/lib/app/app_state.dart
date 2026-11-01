@@ -300,6 +300,16 @@ class AppState extends ChangeNotifier with FamilyReads {
     _changed(const {Changes.server});
   }
 
+  /// Whether the family's server said this family is its own (its parents see Backups), once
+  /// it has said.
+  bool get serverFamily => _serverFamily;
+  bool _serverFamily = false;
+  set serverFamily(bool on) {
+    if (on == _serverFamily) return;
+    _serverFamily = on;
+    _changed(const {Changes.server});
+  }
+
   /// Notices (a privacy change, a sitter's access ending) this device's person put away with
   /// "Got it", by key. Kept on this device only.
   bool seen(String key) => _seen.contains(key);

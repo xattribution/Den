@@ -66,6 +66,12 @@ class AdvancedScreen extends StatelessWidget {
                 onTap: () => context.push('/settings/advanced/sign-in'),
               ),
               NavRow(
+                icon: PhosphorIconsRegular.desktopTower,
+                label: 'Server',
+                detail: 'The internet, its version and updates',
+                onTap: () => context.push('/settings/advanced/server'),
+              ),
+              NavRow(
                 icon: PhosphorIconsRegular.database,
                 label: 'Data',
                 detail: 'Export, and the history of changes',

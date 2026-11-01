@@ -16,6 +16,7 @@ import 'screens/link_browser_screen.dart';
 import 'screens/nearby_device_screen.dart';
 import 'screens/reader_screen.dart';
 import 'screens/search_screen.dart';
+import 'screens/server_screen.dart';
 import 'screens/sign_in_setup_screen.dart';
 
 /// What changed and finding things: `/history?q=`, `/search?q=`.
@@ -47,6 +48,7 @@ final List<RouteBase> advancedSettingsRoutes = [
         routes: [GoRoute(path: 'add', builder: (_, _) => const AddScreenScreen())],
       ),
       GoRoute(path: 'sign-in', builder: (_, _) => const SignInSetupScreen()),
+      GoRoute(path: 'server', builder: (_, _) => const ServerScreen()),
       GoRoute(path: 'data', builder: (_, _) => const DataScreen()),
     ],
   ),
