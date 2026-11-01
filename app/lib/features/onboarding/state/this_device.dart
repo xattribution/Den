@@ -30,3 +30,10 @@ String suggestDeviceName(String personName, DeviceKind kind) {
   if (name.isEmpty) return apple && (kind == DeviceKind.phone || kind == DeviceKind.tablet) ? word : FamilyWords.deviceKind(kind);
   return '${FamilyWords.possessive(name)} $word';
 }
+
+/// "Alex's new iPhone": a device getting back in for someone who had one before.
+String suggestNewDeviceName(String personName, DeviceKind kind) {
+  final base = suggestDeviceName(personName, kind);
+  final apostrophe = base.indexOf("'s ");
+  return apostrophe < 0 ? base : '${base.substring(0, apostrophe + 3)}new ${base.substring(apostrophe + 3)}';
+}

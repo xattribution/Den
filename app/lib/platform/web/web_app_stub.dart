@@ -42,3 +42,9 @@ bool keyboardNow() => false;
 Future<String?> fetchFresh(String path) async => null;
 
 void reload() {}
+
+bool passkeyArm(String kind, String json) => false;
+
+Future<String> passkeyGo(String kind) async => '{"error":"unsupported"}';
+
+bool passkeyBind(Object element, String kind, void Function(Future<String> answer) onStart) => false;

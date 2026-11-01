@@ -64,6 +64,13 @@ feed), and the mDNS advertisement.
   [`GET /api/v1/recovery/key`](#get-apiv1recoverykey) ·
   [`POST /api/v1/recovery/tickets`](#post-apiv1recoverytickets) ·
   [`POST /api/v1/recovery/redeem`](#post-apiv1recoveryredeem)
+- [Getting back in with a passkey](#getting-back-in-with-a-passkey):
+  [`POST /api/v1/passkeys/options`](#post-apiv1passkeysoptions) ·
+  [`POST /api/v1/passkeys`](#post-apiv1passkeys) ·
+  [`GET /api/v1/passkeys`](#get-apiv1passkeys) ·
+  [`DELETE /api/v1/passkeys/{id}`](#delete-apiv1passkeysid) ·
+  [`POST /api/v1/passkeys/sign-in/options`](#post-apiv1passkeyssign-inoptions) ·
+  [`POST /api/v1/passkeys/sign-in`](#post-apiv1passkeyssign-in)
 - [Signing in with Google and Apple](#signing-in-with-google-and-apple):
   [`GET /auth/oidc/{provider}/start`](#get-authoidcproviderstart) ·
   [`GET /auth/oidc/{provider}/callback`](#get-authoidcprovidercallback-and-post-authoidcapplecallback) ·
@@ -2158,6 +2165,129 @@ clients together; and per client,
 the same budget as invites and browser links, see [Limits per client](#limits-per-client)),
 `503 not_ready`.
 
+## Getting back in with a passkey
+
+How a family member gets back into Den in a browser (a Home Screen app Safari cleared, a new
+phone): a passkey their own device made, with Face ID on an iPhone, a fingerprint or the screen
+lock on Android, Windows Hello. The hub is the WebAuthn relying party for the family's own
+address, as [`base`](#behind-a-reverse-proxy) gives it (the public URL, else the address the
+browser asked for): its host is the RP ID and its origin the only origin. There is nothing to set
+up and no outside service. Passkeys need a secure page with a host name, so at a plain `http`
+address or an IP address every route here answers `409 needs_https` and the app offers none.
+
+A passkey lets nobody in by itself. It says who is back, and the hub then lets the new device ask
+the way the family's trust rules already allow (ARCHITECTURE.md, "Passkeys"):
+
+- a **parent**, while the family lets the hub help ([server-assisted
+  recovery](#getting-back-in-server-assisted-recovery)): the hub signs a recovery proof (kind
+  `hub`) for that parent and the new device's key, exactly as for `den_hub recover`'s words, and
+  the device is in at once. Every device shows it; any parent can remove it.
+- **anyone else**, and a parent while the hub's help is off: the new device asks to join as them
+  (a join request naming them), and a parent lets it in with one tap, as for an invite without a
+  key.
+
+**What the hub keeps.** `<data>/hub/passkeys.json` (owner-only, in backups, never in the family's
+log): for each passkey its credential id, the member, the RP ID it was made for, its public key
+(ES256 `x`, `y` or RS256 `n`, `e`), when and on which device it was made, the device it belongs
+to now, its sign counter and backup flag (kept for information only), and when it was last used;
+for each member a random 16-byte WebAuthn user handle (never their member id). Challenges live in
+memory only: each one works once, for 5 minutes, for one kind of ceremony, at one address. A
+restore at the same address keeps passkeys working; one made after the backup has to be made
+again.
+
+**Checked.** `clientDataJSON` `type` (`webauthn.create` or `webauthn.get`), `challenge` (one
+this hub made, unused, for this kind), `origin` (exactly the family's, `crossOrigin` false, no
+`topOrigin`); `authenticatorData`'s RP ID hash, user present (UP) and **user verified** (UV); the
+signature (ES256, DER-encoded, over `authenticatorData | SHA-256(clientDataJSON)`, or RS256).
+Attestation is asked as `"none"` and never read, whatever an authenticator sends. Only ES256
+(`-7`) and RS256 (`-257`) keys are kept, and an ES256 point must lie on P-256. The minimal CBOR
+reader takes definite lengths, integers, byte and text strings, arrays, maps and simple values,
+nested at most 8 deep, and nothing else.
+
+**Gone with what it was for.** A passkey whose member was removed, or whose device was removed,
+is forgotten the next time the hub looks. It belongs to the device that made it until it signs
+in on another; then to that one, so removing the phone that was lost leaves it working. A
+sitter past their last day signs in as nobody. The person removes their own from their page; a
+parent's own device may remove anyone's.
+
+### `POST /api/v1/passkeys/options`
+
+Signed by a person's own **personal** device (`DeviceRequest`; a shared screen, a hub-mode
+device or a device acting for someone else: `403 permission_denied`). Body `{}`. Answer `200`:
+
+```json
+{
+  "options": {
+    "rp": {"id": "den.example.com", "name": "Den"},
+    "user": {"id": "<16 random bytes>", "name": "Alex (Carter family)", "displayName": "Alex"},
+    "challenge": "<32 random bytes>",
+    "pubKeyCredParams": [{"type": "public-key", "alg": -7}, {"type": "public-key", "alg": -257}],
+    "timeout": 120000,
+    "attestation": "none",
+    "authenticatorSelection": {"residentKey": "required", "requireResidentKey": true, "userVerification": "required"},
+    "hints": ["client-device"],
+    "excludeCredentials": [{"type": "public-key", "id": "<a passkey of theirs for this address>"}]
+  },
+  "existing": 1,
+  "expires_ms": 1793202420000
+}
+```
+
+Bytes are base64url. The challenge is this device's, for making one, for 5 minutes.
+
+### `POST /api/v1/passkeys`
+
+Signed by the device that asked for the options. Body `{"credential": <PublicKeyCredential.toJSON()
+of navigator.credentials.create>}`. Answer `201 {"id", "member", "made_ms", "made_on", "used_ms",
+"synced"}`. Errors: `400 invalid_input` (the answer didn't check out: another challenge, origin
+or RP ID, no user verification, another algorithm), `409 conflict` (the passkey is someone
+else's here), `409 too_many` (10 already).
+
+### `GET /api/v1/passkeys`
+
+Signed. `{"passkeys": [{"id", "member", "made_ms", "made_on", "used_ms", "synced"}]}`: the acting
+person's own; with `?member=<id>`, anyone's, for a parent's own device only (`403` otherwise).
+
+### `DELETE /api/v1/passkeys/{id}`
+
+Signed by its person on their own personal device, or by a parent's own device. `200 {"ok":
+true}`; `404 not_found` when it's gone already.
+
+### `POST /api/v1/passkeys/sign-in/options`
+
+From anyone, counted under the [`auth` budget](#limits-per-client). Body `{}`. Answer `200
+{"options": {"challenge", "rpId", "timeout", "userVerification": "required", "allowCredentials":
+[], "hints"}, "expires_ms"}`. No credential is named: the browser offers whichever of the
+person's passkeys are for this address. `503 not_ready` before the hub is in a family.
+
+### `POST /api/v1/passkeys/sign-in`
+
+From anyone, under the `auth` budget and the failed-tries count. Body `{"credential": <toJSON()
+of navigator.credentials.get>, "pubkey": "<the new device's Ed25519 key>"}`. Answer `200`:
+
+```json
+{
+  "invite": "den://join?f=...&d=<hub>&k=<hub key>&s=...&x=1793202720",
+  "member": "M3ALEX7QK4MXN3TB",
+  "member_name": "Alex",
+  "member_marker": "sky",
+  "member_picture": "dog",
+  "family": "Carter family",
+  "proof": {"kind": "hub", "member": "M3ALEX7QK4MXN3TB", "key": "<server key>", "nonce": "...", "expires": 1793202720000, "sig": "..."},
+  "lets_in": true,
+  "expires_ms": 1793202720000
+}
+```
+
+The device joins over `/ws` with `invite` (good for 10 minutes): with `proof`, carrying it in its
+own device record, as after [`/api/v1/recovery/redeem`](#post-apiv1recoveryredeem); without
+(`"proof": null`, `"lets_in": false`), with a join request naming `member`, which a parent
+approves. Errors: `403 not_in_family` with "This passkey isn't for anyone in this family. Ask
+someone in your family for an invite." (a passkey this hub doesn't know, or whose person is gone
+or whose access ended; nothing is made), `400 invalid_input` (a challenge used, unknown or run
+out, another origin, no user verification, a bad signature), `429 busy` (three of their devices
+are waiting for a parent already), `429 rate_limited`.
+
 ## Signing in with Google and Apple
 
 A parent's Google or Apple account signs in to the hub, in a browser, as their member: phase 1
@@ -2489,6 +2619,7 @@ records alone.
 | `POST /api/v1/invites` | The hub the grant's invite names |
 | `POST /api/v1/hub/setup` | The address's family only (the setup link names it); at an address that is no family's, `404 no_family` |
 | `POST /api/v1/screens/code...` (a kitchen screen with no family) | The address's family only: a screen's code is found only by that family's parents, whose signed requests go to their own hub, so a parent of another family on the host finds nothing, the same as a wrong code |
+| `/api/v1/passkeys/...` | The address's family only: a passkey is made for one address (its RP ID) and kept by that family alone, and the browser offers it only there. At an address that is no family's, `404 no_family` |
 | `/auth/*`, `GET /api/v1/me` | The address's family only: each family's sign-in comes back to its own address (its own redirect), with cookies only that address holds (`__Host-`). At an address that is no family's, `404 no_family`, before any sign-in starts |
 | Anything else | The address's family |
 

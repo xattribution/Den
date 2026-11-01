@@ -156,6 +156,45 @@ bool keyboardNow() {
   }
 }
 
+// Newer still: passkeys, looked up too.
+
+bool passkeyArm(String kind, String json) {
+  final web = _denWeb;
+  if (web == null || !web.has('passkeyArm')) return false;
+  try {
+    return web.callMethod<JSBoolean>('passkeyArm'.toJS, kind.toJS, json.toJS).toDart;
+  } on Object {
+    return false;
+  }
+}
+
+/// Must be the first thing a tap does: the call into the page happens before any await.
+Future<String> passkeyGo(String kind) {
+  final web = _denWeb;
+  if (web == null || !web.has('passkeyGo')) return Future.value('{"error":"unsupported"}');
+  final JSPromise<JSString> pending;
+  try {
+    pending = web.callMethod<JSPromise<JSString>>('passkeyGo'.toJS, kind.toJS);
+  } on Object {
+    return Future.value('{"error":"unsupported"}');
+  }
+  return pending.toDart.then((answer) => answer.toDart, onError: (Object _) => '{"error":"failed"}');
+}
+
+/// Makes [element] (a platform view's `<button>`) open the passkey sheet from its own click;
+/// [onStart] gets the answer as it starts.
+bool passkeyBind(Object element, String kind, void Function(Future<String> answer) onStart) {
+  final web = _denWeb;
+  if (web == null || !web.has('passkeyBind')) return false;
+  void started(JSPromise<JSString> pending) =>
+      onStart(pending.toDart.then((answer) => answer.toDart, onError: (Object _) => '{"error":"failed"}'));
+  try {
+    return web.callMethod<JSBoolean>('passkeyBind'.toJS, element as JSObject, kind.toJS, started.toJS).toDart;
+  } on Object {
+    return false;
+  }
+}
+
 String? screenInfo() {
   final web = _denWeb;
   if (web == null || !web.has('screenInfo')) return null;

@@ -25,7 +25,14 @@ class JoinStatus {
 /// screens show (derived from the session transcript; empty for QR joins, where the code itself
 /// carries the inviter's key).
 class JoinTicket {
-  const JoinTicket({required this.familyId, this.familyName, this.inviterName, this.words = const [], this.admitted = false});
+  const JoinTicket({
+    required this.familyId,
+    this.familyName,
+    this.inviterName,
+    this.words = const [],
+    this.admitted = false,
+    this.passkey = false,
+  });
 
   final String familyId;
   final String? familyName;
@@ -37,6 +44,10 @@ class JoinTicket {
   /// The invite let this device in by itself (its key), so nobody needs to approve it: it is
   /// only catching up.
   final bool admitted;
+
+  /// The person signed in with a passkey: they have one already, so Den doesn't offer to make
+  /// one once they're in.
+  final bool passkey;
 }
 
 /// A 4-word code a parent reads out to a device that can't scan, valid until [expires].
@@ -207,6 +218,9 @@ class PairingException implements Exception {
 
   /// The hub holds no invite with those words (wrong, or expired).
   static const unknownCode = 'unknown-code';
+
+  /// A passkey that isn't for anyone in the family: "Ask someone in your family for an invite."
+  static const notInFamily = 'not-in-family';
   @override
   String toString() => message;
 }
@@ -319,6 +333,24 @@ abstract class PairingService {
   Future<RecoverySession> startRecovery(
     String text, {
     String? hubUrl,
+    required String Function(String name) deviceName,
+    required DeviceKind kind,
+  }) async =>
+      throw const PairingException(LocalOnlyPairing.message);
+
+  // ------------------------------------------------------------------ passkeys
+
+  /// In a browser the hub served: the hub's options for signing in with a passkey, with a fresh
+  /// challenge, to arm in the page before the tap. Null where the hub offers none (an older hub,
+  /// an address that isn't `https`, a hub in no family).
+  Future<Map<String, Object?>?> passkeySignInOptions() async => null;
+
+  /// Signs in with [credential], the browser's passkey answer, and joins as the person it is for:
+  /// at once for a parent the hub may help, otherwise asking a parent, who lets this device in
+  /// with one tap. [deviceName] names this device from theirs. Throws [PairingException] with
+  /// words for people; a passkey that is no one's here is [PairingException.notInFamily].
+  Future<JoinTicket> signInWithPasskey(
+    Map<String, Object?> credential, {
     required String Function(String name) deviceName,
     required DeviceKind kind,
   }) async =>

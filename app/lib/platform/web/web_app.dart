@@ -21,6 +21,8 @@ class WebAppInfo {
     this.share = false,
     this.ready = false,
     this.mobile = false,
+    this.android = false,
+    this.passkeys = false,
   });
 
   factory WebAppInfo.fromJson(Map<String, Object?> json) {
@@ -39,6 +41,8 @@ class WebAppInfo {
       share: json['share'] == true,
       ready: json['ready'] == true,
       mobile: json['mobile'] == true,
+      android: json['android'] == true,
+      passkeys: json['passkeys'] == true,
     );
   }
 
@@ -68,6 +72,13 @@ class WebAppInfo {
 
   /// A phone or tablet's browser, whose file picker can open the camera.
   final bool mobile;
+
+  /// An Android phone or tablet.
+  final bool android;
+
+  /// The browser can make and use passkeys here: WebAuthn, on a secure page at a host name
+  /// (never an IP address). Plain `http` on the home network has none, and Den says nothing.
+  final bool passkeys;
 
   /// Safari on an iPhone or iPad, not opened from the Home Screen. Den belongs on the Home
   /// Screen there: the Home Screen app keeps its own storage, separate from Safari's, and only
@@ -394,4 +405,18 @@ abstract final class WebApp {
 
   /// Loads the page again, as when Den opens.
   static void reload() => impl.reload();
+
+  /// Keeps the hub's passkey options for [kind] (`create` or `get`) in the page, ahead of the
+  /// tap that uses them: the tap must open the browser's sheet at once. False off the web, or
+  /// with a page from before passkeys.
+  static bool passkeyArm(String kind, String json) => impl.passkeyArm(kind, json);
+
+  /// Opens the browser's passkey sheet with what [passkeyArm] kept, answering its JSON
+  /// (`{"credential": ...}` or `{"error": name}`). Call it straight from a tap.
+  static Future<String> passkeyGo(String kind) => impl.passkeyGo(kind);
+
+  /// Makes [element] (a platform view's `<button>`) open the passkey sheet from its own click,
+  /// handing [onStart] the answer as it starts. False when the page can't.
+  static bool passkeyBind(Object element, String kind, void Function(Future<String> answer) onStart) =>
+      impl.passkeyBind(element, kind, onStart);
 }

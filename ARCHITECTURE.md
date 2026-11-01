@@ -464,6 +464,53 @@ change it: one client serves the whole server, so it is the server's to set. The
 lists every family's address the host knows (`host.json`), each needing its own way back
 registered at the provider.
 
+### Passkeys
+
+The main way a family member gets back into Den in a browser: the Home Screen app Safari
+cleared, or a new phone. A passkey (Face ID on an iPhone, a fingerprint or the screen lock on
+Android, Windows Hello) is made on the person's own device, after they joined from an invite or
+later on their page, and the hub keeps its public key (`den_hub/lib/src/passkeys/`,
+docs/hub-api.md "Getting back in with a passkey"). It is not a new way into the family and makes
+no trust decision of its own:
+
+- **Invites stay the only way in.** A passkey belongs to a member who is in the family already;
+  one that isn't anyone's here gets "Ask someone in your family for an invite", and nothing is
+  made.
+- **It says who; the existing rules decide.** Signed in, a parent the family lets the hub help
+  gets the hub's recovery proof (kind `hub`, as `den_hub recover`'s words give), so the new device
+  is let in at once, shown everywhere as the hub's recovery and removable by any parent, exactly
+  as in "Recovery". Anyone else, and a parent while the hub's help is off, has the new device ask
+  to join as them, and a parent's own device approves it in one tap. So a passkey lets in no
+  device that the hub's help or a parent couldn't already; the hub's own key still makes no trust
+  decision. A parent who makes a passkey on their own device turns the hub's help on in the same
+  step (the offer says the hub checks it and the family sees when it's used): the trust decision
+  is theirs, on their own device, as when they flip the switch.
+- **Google and Apple sign-in don't do this.** A browser signed in with an account reads
+  `/api/v1/me` and no more (phase 1 of the account plan); it is no device. Passkeys reuse the
+  recovery proof and the join request instead, rather than widen what a session may do. When
+  phases 2 and 3 bring grants, a passkey sign-in can become a grant capped by the person's
+  current permissions, like an account's.
+- **Kept by the hub, not the log.** `hub/passkeys.json` (owner-only, in backups): credential id,
+  member, RP ID, public key, made on, the device it belongs to now, counters for information. A
+  passkey of a removed person, or of a removed device, is forgotten; one moves to the device that
+  last signed in with it, so removing the lost phone leaves it working.
+- **Self-contained.** The relying party is the family's own address as the browser sees it (the
+  hub's public URL, else the request's host): no client to register, no outside service, nothing
+  in a file. Each family on a Den host has its own address, store and challenges. WebAuthn needs
+  a secure page at a host name, so at a plain `http` address on the home network the app offers
+  nothing and says nothing.
+- **Proportionate checks.** ES256 and RS256; attestation `"none"`, never read; a challenge used
+  once within 5 minutes; origin, RP ID, user presence and user verification required; the
+  signature. The sign counter and backup flags are kept, never enforced (synced passkeys report
+  0).
+
+In the browser, the passkey sheet opens only inside the person's own tap, and Flutter's pointer
+pipeline (and any `await`) can lose it. So the hub's options are fetched ahead and armed in the
+page, and a real, invisible `<button>` (a platform view) lies over the button Flutter draws; its
+own click calls `navigator.credentials` at once (`web/den_web.js`, "passkeys";
+`platform/web/passkey_button.dart`). A keyboard or screen reader activates Flutter's button,
+which calls the page straight from its handler.
+
 ### Record types and fields
 
 Times are UTC milliseconds unless noted. Local dates are `YYYY-MM-DD` strings in the family's
@@ -1429,6 +1476,11 @@ proxy in front of the hub, where it has the hub as its own origin.
   code) brings the code, so nothing is typed, and the hub's device id: the phone takes in only a
   hub whose session proves the key that id is the hash of, with no words at all. After founding
   the app goes to Add people; the recovery words wait in Needs you.
+- **Getting back in.** On the welcome screen of a browser with no family, "Sign in with Face
+  ID" (a fingerprint on Android, a passkey elsewhere) is the one primary button wherever the
+  page can use passkeys, with "Lost your phone? Use your recovery words" under it; after joining
+  on their own phone, a person is offered to make one, and their page offers it again. See
+  "Passkeys".
 - **What the browser can't do** is left out rather than offered: scanning, phone calendars, the
   share extension and on-device speech. Photos and PDFs come through the browser's file picker
   (which offers the camera), the share sheet goes through the Web Share API, reminders through

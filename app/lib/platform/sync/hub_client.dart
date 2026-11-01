@@ -147,6 +147,31 @@ class RedeemedRecovery {
   final String? familyName;
 }
 
+/// Who signed in with a passkey, and what lets this device join: the hub's recovery proof for a
+/// parent the hub may help (in at once), or none (a parent lets the device in).
+class RedeemedPasskey {
+  const RedeemedPasskey({
+    required this.invite,
+    required this.member,
+    required this.memberName,
+    this.marker,
+    this.picture,
+    this.familyName,
+    this.proof,
+  });
+
+  /// A `den://join` invite naming the hub.
+  final String invite;
+  final String member;
+  final String memberName;
+  final String? marker;
+  final String? picture;
+  final String? familyName;
+
+  /// den_core's `RecoveryProof` as JSON, or null.
+  final Map<String, Object?>? proof;
+}
+
 /// A hub turned a request down; [message] says why and what to do, for people.
 class HubException implements Exception {
   const HubException(this.message, {this.code, this.triesLeft, this.retryAfter});
@@ -328,6 +353,43 @@ class HubClient {
       member: member,
       memberName: name,
       familyName: json['family'] as String?,
+    );
+  }
+
+  /// `POST /api/v1/passkeys/sign-in/options` at the hub that served this page: a challenge for
+  /// the browser's passkey sheet.
+  Future<Map<String, Object?>> passkeySignInOptions(Uri base) => _send(
+        () => _http.post(
+          base.replace(path: '/api/v1/passkeys/sign-in/options'),
+          headers: const {'content-type': 'application/json'},
+          body: '{}',
+        ),
+        base,
+      );
+
+  /// `POST /api/v1/passkeys/sign-in`: the sheet's answer and this device's key; who is back and
+  /// what lets this device join.
+  Future<RedeemedPasskey> passkeySignIn(Uri base, Map<String, Object?> credential, String pubkey) async {
+    final json = await _send(
+      () => _http.post(
+        base.replace(path: '/api/v1/passkeys/sign-in'),
+        headers: const {'content-type': 'application/json'},
+        body: jsonEncode({'credential': credential, 'pubkey': pubkey}),
+      ),
+      base,
+    );
+    final invite = json['invite'], member = json['member'], name = json['member_name'], proof = json['proof'];
+    if (invite is! String || member is! String || name is! String || (proof != null && proof is! Map)) {
+      throw const HubException("The hub's answer was missing something. Try again.");
+    }
+    return RedeemedPasskey(
+      invite: invite,
+      member: member,
+      memberName: name,
+      marker: json['member_marker'] as String?,
+      picture: json['member_picture'] as String?,
+      familyName: json['family'] as String?,
+      proof: proof == null ? null : Map<String, Object?>.from(proof as Map),
     );
   }
 
