@@ -128,18 +128,15 @@ class _ServerScreenState extends State<ServerScreen> {
               title: 'The internet',
               child: Column(
                 children: ruled([
-                  NavRow(
-                    icon: PhosphorIconsRegular.globeHemisphereWest,
+                  InfoRow.text(
                     label: 'Cloudflare',
                     value: net.connected
                         ? 'Connected'
                         : net.token
                             ? 'Not connected'
                             : 'Off',
-                    detail: s.address == null ? null : Uri.parse(s.address!).host,
-                    chevron: false,
-                    onTap: null,
                   ),
+                  if (s.address != null) InfoRow.text(label: 'Address', value: Uri.parse(s.address!).host),
                   NavRow(
                     icon: PhosphorIconsRegular.key,
                     label: net.token ? 'Change the tunnel token' : 'Add a tunnel token',
@@ -172,8 +169,8 @@ class _ServerScreenState extends State<ServerScreen> {
             title: 'Den on the server',
             child: Column(
               children: ruled([
-                NavRow(icon: PhosphorIconsRegular.info, label: 'Version', value: s.version, chevron: false, onTap: null),
-              ], indent: 36),
+                InfoRow.text(label: 'Version', value: s.version),
+              ]),
             ),
           ),
           if (update != null && update.state == 'updating')

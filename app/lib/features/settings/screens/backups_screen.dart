@@ -149,23 +149,14 @@ class _BackupsScreenState extends State<BackupsScreen> {
           GroupCard(
             child: Column(
               children: ruled([
-                NavRow(
-                  icon: PhosphorIconsRegular.moonStars,
-                  label: 'Every night, on the server',
-                  detail: 'Keeps the newest ${s.keep}',
-                  chevron: false,
-                  onTap: null,
-                ),
-                NavRow(
-                  icon: PhosphorIconsRegular.clockCounterClockwise,
+                InfoRow.text(label: 'Every night', value: 'On the server, keeping the newest ${s.keep}'),
+                InfoRow.text(
                   label: 'Last backup',
                   value: s.lastAt == null
                       ? 'None yet'
                       : [_lastWords(s.lastAt!), if (s.lastSize != null) sizeWords(s.lastSize!)].join(' · '),
-                  chevron: false,
-                  onTap: null,
                 ),
-              ], indent: 36),
+              ]),
             ),
           ),
           if (problem != null)
