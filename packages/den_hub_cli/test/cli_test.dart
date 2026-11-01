@@ -258,23 +258,39 @@ void main() {
     }
   });
 
-  test('serve refuses Google or Apple sign-in set up only in part, before it opens anything', () async {
-    final cases = <Map<String, String>>[
-      {'DEN_GOOGLE_CLIENT_ID': 'id.apps.googleusercontent.com'},
-      {'DEN_GOOGLE_CLIENT_SECRET': 'shh-not-for-logs'},
-      {'DEN_APPLE_SERVICES_ID': 'family.den.signin', 'DEN_APPLE_TEAM_ID': 'TEAM123456', 'DEN_APPLE_KEY_ID': 'KEY7654321'},
-      {
-        'DEN_APPLE_SERVICES_ID': 'family.den.signin',
-        'DEN_APPLE_TEAM_ID': 'TEAM123456',
-        'DEN_APPLE_KEY_ID': 'KEY7654321',
-        'DEN_APPLE_KEY_FILE': '${tmp.path}/no-such-key.p8',
-      },
-    ];
-    for (final env in cases) {
-      final (code, _, err) = await run(['serve', '--data', dataPath, '--port', '0'], env: env);
-      expect(code, 64, reason: '$env');
-      expect(err, anyOf(contains('Google sign-in needs'), contains('Apple sign-in needs'), contains('DEN_APPLE_KEY_FILE')), reason: '$env');
-      expect(err, isNot(contains('shh-not-for-logs')), reason: 'a secret is never echoed');
+  test('settings the hub no longer reads are named once in the log, never their values, and change nothing', () async {
+    const secret = 'GOCSPX-shh-not-for-logs';
+    final env = {
+      'DEN_LOG': 'warn',
+      'DEN_GOOGLE_CLIENT_ID': '1234567890-den.apps.googleusercontent.com',
+      'DEN_GOOGLE_CLIENT_SECRET': secret,
+      'DEN_APPLE_KEY_FILE': '${tmp.path}/no-such-key.p8',
+      'DEN_HOST_PUSH': 'den.example.com',
+      'DEN_HA_URL': 'http://homeassistant.local:8123',
+      'DEN_HA_TOKEN': 'ha-token-not-for-logs',
+    };
+    final err = StringBuffer();
+    final host = await openHost(
+      cliParser().commands['serve']!.parse(['--port', '0', '--host', '127.0.0.1', '--no-mdns']),
+      DataDir(dataPath),
+      0,
+      CliIo(input: const Stream.empty(), out: StringBuffer(), err: err, environment: env),
+    );
+    addTearDown(host.stop);
+    final log = err.toString();
+    expect(log, contains('DEN_GOOGLE_CLIENT_ID, DEN_GOOGLE_CLIENT_SECRET, DEN_APPLE_KEY_FILE are no longer read'));
+    expect(log, contains('Settings, Advanced, Sign in with Google or Apple'));
+    expect(log, contains('DEN_HOST_PUSH is no longer read'));
+    expect(log, contains('DEN_HA_URL, DEN_HA_TOKEN'));
+    for (final value in [secret, 'ha-token-not-for-logs', '1234567890-den', 'homeassistant.local']) {
+      expect(log, isNot(contains(value)), reason: 'a value is never echoed');
+    }
+    expect(host.signIn.providers, isNull, reason: 'sign-in is set up in the app, not from the environment');
+    expect(host.tenants.single.config.hostPush, isTrue, reason: 'what DEN_HOST_PUSH=all did is the default');
+    expect(DataDir.backupPath('hub/$signInFile'), isTrue, reason: 'what the app set up for signing in is in backups');
+    expect(retiredSettings.keys, containsAll(['DEN_GOOGLE_CLIENT_ID', 'DEN_APPLE_KEY_FILE', 'DEN_HOST_PUSH', 'DEN_NOTIFY']));
+    for (final retired in ['--google-client-id', '--host-push', '--ha-url']) {
+      expect(cliParser().commands['serve']!.options.keys, isNot(contains(retired.substring(2))));
     }
   });
 
@@ -398,15 +414,5 @@ void main() {
     final (forced, _, forcedErr) = await run(['restore', '--in', file, '--passphrase-env', 'DEN_PASS', '--data', target, '--force'], env: env);
     expect(forced, 0, reason: forcedErr);
     expect(File('$target${Platform.pathSeparator}hub${Platform.pathSeparator}stale.json').existsSync(), isFalse);
-  });
-
-  test('DEN_HOST_PUSH names the families that share the host push key: all, or their addresses', () {
-    expect(parseHostPush('').all, isFalse);
-    expect(parseHostPush('').hosts, isEmpty);
-    expect(parseHostPush('all').all, isTrue);
-    expect(parseHostPush(' On ').all, isTrue);
-    final some = parseHostPush('den.kotvas.app, https://Den-Smith.kotvas.app, den-x.test:8443,,');
-    expect(some.all, isFalse);
-    expect(some.hosts, {'den.kotvas.app', 'den-smith.kotvas.app', 'den-x.test'});
   });
 }

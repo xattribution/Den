@@ -451,7 +451,18 @@ its `SameSite=Lax` cookie comes along. An account bound to nobody in the family 
 answer, the same as a hub with no family yet, after the same work, and nothing is made. A bound
 one gets a session: a `__Host-` cookie (`Secure`, `HttpOnly`, `SameSite=Lax`, 12 hours) whose
 hash the hub keeps in memory, new on each sign-in, ended the moment the member no longer has that
-account. With no provider configured the hub has no `/auth` routes at all.
+account. With no provider on, every `/auth` route answers `404`.
+
+**Setting it up** (`sign_in_setup.dart`) is done from the app, never in a file: a parent of the
+host's own family (the family in the host's data directory itself, whoever runs the server), on
+their own personal phone, pastes the client from Google's console (and Apple's), and the hub
+checks it with the provider (discovery, and its token endpoint asked about a made-up code: it
+answers `invalid_client` for a client it doesn't know) before it keeps it and turns it on, for
+every family on the host at once. It is kept in that family's `hub/sign-in.json`, owner-only and
+in its backups, never in a log and never in an answer. Another family's parents can't read or
+change it: one client serves the whole server, so it is the server's to set. The setup screen
+lists every family's address the host knows (`host.json`), each needing its own way back
+registered at the provider.
 
 ### Record types and fields
 
@@ -993,7 +1004,7 @@ holds each other family in the same layout; `<data>/host/` the host's own state.
 add-family` starts a fresh family on the running host; `den_hub adopt` moves a hub that ran on its
 own in, keys and all, so it keeps its device id and its phones keep syncing; `--family` picks a
 family for the per-family commands (backups are per family). Every family's Web Push goes out
-under its own VAPID key, and, for families the operator opted in (`DEN_HOST_PUSH`), under the
+under its own VAPID key, and, since every family on a host also hands it out, under the
 host's own key (`<data>/host/push.json`) for the subscriptions made with it: one web app holding
 several of those families subscribes once with that key and registers the subscription with each
 (see "Notifications"). A family signs a subscription only with the key it was made with, never
@@ -1185,8 +1196,10 @@ process's `IsolateNameServer`. A background task that finds the app holding it a
 refresh instead; the app at start waits for a background task to finish; a holder that stopped
 answering pings is taken over.
 
-The hub additionally sends pushes for live events (a message, an approval waiting) through a
-pluggable notifier: Home Assistant's `notify` service, ntfy, or the hosted push relay.
+The hub additionally sends pushes for live events (an approval waiting, a reward asked for, a
+chore given for today) by Web Push, below. Home Assistant gets reminders through its Den
+integration, which asks the hub with a token and fires `den_event_starting` (the hub has no
+notifier of its own for it, or for ntfy, any more: those took a hand-edited `notify.json`).
 
 Browsers can't schedule notifications, so there the hub sends them with **Web Push** (a Home
 Screen web app on iOS 16.4 and later, or any browser with Web Push). The hub makes a P-256 VAPID

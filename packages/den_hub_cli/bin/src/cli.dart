@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/args.dart';
@@ -46,8 +45,6 @@ ArgParser cliParser() {
     ..addOption('web', help: 'Static web build to serve at / (env DEN_WEB)')
     ..addOption('relay', help: 'Relay URL for a tunnel (env DEN_RELAY)')
     ..addOption('name', help: 'Hub name before it joins a family (env DEN_NAME)')
-    ..addOption('ha-url', help: 'Home Assistant URL for notifications (env DEN_HA_URL)')
-    ..addOption('ha-token', help: 'Home Assistant long-lived token (env DEN_HA_TOKEN)')
     ..addOption('public-url', help: 'Public base URL for OAuth and link codes (env DEN_PUBLIC_URL)')
     ..addOption('trusted-proxies',
         help: 'Reverse proxies whose X-Forwarded-* headers to believe, addresses or CIDRs (env DEN_TRUSTED_PROXIES)')
@@ -57,17 +54,6 @@ ArgParser cliParser() {
         help: 'The other families\' hubs on this server, whose shared calendars may be fetched through this '
             'machine\'s own reverse proxy: https addresses or names (env DEN_PEER_HUBS)')
     ..addOption('csp', help: 'Replace the web app\'s Content-Security-Policy (env DEN_CSP)')
-    ..addOption('host-push',
-        help: 'Families that share the host\'s own Web Push key, so one web app holding several of them gets every '
-            'family\'s reminders: "all", or their addresses, comma-separated (env DEN_HOST_PUSH; default none)')
-    ..addOption('google-client-id', help: 'Sign in with Google: the OAuth client id (env DEN_GOOGLE_CLIENT_ID)')
-    ..addOption('google-client-secret',
-        help: 'Sign in with Google: its client secret (env DEN_GOOGLE_CLIENT_SECRET, better than this option: '
-            'the command line shows in ps)')
-    ..addOption('apple-services-id', help: 'Sign in with Apple: the Services ID (env DEN_APPLE_SERVICES_ID)')
-    ..addOption('apple-team-id', help: 'Sign in with Apple: the Apple Developer team id (env DEN_APPLE_TEAM_ID)')
-    ..addOption('apple-key-id', help: 'Sign in with Apple: the key\'s id (env DEN_APPLE_KEY_ID)')
-    ..addOption('apple-key-file', help: 'Sign in with Apple: the .p8 key file (env DEN_APPLE_KEY_FILE)')
     ..addOption('log-level', help: 'debug, info, warn or error (env DEN_LOG)')
     ..addFlag('public',
         help: 'Reachable from the internet: minimal unauthenticated answers, mDNS off (env DEN_PUBLIC=1; '
@@ -186,17 +172,40 @@ String _usage(ArgParser parser) => [
 
 LogLevel _level(String? name) => LogLevel.values.firstWhere((l) => l.name == name, orElse: () => LogLevel.info);
 
-Map<String, MemberNotify> _notify(DataDir data, Map<String, String> env) {
-  String? text = env['DEN_NOTIFY'];
-  final file = File('${data.path}${Platform.pathSeparator}notify.json');
-  if (text == null && file.existsSync()) text = file.readAsStringSync();
-  if (text == null || text.trim().isEmpty) return const {};
-  final json = (jsonDecode(text) as Map).cast<String, Object?>();
-  final members = (json['members'] as Map?)?.cast<String, Object?>() ?? json;
-  return {
-    for (final e in members.entries)
-      if (e.value is Map) e.key: MemberNotify.fromJson((e.value as Map).cast<String, Object?>()),
-  };
+/// Settings the hub read from its environment once, and reads no more: what each did is set up
+/// in the app now, or always on. Each one still set gets one line in the log at start, naming it
+/// and never its value, and is otherwise ignored (docs/settings.md).
+const Map<String, String> retiredSettings = {
+  'DEN_GOOGLE_CLIENT_ID': _signIn,
+  'DEN_GOOGLE_CLIENT_SECRET': _signIn,
+  'DEN_APPLE_SERVICES_ID': _signIn,
+  'DEN_APPLE_TEAM_ID': _signIn,
+  'DEN_APPLE_KEY_ID': _signIn,
+  'DEN_APPLE_KEY_FILE': _signIn,
+  'DEN_HOST_PUSH': 'Families on a Den host always share its push key now, for a browser holding several of them.',
+  'DEN_HA_URL': _notifiers,
+  'DEN_HA_TOKEN': _notifiers,
+  'DEN_NOTIFY': _notifiers,
+};
+
+const String _signIn = 'Signing in with Google or Apple is set up in the app: on a parent\'s phone, Settings, Advanced, '
+    'Sign in with Google or Apple.';
+const String _notifiers = 'The hub no longer sends reminders to Home Assistant\'s notify service or ntfy: Home Assistant gets '
+    'them through its Den integration (Settings, Advanced, Home Assistant), and phones and browsers from Den itself.';
+
+/// Says once, in [log], which [retiredSettings] are still in [env] (and whether [data] still has
+/// a `notify.json`), and what took their place. Never a value.
+void warnRetired(Map<String, String> env, DataDir data, HubLog log) {
+  final found = <String, List<String>>{};
+  for (final e in retiredSettings.entries) {
+    if ((env[e.key] ?? '').trim().isNotEmpty) found.putIfAbsent(e.value, () => []).add(e.key);
+  }
+  if (File('${data.path}${Platform.pathSeparator}notify.json').existsSync()) found.putIfAbsent(_notifiers, () => []).add('notify.json');
+  for (final e in found.entries) {
+    final names = e.value.join(', ');
+    log.warn('$names ${e.value.length == 1 ? 'is' : 'are'} no longer read, and changes nothing. ${e.key} '
+        'Take ${e.value.length == 1 ? 'it' : 'them'} out whenever you like.');
+  }
 }
 
 bool? _envFlag(String? v) => v == null ? null : !(v == '0' || v.toLowerCase() == 'false' || v.toLowerCase() == 'no');
@@ -246,34 +255,19 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
   final exposed = a['public'] as bool? ?? _envFlag(env['DEN_PUBLIC']);
   final publicPosture = exposed ?? (publicUrl?.scheme == 'https');
   final relay = opt('relay', 'DEN_RELAY');
-  final ha = opt('ha-url', 'DEN_HA_URL');
   final bind = opt('host', 'DEN_HOST');
   final web = opt('web', 'DEN_WEB');
   final csp = opt('csp', 'DEN_CSP');
   final mailbox = a['mailbox'] as bool? ?? _envFlag(env['DEN_MAILBOX']) ?? false;
   final allowedOrigins = [...?env['DEN_ALLOWED_ORIGINS']?.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty)];
   final log = HubLog(level: _level(opt('log-level', 'DEN_LOG')), sink: io.err.writeln);
-  final sharedPush = parseHostPush(opt('host-push', 'DEN_HOST_PUSH') ?? '');
-  // Signing in with Google and Apple: one set of providers for every family on the host, each
-  // family's address registered with them as a redirect (docs/hosting.md).
-  final SignInProviders? signIn;
-  try {
-    signIn = SignInProviders.fromSettings(
-      googleClientId: opt('google-client-id', 'DEN_GOOGLE_CLIENT_ID'),
-      googleClientSecret: opt('google-client-secret', 'DEN_GOOGLE_CLIENT_SECRET'),
-      appleServicesId: opt('apple-services-id', 'DEN_APPLE_SERVICES_ID'),
-      appleTeamId: opt('apple-team-id', 'DEN_APPLE_TEAM_ID'),
-      appleKeyId: opt('apple-key-id', 'DEN_APPLE_KEY_ID'),
-      appleKeyFile: opt('apple-key-file', 'DEN_APPLE_KEY_FILE'),
-      warn: log.warn,
-    );
-  } on FormatException catch (e) {
-    throw CliUsage(e.message);
-  }
+  warnRetired(env, data, log);
 
   /// A family's hub: the first family's as `serve` always made it; another family's at its own
-  /// address, labeled in the log, with its own notify.json, and without mDNS and Home Assistant
-  /// (which are the first family's home's).
+  /// address, labeled in the log, and without mDNS (the first family's home's). Signing in with
+  /// Google and Apple is the host's, set up from a parent's phone in the first family
+  /// (sign_in_setup.dart), and every family shares the host's push key for a browser holding
+  /// several of them.
   HubConfig configFor(DataDir dir, {Uri? address, HostedLog? hosted}) => HubConfig(
         port: port,
         host: bind,
@@ -281,9 +275,6 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
         webDir: web,
         relay: relay == null || relay.isEmpty ? null : Uri.parse(relay),
         name: opt('name', 'DEN_NAME') ?? 'Den hub',
-        homeAssistantUrl: hosted != null || ha == null || ha.isEmpty ? null : Uri.parse(ha),
-        homeAssistantToken: hosted == null ? opt('ha-token', 'DEN_HA_TOKEN') : null,
-        notify: _notify(dir, hosted == null ? env : const {}),
         publicUrl: address,
         allowedOrigins: allowedOrigins,
         trustedProxies: proxies,
@@ -294,8 +285,6 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
         mailbox: mailbox,
         mdns: hosted == null ? a['mdns'] as bool? ?? _envFlag(env['DEN_MDNS']) ?? !publicPosture : false,
         log: hosted == null ? log : log.labeled(hosted.hostname ?? hosted.id),
-        hostPush: sharedPush.all || (address != null && sharedPush.hosts.contains(address.host.toLowerCase())),
-        signIn: signIn,
       );
 
   Future<HostedTenant> openLog(HostedLog hosted, {required bool fresh}) async {
@@ -383,15 +372,4 @@ Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
   } finally {
     if (!handedOver) await data.unlock();
   }
-}
-
-/// `DEN_HOST_PUSH`: the families that opt into the host's own Web Push key, so one web app at one
-/// address holding several families on the host gets every one's reminders through one
-/// subscription. `all` (or `on`, `1`, `true`), or the families' addresses, comma-separated;
-/// empty for none. Each family otherwise hands out and signs with its own key only.
-({bool all, Set<String> hosts}) parseHostPush(String text) {
-  final parts = [for (final p in text.split(',')) if (p.trim().isNotEmpty) p.trim().toLowerCase()];
-  if (parts.any((p) => const {'all', 'on', '1', 'true', 'yes'}.contains(p))) return (all: true, hosts: const {});
-  String hostOf(String p) => (p.contains('://') ? Uri.tryParse(p)?.host : p.split(':').first) ?? '';
-  return (all: false, hosts: {for (final p in parts) hostOf(p)}..remove(''));
 }

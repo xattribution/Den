@@ -6,8 +6,10 @@ import 'package:den_core/storage_io.dart';
 import 'package:den_hub/den_hub.dart';
 
 /// The hub's data directory: `keys.json` (device keys, owner-only), `log/` (the change log),
-/// `hub/` (the hub's own state), `notify.json` (reminder targets, optional) and `hub.lock`
-/// (held while a process uses it).
+/// `hub/` (the hub's own state, with what the app set up on the hub: the reader's and the AI
+/// helper's keys, signing in with Google and Apple), `notify.json` (reminder targets older hubs
+/// read; nothing reads it now, but backups keep it so an old backup restores whole) and
+/// `hub.lock` (held while a process uses it).
 ///
 /// On a Den host this is the first family's, unchanged, and it also holds `logs/<id>/`, each
 /// other family's data directory in the same layout ([log]), and `host/`, the host's own state
