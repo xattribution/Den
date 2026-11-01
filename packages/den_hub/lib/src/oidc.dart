@@ -21,7 +21,6 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File, FileSystemException, Platform;
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -54,6 +53,18 @@ enum OidcRefusal {
 
   /// Apple's Hide My Email relay address.
   relayEmail,
+}
+
+/// What a provider's token endpoint said of a client ([OidcProvider.checkClient]).
+enum ClientCheck {
+  /// It knows the client and its secret.
+  known,
+
+  /// It doesn't know the client, or not with that secret (or Apple's key).
+  unknown,
+
+  /// It knows the client, which can't sign people in on a website.
+  wrongKind,
 }
 
 /// A sign-in the hub refused. [reason] is for the log: never a token, a code, a claim's value
@@ -385,9 +396,9 @@ class OidcProvider {
         _clientSecret = clientSecret,
         _apple = apple;
 
-  /// Google, with the OAuth client the owner made in Google Cloud (`DEN_GOOGLE_CLIENT_ID`,
-  /// `DEN_GOOGLE_CLIENT_SECRET`). [issuer] is for tests (a fake provider); Google's own ID
-  /// tokens name either of the two issuers Google documents, compared exactly.
+  /// Google, with the OAuth client a parent made in Google Cloud and pasted into the app.
+  /// [issuer] is for tests (a fake provider); Google's own ID tokens name either of the two
+  /// issuers Google documents, compared exactly.
   factory OidcProvider.google({required String clientId, required String clientSecret, Uri? issuer}) {
     final iss = issuer == null ? 'https://accounts.google.com' : _issuer(issuer);
     return OidcProvider._(
@@ -401,9 +412,9 @@ class OidcProvider {
     );
   }
 
-  /// Apple, with the Services ID (`DEN_APPLE_SERVICES_ID`, the client id) and the key
-  /// (`DEN_APPLE_TEAM_ID`, `DEN_APPLE_KEY_ID`, `DEN_APPLE_KEY_FILE`). Apple answers by posting
-  /// a form to the hub (`response_mode=form_post`). [issuer] is for tests.
+  /// Apple, with the Services ID (the client id) and the key (the team, the key's id and its
+  /// `.p8`), as a parent pasted them into the app. Apple answers by posting a form to the hub
+  /// (`response_mode=form_post`). [issuer] is for tests.
   factory OidcProvider.apple({required String servicesId, required AppleKey key, Uri? issuer}) {
     final iss = issuer == null ? 'https://appleid.apple.com' : _issuer(issuer);
     return OidcProvider._(
@@ -604,6 +615,35 @@ class OidcProvider {
     return token;
   }
 
+  /// Whether the token endpoint knows this client, its secret and (Apple) its key, asked the
+  /// only way a provider answers it: a made-up code is exchanged, which it refuses either way,
+  /// with `invalid_client` when it doesn't know the client or its secret, `unauthorized_client`
+  /// when the client can't sign in on a website, and something else (`invalid_grant`) when all
+  /// is well but the code. Throws [OidcRefused] when the provider can't be reached.
+  Future<ClientCheck> checkClient(http.Client client, {required String redirectUri, required int now}) async {
+    final at = await endpoints(client, now);
+    final request = http.Request('POST', at.token)
+      ..followRedirects = false
+      ..headers['accept'] = 'application/json'
+      ..bodyFields = {
+        'grant_type': 'authorization_code',
+        'code': 'den-check-${randomToken(16)}',
+        'redirect_uri': redirectUri,
+        'client_id': clientId,
+        'client_secret': _secret(now),
+        'code_verifier': randomToken(),
+      };
+    final answer = await _send(client, request, expectOk: false);
+    if (answer.status >= 500) {
+      throw OidcRefused('the token endpoint answered ${answer.status}', kind: OidcRefusal.unavailable);
+    }
+    return switch (answer.json['error']) {
+      'invalid_client' => ClientCheck.unknown,
+      'unauthorized_client' => ClientCheck.wrongKind,
+      _ => ClientCheck.known,
+    };
+  }
+
   /// Checks [idToken] (see the library's comment) for a sign-in that sent [nonce], at [now]
   /// (UTC milliseconds). Throws [OidcRefused].
   Future<OidcIdentity> verify(http.Client client, String idToken, {required String nonce, required int now}) async {
@@ -750,78 +790,25 @@ class _Answer {
   final Map<String, String> headers;
 }
 
-/// The providers a hub signs people in with (`DEN_GOOGLE_*`, `DEN_APPLE_*`). With none, the
-/// hub has no `/auth` routes at all.
+/// The providers a host signs people in with, as a parent of the host's own family set them up
+/// in the app (sign_in_setup.dart). With none, the hub answers none of the `/auth` routes.
 class SignInProviders {
   /// [google] and [apple], either or both.
   SignInProviders({this.google, this.apple});
 
-  /// Google, when configured.
+  /// Google, when on.
   final OidcProvider? google;
 
-  /// Apple, when configured.
+  /// Apple, when on.
   final OidcProvider? apple;
 
-  /// Those configured, Google first.
+  /// Those on, Google first.
   List<OidcProvider> get all => [?google, ?apple];
 
-  /// The provider [id] names, when configured.
+  /// The provider [id] names, when on.
   OidcProvider? byId(String? id) => switch (id) {
         googleProvider => google,
         appleProvider => apple,
         _ => null,
       };
-
-  /// From the operator's settings (the environment or `den_hub serve` options): Google needs its
-  /// client id and secret; Apple its Services ID, team id, key id and the `.p8` key file. Null
-  /// when neither is set at all. Throws [FormatException] for a provider set up only in part or a
-  /// key file that can't be read, so a typo stops the hub instead of leaving sign-in half on.
-  /// [warn] hears about a key file other users on the machine can read.
-  static SignInProviders? fromSettings({
-    String? googleClientId,
-    String? googleClientSecret,
-    String? appleServicesId,
-    String? appleTeamId,
-    String? appleKeyId,
-    String? appleKeyFile,
-    void Function(String message)? warn,
-  }) {
-    String? clean(String? v) => v == null || v.trim().isEmpty ? null : v.trim();
-    final gId = clean(googleClientId), gSecret = clean(googleClientSecret);
-    final aId = clean(appleServicesId), aTeam = clean(appleTeamId), aKey = clean(appleKeyId), aFile = clean(appleKeyFile);
-    OidcProvider? google;
-    if (gId != null || gSecret != null) {
-      if (gId == null || gSecret == null) {
-        throw const FormatException('Google sign-in needs both DEN_GOOGLE_CLIENT_ID and DEN_GOOGLE_CLIENT_SECRET');
-      }
-      google = OidcProvider.google(clientId: gId, clientSecret: gSecret);
-    }
-    OidcProvider? apple;
-    if (aId != null || aTeam != null || aKey != null || aFile != null) {
-      if (aId == null || aTeam == null || aKey == null || aFile == null) {
-        throw const FormatException(
-            'Apple sign-in needs DEN_APPLE_SERVICES_ID, DEN_APPLE_TEAM_ID, DEN_APPLE_KEY_ID and DEN_APPLE_KEY_FILE');
-      }
-      final file = File(aFile);
-      final String pem;
-      try {
-        pem = file.readAsStringSync();
-      } on FileSystemException catch (e) {
-        throw FormatException('DEN_APPLE_KEY_FILE: can\'t read $aFile (${e.osError?.message ?? e.message})');
-      }
-      final Uint8List key;
-      try {
-        key = readP8(pem);
-      } on FormatException catch (e) {
-        throw FormatException('DEN_APPLE_KEY_FILE: $aFile: ${e.message}');
-      }
-      if (!Platform.isWindows && (file.statSync().mode & 0x3f) != 0) {
-        warn?.call('$aFile, the key that signs the hub in at Apple, can be read by other users on this machine. '
-            'chmod 600 it.');
-      }
-      apple = OidcProvider.apple(servicesId: aId, key: AppleKey(teamId: aTeam, keyId: aKey, privateKey: key));
-    }
-    if (google == null && apple == null) return null;
-    return SignInProviders(google: google, apple: apple);
-  }
 }

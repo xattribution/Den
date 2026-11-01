@@ -5,31 +5,12 @@ import 'package:http/http.dart' as http;
 import 'edge.dart';
 import 'log.dart';
 import 'net_guard.dart';
-import 'oidc.dart';
 
 /// The hub's default port, shared by HTTP, WebSocket sync and MCP.
 const int defaultHubPort = 47733;
 
 /// The `den_hub` version reported by `/health`, mDNS and MCP.
 const String hubVersion = '0.1.0';
-
-/// Where one member's reminders go.
-class MemberNotify {
-  /// Creates a member's notifier targets; either may be null.
-  const MemberNotify({this.homeAssistantService, this.ntfyTopic});
-
-  /// Reads `{"ha": "mobile_app_alex_phone", "ntfy": "https://ntfy.sh/den-alex"}`.
-  factory MemberNotify.fromJson(Map<String, Object?> json) => MemberNotify(
-        homeAssistantService: json['ha'] as String?,
-        ntfyTopic: json['ntfy'] as String?,
-      );
-
-  /// Home Assistant notify service name, without `notify.` (`mobile_app_alex_phone`).
-  final String? homeAssistantService;
-
-  /// ntfy topic: a full URL (`https://ntfy.sh/den-alex-7f3k`), or a topic name on ntfy.sh.
-  final String? ntfyTopic;
-}
 
 /// How a hub runs. Everything is optional; the defaults serve a family on the LAN.
 class HubConfig {
@@ -41,9 +22,6 @@ class HubConfig {
     this.webDir,
     this.relay,
     this.name = 'Den hub',
-    this.homeAssistantUrl,
-    this.homeAssistantToken,
-    this.notify = const {},
     this.publicUrl,
     this.allowedOrigins = const [],
     this.trustedProxies = const [],
@@ -62,8 +40,8 @@ class HubConfig {
     this.accessTokenLifetime = const Duration(hours: 1),
     this.refreshTokenLifetime = const Duration(days: 90),
     this.onSetupCode,
-    this.hostPush = false,
-    this.signIn,
+    this.hostPush = true,
+    this.signInIssuers = const {},
   });
 
   /// TCP port for HTTP, WebSocket sync and MCP; 0 picks a free one.
@@ -86,15 +64,6 @@ class HubConfig {
 
   /// The hub's device name before it joins a family (afterwards, its device record's name).
   final String name;
-
-  /// Home Assistant's base URL for notifications (`http://homeassistant.local:8123`).
-  final Uri? homeAssistantUrl;
-
-  /// A Home Assistant long-lived access token.
-  final String? homeAssistantToken;
-
-  /// Reminder targets by member id or member name.
-  final Map<String, MemberNotify> notify;
 
   /// The hub's public base URL (`https://den.example.com`), used for OAuth metadata and link
   /// codes. Without it the hub uses the address each request came to.
@@ -168,18 +137,19 @@ class HubConfig {
   /// Called with each new setup code while the hub has no family (an app showing it on screen).
   final void Function(String code)? onSetupCode;
 
-  /// Whether this family, on a Den host, opts into the host's own Web Push key
-  /// (`DEN_HOST_PUSH`): it hands it out beside its own, so one web app at one address holding
-  /// several families on the host makes one subscription with it and registers that with each.
-  /// The family then signs the subscriptions made with the host's key with that key, and its
-  /// own subscriptions with its own key; never another family's. Off (the default), the family
-  /// hands out and signs with its own key only, as a hub always has.
+  /// Whether this family, on a Den host, hands out the host's own Web Push key beside its own
+  /// (on by default; docs/hosting.md, "One app, several families"), so one web app at one
+  /// address holding several families on the host makes one subscription with it and registers
+  /// that with each. The family signs the subscriptions made with the host's key with that key,
+  /// and its own subscriptions with its own key; never another family's. A browser holding one
+  /// family keeps subscribing with that family's own key. Off, the family hands out and signs
+  /// with its own key only (tests, and an app embedding the hub that wants that).
   final bool hostPush;
 
-  /// Signing in with Google and Apple (`DEN_GOOGLE_*`, `DEN_APPLE_*`; accounts.dart). Null, or
-  /// none configured: the hub has no `/auth` routes, `/api/v1/me` or account bindings at all.
-  /// It needs an `https` [publicUrl], where the providers send people back.
-  final SignInProviders? signIn;
+  /// Where the sign-in providers are, for [DenHub.start]'s host (`{'google': ..., 'apple': ...}`):
+  /// tests point them at fakes. Empty, Google's and Apple's own. Which providers are on is set
+  /// up from a parent's phone (sign_in_setup.dart), never here.
+  final Map<String, Uri> signInIssuers;
 
   /// The bind address as an [InternetAddress] or string for `HttpServer.bind`.
   Object get bindAddress => host ?? InternetAddress.anyIPv4;

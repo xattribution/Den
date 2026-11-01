@@ -9,6 +9,7 @@ import 'package:shelf/shelf.dart';
 import 'edge.dart';
 import 'push/web_push_crypto.dart';
 import 'setup.dart' show restrictToOwner;
+import 'sign_in_setup.dart';
 
 /// The directory under a host's data directory that holds each log besides the first:
 /// `<data>/logs/<id>/`, each in the same layout as `<data>/` itself (`keys.json`, `log/`, `hub/`,
@@ -404,4 +405,13 @@ abstract interface class HostLink {
   /// The host's own Web Push key ([hostPushFile]), which a family hands out and signs with only
   /// when it opted in ([HubConfig.hostPush]), and only for subscriptions made with it.
   VapidKeys get pushKey;
+
+  /// Signing in with Google and Apple, one set for every family on the host, kept in the host's
+  /// own family's data and changed only by its parents ([HubSignInSetup]).
+  HostSignIn get signIn;
+
+  /// Every family's address the host knows (its own family's first): those it serves now and
+  /// those `host.json` lists, attached or not. Each needs its own way back registered with
+  /// Google and Apple.
+  List<Uri> get familyAddresses;
 }

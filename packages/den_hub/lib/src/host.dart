@@ -22,6 +22,7 @@ import 'log.dart';
 import 'net_guard.dart';
 import 'push/web_push_crypto.dart' show VapidKeys;
 import 'recovery.dart';
+import 'sign_in_setup.dart';
 import 'tenant_router.dart';
 import 'web.dart';
 
@@ -52,6 +53,7 @@ class HostConfig {
     this.single = false,
     this.expected = const [],
     this.retryInterval = const Duration(seconds: 30),
+    this.signInIssuers = const {},
   });
 
   /// The host-wide part of [config], for a host serving that one hub ([DenHub.start]).
@@ -68,6 +70,7 @@ class HostConfig {
         peerHubs: config.peerHubs,
         resolver: config.resolver,
         fetchClient: config.fetchClient,
+        signInIssuers: config.signInIssuers,
       );
 
   /// TCP port for every family's HTTP, sync and MCP; 0 picks a free one.
@@ -135,6 +138,10 @@ class HostConfig {
 
   /// How often the host tries again to open a family in `host.json` that didn't open.
   final Duration retryInterval;
+
+  /// Where the sign-in providers are (`{'google': ..., 'apple': ...}`): tests point them at
+  /// fakes. Empty, Google's and Apple's own. Whether each is on is set up in the app.
+  final Map<String, Uri> signInIssuers;
 }
 
 /// The Den host: one process serving several families' logs (docs/hosting.md, "One host for
@@ -192,6 +199,38 @@ class DenHost implements HostLink {
       perClient: HubRecovery.maxWrong, ceiling: HubRecovery.wrongCeiling, window: HubRecovery.wrongWindow, scale: _families);
 
   int _families() => max(1, _tenants.length);
+
+  @override
+  late final HostSignIn signIn = HostSignIn(issuers: config.signInIssuers);
+
+  /// The host's own family: the first one added without a log id of its own, the family in the
+  /// host's data directory itself (the one `install.sh` or `den_hub serve` set up, whoever runs
+  /// the server). Its parents set up what is the host's (signing in with Google and Apple). The
+  /// place is taken once: should that family stop, no other takes it.
+  DenHub? _own;
+  bool _ownTaken = false;
+
+  /// The host's own family, while it is attached.
+  DenHub? get ownFamily => _own;
+
+  @override
+  List<Uri> get familyAddresses {
+    final out = <String, Uri>{};
+    void add(Uri? url) {
+      final name = normalizeHostname(url?.host);
+      if (url == null || name == null) return;
+      out.putIfAbsent('${url.scheme}://$name:${url.port}', () => url);
+    }
+
+    add(_own?.config.publicUrl ?? state.primaryUrl);
+    for (final t in _tenants) {
+      add(t.config.publicUrl);
+    }
+    for (final l in state.logs) {
+      add(l.publicUrl);
+    }
+    return out.values.toList();
+  }
 
   @override
   late final http_client.Client http;
@@ -324,6 +363,11 @@ class DenHost implements HostLink {
     _tenants.add(tenant);
     if (id != null) _ids[tenant] = id;
     if (id == null) state.notePrimary(config.publicUrl);
+    if (id == null && !_ownTaken) {
+      _ownTaken = true;
+      _own = tenant;
+      signIn.attach(hubDevice: den.deviceId, dataDir: config.dataDir, log: tenant.context.log);
+    }
     if (onClosed != null) _opened[tenant] = (den: den, config: config, close: onClosed);
     return tenant;
   }
@@ -338,6 +382,10 @@ class DenHost implements HostLink {
   void detach(DenHub tenant) {
     _tenants.remove(tenant);
     _ids.remove(tenant);
+    if (identical(tenant, _own)) {
+      _own = null;
+      signIn.detach(tenant.den.deviceId);
+    }
   }
 
   // ------------------------------------------------------------------ HostLink

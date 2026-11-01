@@ -2,7 +2,6 @@
 library;
 
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:den_hub/den_hub.dart';
@@ -371,58 +370,51 @@ void main() {
     });
   });
 
-  group('settings', () {
-    late Directory dir;
-    setUp(() async => dir = await Directory.systemTemp.createTemp('den_oidc_'));
-    tearDown(() => dir.delete(recursive: true));
+  group('checking a client', () {
+    late FakeIdp google;
+    late FakeIdp apple;
+    late http.Client client;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    const back = 'https://den.test/auth/oidc/google/callback';
 
-    test('nothing set is no sign-in', () {
-      expect(SignInProviders.fromSettings(), isNull);
-      expect(SignInProviders.fromSettings(googleClientId: ' ', appleTeamId: ''), isNull);
+    setUp(() async {
+      google = await FakeIdp.start();
+      apple = await FakeIdp.start(apple: true, clientId: 'family.den.signin');
+      client = fakeProviderGuard().client();
     });
 
-    test('a provider set up in part stops the hub instead of half working', () {
-      expect(() => SignInProviders.fromSettings(googleClientId: 'id'), throwsFormatException);
-      expect(() => SignInProviders.fromSettings(googleClientSecret: 'secret'), throwsFormatException);
-      expect(() => SignInProviders.fromSettings(appleServicesId: 'family.den', appleTeamId: 'T'), throwsFormatException);
-      expect(
-          () => SignInProviders.fromSettings(
-              appleServicesId: 'family.den', appleTeamId: 'T', appleKeyId: 'K', appleKeyFile: '${dir.path}/missing.p8'),
-          throwsFormatException);
-      final bad = File('${dir.path}/bad.p8')..writeAsStringSync('not a key');
-      expect(
-          () => SignInProviders.fromSettings(appleServicesId: 'family.den', appleTeamId: 'T', appleKeyId: 'K', appleKeyFile: bad.path),
-          throwsFormatException);
+    tearDown(() async {
+      client.close();
+      await google.stop();
+      await apple.stop();
     });
 
-    test('Google, Apple or both; a key file others can read is warned about', () async {
-      final google = SignInProviders.fromSettings(googleClientId: 'id', googleClientSecret: 'secret')!;
-      expect([for (final p in google.all) p.id], [googleProvider]);
-      expect(google.google!.issuer, 'https://accounts.google.com');
-      final key = File('${dir.path}/AuthKey.p8')..writeAsStringSync(appleP8);
-      if (!Platform.isWindows) await Process.run('chmod', ['644', key.path]);
-      final warnings = <String>[];
-      final both = SignInProviders.fromSettings(
-        googleClientId: 'id',
-        googleClientSecret: 'secret',
-        appleServicesId: 'family.den.signin',
-        appleTeamId: 'TEAM123456',
-        appleKeyId: 'KEY7654321',
-        appleKeyFile: key.path,
-        warn: warnings.add,
-      )!;
-      expect([for (final p in both.all) p.id], [googleProvider, appleProvider]);
-      expect(both.apple!.issuer, 'https://appleid.apple.com');
-      expect(both.apple!.clientId, 'family.den.signin');
-      expect(both.apple!.formPost, isTrue);
-      if (!Platform.isWindows) {
-        expect(warnings.single, contains('chmod 600'));
-        await Process.run('chmod', ['600', key.path]);
-        warnings.clear();
-        SignInProviders.fromSettings(
-            appleServicesId: 's', appleTeamId: 't', appleKeyId: 'k', appleKeyFile: key.path, warn: warnings.add);
-        expect(warnings, isEmpty);
-      }
+    OidcProvider googleWith(String id, String secret) => OidcProvider.google(clientId: id, clientSecret: secret, issuer: google.issuerUri);
+    OidcProvider appleWith(String key, {String? team}) => OidcProvider.apple(
+          servicesId: apple.clientId,
+          key: AppleKey(teamId: team ?? apple.teamId, keyId: apple.keyId, privateKey: readP8(key)),
+          issuer: apple.issuerUri,
+        );
+
+    test('the token endpoint knows the client and its secret, and nothing else is taken for it', () async {
+      expect(await googleWith(google.clientId, google.clientSecret).checkClient(client, redirectUri: back, now: now), ClientCheck.known);
+      expect(await googleWith('someone-else', google.clientSecret).checkClient(client, redirectUri: back, now: now), ClientCheck.unknown);
+      expect(await googleWith(google.clientId, 'wrong').checkClient(client, redirectUri: back, now: now), ClientCheck.unknown);
+      expect(google.refusals, ['unknown code', 'client_id', 'client_secret'], reason: 'a made-up code, never a sign-in');
+      google.webClient = false;
+      expect(await googleWith(google.clientId, google.clientSecret).checkClient(client, redirectUri: back, now: now), ClientCheck.wrongKind);
+    });
+
+    test("Apple's: the Services ID, the team and the key together", () async {
+      expect(await appleWith(appleP8).checkClient(client, redirectUri: back, now: now), ClientCheck.known);
+      expect(await appleWith(otherP8).checkClient(client, redirectUri: back, now: now), ClientCheck.unknown);
+      expect(await appleWith(appleP8, team: 'OTHER12345').checkClient(client, redirectUri: back, now: now), ClientCheck.unknown);
+    });
+
+    test('a provider in trouble is a refusal of its own, not an answer about the client', () async {
+      google.tokenStatus = 503;
+      await expectLater(googleWith(google.clientId, google.clientSecret).checkClient(client, redirectUri: back, now: now),
+          throwsA(isA<OidcRefused>().having((e) => e.kind, 'kind', OidcRefusal.unavailable)));
     });
   });
 }

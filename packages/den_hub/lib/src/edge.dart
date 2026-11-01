@@ -181,6 +181,10 @@ abstract final class Limits {
   /// takes two or three of these.
   static const Rate auth = Rate(30, Duration(minutes: 10));
 
+  /// Turning sign-in with Google or Apple on or changing it, from a parent's phone: each try asks
+  /// the provider, so a stuck phone or a stolen one can't make the hub hammer it.
+  static const Rate signInSetup = Rate(10, Duration(minutes: 10));
+
   /// New WebSocket connections (device sync).
   static const Rate sockets = Rate(120, Duration(minutes: 1));
 

@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'support/browser.dart';
 import 'support/fake_idp.dart';
 import 'support/fixture.dart';
+import 'support/sign_in.dart';
 import 'support/test.dart';
 
 /// The security review's proofs for PR #41, ported with their assertions turned around: each
@@ -42,9 +43,15 @@ void main() {
         publicUrl: public,
         trustedProxies: proxies,
         fetchClient: fetch ?? fakeProviderGuard().client(),
-        signIn: SignInProviders(
-            google: OidcProvider.google(clientId: google.clientId, clientSecret: google.clientSecret, issuer: google.issuerUri)),
+        signInIssuers: issuersOf(google: google),
       );
+
+  /// A hub whose host signs in with [google], turned on as a parent of its own family does.
+  Future<HubFixture> started(FakeIdp google, {http.Client? fetch, List<IpNetwork> proxies = const []}) async {
+    final f = await HubFixture.start(configure: (base) => configFor(base, google, fetch: fetch, proxies: proxies));
+    await turnOnSignIn(f.hub.host, google: google);
+    return f;
+  }
 
   Future<Map<String, Object?>> binding(HubFixture f) async {
     final started = await signedCall(f.base, f.phone, 'POST', '/api/v1/account/bindings', hub: f.hubDen.deviceId, body: {'provider': 'google'});
@@ -61,8 +68,7 @@ void main() {
   tearDown(() => google.stop());
 
   test('F1: a start link used twice while discovery is in flight binds neither person', () async {
-    final f = await HubFixture.start(
-        configure: (base) => configFor(base, google, fetch: _SlowDiscovery(fakeProviderGuard().client(), const Duration(milliseconds: 300))));
+    final f = await started(google, fetch: _SlowDiscovery(fakeProviderGuard().client(), const Duration(milliseconds: 300)));
     addTearDown(f.stop);
     final b = await binding(f);
     final ticket = Uri.parse(b['start_url'] as String).queryParameters['bind']!;
@@ -82,7 +88,7 @@ void main() {
   });
 
   test('F2: a few addresses can\'t fill the sign-ins in flight; nobody is turned away, and bindings are never pushed out', () async {
-    final f = await HubFixture.start(configure: (base) => configFor(base, google, proxies: [IpNetwork.parse('127.0.0.1/32')]));
+    final f = await started(google, proxies: [IpNetwork.parse('127.0.0.1/32')]);
     addTearDown(f.stop);
     f.hub.accounts.maxFlows = 20;
     // A binding under way first, then a flood from many addresses.
@@ -108,7 +114,7 @@ void main() {
   });
 
   test('F2: one client keeps only its last few sign-ins in flight', () async {
-    final f = await HubFixture.start(configure: (base) => configFor(base, google));
+    final f = await started(google);
     addTearDown(f.stop);
     final b = Browser(f.base);
     final first = await b.go('GET', '/auth/oidc/google/start');
@@ -124,7 +130,7 @@ void main() {
   });
 
   test('F4: a parent made a kid keeps a binding that signs in as nobody, and their session ends', () async {
-    final f = await HubFixture.start(configure: (base) => configFor(base, google));
+    final f = await started(google);
     addTearDown(f.stop);
     final alex = f.id('Alex');
     final b = await binding(f);
