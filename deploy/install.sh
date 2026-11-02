@@ -919,10 +919,19 @@ tailscale_serve() {
     note "would serve Den on the tailnet at https://$ts_name (Tailscale Serve)"
     return 0
   fi
-  if tailscale serve --bg --https="$ts_port" "http://127.0.0.1:$DEN_PORT" > /dev/null 2>&1; then
+  # Tailscale waits, without end, for Serve to be turned on for the tailnet the first time; it
+  # prints the link that does it. Give it a few seconds, and pass the link on.
+  ts_out=$(timeout 20 tailscale serve --bg --https="$ts_port" "http://127.0.0.1:$DEN_PORT" 2>&1)
+  ts_rc=$?
+  ts_link=$(printf '%s\n' "$ts_out" | grep -o 'https://login\.tailscale\.com/[^ ]*' | head -n 1)
+  if [ "$ts_rc" = 0 ] && [ -z "$ts_link" ]; then
     printf '%s\n' "$ts_port" | put "$STATE_DIR/tailscale-port" 600
     if [ "$ts_port" = 443 ]; then TS_URL=https://$ts_name; else TS_URL=https://$ts_name:$ts_port; fi
     note "on your tailnet: $TS_URL"
+  elif [ -n "$ts_link" ]; then
+    note "Tailscale needs Serve turned on for your tailnet, once. Open this link and turn it on:"
+    note "    $ts_link"
+    note "then run sudo den again."
   else
     note "Tailscale is here, but it didn't take Den. Turn on HTTPS Certificates on the DNS page of"
     note "Tailscale's admin console, then run sudo den again."
