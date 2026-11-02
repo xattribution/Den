@@ -34,7 +34,7 @@ On a computer at home (here Docker was already installed; on a fresh one, `[1/5]
 Den installer
 
 This computer: Ubuntu 24.04.3 LTS, 64-bit Intel/AMD, 7.6 GB memory, 200 GB free
-Network: 192.168.1.50 (home network)
+Network: 192.168.1.50
 
 [1/5] Docker
       ready: Docker 28.5.1
@@ -54,13 +54,13 @@ Network: 192.168.1.50 (home network)
 Den is running.
 
 Next: make your family. Open this link on your phone or computer
-(on the same Wi-Fi as this computer), or scan the code with your phone's camera:
+(on the same Wi-Fi or VPN as this computer), or scan the code with your phone's camera:
 
-    http://192.168.1.50:47733/#/setup/3JKN-BEKA/3uhgitwjccsopjlo
+    http://192.168.1.50:47733/setup/3JKN-BEKA/3uhgitwjccsopjlo
 
     (a QR code of that link)
 
-On this computer itself:     http://localhost:47733/#/setup/3JKN-BEKA/3uhgitwjccsopjlo
+On this computer itself:  http://localhost:47733/setup/3JKN-BEKA/3uhgitwjccsopjlo
 
 The link works once. A new one, any time until the family is made:  sudo den setup-link
 
@@ -91,8 +91,8 @@ in use ("if it's an older Den, stop it first").
 | `den uninstall` | Asks first; removes the containers, images, units and the command, and keeps the data unless told otherwise. Docker stays |
 | `--dry-run` | On any of the above: says what it would do, and changes nothing |
 
-Options for you, not for James: `--lan` and `--local-only` (overrule [the network
-guess](#who-can-reach-it); the choice is remembered), `--image ghcr.io/xattribution/den:v1.2.0`
+Options for you, not for James: `--local-only` (keeps Den to the computer itself and the
+tunnel, see [who can reach it](#who-can-reach-it); remembered until `--lan` undoes it), `--image ghcr.io/xattribution/den:v1.2.0`
 (run and follow that tag; also remembered; `--image ghcr.io/xattribution/den:stable` goes back
 to the default), `--yes` (ask nothing: uninstall then keeps the data, and reset refuses).
 
@@ -131,17 +131,16 @@ dnf won't put Docker next to Podman (RHEL 8's runc), it stops and gives the
 
 Nothing on the server opens a port to the internet. The tunnel calls out to Cloudflare.
 
-- **A computer at home** (`lan`): the hub's port is published on `0.0.0.0:47733`, which is
-  IPv4 only, so the home network can open the first setup page. A home router doesn't forward
-  that port. IPv6 isn't published.
-- **A server on the internet** (`local`): published on `127.0.0.1:47733` only. The family comes
-  in through the tunnel, and you reach it with `ssh -L 47733:127.0.0.1:47733`.
+The hub's port is published on `0.0.0.0:47733` (IPv4), so every network the computer is on
+reaches it: the home Wi-Fi, and a VPN such as Tailscale or WireGuard. The hub's gate decides
+what each request gets (docs/hub-api.md, "Inside and outside"): a private or VPN address is
+inside, and a public address gets only what the family's devices ask for, the same as through
+the tunnel. A home router doesn't forward the port. IPv6 isn't published.
 
-The guess: `local` if any interface has a public IPv4 address, or the default route's source
-address is public, or the DMI vendor is a known cloud (Amazon EC2, Google, DigitalOcean,
-Hetzner, Linode/Akamai, Vultr, OVH, Scaleway, Oracle, Alibaba), which catches clouds that keep
-a private address behind their NAT. Otherwise `lan`. Tailscale's 100.64/10 and Docker's bridges
-count as private.
+The installer prints a setup link for each private address the computer has (Tailscale's
+100.64/10 counts), the default route's first, and leaves out Docker's and other container
+bridges. `--local-only` publishes on `127.0.0.1:47733` instead; then the family comes in only
+through the tunnel.
 
 Inside, the hub runs with `DEN_PUBLIC=1` (the public posture, always, since the tunnel makes it
 reachable), `DEN_MDNS=0`, and `DEN_TRUSTED_PROXIES=172.30.74.0/24`. That last one is so the
@@ -312,8 +311,7 @@ VPS, with the same address, `den.kotvas.app`.
    but only once SSH works the way you want without them.
 4. **Install:** `curl -fsSL https://github.com/xattribution/Den/releases/latest/download/install.sh | sudo sh -s -- --token eyJ...`
    (until the script is published: `sudo sh deploy/install.sh --token eyJ...` from a checkout).
-   It sees a public address, so it publishes only on 127.0.0.1, and it ends with the https setup
-   link.
+   It ends with the https setup link, and a link at each Wi-Fi or VPN address the server has.
 5. **The family back.** Either restore the backup from the first setup page (once the hub side
    has it), or by hand, before anyone makes a family:
    `sudo cp den-....denbackup /opt/den/data/ && sudo chown 10001:10001 /opt/den/data/den-*.denbackup`,
@@ -364,7 +362,7 @@ These need real Docker, systemd, Cloudflare and hardware, which the tests can't 
       `rclone help backends | grep smb`, `/app/bin/den_hub --help`, and the sqlite library
       loading (`den_hub import-sett` on a small coord.db).
 - [ ] A fresh Ubuntu 24.04 VPS: `curl … | sudo sh -s -- --token …`. Docker installs, the
-      compose file is published on 127.0.0.1 only (`ss -ltn`, plus an outside `nc -z` that fails),
+      port answers an outside `curl` with an empty 404, the VPN address opens the setup page,
       the tunnel connects, the https link and QR work, and the family can be made from a phone.
 - [ ] A Raspberry Pi 4 or 5 on Raspberry Pi OS 64-bit (bookworm or trixie): the install, and the
       home-network link from a phone on the same Wi-Fi.

@@ -57,7 +57,6 @@ if [ -z "${DEN_DIR:-}" ]; then
 fi
 DEN_OS_RELEASE=${DEN_OS_RELEASE:-/etc/os-release}
 DEN_MEMINFO=${DEN_MEMINFO:-/proc/meminfo}
-DEN_DMI_VENDOR=${DEN_DMI_VENDOR:-/sys/class/dmi/id/sys_vendor}
 DEN_SYSTEMD_DIR=${DEN_SYSTEMD_DIR:-/etc/systemd/system}
 DEN_BIN_DIR=${DEN_BIN_DIR:-/usr/local/bin}
 
@@ -70,7 +69,7 @@ DRY_RUN=0
 ASSUME_YES=0
 REPLACE_PODMAN=0
 TOKEN_ARG=
-NETWORK_MODE=      # lan | local; decided by detect_network unless --lan or --local-only
+NETWORK_MODE=      # lan (every network this computer is on) | local (--local-only)
 MODE_FLAG=
 IMAGE_FLAG=
 IMAGE=${DEN_IMAGE:-$DEN_IMAGE_DEFAULT}
@@ -266,38 +265,28 @@ is_private_v4() { # is_private_v4 ADDRESS: private, shared (CGNAT, Tailscale) or
   return 1
 }
 
-# detect_network: sets LAN_IP (this computer's address on its network, if it has a private one)
-# and NETWORK_MODE: `lan` (a computer at home: Den answers the home network on its port, for the
-# first setup page) or `local` (a server on the internet: Den answers this computer only, and the
-# family comes in through the tunnel).
+# detect_network: sets NEAR_IPS, this computer's addresses on the networks it's on (the home
+# Wi-Fi, a VPN such as Tailscale or WireGuard), the one it reaches the internet through first,
+# and BIND: Den answers on all of them. From a public address it answers only the family's
+# devices, the same as through the tunnel. --local-only, once given, keeps Den to this computer
+# and the tunnel.
 detect_network() {
-  LAN_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1)
-  if [ -z "$LAN_IP" ]; then
-    LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-  fi
-  public=
-  for dn_addr in $(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1); do
-    is_private_v4 "$dn_addr" || public=$dn_addr
+  dn_route=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1)
+  NEAR_IPS=
+  for dn_entry in $(ip -4 -o addr show scope global 2>/dev/null | awk '{print $2 "=" $4}'); do
+    dn_if=${dn_entry%%=*}
+    dn_addr=${dn_entry#*=}
+    dn_addr=${dn_addr%%/*}
+    # Docker's and other containers' own bridges are this computer's insides, not a network.
+    case "$dn_if" in docker* | br-* | veth* | virbr* | cni* | flannel* | podman* | lxcbr* | lxdbr*) continue ;; esac
+    case "$dn_addr" in 127.* | 169.254.*) continue ;; esac
+    is_private_v4 "$dn_addr" || continue
+    if [ "$dn_addr" = "$dn_route" ]; then NEAR_IPS="$dn_addr${NEAR_IPS:+ $NEAR_IPS}"; else NEAR_IPS="${NEAR_IPS:+$NEAR_IPS }$dn_addr"; fi
   done
-  # Cloud servers that keep a private address behind the provider's own public one.
-  vendor=$(cat "$DEN_DMI_VENDOR" 2>/dev/null)
-  case "$vendor" in
-    *"Amazon EC2"* | Google* | DigitalOcean* | Hetzner* | Linode* | Akamai* | Vultr* | OVH* | Scaleway* | OracleCloud* | Alibaba*)
-      [ -n "$public" ] || public="($vendor)" ;;
-  esac
-  if [ -n "$LAN_IP" ] && ! is_private_v4 "$LAN_IP"; then
-    public=$LAN_IP
-  fi
-  # --lan or --local-only, once given, stays the choice for this computer.
   [ -n "$NETWORK_MODE" ] || NETWORK_MODE=$(cat "$STATE_DIR/network-mode" 2>/dev/null)
   case "$NETWORK_MODE" in
-    lan | local) ;;
-    *) if [ -n "$public" ]; then NETWORK_MODE=local; else NETWORK_MODE=lan; fi ;;
-  esac
-  [ "$NETWORK_MODE" = local ] && LAN_IP=
-  case "$NETWORK_MODE" in
-    lan) BIND=0.0.0.0 ;;
-    *) BIND=127.0.0.1 ;;
+    local) BIND=127.0.0.1 NEAR_IPS= ;;
+    *) NETWORK_MODE=lan BIND=0.0.0.0 ;;
   esac
 }
 
@@ -486,7 +475,7 @@ services:
       DEN_CONNECTOR_METRICS: "http://tunnel:20241"
       DEN_LOG: "info"
     ports:
-      # $NETWORK_MODE: $( [ "$BIND" = 0.0.0.0 ] && echo "this computer and its home network (IPv4), never the internet" || echo "this computer only; the family comes in through the tunnel" )
+      # $( [ "$BIND" = 0.0.0.0 ] && echo "Every network this computer is on. From a public address Den answers only the family's devices." || echo "This computer only (--local-only); the family comes in through the tunnel." )
       - "$BIND:$DEN_PORT:$DEN_PORT"
     volumes:
       - $DATA_DIR:/data:z
@@ -921,16 +910,24 @@ print_setup() {
   ps_local_url=http://localhost:$DEN_PORT
   ps_qr=
   ps_link=
-  ps_lan_link=
+  ps_near=
+  ps_where=
   if [ -n "$TUNNEL_HOST" ] && [ "$TUNNEL_STATE" = connected ]; then
     ps_qr=$(bare_link "https://$TUNNEL_HOST")
     ps_link=$(printf '%s\n' "$ps_qr" | head -n 1)
+    ps_where=anywhere
   fi
-  if [ "$NETWORK_MODE" = lan ] && [ -n "$LAN_IP" ]; then
-    ps_lan=$(bare_link "http://$LAN_IP:$DEN_PORT")
-    ps_lan_link=$(printf '%s\n' "$ps_lan" | head -n 1)
-    [ -n "$ps_qr" ] || { ps_qr=$ps_lan; ps_link=$ps_lan_link; }
-  fi
+  for ps_ip in $NEAR_IPS; do
+    ps_out=$(bare_link "http://$ps_ip:$DEN_PORT")
+    [ -n "$ps_out" ] || continue
+    if [ -z "$ps_link" ]; then
+      ps_qr=$ps_out
+      ps_link=$(printf '%s\n' "$ps_out" | head -n 1)
+      ps_where=near
+    else
+      ps_near="$ps_near $(printf '%s\n' "$ps_out" | head -n 1)"
+    fi
+  done
   ps_any=$(bare_link "$ps_local_url" | head -n 1)
   if [ -z "$ps_any" ]; then
     say ""
@@ -939,8 +936,8 @@ print_setup() {
   fi
   say ""
   say "Next: make your family. Open this link on your phone or computer"
-  if [ "$ps_link" = "$ps_lan_link" ] && [ -n "$ps_lan_link" ]; then
-    say "(on the same Wi-Fi as this computer), or scan the code with your phone's camera:"
+  if [ "$ps_where" = near ]; then
+    say "(on the same Wi-Fi or VPN as this computer), or scan the code with your phone's camera:"
   elif [ -n "$ps_link" ]; then
     say "(from anywhere), or scan the code with your phone's camera:"
   fi
@@ -950,10 +947,10 @@ print_setup() {
     say ""
     printf '%s\n' "$ps_qr" | tail -n +2
     say ""
-    [ -n "$ps_lan_link" ] && [ "$ps_lan_link" != "$ps_link" ] && say "On the home Wi-Fi it's also:  $ps_lan_link"
-    say "On this computer itself:     $ps_any"
+    for ps_more in $ps_near; do say "On the same Wi-Fi or VPN:  $ps_more"; done
+    say "On this computer itself:  $ps_any"
   else
-    # A server on the internet the family can't reach yet: nothing but this computer can open Den.
+    # Nothing reaches this computer yet but itself.
     if has_token && [ "$TUNNEL_STATE" = connected ]; then
       say "(it opens once Den has its address in Cloudflare: Step 3 of the guide). Then type:"
       say ""
@@ -994,11 +991,13 @@ cmd_install() {
   detect_platform
   check_resources
   detect_network
-  ci_kind="home network"
-  [ "$NETWORK_MODE" = local ] && ci_kind="internet server: Den answers this computer and the tunnel; nobody else"
   say ""
   say "This computer: $OS_NAME, $( [ "$ARCH" = amd64 ] && echo "64-bit Intel/AMD" || echo "64-bit ARM" ), $MEM_TEXT memory, $DISK_TEXT free"
-  say "Network: ${LAN_IP:-no home network address} ($ci_kind)"
+  if [ "$NETWORK_MODE" = local ]; then
+    say "Network: this computer and the tunnel only (--local-only)"
+  else
+    say "Network: ${NEAR_IPS:-no Wi-Fi or VPN address yet; the tunnel brings the family in}"
+  fi
 
   if [ -n "$TOKEN_ARG" ]; then
     TOKEN=$(clean_token "$TOKEN_ARG")
@@ -1108,10 +1107,12 @@ cmd_status() {
     cs_msg=$(json_get "$HUB_DIR/tunnel-status.json" message)
     [ "$TUNNEL_STATE" = connected ] && [ -n "$cs_msg" ] && say "  $cs_msg"
   fi
-  if [ "$NETWORK_MODE" = lan ] && [ -n "$LAN_IP" ]; then
-    say "On the home network: http://$LAN_IP:$DEN_PORT"
+  if [ "$NETWORK_MODE" = local ]; then
+    say "On the same Wi-Fi or VPN: off (--local-only)"
+  elif [ -z "$NEAR_IPS" ]; then
+    say "On the same Wi-Fi or VPN: this computer isn't on one"
   else
-    say "On the home network: no (this computer answers only itself and the tunnel)"
+    for cs_ip in $NEAR_IPS; do say "On the same Wi-Fi or VPN: http://$cs_ip:$DEN_PORT"; done
   fi
   cs_umsg=$(json_get "$HUB_DIR/update.json" message)
   cs_checked=$(json_get "$HUB_DIR/update.json" checked)

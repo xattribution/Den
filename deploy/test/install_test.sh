@@ -68,7 +68,11 @@ EOF
 case "$*" in
   "-4 route get 1.1.1.1") [ -n "${MOCK_IP_SRC:-}" ] && echo "1.1.1.1 via 10.0.0.1 dev eth0 src $MOCK_IP_SRC uid 0" ;;
   "-4 -o addr show scope global")
-    for a in ${MOCK_IP_ADDRS:-}; do echo "2: eth0    inet $a/24 brd 0.0.0.0 scope global eth0"; done ;;
+    # Each address is ADDRESS (on eth0) or INTERFACE:ADDRESS.
+    for a in ${MOCK_IP_ADDRS:-}; do
+      case "$a" in *:*) i=${a%%:*} a=${a#*:} ;; *) i=eth0 ;; esac
+      echo "2: $i    inet $a/24 brd 0.0.0.0 scope global $i"
+    done ;;
 esac
 exit 0
 EOF
@@ -146,13 +150,12 @@ scenario() {
   mkdir -p "$S/opt" "$S/systemd" "$S/bin"
   make_mocks "$S/mock"
   printf 'MemTotal:        %s kB\n' "${MOCK_MEM_KB:-3900000}" > "$S/meminfo"
-  : > "$S/dmi"
 }
 
 # in_scenario CMD...: runs CMD in the sandbox, with the installer's paths pointed into S.
 in_scenario() {
   env -i PATH="$S/mock:$SYS" HOME="$S" TMPDIR="$S" \
-    DEN_DIR="$S/opt/den" DEN_OS_RELEASE="$S/os-release" DEN_MEMINFO="$S/meminfo" DEN_DMI_VENDOR="$S/dmi" \
+    DEN_DIR="$S/opt/den" DEN_OS_RELEASE="$S/os-release" DEN_MEMINFO="$S/meminfo" \
     DEN_SYSTEMD_DIR="$S/systemd" DEN_BIN_DIR="$S/bin" DEN_ETC="$S/etc/den" MOCK_DIR="$S" \
     MOCK_ARCH="${MOCK_ARCH:-x86_64}" MOCK_LONG_BIT="${MOCK_LONG_BIT:-64}" MOCK_DF_KB="${MOCK_DF_KB:-50000000}" \
     MOCK_IP_SRC="${MOCK_IP_SRC-192.168.1.50}" MOCK_IP_ADDRS="${MOCK_IP_ADDRS-192.168.1.50}" \
@@ -222,23 +225,25 @@ expect_contains "resources: a full disk refused" "$(MOCK_DF_KB=900000 resources)
 
 # --- the network: home or internet -------------------------------------------------------------
 
-network() { in_scenario sh -c '. "$1"; detect_network; echo "MODE=$NETWORK_MODE BIND=$BIND LAN=$LAN_IP"' sh "$INSTALL" 2>&1; }
+network() { in_scenario sh -c '. "$1"; detect_network; echo "MODE=$NETWORK_MODE BIND=$BIND NEAR=$NEAR_IPS"' sh "$INSTALL" 2>&1; }
 scenario net
-expect_eq "network: a computer at home" "$(network)" "MODE=lan BIND=0.0.0.0 LAN=192.168.1.50"
-expect_eq "network: at home, with Tailscale and Docker's bridge too" \
-  "$(MOCK_IP_ADDRS="192.168.1.50 100.101.102.103 172.17.0.1" network)" "MODE=lan BIND=0.0.0.0 LAN=192.168.1.50"
-expect_eq "network: a VPS with its public address" \
-  "$(MOCK_IP_SRC=203.0.113.7 MOCK_IP_ADDRS="203.0.113.7 172.17.0.1" network)" "MODE=local BIND=127.0.0.1 LAN="
-expect_eq "network: a VPS with a public address beside a private one" \
-  "$(MOCK_IP_SRC=10.0.0.5 MOCK_IP_ADDRS="10.0.0.5 198.51.100.20" network)" "MODE=local BIND=127.0.0.1 LAN="
-echo "Amazon EC2" > "$S/dmi"
-expect_eq "network: a cloud server behind its provider's NAT" "$(MOCK_IP_SRC=172.31.5.9 MOCK_IP_ADDRS=172.31.5.9 network)" "MODE=local BIND=127.0.0.1 LAN="
-: > "$S/dmi"
-mkdir -p "$S/opt/den/state" && echo lan > "$S/opt/den/state/network-mode"
-expect_eq "network: --lan, once given, is remembered" \
-  "$(MOCK_IP_SRC=203.0.113.7 MOCK_IP_ADDRS=203.0.113.7 network)" "MODE=lan BIND=0.0.0.0 LAN=203.0.113.7"
+expect_eq "network: a computer at home" "$(network)" "MODE=lan BIND=0.0.0.0 NEAR=192.168.1.50"
+expect_eq "network: at home, with a VPN, and Docker's bridges left out" \
+  "$(MOCK_IP_ADDRS="docker0:172.17.0.1 192.168.1.50 tailscale0:100.101.102.103 br-1a2b:172.30.74.1" network)" \
+  "MODE=lan BIND=0.0.0.0 NEAR=192.168.1.50 100.101.102.103"
+expect_eq "network: a VPS on a VPN answers there" \
+  "$(MOCK_IP_SRC=203.0.113.7 MOCK_IP_ADDRS="203.0.113.7 docker0:172.17.0.1 tailscale0:100.118.184.55" network)" \
+  "MODE=lan BIND=0.0.0.0 NEAR=100.118.184.55"
+expect_eq "network: a VPS with a private network beside its public address" \
+  "$(MOCK_IP_SRC=198.51.100.20 MOCK_IP_ADDRS="198.51.100.20 eth1:10.0.0.5" network)" "MODE=lan BIND=0.0.0.0 NEAR=10.0.0.5"
+expect_eq "network: the way to the internet comes first" \
+  "$(MOCK_IP_SRC=10.0.0.5 MOCK_IP_ADDRS="wg0:10.8.0.2 10.0.0.5" network)" "MODE=lan BIND=0.0.0.0 NEAR=10.0.0.5 10.8.0.2"
+expect_eq "network: a VPS on nothing but the internet still answers its port (the gate keeps strangers out)" \
+  "$(MOCK_IP_SRC=203.0.113.7 MOCK_IP_ADDRS=203.0.113.7 network)" "MODE=lan BIND=0.0.0.0 NEAR="
+mkdir -p "$S/opt/den/state" && echo local > "$S/opt/den/state/network-mode"
+expect_eq "network: --local-only, once given, is remembered" "$(network)" "MODE=local BIND=127.0.0.1 NEAR="
 rm -f "$S/opt/den/state/network-mode"
-expect_eq "network: no network at all" "$(MOCK_IP_SRC='' MOCK_IP_ADDRS='' network)" "MODE=lan BIND=0.0.0.0 LAN="
+expect_eq "network: no network at all" "$(MOCK_IP_SRC='' MOCK_IP_ADDRS='' network)" "MODE=lan BIND=0.0.0.0 NEAR="
 
 private() { in_scenario sh -c '. "$1"; if is_private_v4 "$2"; then echo private; else echo public; fi' sh "$INSTALL" "$1"; }
 for a in 10.1.2.3 192.168.0.9 172.16.0.1 172.31.255.1 100.64.0.1 100.127.9.9 169.254.1.1; do
@@ -286,8 +291,8 @@ compose_for() { # mode
 scenario compose
 lan_compose=$(compose_for lan)
 local_compose=$(compose_for local)
-expect_contains "compose: at home, the home network reaches the port" "$lan_compose" '"0.0.0.0:47733:47733"'
-expect_contains "compose: on a server, only the server itself" "$local_compose" '"127.0.0.1:47733:47733"'
+expect_contains "compose: every network this computer is on reaches the port" "$lan_compose" '"0.0.0.0:47733:47733"'
+expect_contains "compose: --local-only, only the computer itself" "$local_compose" '"127.0.0.1:47733:47733"'
 expect_contains "compose: the data, shared with the connector" "$lan_compose" "$S/opt/den/data:/data:z"
 expect_contains "compose: the connector runs from the same image" "$lan_compose" 'entrypoint: ["/app/bin/den-connector"]'
 expect_contains "compose: the public posture" "$lan_compose" 'DEN_PUBLIC: "1"'
@@ -321,7 +326,7 @@ os_release "$S/os-release" ubuntu 24.04 "Ubuntu 24.04.3 LTS" UBUNTU_CODENAME=nob
 out=$(dry_run)
 expect_contains "dry run (Ubuntu, no Docker): says it's a dry run" "$out" "dry run: nothing on this computer changes"
 expect_contains "dry run (Ubuntu): describes the computer" "$out" "This computer: Ubuntu 24.04.3 LTS, 64-bit Intel/AMD, 3.7 GB memory, 48 GB free"
-expect_contains "dry run (Ubuntu): home network" "$out" "Network: 192.168.1.50 (home network)"
+expect_contains "dry run (Ubuntu): its network address" "$out" "Network: 192.168.1.50"
 expect_contains "dry run (Ubuntu): Docker's key" "$out" "would run: curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc"
 expect_contains "dry run (Ubuntu): Docker's repository" "$out" "would write: /etc/apt/sources.list.d/docker.sources"
 expect_contains "dry run (Ubuntu): Docker's packages" "$out" "apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
@@ -389,8 +394,10 @@ expect_contains "dry run (openSUSE): zypper" "$out" "zypper --non-interactive in
 
 scenario dry-vps
 os_release "$S/os-release" ubuntu 24.04 "Ubuntu 24.04.3 LTS" UBUNTU_CODENAME=noble
+out=$(MOCK_IP_SRC=203.0.113.7 MOCK_IP_ADDRS="203.0.113.7 tailscale0:100.118.184.55" dry_run present)
+expect_contains "dry run (VPS on a VPN): its VPN address" "$out" "Network: 100.118.184.55"
 out=$(MOCK_IP_SRC=203.0.113.7 MOCK_IP_ADDRS=203.0.113.7 dry_run present)
-expect_contains "dry run (VPS): says it answers only itself and the tunnel" "$out" "internet server: Den answers this computer and the tunnel; nobody else"
+expect_contains "dry run (VPS): the tunnel brings the family in" "$out" "Network: no Wi-Fi or VPN address yet; the tunnel brings the family in"
 out=$(make_cli_docker "$S/mock" present; MOCK_IP_SRC=203.0.113.7 MOCK_IP_ADDRS=203.0.113.7 in_scenario sh "$INSTALL" --dry-run --token "cloudflared service install $tok" 2>&1)
 expect_contains "dry run (VPS, --token): keeps the token where the hub does" "$out" "would write the tunnel token to $S/opt/den/data/hub/tunnel-token"
 out=$(make_cli_docker "$S/mock" present; in_scenario sh "$INSTALL" --dry-run --token nonsense 2>&1)
