@@ -293,7 +293,8 @@ jobs:
   apps-publish:
     name: Attach the apps to the release
     needs: [build]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Whatever built goes up, even when one platform didn't.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -304,14 +305,14 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist
-          (cd built/den-windows && zip -qr ../../dist/Den-windows.zip .)
-          (cd built/den-macos && zip -qry ../../dist/Den-macos.zip Den.app)
-          cp built/den-android/app-release.apk dist/Den-android.apk
-          tar -C built/den-linux -czf dist/Den-linux.tar.gz .
+          if [ -d built/den-windows ]; then (cd built/den-windows && zip -qr ../../dist/Den-windows.zip .); fi
+          if [ -d built/den-macos ]; then (cd built/den-macos && zip -qry ../../dist/Den-macos.zip Den.app); fi
+          if [ -f built/den-android/app-release.apk ]; then cp built/den-android/app-release.apk dist/Den-android.apk; fi
+          if [ -d built/den-linux ]; then tar -C built/den-linux -czf dist/Den-linux.tar.gz .; fi
+          ls dist
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          fail_on_unmatched_files: true
 
   # On a labeled pull request or a manual run, build the hub and relay images when the change
   # touches them (one platform, nothing pushed), so a broken Dockerfile or a web build that
