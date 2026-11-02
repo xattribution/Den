@@ -6,8 +6,7 @@ The family's calendar, chores, lists and points, in one app on everyone's phone.
 
 ## Start here
 
-Den lives on one computer in your house that stays on. Everyone's phones connect to it, and nobody
-outside your family can.
+Den runs on one computer in your house that stays on. Everyone's phones connect to it.
 
 1. **Install Den** on the computer that stays on. Pick yours below.
 2. **Open the link Den shows you**, tap **Make your family**, and finish on your phone.
@@ -76,9 +75,8 @@ they open your backups. In Den: **Family**, your name, **Recovery words**.
 
 ## Reach Den from away
 
-At home, Den just works. To reach it from anywhere else, give Den a Cloudflare Tunnel (free; you
-need a domain on Cloudflare). If you use a VPN into your home, that works too, with nothing to set
-up.
+To reach Den from anywhere, give it a Cloudflare Tunnel (free, with a domain on Cloudflare). A VPN
+into your home works too.
 
 ### 1. Make the tunnel
 
@@ -117,7 +115,7 @@ Back on the Cloudflare page from above:
      If the page has two boxes instead, set **Type** to `HTTP` and **URL** to `hub:47733`.
 4. Click **Add route** (or **Save**).
 
-Type it exactly as shown: `hub`, not `localhost` and not your computer's address.
+Type it exactly as shown: `hub`.
 
 That's your family's address: `den.` plus your domain, like `den.smithfamily.com`.
 
@@ -188,7 +186,7 @@ Pi Imager and pick **Raspberry Pi OS (64-bit)**), then start again from [Linux](
 needs 1 GB of memory and 2 GB of free space. On a VPS, pick a bigger plan.
 
 **"Den's download isn't available right now"**. Den's download site turned the computer away.
-That's on Den's side, not yours: wait a while and run the line again. If it keeps happening,
+Wait a while and run the line again. If it keeps happening,
 report it on Den's GitHub page.
 
 **"Couldn't reach download.docker.com"**, **"Couldn't download Den"** or **"Couldn't reach this
