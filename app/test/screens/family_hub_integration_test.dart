@@ -175,16 +175,13 @@ void main() {
     expect(status.stage, 'removed');
   });
 
-  test('A wrong setup code says how many tries are left', () async {
+  test('On the home network a fresh hub is open to claim, with no code', () async {
     final (_, hub) = await startHub();
     final phone = await parentPhone();
     final network = DenNetwork(phone, localHub: noHub());
     addTearDown(network.dispose);
-    final pairing = NetPairing(network);
-    final info = await pairing.hubStatus('127.0.0.1:${hub.port}');
-    final session = pairing.setUpHub(info, 'AAAA-AAAA');
-    await until(() => session.stage == HubSetupStage.failed, what: 'the refusal');
-    expect(session.error, "That setup code isn't right. Check it in the hub's log: 4 more tries, then the hub makes you wait a minute.");
+    final info = await NetPairing(network).hubStatus('127.0.0.1:${hub.port}');
+    expect(info.open, isTrue);
   });
 
   test('A browser links through the hub with a parent phone answering its code', () async {
@@ -238,7 +235,7 @@ void main() {
     final grandma = mom.member(grandmaId)!;
     final message = await momPairing.createInvite(memberId: grandma.id, letIn: false);
     expect(message.words, hasLength(4));
-    expect(message.link.fragment, '/join/${message.words.join('-')}');
+    expect(message.link.path, '/join/${message.words.join('-')}');
     expect(message.text, contains(message.code));
 
     // Grandma's iPad, later, from the link: types the words and asks to join.
