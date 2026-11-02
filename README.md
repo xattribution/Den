@@ -93,8 +93,9 @@ the tunnel in Cloudflare and make a new one.
    most terminals, paste is right-click, or Ctrl+Shift+V.) If you skip it, you can give it
    later by typing `sudo den tunnel`.
 
-5. At the end it says **Den is running**, then shows a link and a square code (a QR code). Leave
-   the terminal open and go on to Step 3.
+5. When it says **Now give Den its address in Cloudflare**, leave the terminal open and go on to
+   Step 3. Once you've done Step 3, the terminal says **Den is running** and shows a link and a
+   square code (a QR code) for Step 4.
 
 ## Step 3: Give Den its address in Cloudflare
 
@@ -118,8 +119,8 @@ That's your family's address: `den.` plus your domain, like `den.smithfamily.com
 
 ## Step 4: Make your family
 
-1. On your phone or computer, open the link the installer showed at the end of Step 2. Or point
-   your phone's camera at the square code and tap the link that appears.
+1. On your phone or computer, open the link the terminal showed after Step 3. Or point your
+   phone's camera at the square code and tap the link that appears.
    - Lost it? In the terminal, type `sudo den setup-link` and press Enter for a new one.
 2. If Den asks for the tunnel token, paste it and click **Connect**. When it says **Connected**,
    it shows your family's address. If it asks what address you gave it in Cloudflare, type the
@@ -205,6 +206,10 @@ Pi Imager and pick **Raspberry Pi OS (64-bit)**), then start again from Step 2.
 
 **"This computer has ... memory"** or **"... free disk space"**. The computer is too small. Den
 needs 1 GB of memory and 2 GB of free space. On a VPS, pick a bigger plan.
+
+**"Den's download isn't available right now"**. Den's download site turned the computer away.
+That's on Den's side, not yours: wait a while and run the line again. If it keeps happening,
+report it on Den's GitHub page.
 
 **"Couldn't reach download.docker.com"**, **"Couldn't download Den"** or **"Couldn't reach this
 computer's software sources"**. The computer isn't getting to the internet. Check its connection,

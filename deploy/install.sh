@@ -619,9 +619,35 @@ image_version() {
   printf '%s' "${iv:-dev}"
 }
 
+# pull_image [quiet]: downloads $IMAGE:$CHANNEL. When it can't, PULL_WHY says why: missing (the
+# registry has no such image or won't hand it out: not published yet, or not public) or offline.
+# quiet: say nothing; the caller explains.
+PULL_WHY=
 pull_image() {
+  PULL_WHY=
   if [ "$DRY_RUN" = 1 ]; then say "      would run: docker pull $IMAGE:$CHANNEL"; return 0; fi
-  quietly docker pull "$IMAGE:$CHANNEL"
+  pi_log=${TMPDIR:-/tmp}/den-pull.$$.log
+  if docker pull "$IMAGE:$CHANNEL" > "$pi_log" 2>&1; then rm -f "$pi_log"; return 0; fi
+  if grep -qiE 'denied|unauthorized|not found|manifest unknown|does not exist' "$pi_log"; then
+    PULL_WHY=missing
+  else
+    PULL_WHY=offline
+  fi
+  if [ "${1:-}" != quiet ]; then
+    say "      This step failed. Its last words were:"
+    tail -n 15 "$pi_log" | sed 's/^/        | /'
+  fi
+  rm -f "$pi_log"
+  return 1
+}
+
+# pull_failed: why the download didn't work, for people.
+pull_failed() {
+  if [ "$PULL_WHY" = missing ]; then
+    printf '%s\n' "Den's download isn't available right now (the download site said no)."
+  else
+    printf '%s\n' "Couldn't reach Den's download."
+  fi
 }
 
 hub_container() { compose ps -q hub 2>/dev/null | head -n 1; }
@@ -759,8 +785,12 @@ do_update() {
   AVAILABLE=$CURRENT
   write_update checking "Looking for an update"
   du_before=$(image_id "$IMAGE:$CHANNEL")
-  if ! pull_image; then
-    write_update failed "Couldn't reach the internet to look for an update. Den tries again tomorrow night."
+  if ! pull_image quiet; then
+    if [ "$PULL_WHY" = missing ]; then
+      write_update failed "Couldn't look for an update: the download site said no. Den tries again tomorrow night."
+    else
+      write_update failed "Couldn't reach the internet to look for an update. Den tries again tomorrow night."
+    fi
     return 1
   fi
   [ "$DRY_RUN" = 1 ] && { apply_update; return 0; }
@@ -824,6 +854,27 @@ wait_tunnel() {
   done
 }
 
+# wait_address SECONDS: until the tunnel has its public address in Cloudflare (sets TUNNEL_HOST).
+# Says once if Cloudflare sends the address somewhere other than Den.
+wait_address() {
+  [ "$DRY_RUN" = 1 ] && return 0
+  wa_end=$(( $(date +%s) + $1 ))
+  wa_told=
+  while :; do
+    wait_tunnel 0
+    wa_service=$(json_get "$HUB_DIR/tunnel-status.json" service)
+    if [ -n "$TUNNEL_HOST" ] && { [ -s "$HUB_DIR/address" ] || [ "$wa_service" = "http://hub:$DEN_PORT" ]; }; then
+      return 0
+    fi
+    if [ -n "$TUNNEL_HOST" ] && [ -z "$wa_told" ]; then
+      wa_told=1
+      say "Cloudflare sends $TUNNEL_HOST to ${wa_service:-somewhere else}. The Service URL must be exactly http://hub:$DEN_PORT (Step 3)."
+    fi
+    [ "$(date +%s)" -ge "$wa_end" ] && { TUNNEL_HOST=; return 0; }
+    sleep 3
+  done
+}
+
 # --- the setup link -------------------------------------------------------------------------
 
 hub_paired() {
@@ -881,10 +932,20 @@ print_setup() {
     [ -n "$ps_lan_link" ] && [ "$ps_lan_link" != "$ps_link" ] && say "On the home Wi-Fi it's also:  $ps_lan_link"
     say "On this computer itself:     $ps_any"
   else
-    # A server on the internet with no tunnel yet: nothing but this computer can open Den.
-    say "(it opens only once the tunnel is set up):"
-    say ""
-    say "    sudo den tunnel        (then paste your tunnel token from Cloudflare)"
+    # A server on the internet the family can't reach yet: nothing but this computer can open Den.
+    if has_token && [ "$TUNNEL_STATE" = connected ]; then
+      say "(it opens once Den has its address in Cloudflare: Step 3 of the guide). Then type:"
+      say ""
+      say "    sudo den setup-link"
+    elif has_token; then
+      say "(it opens once the tunnel connects: sudo den status says when). Then type:"
+      say ""
+      say "    sudo den setup-link"
+    else
+      say "(it opens only once the tunnel is set up):"
+      say ""
+      say "    sudo den tunnel        (then paste your tunnel token from Cloudflare)"
+    fi
     say ""
     say "On this computer itself it's already: $ps_any"
   fi
@@ -947,7 +1008,12 @@ cmd_install() {
     UPDATE_FIRST=1
   else
     note "downloading (about 200 MB)"
-    pull_image || die "Couldn't download Den." "Check that this computer is connected to the internet, then run the same command again."
+    if ! pull_image; then
+      if [ "$PULL_WHY" = missing ]; then
+        die "Couldn't download Den: $(pull_failed)" "Run the same command again in a while. If it keeps saying this, report it on Den's GitHub page."
+      fi
+      die "Couldn't download Den." "Check that this computer is connected to the internet, then run the same command again."
+    fi
     run docker tag "$IMAGE:$CHANNEL" den:current
     UPDATE_FIRST=0
   fi
@@ -957,7 +1023,7 @@ cmd_install() {
     # Repair first (the compose file may have changed), then the update, with its way back.
     run compose up -d --remove-orphans
     wait_healthy 120 || note "(it was not running properly; the update below may fix it)"
-    do_update 1 || true
+    do_update 1 || note "couldn't look for a newer version just now, so Den stays on this one (it looks again tonight)"
   else
     run compose up -d --remove-orphans
   fi
@@ -986,8 +1052,15 @@ cmd_install() {
     say ""
     say "Connecting the tunnel..."
     wait_tunnel 45
+    if [ "$TUNNEL_STATE" = connected ] && [ -z "$TUNNEL_HOST" ] && can_ask; then
+      say "The tunnel is connected."
+      say ""
+      say "Now give Den its address in Cloudflare: Step 3 of the guide."
+      say "This waits here until that's done (or press Ctrl-C, and afterwards type: sudo den setup-link)..."
+      wait_address 1800
+    fi
     case "$TUNNEL_STATE" in
-      connected) say "Reachable from anywhere${TUNNEL_HOST:+ at https://$TUNNEL_HOST}." ;;
+      connected) if [ -n "$TUNNEL_HOST" ]; then say "Reachable from anywhere at https://$TUNNEL_HOST."; else say "The tunnel is connected."; fi ;;
       error) say "The tunnel didn't connect: $(json_get "$HUB_DIR/tunnel-status.json" message)" ;;
       *) say "The tunnel is still connecting; sudo den status shows when it's up." ;;
     esac

@@ -266,6 +266,18 @@ expect_eq "links: the tunnel's hostname" "$(tunnel_host)" "connected den.kotvas.
 echo "https://den.smith.family/" > "$S/opt/den/data/hub/address"
 expect_eq "links: the address the hub settled on wins" "$(tunnel_host)" "connected den.smith.family"
 
+addr() { in_scenario sh -c '. "$1"; wait_address 0; echo "[$TUNNEL_HOST]"' sh "$INSTALL"; }
+scenario tunneladdress
+mkdir -p "$S/opt/den/data/hub"
+echo '{"state":"connected","hostname":"","service":"","connections":4,"message":"","since":"x","updated":"x"}' > "$S/opt/den/data/hub/tunnel-status.json"
+expect_eq "address: none yet in Cloudflare" "$(addr)" "[]"
+echo '{"state":"connected","hostname":"den.kotvas.app","service":"http://localhost:47733","connections":4,"message":"","since":"x","updated":"x"}' > "$S/opt/den/data/hub/tunnel-status.json"
+out=$(addr)
+expect_contains "address: sent somewhere else, says what to fix" "$out" "The Service URL must be exactly http://hub:47733"
+expect_contains "address: and doesn't count it" "$out" "[]"
+echo '{"state":"connected","hostname":"den.kotvas.app","service":"http://hub:47733","connections":4,"message":"","since":"x","updated":"x"}' > "$S/opt/den/data/hub/tunnel-status.json"
+expect_eq "address: given in Cloudflare" "$(addr)" "[den.kotvas.app]"
+
 # --- the compose file ---------------------------------------------------------------------------
 
 compose_for() { # mode
@@ -426,6 +438,7 @@ case "$1" in
     esac ;;
   pull)
     [ -f "$MOCK_DIR/offline" ] && { echo "dial tcp: no such host" >&2; exit 1; }
+    [ -f "$MOCK_DIR/denied" ] && { echo "Error response from daemon: error from registry: denied" >&2; exit 1; }
     cp "$d/remote/$(key "$2")" "$d/tags/$(key "$2")" ;;
   tag) cp "$d/tags/$(key "$2")" "$d/tags/$(key "$3")" ;;
   inspect)
@@ -509,6 +522,17 @@ rm -f "$S/mock/sleep"
 out=$(update timer)
 expect_contains "rollback: the next night leaves the bad version alone" "$out" "didn't start before, so Den stays on v1.0.0"
 expect_eq "rollback: still on the old one" "$(current)" sha256:old
+
+installed_scenario denied
+touch "$S/denied"
+out=$(update timer)
+expect_contains "update: a download that isn't published says so" "$out" "the download site said no"
+expect_not_contains "update: and doesn't blame the internet" "$out" "reach the internet"
+expect_eq "update: still on the one it has" "$(current)" sha256:old
+pull_why() { DEN_INSTALL_SOURCED=1 in_scenario sh -c '. "$1"; pull_image quiet; echo "${PULL_WHY:-ok}"' sh "$INSTALL"; }
+expect_eq "download: denied means not published" "$(pull_why)" missing
+rm -f "$S/denied"; touch "$S/offline"
+expect_eq "download: no network means offline" "$(pull_why)" offline
 
 installed_scenario manual
 remote_img ghcr.io/xattribution/den:stable sha256:new
