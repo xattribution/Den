@@ -390,7 +390,7 @@ expect_contains "dry run (openSUSE): zypper" "$out" "zypper --non-interactive in
 scenario dry-vps
 os_release "$S/os-release" ubuntu 24.04 "Ubuntu 24.04.3 LTS" UBUNTU_CODENAME=noble
 out=$(MOCK_IP_SRC=203.0.113.7 MOCK_IP_ADDRS=203.0.113.7 dry_run present)
-expect_contains "dry run (VPS): says it answers only itself and the tunnel" "$out" "internet server: Den answers this computer, your tailnet and the tunnel; nobody else"
+expect_contains "dry run (VPS): says it answers only itself and the tunnel" "$out" "internet server: Den answers this computer and the tunnel; nobody else"
 out=$(make_cli_docker "$S/mock" present; MOCK_IP_SRC=203.0.113.7 MOCK_IP_ADDRS=203.0.113.7 in_scenario sh "$INSTALL" --dry-run --token "cloudflared service install $tok" 2>&1)
 expect_contains "dry run (VPS, --token): keeps the token where the hub does" "$out" "would write the tunnel token to $S/opt/den/data/hub/tunnel-token"
 out=$(make_cli_docker "$S/mock" present; in_scenario sh "$INSTALL" --dry-run --token nonsense 2>&1)

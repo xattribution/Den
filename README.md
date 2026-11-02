@@ -26,13 +26,13 @@ reach it. Setting it up takes one pasted line and a few taps.
 
    It installs everything Den needs into `~/den` and ends with a link and a square code.
 
-2. **Open that link** on your phone or a computer on the same Wi-Fi (or anywhere, with Tailscale
-   on). Or point your phone's camera at the square code.
+2. **Open that link** on your phone or a computer. Or point your phone's camera at the square
+   code.
 
 3. **Den's setup page takes it from there:** make your family, add your NAS for backups, and
    invite everyone. Nothing else is typed into a terminal.
 
-**Who can reach it.** On your home Wi-Fi and your tailnet, Den works like any home device: the
+**Who can reach it.** On your home network, or a VPN into it, Den works like any home device: the
 first person to open its setup page sets it up. From anywhere else, Den answers only your family's
 devices, and a phone that opens an invite you sent. Everyone else gets nothing at all, not even a
 login page.
@@ -57,12 +57,7 @@ there.
 
 ## Reaching Den from away
 
-**With Tailscale:** if the computer running Den has Tailscale, the installer puts Den on your
-tailnet by itself, at `https://<computer>.<tailnet>.ts.net` with a real certificate. Every phone
-with Tailscale on reaches it from anywhere and counts as home. (If the installer says so, turn on
-**HTTPS Certificates** on the DNS page of Tailscale's admin console once, then run `sudo den`.)
-
-**With Cloudflare,** for family who won't install Tailscale: Den's setup page (Settings, Advanced,
+**With Cloudflare:** Den's setup page (Settings, Advanced,
 Server, on a parent's phone later) takes a Cloudflare Tunnel's token. The tunnel only carries the
 family's devices to Den; nobody else gets anything through it. You need a free Cloudflare account
 and a domain on it.
@@ -197,7 +192,7 @@ sure, then `sudo den tunnel` and paste it.
 **The setup link doesn't open.** It works only once. Make a new one: `sudo den setup-link`.
 
 **Den's address shows a blank page away from home.** That's Den keeping strangers out. A new phone
-gets in by opening an invite a parent sent (or by being on the home Wi-Fi or Tailscale). A phone
+gets in by opening an invite a parent sent (or by being on the home Wi-Fi or a VPN into it). A phone
 already in the family opens Den from its Home Screen icon as usual.
 
 **The NAS can't be found.** Type its address as numbers (like `192.168.1.20`) instead of its name.
