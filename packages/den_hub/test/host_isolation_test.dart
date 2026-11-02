@@ -251,10 +251,12 @@ void main() {
       expect(twice.status, 409, reason: twice.text);
       expect(twice.error['message'], contains('on this server already'));
       expect(c.den.hasFamily, isFalse);
-      // Wrong codes count at the hub they were tried at: five, then a wait.
+      // Wrong codes count at the hub they were tried at: five, then a wait. From outside the home
+      // (on the home network a fresh hub needs no code), with the setup link's door pass.
+      final outside = {...fromTunnel, 'cookie': await doorPass(f.base, '/setup/$code/${c.den.deviceId}')};
       var tries = 0;
       while (tries < 10) {
-        final wrong = await f.call('POST', '/api/v1/hub/setup', hostname: 'den-c.test', body: {'code': 'ZZZZ-ZZZZ', 'invite': 'x'});
+        final wrong = await f.call('POST', '/api/v1/hub/setup', hostname: 'den-c.test', body: {'code': 'ZZZZ-ZZZZ', 'invite': 'x'}, headers: outside);
         if (wrong.status == 429) break;
         expect(wrong.status, 403);
         tries++;

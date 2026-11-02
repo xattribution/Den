@@ -142,11 +142,11 @@ void main() {
     ));
     addTearDown(hub.stop);
     final link = setupLink(Uri.parse('https://den.example.com'), codes.single, den.deviceId);
-    expect(link.toString(), 'https://den.example.com/#/setup/${codes.single}/${den.deviceId}');
+    expect(link.toString(), 'https://den.example.com/setup/${codes.single}/${den.deviceId}');
     expect(logged.where((l) => l.contains(link.toString())), hasLength(1), reason: 'the log shows it beside the code');
 
     // The phone reads the link: the code it sends, and the hub it expects.
-    final parts = link.fragment.split('/');
+    final parts = link.path.split('/');
     final code = parts[2], expected = parts[3];
     final status = await apiCall(hub.localUrl, 'GET', '/api/v1/hub/status');
     expect(status.body['device'], expected, reason: "the hub that answers is the one that printed the link");

@@ -153,7 +153,7 @@ scenario() {
 in_scenario() {
   env -i PATH="$S/mock:$SYS" HOME="$S" TMPDIR="$S" \
     DEN_DIR="$S/opt/den" DEN_OS_RELEASE="$S/os-release" DEN_MEMINFO="$S/meminfo" DEN_DMI_VENDOR="$S/dmi" \
-    DEN_SYSTEMD_DIR="$S/systemd" DEN_BIN_DIR="$S/bin" MOCK_DIR="$S" \
+    DEN_SYSTEMD_DIR="$S/systemd" DEN_BIN_DIR="$S/bin" DEN_ETC="$S/etc/den" MOCK_DIR="$S" \
     MOCK_ARCH="${MOCK_ARCH:-x86_64}" MOCK_LONG_BIT="${MOCK_LONG_BIT:-64}" MOCK_DF_KB="${MOCK_DF_KB:-50000000}" \
     MOCK_IP_SRC="${MOCK_IP_SRC-192.168.1.50}" MOCK_IP_ADDRS="${MOCK_IP_ADDRS-192.168.1.50}" \
     DEN_HEALTH_WAIT="${DEN_HEALTH_WAIT:-240}" MOCK_UID="${MOCK_UID:-0}" \
@@ -390,7 +390,7 @@ expect_contains "dry run (openSUSE): zypper" "$out" "zypper --non-interactive in
 scenario dry-vps
 os_release "$S/os-release" ubuntu 24.04 "Ubuntu 24.04.3 LTS" UBUNTU_CODENAME=noble
 out=$(MOCK_IP_SRC=203.0.113.7 MOCK_IP_ADDRS=203.0.113.7 dry_run present)
-expect_contains "dry run (VPS): says it answers only itself and the tunnel" "$out" "internet server: Den will answer this computer and the tunnel only"
+expect_contains "dry run (VPS): says it answers only itself and the tunnel" "$out" "internet server: Den answers this computer, your tailnet and the tunnel; nobody else"
 out=$(make_cli_docker "$S/mock" present; MOCK_IP_SRC=203.0.113.7 MOCK_IP_ADDRS=203.0.113.7 in_scenario sh "$INSTALL" --dry-run --token "cloudflared service install $tok" 2>&1)
 expect_contains "dry run (VPS, --token): keeps the token where the hub does" "$out" "would write the tunnel token to $S/opt/den/data/hub/tunnel-token"
 out=$(make_cli_docker "$S/mock" present; in_scenario sh "$INSTALL" --dry-run --token nonsense 2>&1)

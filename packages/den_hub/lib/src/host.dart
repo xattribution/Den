@@ -27,6 +27,8 @@ import 'net_guard.dart';
 import 'push/web_push_crypto.dart' show VapidKeys;
 import 'recovery.dart';
 import 'server/connector.dart';
+import 'server/outside.dart';
+import 'setup.dart' show HubSetup;
 import 'server/updater.dart';
 import 'sign_in_setup.dart';
 import 'tenant_router.dart';
@@ -324,6 +326,9 @@ class DenHost implements HostLink {
   HttpServer? _server;
   Handler? _web;
   String? _cliSecret;
+
+  /// The door pass from outside ([DoorPass]).
+  late final DoorPass door;
   Future<void> _busy = Future.value();
   bool _stopped = false;
 
@@ -357,6 +362,7 @@ class DenHost implements HostLink {
       rethrow;
     }
     host._cliSecret = host.state.writeCliSecret();
+    host.door = DoorPass.open(config.dataDir);
     host.state.dropKeyring();
     host._web = webAppHandler(config.webDir, policy: host._webPolicy);
     final pipeline = host._handler = const Pipeline().addMiddleware(host._headers).addMiddleware(host._errors).addHandler(host._route);
@@ -648,9 +654,25 @@ class DenHost implements HostLink {
     return _configured.contains(hostname);
   }
 
+  int _now() => config.clock?.call() ?? DateTime.now().toUtc().millisecondsSinceEpoch;
+
+  /// Whether [request] came from inside the home ([fromInside]).
+  bool inside(Request request) => fromInside(request, config.trustedProxies);
+
   FutureOr<Response> _route(Request request) async {
     final segments = request.url.pathSegments.where((s) => s.isNotEmpty).toList();
     final first = segments.isEmpty ? '' : segments.first;
+    // An invite's or a fresh hub's setup link, which lets a browser in from outside.
+    if (request.method == 'GET' && (first == 'join' && segments.length == 2 || first == 'setup' && segments.length == 3)) {
+      return _door(request, segments);
+    }
+    // From outside, only the family: everyone else gets nothing at all.
+    if (!inside(request) && !outsideMayAsk(request, segments) && !anyoneMayLoad(segments)) {
+      if (!passMayLoad(request, segments) || !await door.admits(request, _now())) {
+        _anonymous(request);
+        return nothingHere();
+      }
+    }
     if (request.url.path == 'ws') return _ws(request);
     if (!reserved.contains(first)) {
       final admitted = _anonymous(request);
@@ -672,6 +694,10 @@ class DenHost implements HostLink {
     if (signed && named != null) {
       final tenant = router.forHub(named);
       if (tenant != null && await tenant.verifiesHeaders(request)) {
+        // A device of the family renewing its browser's door pass.
+        if (method == 'POST' && segments.join('/') == 'api/v1/door/pass') {
+          return jsonResponse({'ok': true}, headers: {'set-cookie': await door.cookie(DoorPass.deviceLife, _now()), 'cache-control': 'no-store'});
+        }
         return tenant.handle(request.change(context: {DeviceAuth.verifiedHeaders: true}));
       }
     }
@@ -763,6 +789,32 @@ class DenHost implements HostLink {
     }
     _anonymous(request);
     throw _noFamily();
+  }
+
+  /// `GET /join/<words>` and `GET /setup/<code>/<hub>`: the links Den sends, opened in a browser.
+  /// A link that works gets a door pass for [DoorPass.linkLife] and goes on to the app at the
+  /// route it is for. From outside, a link that doesn't work gets nothing, like any stranger;
+  /// inside, the app opens and says what is wrong.
+  Future<Response> _door(Request request, List<String> segments) async {
+    final admitted = _anonymous(request);
+    final home = inside(request);
+    _checkFailures(request);
+    final bool works;
+    if (segments.first == 'join') {
+      works = _tenants.isNotEmpty && await HubInvites.liveAcross(admitted, [for (final t in _tenants) t.invites], segments[1]);
+    } else {
+      works = setupCodeTaken(HubSetup.normalize(segments[1]));
+    }
+    if (!works) {
+      _failed(request);
+      if (!home) return nothingHere();
+    }
+    final route = '/${segments.map(Uri.encodeComponent).join('/')}';
+    return Response.found('/#$route', headers: {
+      if (works) 'set-cookie': await door.cookie(DoorPass.linkLife, _now()),
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+    });
   }
 
   /// The hub an invite grant's invite names as its inviting device, or null.

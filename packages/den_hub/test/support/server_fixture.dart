@@ -212,9 +212,18 @@ class ServerFixture {
     return ServerFixture._(dir, host, connector, rclone, logged);
   }
 
-  /// A request with the setup code [code] (null: the server's own).
-  Future<ApiResult> withCode(String method, String path, {Object? body, String? code}) =>
-      apiCall(base, method, path, body: body, headers: {HubSetup.codeHeader: code ?? own.setupCode ?? ''});
+  /// A request with the setup code [code] (null: the server's own). From the home network the
+  /// code isn't needed; [outside] sends it through a tunnel, with the door pass the setup link
+  /// gives, where the code is what counts.
+  Future<ApiResult> withCode(String method, String path, {Object? body, String? code, bool outside = false}) async =>
+      apiCall(base, method, path, body: body, headers: {
+        HubSetup.codeHeader: code ?? own.setupCode ?? '',
+        if (outside) ...await outsideHeaders(),
+      });
+
+  /// The headers of a browser outside the home that opened this server's setup link.
+  Future<Map<String, String>> outsideHeaders() async =>
+      {...fromTunnel, 'cookie': await doorPass(base, '/setup/${own.setupCode}/${own.den.deviceId}')};
 
   /// A request [den] signs for the server's own family's hub.
   Future<ApiResult> signed(Den den, String method, String path, {Object? body}) async {

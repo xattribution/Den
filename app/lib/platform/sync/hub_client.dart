@@ -17,7 +17,11 @@ class HubInfo {
     this.lastError,
     this.matchingWords = const [],
     this.firstBoot,
+    this.open = false,
   });
+
+  /// A fresh hub that this device may claim without its setup code: it is on the home network.
+  final bool open;
 
   /// What a fresh server's first-boot pages say comes first: `start` (connect it to the
   /// internet, then make or restore the family) or `family` (that was done: make the family
@@ -227,6 +231,7 @@ class HubClient {
       stage: json['stage'] as String? ?? 'waiting_for_code',
       lastError: json['last_error'] as String?,
       firstBoot: json['first_boot'] is Map ? (json['first_boot']! as Map)['next'] as String? : null,
+      open: json['open'] == true,
       matchingWords: [
         if (json['matching_words'] case final List<Object?> words)
           for (final w in words)

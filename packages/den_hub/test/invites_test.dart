@@ -32,7 +32,7 @@ void main() {
     final words = (made.body['words']! as List).cast<String>();
     expect(words, hasLength(4));
     expect(made.body['code'], words.join(' '));
-    expect(made.body['link'], '${f.base}/#/join/${words.join('-')}');
+    expect(made.body['link'], '${f.base}/join/${words.join('-')}');
     expect(made.body['member'], zoe);
 
     // Typed loosely, as people do.

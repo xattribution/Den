@@ -131,3 +131,18 @@ Future<void> eventually(FutureOr<bool> Function() condition, {Duration timeout =
     await Future<void>.delayed(const Duration(milliseconds: 20));
   }
 }
+
+/// What a request through a Cloudflare tunnel carries: it comes from outside the home.
+const Map<String, String> fromTunnel = {'cf-connecting-ip': '203.0.113.9'};
+
+/// The door pass cookie (`name=value`) a browser outside gets for opening [path] at [base]: a
+/// setup or invite link that works.
+Future<String> doorPass(Uri base, String path) async {
+  final request = http.Request('GET', base.resolve(path))
+    ..followRedirects = false
+    ..headers.addAll(fromTunnel);
+  final response = await http.Response.fromStream(await request.send());
+  final cookie = response.headers['set-cookie'];
+  if (cookie == null) throw StateError('No door pass for $path: ${response.statusCode}');
+  return cookie.split(';').first;
+}

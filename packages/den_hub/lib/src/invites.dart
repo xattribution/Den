@@ -207,7 +207,7 @@ class HubInvites {
     return jsonResponse({
       'code': code,
       'words': words,
-      'link': urlOf(base, '/#/join/${words.join('-')}'),
+      'link': urlOf(base, '/join/${words.join('-')}'),
       'expires': DateTime.fromMillisecondsSinceEpoch(expires, isUtc: true).toIso8601String(),
       'expires_ms': expires,
       'member': member,
@@ -300,6 +300,35 @@ class HubInvites {
     }
     final holder = holders.single;
     return holder._answer(request, holder._wordsFor(code) ?? code, client, now);
+  }
+
+  /// Whether the four [words] of an invite link (`maple-river-canoe-tiger`) open a live invite
+  /// in one of [books], without using it: for the door ([DenHost], `GET /join/<words>`). Counted
+  /// like [redeemAcross]: the host's limits and wrong words, before anything is stretched.
+  static Future<bool> liveAcross(Request request, List<HubInvites> books, String words) async {
+    final ready = [for (final b in books) if (b.hub.ready) b];
+    if (ready.isEmpty) return false;
+    final first = ready.first;
+    final hub = first.hub;
+    hub.limit(request, 'pairing', Limits.pairing);
+    final now = hub.now();
+    final client = hub.clientOf(request);
+    if (first._wrong.wait(client, now) != null) return false;
+    var code = normalizeCode(words.replaceAll(RegExp(r'[\-_.]+'), ' '));
+    if (code == null) {
+      first._wrong.add(client, now);
+      return false;
+    }
+    var holders = [for (final book in ready) if (book.holds(code)) book];
+    if (holders.isEmpty && ready.any((book) => book._hasSlots)) {
+      code = 'slot:${await InviteWords.slot(code)}';
+      holders = [for (final book in ready) if (book.holds(code)) book];
+    }
+    if (holders.length != 1) {
+      first._wrong.add(client, now);
+      return false;
+    }
+    return true;
   }
 
   /// The invite this family keeps under [code], for [redeemAcross].

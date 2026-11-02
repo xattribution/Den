@@ -9,7 +9,7 @@ void main() {
     expect(link.words, 'maple river canoe tiger');
     expect(link.hub.toString(), 'https://den.example.com');
     expect(link.route, '/join/maple-river-canoe-tiger');
-    expect(link.link().toString(), 'https://den.example.com/#/join/maple-river-canoe-tiger');
+    expect(link.link().toString(), 'https://den.example.com/join/maple-river-canoe-tiger');
 
     expect(DenLink.parse('/join/maple-river-canoe-tiger')!.words, 'maple river canoe tiger');
     const message = 'Zoe, join The Carters on Den: https://den.example.com:8443/#/join/maple-river-canoe-tiger\n\n'
