@@ -2,68 +2,85 @@
 
 The family's calendar, chores, lists and points, in one app on everyone's phone.
 
-![Den's Today on an iPad and a phone: what needs you (a ride nobody is driving, a reward to approve, a late chore), today's events, and chores by person](docs/screens/today-ipad-and-phone.png)
+![Den on an iPad and a phone](docs/screens/today-ipad-and-phone.png)
 
-Den runs on a computer you own, not on someone else's service, and only your family's devices can
-reach it. Setting it up takes one pasted line and a few taps.
+## Start here
 
-- [Quick start](#quick-start)
-- [On a NAS or any Docker box](#on-a-nas-or-any-docker-box)
-- [Reaching Den from away](#reaching-den-from-away)
-- [Backups, and your NAS](#backups-and-your-nas)
-- [Updates](#updates)
-- [Moving Den to another computer](#moving-den-to-another-computer)
-- [If something goes wrong](#if-something-goes-wrong)
+Den lives on one computer in your house that stays on. Everyone's phones connect to it, and nobody
+outside your family can.
 
-## Quick start
+1. **Install Den** on the computer that stays on. Pick yours below.
+2. **Open the link Den shows you**, tap **Make your family**, and finish on your phone.
+3. **Invite everyone.** In Den, tap **Family**, then **Invite**, and send each person their link.
 
-1. **On a Linux computer that stays on** (an old PC, a mini PC, a Raspberry Pi 4 or 5, or a VPS,
-   with at least 1 GB of memory), open a terminal, paste this line and press Enter:
+[Windows](#windows) · [Mac](#mac) · [Linux](#linux) · [NAS or Docker](#nas-or-docker) ·
+[iPhone and iPad](#iphone-and-ipad) · [Android](#android)
+
+### Windows
+
+1. Download **Den-windows.zip** from the [latest release](https://github.com/xattribution/Den/releases/latest).
+2. Unzip it and open **den_app.exe**.
+3. Tap **Start a family**.
+4. Go to **Settings**, **Advanced**, **Hub and sync**, and turn on **Keep the family online**.
+   Leave this computer on.
+
+### Mac
+
+1. Download **Den-macos.zip** from the [latest release](https://github.com/xattribution/Den/releases/latest).
+2. Unzip it and drag **Den** into **Applications**.
+3. The first time, right-click **Den** and choose **Open**, then **Open** again.
+4. Tap **Start a family**.
+5. Go to **Settings**, **Advanced**, **Hub and sync**, and turn on **Keep the family online**.
+   Leave this Mac on.
+
+### Linux
+
+For an old PC, a mini PC, a Raspberry Pi 4 or 5 (64-bit), or a VPS.
+
+1. Open a terminal, paste this line and press Enter:
 
    ```sh
    curl -fsSL https://github.com/xattribution/Den/releases/latest/download/install.sh | sudo sh
    ```
 
-   It installs everything Den needs into `~/den` and ends with a link and a square code.
+2. Wait for it to finish (5 to 15 minutes). It ends with a link and a square code.
+3. Open the link, or scan the code with your phone's camera.
 
-2. **Open that link** on your phone or a computer. Or point your phone's camera at the square
-   code.
+### NAS or Docker
 
-3. **Den's setup page takes it from there:** make your family, add your NAS for backups, and
-   invite everyone. Nothing else is typed into a terminal.
+For Synology, Unraid, TrueNAS, Portainer, or anything else that runs Docker.
 
-**Who can reach it.** On your home network, or a VPN into it, Den works like any home device: the
-first person to open its setup page sets it up. From anywhere else, Den answers only your family's
-devices, and a phone that opens an invite you sent. Everyone else gets nothing at all, not even a
-login page.
+1. Add a container from `ghcr.io/xattribution/den:stable` with port `47733` and a volume at
+   `/data`. Or run:
 
-**On an iPhone:** when Den opens in Safari, tap **Share**, then **Add to Home Screen**, then
-**Add**. On Android: Chrome's **⋮** menu, then **Install app**.
+   ```sh
+   docker run -d --name den --restart unless-stopped -p 47733:47733 -v den-data:/data ghcr.io/xattribution/den:stable
+   ```
 
-**Save your recovery words.** They're 12 words that get you back in if you lose your phone, and
-they open your backups. In Den: your picture, then **Family**, your name, **Recovery words**.
+2. Open `http://<the box's address>:47733` on a phone or computer on the same Wi-Fi.
 
-## On a NAS or any Docker box
+### iPhone and iPad
 
-Synology, Unraid, TrueNAS, Portainer and the like: add a container from
-`ghcr.io/xattribution/den:stable`, with port `47733` and a volume at `/data`. Or with Docker:
+1. Open the invite link a parent sent you, in **Safari**.
+2. Tap **Share**, then **Add to Home Screen**, then **Add**.
+3. Open **Den** from your Home Screen and tap **Join**.
 
-```sh
-docker run -d --name den --restart unless-stopped -p 47733:47733 -v den-data:/data ghcr.io/xattribution/den:stable
-```
+### Android
 
-Then open `http://<the box's address>:47733` on the home Wi-Fi. Den's setup page takes it from
-there.
+1. Open the invite link a parent sent you, in **Chrome**.
+2. Tap **⋮**, then **Install app**.
+3. Open **Den** and tap **Join**.
 
-## Reaching Den from away
+**Save your recovery words.** Every parent should. They get you back in if you lose your phone, and
+they open your backups. In Den: **Family**, your name, **Recovery words**.
 
-**With Cloudflare:** Den's setup page (Settings, Advanced,
-Server, on a parent's phone later) takes a Cloudflare Tunnel's token. The tunnel only carries the
-family's devices to Den; nobody else gets anything through it. You need a free Cloudflare account
-and a domain on it.
+## Reach Den from away
 
-### Making the Cloudflare Tunnel
+At home, Den just works. To reach it from anywhere else, give Den a Cloudflare Tunnel (free; you
+need a domain on Cloudflare). If you use a VPN into your home, that works too, with nothing to set
+up.
 
+### 1. Make the tunnel
 
 Here you make a **tunnel**: a private line from your computer to Cloudflare. You'll come away with
 a long code called a **tunnel token**.
@@ -84,7 +101,7 @@ a long code called a **tunnel token**.
 **Keep the token private.** Anyone with it can pretend to be your Den. If it ever gets out, delete
 the tunnel in Cloudflare and make a new one.
 
-### Giving Den its address in Cloudflare
+### 2. Give Den its address in Cloudflare
 
 Back on the Cloudflare page from above:
 
@@ -103,6 +120,11 @@ Back on the Cloudflare page from above:
 Type it exactly as shown: `hub`, not `localhost` and not your computer's address.
 
 That's your family's address: `den.` plus your domain, like `den.smithfamily.com`.
+
+### 3. Give Den the token
+
+Paste the token on Den's setup page (**Connect Den to the internet**), or later in Den on your
+phone: **Settings**, **Advanced**, **Server**.
 
 ## Backups, and your NAS
 
@@ -132,7 +154,7 @@ before, by itself. When there's an update, Den shows it in **Settings**, **Advan
 
 ## Moving Den to another computer
 
-1. Run the [quick start](#quick-start) line on the new computer, and give it the **same tunnel token**.
+1. Install Den on the new computer ([Start here](#start-here)), and give it the **same tunnel token**.
 2. Open the link it shows and choose **Restore from a backup**.
 3. Pick where the backup is: **A file on this device**, **On your NAS**, or **On this server**.
    Pick the backup (the newest is already chosen) and type your recovery words.
@@ -142,7 +164,7 @@ Everyone's phones find the family again on their own, because the address stays 
 
 ## If something goes wrong
 
-**First, try this:** run the install line from the quick start again. It's safe to run as many times as
+**First, try this:** run the [Linux install line](#linux) again. It's safe to run as many times as
 you want. It fixes what it can and never deletes your family.
 
 To see how Den is doing, type this in the terminal:
@@ -156,11 +178,11 @@ tool. On Debian or Ubuntu, type `apt-get install -y curl sudo` and press Enter (
 again.
 
 **"Den needs to be installed as the computer's administrator."** You left out `sudo`. Copy the
-whole line from the quick start again, including `| sudo sh` at the end.
+whole line from [Linux](#linux) again, including `| sudo sh` at the end.
 
 **"This Raspberry Pi is running the 32-bit Raspberry Pi OS"**, or **"Den needs 64-bit"**. Den only
 runs on 64-bit systems. Put the 64-bit system on the computer (for a Raspberry Pi, use Raspberry
-Pi Imager and pick **Raspberry Pi OS (64-bit)**), then start again from the quick start.
+Pi Imager and pick **Raspberry Pi OS (64-bit)**), then start again from [Linux](#linux).
 
 **"This computer has ... memory"** or **"... free disk space"**. The computer is too small. Den
 needs 1 GB of memory and 2 GB of free space. On a VPS, pick a bigger plan.
@@ -179,14 +201,13 @@ Den, is in the way. If you set up an older Den by hand, stop it first, then run 
 **"This computer has Podman"**. Den needs Docker, and this computer has a look-alike. It's
 simplest to use a fresh computer or VPS.
 
-**"That doesn't look like a tunnel token"**. Copy the command from Cloudflare again ([Making the Cloudflare Tunnel](#making-the-cloudflare-tunnel), number
-5) and paste the whole thing. To give Den the token later: `sudo den tunnel`.
+**"That doesn't look like a tunnel token"**. Copy the command from Cloudflare again ([Make the tunnel](#1-make-the-tunnel), number 5) and paste the whole thing. To give Den the token later: `sudo den tunnel`.
 
 **The tunnel says it didn't connect.** Check the token: make a new one in Cloudflare if you're not
 sure, then `sudo den tunnel` and paste it.
 
 **Den's address shows a Cloudflare error page** (like "Bad gateway" or error 1033).
-- Check [Giving Den its address in Cloudflare](#giving-den-its-address-in-cloudflare): the Service URL must be exactly `http://hub:47733`.
+- Check [Give Den its address in Cloudflare](#2-give-den-its-address-in-cloudflare): the Service URL must be exactly `http://hub:47733`.
 - Run `sudo den status`. If it says Den isn't running, run the install line again.
 
 **The setup link doesn't open.** It works only once. Make a new one: `sudo den setup-link`.
