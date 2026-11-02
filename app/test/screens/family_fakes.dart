@@ -1,10 +1,10 @@
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
-import 'package:den_app/net/den_network.dart';
-import 'package:den_app/net/local_hub.dart';
-import 'package:den_app/net/pairing.dart';
+import 'package:den_app/platform/sync/den_network.dart';
+import 'package:den_app/platform/sync/local_hub.dart';
+import 'package:den_app/platform/sync/pairing.dart';
 import 'package:den_net/den_net.dart' show SyncNode;
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/app/app_state.dart';
 import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
@@ -22,6 +22,12 @@ class FakePairing extends PairingService {
     this.hubInfo,
     this.setup,
     this.link,
+    this.invite,
+    this.serving,
+    this.recoveryKey,
+    this.recovery,
+    this.peek,
+    this.admits = false,
   });
 
   final List<PendingJoin> pending;
@@ -32,6 +38,80 @@ class FakePairing extends PairingService {
   final HubSetupSession? setup;
   final BrowserLinkSession? link;
 
+  /// The invite [createInvite] makes; without one it says there's no hub.
+  final InviteMessage? invite;
+
+  /// The hub that served the page.
+  final HubInfo? serving;
+
+  /// What [joinWithInvite] was asked: the words and the device name it chose for "Zoe".
+  final List<(String, String)> invitesUsed = [];
+
+  /// The hub's server recovery key; without one it says there's no hub.
+  final String? recoveryKey;
+
+  /// What the words typed on "I lost my phone" find; without one, nobody.
+  final RecoverySession? recovery;
+
+  /// What [startRecovery] was asked: the words and the device name it chose for "Alex".
+  final List<(String, String)> recoveriesStarted = [];
+
+  /// What [peekInvite] finds; without one, the words find nothing.
+  final InvitePeek? peek;
+
+  /// Whether [joinWithInvite] lets the device in at once, as an invite with a key does.
+  final bool admits;
+
+  /// Whether each invite [createInvite] made was to let them in at once.
+  final List<bool> invitesLetIn = [];
+
+  /// The hubs [setUpHub] and [adoptServingHub] were asked to take in, and the device id each
+  /// expected from a setup link.
+  final List<(String, String?)> hubsSetUp = [];
+
+  @override
+  Future<String> hubRecoveryKey() async => recoveryKey ?? (throw const PairingException(LocalOnlyPairing.message));
+
+  @override
+  Future<RecoverySession> startRecovery(
+    String text, {
+    String? hubUrl,
+    required String Function(String name) deviceName,
+    required DeviceKind kind,
+  }) async {
+    recoveriesStarted.add((text, deviceName('Alex')));
+    return recovery ??
+        (throw const PairingException("Those words don't belong to anyone in this family. Check them against where you saved them."));
+  }
+
+  @override
+  Future<HubInfo?> servingHub() async => serving;
+
+  @override
+  Future<InviteMessage> createInvite({String? memberId, bool letIn = true}) async {
+    invitesLetIn.add(letIn);
+    return invite ?? (throw const PairingException(LocalOnlyPairing.message));
+  }
+
+  @override
+  Future<InvitePeek> peekInvite(String words, {String? hubUrl}) async =>
+      peek ??
+      (throw const PairingException(
+        "That code isn't right, or the invite has expired. Ask for a new invite.",
+        reason: PairingException.unknownCode,
+      ));
+
+  @override
+  Future<JoinTicket> joinWithInvite(
+    String words, {
+    String? hubUrl,
+    required String Function(String? forName) deviceName,
+    required DeviceKind kind,
+  }) async {
+    invitesUsed.add((words, deviceName('Zoe')));
+    return JoinTicket(familyId: 'FAMILY', familyName: 'The Carters', admitted: admits);
+  }
+
   @override
   Future<List<FoundHub>> findHubs() async => found;
 
@@ -40,7 +120,16 @@ class FakePairing extends PairingService {
       hubInfo ?? (throw const PairingException("Couldn't reach a hub at that address."));
 
   @override
-  HubSetupSession setUpHub(HubInfo hub, String code) => setup!;
+  HubSetupSession setUpHub(HubInfo hub, String code, {String? expectDevice}) {
+    hubsSetUp.add((code, expectDevice));
+    return setup!;
+  }
+
+  @override
+  HubSetupSession adoptServingHub(HubInfo hub, String code, {String? expectDevice}) {
+    hubsSetUp.add((code, expectDevice));
+    return setup ?? (throw const PairingException(LocalOnlyPairing.message));
+  }
 
   @override
   Future<BrowserLinkSession> linkThisBrowser({required String Function() deviceName}) async =>
@@ -75,28 +164,40 @@ class FakePairing extends PairingService {
 }
 
 /// Pumps [screen] the way `shoot` does, without comparing, so a test can act before the shot.
+/// [pushed] opens it over another page, as the app does, so its back button shows. The pairing
+/// service is above the navigator, where sheets the screen opens find it too.
 Future<void> pumpScreen(
   WidgetTester tester,
   Widget screen, {
   required AppState state,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
   PairingService? pairing,
+  bool pushed = false,
 }) async {
   await loadFonts();
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final scale = state.wall ? DenType.wallScale : 1.0;
-  Widget child = Scaffold(body: SafeArea(child: screen));
-  if (pairing != null) child = PairingScope(service: pairing, child: child);
+  final child = Scaffold(body: SafeArea(child: screen));
   await tester.pumpWidget(
     DenScope(
       state: state,
       child: MaterialApp(
+        // A fresh navigator for each screen a test pumps: its first pages are made only once.
+        key: UniqueKey(),
         debugShowCheckedModeBanner: false,
-        theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
-        home: child,
+        theme: denTheme(theme ?? (night ? DenColors.night : DenColors.day), typeScale: scale),
+        builder: (context, navigator) => TextSizeFromState(
+          child: pairing == null ? navigator! : PairingScope(service: pairing, child: navigator!),
+        ),
+        onGenerateRoute: (_) => MaterialPageRoute<void>(builder: (_) => child),
+        onGenerateInitialRoutes: (_) => [
+          if (pushed) MaterialPageRoute<void>(builder: (_) => const Scaffold()),
+          MaterialPageRoute<void>(builder: (_) => child),
+        ],
       ),
     ),
   );
@@ -115,9 +216,11 @@ Future<void> shootWith(
   required AppState state,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
   PairingService? pairing,
+  bool pushed = false,
 }) async {
-  await pumpScreen(tester, screen, state: state, size: size, night: night, pairing: pairing);
+  await pumpScreen(tester, screen, state: state, size: size, night: night, theme: theme, pairing: pairing, pushed: pushed);
   await matchShot(name);
 }
 
@@ -186,6 +289,45 @@ Future<AppState> littleKidTablet(WidgetTester tester) => real(tester, () async {
       await phone.approveDevice(tablet.deviceId, member: leo.id, mode: DeviceMode.personal);
       await tablet.ingest(phone.changesSince(tablet.versionVector, spaces: phone.spacesForDevice(tablet.deviceId)));
       return AppState(tablet);
+    });
+
+/// A hub device named [name] approved by [phone], as the phone holds it.
+Future<Den> approveHub(Den phone, {String name = 'Den hub'}) async {
+  final hub = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate(), now: phone.now);
+  await hub.requestJoin(
+    familyId: phone.familyId!,
+    founderPubkey: phone.founderPubkey!,
+    deviceName: name,
+    kind: DeviceKind.hub,
+    mode: DeviceMode.hub,
+  );
+  await phone.ingest(hub.changesSince(const {}));
+  await phone.approveDevice(hub.deviceId, mode: DeviceMode.hub);
+  return hub;
+}
+
+/// The demo family after "reset the hub, keep the family", on Alex's phone: the old "Den hub",
+/// approved Sep 18 and last synced with on Oct 2 at the home address, and the new "Den hub" at
+/// the same address, approved today and synced with a few minutes ago.
+Future<({AppState state, String oldHub, String newHub})> replacedHub(WidgetTester tester) => real(tester, () async {
+      final storage = MemoryStorage();
+      final keys = await DeviceKeys.generate();
+      final before = await createDemoFamily(storage: storage, keys: keys, now: DateTime.utc(2026, 9, 18, 15));
+      final oldHub = await approveHub(before);
+      await before.close();
+      final phone = await Den.open(storage: storage, keys: keys, now: () => demoNow.millisecondsSinceEpoch);
+      final newHub = await approveHub(phone);
+      final address = Uri.parse('ws://192.168.1.20:47733/ws');
+      final network = DenNetwork(
+        phone,
+        localHub: FakeLocalHub(),
+        hubs: [address],
+        seen: {
+          oldHub.deviceId: HubSighting(DateTime.utc(2026, 10, 2, 23, 40).millisecondsSinceEpoch, address),
+          newHub.deviceId: HubSighting(demoNow.subtract(const Duration(minutes: 4)).millisecondsSinceEpoch, address),
+        },
+      );
+      return (state: AppState(phone, network: network), oldHub: oldHub.deviceId, newHub: newHub.deviceId);
     });
 
 /// A fixed hub, for screenshots of adding one.

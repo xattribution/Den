@@ -1,8 +1,10 @@
 import 'dart:convert';
 
+import 'package:den_app/design/layout.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/app/app_state.dart';
+import 'package:den_app/app/family_colors.dart';
 import 'package:den_core/demo.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -58,6 +60,7 @@ Future<void> shoot(
   required AppState state,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
 }) async {
   await loadFonts();
   tester.view.physicalSize = size;
@@ -70,7 +73,8 @@ Future<void> shoot(
       state: state,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
+        theme: denTheme(theme ?? (night ? DenColors.night : DenColors.day), typeScale: scale),
+        builder: (context, child) => TextSizeFromState(child: child!),
         home: Scaffold(body: SafeArea(child: screen)),
       ),
     ),
@@ -87,6 +91,7 @@ Future<void> shootRoute(
   required AppState state,
   Size size = phone,
   bool night = false,
+  DenColors? theme,
 }) async {
   await loadFonts();
   tester.view.physicalSize = size;
@@ -99,10 +104,55 @@ Future<void> shootRoute(
       child: MaterialApp.router(
         debugShowCheckedModeBanner: false,
         routerConfig: router,
-        theme: denTheme(night ? DenColors.night : DenColors.day, typeScale: scale),
+        theme: denTheme(theme ?? (night ? DenColors.night : DenColors.day), typeScale: scale),
+        builder: (context, child) => TextSizeFromState(child: child!),
       ),
     ),
   );
   await tester.pumpAndSettle();
   await expectLater(find.byType(MaterialApp), matchesGoldenFile('../goldens/$name.png'));
+}
+
+/// Text that reads [words], whatever spaces the line-breaking helpers made unbreakable
+/// ("3:30 PM", "same time").
+Finder findWords(String words) => find.byWidgetPredicate(
+      (w) => w is Text && (w.data ?? w.textSpan?.toPlainText())?.replaceAll(RegExp('[\u00a0\u202f]'), ' ') == words,
+      description: 'text "$words"',
+    );
+
+/// The person's own text size ([AppState.textSize]) on top of the system's, held to 200 %,
+/// following the setting when it changes, and the family's colors, the way the app's root does.
+class TextSizeFromState extends StatelessWidget {
+  const TextSizeFromState({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => FamilyColors(
+        child: DenTextScale(size: DenScope.watch(context, const {Changes.prefs}).textSize, child: child),
+      );
+}
+
+/// Sets the system text size to [scale] (2.0 is 200 %) for the rest of the test.
+void withTextScale(WidgetTester tester, double scale) {
+  tester.platformDispatcher.textScaleFactorTestValue = scale;
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+}
+
+/// [child] with the system text size [text] (null keeps what [withTextScale] set), then the
+/// person's own text size on top, held to 200 %, the way the app's root does it. Asking for a
+/// text size here after [withTextScale] set another is a mistake in the test, so it fails.
+Widget systemText(WidgetTester tester, double? text, {required AppState state, required Widget child}) {
+  final scaled = TextSizeFromState(child: child);
+  if (text == null) return scaled;
+  final set = tester.platformDispatcher.textScaleFactor;
+  if (set != 1 && set != text) {
+    throw StateError('withTextScale set the text size to $set and the shot asks for $text; use one of them.');
+  }
+  return Builder(
+    builder: (context) => MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(text)),
+      child: scaled,
+    ),
+  );
 }

@@ -10,6 +10,10 @@ dependencies:
   async: ^2.13.0
   collection: ^1.19.1
   cryptography: ^2.9.0
+  den_actions:
+    path: ../den_actions
+  den_assistant:
+    path: ../den_assistant
   den_capture:
     path: ../den_capture
   den_core:
@@ -18,6 +22,7 @@ dependencies:
     path: ../den_net
   http: ^1.5.0
   mime: ^2.0.0
+  pointycastle: ^4.0.0
   shelf: ^1.4.2
   shelf_router: ^1.1.4
   shelf_static: ^1.1.3

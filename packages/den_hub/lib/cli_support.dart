@@ -4,4 +4,5 @@ library;
 
 export 'src/context.dart';
 export 'src/gate.dart';
+export 'src/recovery.dart' show HubRecovery, RecoveryRefused, RecoveryTicket, recoveryCliFile, recoveryTicketsDoc;
 export 'src/state.dart';

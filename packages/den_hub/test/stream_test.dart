@@ -6,7 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:den_core/den_core.dart';
-import 'package:test/test.dart';
+import 'support/test.dart';
 
 import 'support/fixture.dart';
 
@@ -109,7 +109,7 @@ void main() {
     expect(changed.$2['types'], ['item']);
     expect((changed.$2['records'] as List).single, containsPair('type', 'item'));
     expect(changed.$2['via'], 'Kitchen');
-    expect(changed.$2['actor'], isNull);
+    expect(changed.$2['actor'], f.id('Alex'), reason: 'the token acts as the parent who made it');
     expect(changed.$3, matches(RegExp(r'^\d{13}-[0-9a-f]{4}-')));
   });
 

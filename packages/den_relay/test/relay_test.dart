@@ -280,6 +280,91 @@ void main() {
     });
   });
 
+  group('per-client shares', () {
+    test('clients are IPv4 addresses, or the /64 an IPv6 address is in', () {
+      expect(clientKeyOf('203.0.113.7'), '203.0.113.7');
+      expect(clientKeyOf('2001:db8:1:2::1'), '2001:db8:1:2::/64');
+      expect(clientKeyOf('2001:db8:1:2:ffff:ffff:ffff:ffff'), '2001:db8:1:2::/64');
+      expect(clientKeyOf('2001:db8:1:3::1'), '2001:db8:1:3::/64');
+      expect(clientKeyOf('::ffff:203.0.113.7'), '203.0.113.7');
+      expect(clientKeyOf('unknown'), 'unknown');
+    });
+
+    test('the rate limit counts a whole IPv6 /64 as one client', () async {
+      final relay = await startRelay(const RelayConfig(trustProxy: true, ipRate: RateSpec(capacity: 1, perSecond: 0.01)));
+      addTearDown(relay.close);
+      final uri = httpBase(relay).replace(path: '/mailbox/${mailbox(1)}');
+      Future<int> from(String address) async => (await http.get(uri, headers: {'x-forwarded-for': address})).statusCode;
+      expect(await from('2001:db8:5:6::1'), 200);
+      expect(await from('2001:db8:5:6::2'), 429, reason: 'the same /64');
+      expect(await from('2001:db8:5:7::1'), 200);
+    });
+
+    test('one client can fill only its share of mailbox bytes and mailboxes', () async {
+      final relay = await startRelay(const RelayConfig(trustProxy: true, maxClientBytes: 150, maxClientMailboxes: 2));
+      addTearDown(relay.close);
+      Future<http.Response> post(String address, String id, int size) => http.post(
+            httpBase(relay).replace(path: '/mailbox/$id'),
+            headers: {'x-forwarded-for': address},
+            body: List.filled(size, 1),
+          );
+      expect((await post('2001:db8:1:2::1', mailbox(1), 100)).statusCode, 200);
+      final over = await post('2001:db8:1:2::99', mailbox(1), 60);
+      expect(over.statusCode, 507);
+      expect(jsonDecode(over.body), containsPair('cap', 'client'));
+      expect((await post('2001:db8:1:3::1', mailbox(1), 60)).statusCode, 200, reason: 'another client still can');
+      expect((await post('2001:db8:1:2::1', mailbox(2), 10)).statusCode, 200);
+      expect((await post('2001:db8:1:2::1', mailbox(3), 10)).statusCode, 507, reason: 'two mailboxes each');
+      expect((await post('2001:db8:1:3::1', mailbox(3), 10)).statusCode, 200);
+      expect(relay.mailboxes.bytesOf('2001:db8:1:2::/64'), 110);
+      expect(relay.mailboxes.mailboxesOf('2001:db8:1:2::/64'), 2);
+    });
+
+    test('expired blobs give a client its share back', () async {
+      var now = DateTime.utc(2026, 10, 1).millisecondsSinceEpoch;
+      final relay = await startRelay(RelayConfig(now: () => now, maxClientBytes: 100, maxClientMailboxes: 1));
+      addTearDown(relay.close);
+      final client = RelayMailbox(httpBase(relay));
+      addTearDown(client.close);
+      await client.append(mailbox(1), List.filled(100, 1));
+      await expectLater(client.append(mailbox(2), [1]), throwsA(isA<RelayException>().having((e) => e.status, 'status', 507)));
+      now += const Duration(days: 31).inMilliseconds;
+      await relay.mailboxes.sweep();
+      expect(relay.mailboxes.bytesOf('127.0.0.1'), 0);
+      expect(await client.append(mailbox(2), List.filled(100, 1)), greaterThan(0));
+    });
+
+    test('one client can hold only its share of tunnels, a tunnel\'s streams, and rendezvous slots', () async {
+      final relay = await startRelay(const RelayConfig(maxTunnelsPerClient: 1, maxStreamsPerClient: 2, maxSlotsPerClient: 1));
+      addTearDown(relay.close);
+      final hubKeys = await DeviceKeys.generate();
+      final hubId = await hubKeys.deviceId();
+      final tunnel = RelayTunnel(relay: httpBase(relay), keys: hubKeys, onClient: (_) {});
+      tunnel.start();
+      addTearDown(tunnel.stop);
+      await tunnel.whenOnline();
+      final other = await (await DeviceKeys.generate()).deviceId();
+      expect((await http.get(httpBase(relay).replace(path: '/tunnel/$other'))).statusCode, 503);
+
+      final streams = [
+        for (var i = 0; i < 2; i++) await connectWebSocket(relayConnectUri(httpBase(relay), hubId)),
+      ];
+      await eventuallyTrue(() => tunnel.openStreams == 2);
+      expect((await http.get(httpBase(relay).replace(path: '/connect/$hubId'))).statusCode, 503);
+      await streams.first.sink.close();
+      await eventuallyTrue(() => relay.tunnels.canConnect(hubId, client: '127.0.0.1'));
+      for (final s in streams.skip(1)) {
+        await s.sink.close();
+      }
+
+      final waiting = rendezvous(httpBase(relay), 'ab' * 32, host: true, timeout: const Duration(seconds: 5));
+      unawaited(waiting.then((_) {}, onError: (Object _) {}));
+      await eventuallyTrue(() => relay.slots.hasHost('ab' * 32));
+      final second = await http.get(httpBase(relay).replace(path: '/rendezvous/${'cd' * 32}', query: 'role=host'));
+      expect(second.statusCode, 503);
+    });
+  });
+
   group('rendezvous', () {
     test('pairs a host and a guest and pipes a session between them', () async {
       final relay = await startRelay(const RelayConfig());
@@ -311,6 +396,19 @@ void main() {
       await eventuallyTrue(() => relay.slots.hasHost(slot));
       final second = await http.get(httpBase(relay).replace(path: '/rendezvous/$slot', query: 'role=host'));
       expect(second.statusCode, 409);
+    });
+
+    test('a message over the limit closes the connection before the relay buffers it', () async {
+      final relay = await startRelay(const RelayConfig(maxMessageBytes: 1000));
+      addTearDown(relay.close);
+      final slot = 'ef' * 32;
+      final host = await connectWebSocket(relayRendezvousUri(httpBase(relay), slot, host: true));
+      await eventuallyTrue(() => relay.slots.hasHost(slot));
+      var closed = false;
+      final ended = host.stream.drain<void>().then((_) => closed = true, onError: (Object _) => closed = true);
+      host.sink.add(List.filled(5000, 1));
+      await ended.timeout(const Duration(seconds: 5), onTimeout: () => false);
+      expect(closed, isTrue, reason: 'the relay closed the connection');
     });
 
     test('a waiting host is closed when the slot expires', () async {

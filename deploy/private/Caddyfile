@@ -1,0 +1,46 @@
+# Caddy in front of the hubs, private setup (docs/hosting.md, "Private: home networks plus
+# Tailscale"). It runs on the server's own network and listens on TCP 443 only: no port 80,
+# no HTTP/3, no admin API. The firewall decides who reaches 443 at all (the homes and Tailscale);
+# each hub's own device sign-in decides what they can do.
+{
+	admin off
+	# Nothing listens on port 80, so there's nothing to redirect from.
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+		# A request goes to the site its TLS connection was made for, or nowhere: with several
+		# families on this server, one family's address never carries another's requests.
+		strict_sni_host on
+	}
+}
+
+# A family's site: the certificate, compression, and the hub that serves it. Each address below
+# imports it with that hub's port: the Den host's (DEN_PORT) for every family on it, which is all
+# of them unless one keeps a hub container of its own.
+(den) {
+	# The certificate comes from Let's Encrypt through Cloudflare's DNS (the ACME DNS-01
+	# challenge), with the token from .env. Caddy renews it the same way, about a month ahead.
+	# 1.1.1.1 checks the challenge record, not the server's own resolver.
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+		resolvers 1.1.1.1 1.0.0.1
+	}
+
+	# Caddy sends X-Forwarded-For, -Proto and -Host, passes WebSockets (/ws) through, and
+	# flushes the event streams as they come (the API's, and a shared calendar's watch, which
+	# another family's hub keeps open); the hub sets its own security headers.
+	@compressible not path /api/v1/stream /ics/*/watch
+	encode @compressible zstd gzip
+	reverse_proxy 127.0.0.1:{args[0]}
+}
+
+# The first family.
+{$DEN_DOMAIN} {
+	import den {$DEN_PORT:47733}
+}
+
+# The other families on this server (sudo ./install.sh add-family), a site each, to the Den host
+# (or to a family's own hub container): Caddyfile.families, which install.sh writes and
+# compose.families.yaml mounts here. With no other families, nothing is mounted and this imports
+# nothing.
+import /etc/caddy/families/*

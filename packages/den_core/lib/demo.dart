@@ -1,6 +1,8 @@
 /// A realistic sample family for screenshots, demos and tests. Pure Dart.
 library;
 
+import 'dart:math' as math;
+
 import 'den_core.dart';
 import 'src/time.dart';
 
@@ -21,17 +23,17 @@ const Map<String, String> demoSignIns = {
 ///
 /// [now] is the demo's present moment and becomes the engine's clock: a UTC [DateTime] is taken
 /// as that instant, and a local one (`DateTime(2026, 10, 16, 8)`) as that wall-clock time in
-/// [demoTimeZone], so "today" doesn't depend on the machine's zone. Without [now] the demo is
+/// [zone] ([demoTimeZone] by default, where the family lives), so "today" doesn't depend on the
+/// machine's zone. Without [now] the demo is
 /// seeded around the real time and the engine follows the real clock. [storage] must be empty.
 ///
-/// Two parents (Alex, Priya), three kids (Maya 14, Leo 8, Zoe 4) and Grandma Rosa; a kitchen
-/// display that the kids check chores off on; this week's school runs, soccer practice with
-/// nobody picking up, a dentist visit, a birthday party, dinner at Grandma's, a parents-only
-/// dinner, a swim lesson today with no driver, and a beach trip countdown; daily and rotating
-/// chores with steps and points, completions through the week, groceries across three stores,
-/// a packing list, a meal plan and a dated list; goals, rewards and a pending request.
-Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? now}) async {
-  const zone = demoTimeZone;
+/// Two parents (Alex, who saved recovery words, and Priya), three kids (Maya 14, Leo 8, Zoe 4) and
+/// Grandma Rosa; a kitchen display that the kids check chores off on; this week's school runs,
+/// soccer practice with nobody picking up, a dentist visit, a birthday party, dinner at Grandma's,
+/// a parents-only dinner, a swim lesson today with no driver, and a beach trip countdown; daily and
+/// rotating chores with steps and points, completions through the week, groceries across three
+/// stores, a packing list, a meal plan and a dated list; goals, rewards and a pending request.
+Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? now, String zone = demoTimeZone}) async {
   final fixedNow = now == null
       ? null
       : now.isUtc
@@ -55,20 +57,28 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
     familyName: 'Carter family',
     timezone: zone,
     yourName: 'Alex',
-    marker: Marker.blue,
+    marker: Marker.sky,
     animal: Animal.dog,
+    picture: 'dog',
     deviceName: 'Alex\'s phone',
     deviceKind: DeviceKind.phone,
   );
   final alex = phone.actor!.id;
   final year = int.parse(today.substring(0, 4));
-  final priya = await phone.addMember(name: 'Priya', role: Role.parent, marker: Marker.green, animal: Animal.bird);
+  final priya = await phone.addMember(
+    name: 'Priya',
+    role: Role.parent,
+    marker: Marker.grass,
+    animal: Animal.bird,
+    picture: 'sunflower',
+  );
   final maya = await phone.addMember(
     name: 'Maya',
     role: Role.kid,
     tier: Tier.teen,
-    marker: Marker.orange,
+    marker: Marker.tangerine,
     animal: Animal.horse,
+    picture: 'guitar',
     birthday: '${year - 14}-03-09',
     grants: {Grant.events, Grant.lists},
   );
@@ -76,23 +86,33 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
     name: 'Leo',
     role: Role.kid,
     tier: Tier.little,
-    marker: Marker.teal,
+    marker: Marker.aqua,
     animal: Animal.fish,
+    picture: 'dinosaur',
     birthday: '${year - 8}-07-22',
   );
   final zoe = await phone.addMember(
     name: 'Zoe',
     role: Role.kid,
     tier: Tier.preReader,
-    marker: Marker.pink,
+    marker: Marker.bubblegum,
     animal: Animal.butterfly,
+    picture: 'butterfly',
     birthday: '${year - 4}-11-30',
   );
-  await phone.addMember(name: 'Grandma Rosa', role: Role.adult, marker: Marker.plum, animal: Animal.rabbit);
+  await phone.addMember(
+    name: 'Grandma Rosa',
+    role: Role.adult,
+    marker: Marker.lavender,
+    animal: Animal.rabbit,
+    picture: 'teacup',
+  );
   final names = {alex: 'Alex', priya: 'Priya', maya: 'Maya', leo: 'Leo', zoe: 'Zoe'};
   for (final e in names.entries) {
     await phone.setSignIn(e.key, kind: e.key == zoe ? 'pattern' : 'pin', secret: demoSignIns[e.value]);
   }
+  // Alex saved recovery words when the family was set up; the demo keeps only their public half.
+  await phone.setRecoveryKey(alex, (await RecoveryKey.generate()).publicKey);
 
   final school = await phone.addCategory(name: 'School', icon: 'school');
   final sports = await phone.addCategory(name: 'Sports', icon: 'sports');
@@ -411,7 +431,10 @@ Future<Den> createDemoFamily({DenStorage? storage, DeviceKeys? keys, DateTime? n
   final glue = display.list(science)!.items.firstWhere((i) => i.text == 'Glue sticks').id;
   await as(maya, () => display.setItemChecked(glue, true));
 
-  moveTo(present - 20 * 60000);
+  // This morning's check-offs, a little before now, but never before today began where the
+  // family lives: a check-off clocked yesterday can't be for today (in the first minutes after
+  // midnight, twenty minutes ago was still yesterday).
+  moveTo(math.max(present - 20 * 60000, dayStartIn(zone, today)));
   await as(zoe, () => display.setChoreDone(beds[zoe]!, today, true));
   await as(leo, () => display.setChoreDone(cat, today, true));
   await toPhone();

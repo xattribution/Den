@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:cryptography/dart.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_net/den_net.dart';
 import 'package:test/test.dart';
@@ -55,6 +56,16 @@ void main() {
     expect((await check(headers, sent: utf8.encode('{"text":"pony"}'))).problem, 'bad-signature');
     expect((await check(headers, to: Uri.parse('http://192.168.1.20:47733/api/v1/capture/reader'))).problem, 'bad-signature');
     expect((await check(headers, method: 'PUT')).problem, 'bad-signature');
+    expect((await check(await sign(family.founder, to: kidPhone.deviceId))).problem, 'bad-signature');
+  });
+
+  test('every signed request names the hub it is for, in X-Den-Hub, for a host to route by', () async {
+    final headers = await sign(family.founder);
+    expect(headers[DeviceRequest.hubHeader], hub.deviceId);
+    expect(headers[DeviceRequest.bodyHash], [for (final b in const DartSha256().hashSync(body).bytes) b.toRadixString(16).padLeft(2, '0')].join(), reason: 'the body hash it signed, to check from the headers');
+    // Only routing: the signature covers the hub already, so naming another changes nothing.
+    final other = {...headers, DeviceRequest.hubHeader: kidPhone.deviceId};
+    expect((await check(other)).ok, isTrue);
     expect((await check(await sign(family.founder, to: kidPhone.deviceId))).problem, 'bad-signature');
   });
 

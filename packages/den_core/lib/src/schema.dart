@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'account.dart';
 import 'model.dart';
 import 'rrule.dart';
 import 'time.dart';
@@ -151,17 +154,30 @@ class TypeSpec {
 /// Checks one entry of a map field written on its own, as `"<field>.<key>"`.
 typedef EntryCheck = String? Function(String key, Object? value);
 
-/// One overridden event field of an occurrence; null clears the override.
+/// One overridden event field of an occurrence; null clears the override. `drivers.<leg>`
+/// overrides one ride leg's driver: a member id, or `""` for nobody this time.
 String? _patchEntry(String key, Object? value) {
+  if (key.startsWith('drivers.')) {
+    final leg = key.substring(8);
+    if (!rideLegs.contains(leg)) return 'A ride leg is "to" or "from"';
+    if (value == null || value == '') return null;
+    return id()('Driver', value);
+  }
   if (!patchableEventFields.contains(key)) return 'An occurrence can\'t change "$key" on its own';
   return value == null ? null : eventFields[key]!(_label(key), value);
 }
 
+/// One leg of `event.drivers`, written on its own as `drivers.<leg>`: who drives, or null for
+/// nobody yet.
+String? _driverEntry(String key, Object? value) =>
+    rideLegs.contains(key) ? id(nullable: true)('Driver', value) : 'A ride leg is "to" or "from"';
+
 final FieldCheck _reminders = listOf(number(min: 0, max: 40320), max: 10);
 final FieldCheck _rides = listOf(
-  shape({'leg': oneOf(['to', 'from']), 'driver': id(nullable: true)}, required: {'leg'}),
+  shape({'leg': oneOf(rideLegs), 'driver': id(nullable: true)}, required: {'leg'}),
   max: 4,
 );
+final FieldCheck _drivers = shape({for (final leg in rideLegs) leg: id(nullable: true)});
 final FieldCheck _memberIds = listOf(id(), max: 50, unique: true);
 
 final Map<String, FieldCheck> eventFields = {
@@ -182,6 +198,7 @@ final Map<String, FieldCheck> eventFields = {
     'label': text(max: maxTitle, nullable: true),
   }, required: {'kind'}),
   'rides': _rides,
+  'drivers': _drivers,
   'countdown': flag(),
 };
 
@@ -227,11 +244,141 @@ String? _steps(String label, Object? v) {
   return ids.toSet().length == ids.length ? null : '$label has two steps with the same id';
 }
 
+/// A member's picture: a pack id or `initial` (see [Picture]).
+String? _picture(String label, Object? v) {
+  if (v == null) return null;
+  return Picture.valid(v) ? null : '$label is not a picture Den knows';
+}
+
+/// A parent's recovery key (`member.recovery`) or the hub's the family lets help
+/// (`family.recovery`), with the devices the key it replaces had let in; and the proof a device
+/// let in by recovery carries (`device.recovery`). See recovery.dart.
+FieldCheck _recoveryKey(String name) => shape({name: keyText(nullable: true), 'kept': listOf(id(), unique: true)});
+final FieldCheck _recoveryProof = shape({
+  'kind': oneOf(['words', 'hub']),
+  'member': id(),
+  'key': keyText(),
+  'nonce': keyText(),
+  'expires': number(min: 0),
+  'sig': keyText(),
+}, required: {'kind', 'member', 'key', 'nonce', 'expires', 'sig'});
+
+/// The proof a device let in by an invite carries (`device.invite`). See invite_keys.dart.
+final FieldCheck _inviteProof = shape({
+  'invite': id(),
+  'member': id(nullable: true),
+  'mode': names(DeviceMode.values),
+  'key': keyText(),
+  'nonce': keyText(),
+  'expires': number(min: 0),
+  'sig': keyText(),
+}, required: {'invite', 'mode', 'key', 'nonce', 'expires', 'sig'});
+
+/// One entry of `family.oversight`: a person's privacy (`<memberId>`: `{parentsSeePrivate}`),
+/// or one of their other settings (`<memberId>.<setting>`: a bool, null for the default).
+String? _oversightEntry(String key, Object? v) {
+  final dot = key.indexOf('.');
+  if (dot < 0) return shape({'parentsSeePrivate': flag()})('Oversight', v);
+  final setting = key.substring(dot + 1);
+  if (dot == 0 || !OversightSetting.all.contains(setting)) return 'Oversight has an unknown setting "$setting"';
+  return v == null || v is bool ? null : 'Oversight $setting must be true or false';
+}
+
+String? _oversight(String label, Object? v) {
+  if (v is! Map) return '$label must be a map';
+  if (v.length > 200) return '$label has too many entries';
+  for (final e in v.entries) {
+    if (e.key is! String || !_idRe.hasMatch(e.key as String)) return '$label has a bad key';
+    final err = _oversightEntry(e.key as String, e.value);
+    if (err != null) return err;
+  }
+  return null;
+}
+
+/// What a photo's bytes are: their format and size in pixels, read from the headers; null when
+/// they are neither a JPEG nor a WebP Den can read.
+({String mime, int width, int height})? photoFormat(List<int> b) {
+  int u16be(int i) => (b[i] << 8) | b[i + 1];
+  int u16le(int i) => b[i] | (b[i + 1] << 8);
+  int u24le(int i) => b[i] | (b[i + 1] << 8) | (b[i + 2] << 16);
+  bool ascii(int at, String text) {
+    if (at + text.length > b.length) return false;
+    for (var i = 0; i < text.length; i++) {
+      if (b[at + i] != text.codeUnitAt(i)) return false;
+    }
+    return true;
+  }
+
+  if (b.length > 4 && b[0] == 0xFF && b[1] == 0xD8) {
+    var i = 2;
+    while (i + 3 < b.length) {
+      if (b[i] != 0xFF) return null;
+      final marker = b[i + 1];
+      if (marker == 0xFF) {
+        i++;
+        continue;
+      }
+      if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+        i += 2;
+        continue;
+      }
+      if (marker == 0xD9 || marker == 0xDA) return null;
+      final length = u16be(i + 2);
+      if (length < 2) return null;
+      final sof = marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC;
+      if (sof) {
+        if (i + 9 > b.length) return null;
+        return (mime: Photo.jpeg, height: u16be(i + 5), width: u16be(i + 7));
+      }
+      i += 2 + length;
+    }
+    return null;
+  }
+  if (b.length >= 30 && ascii(0, 'RIFF') && ascii(8, 'WEBP')) {
+    if (ascii(12, 'VP8 ') && b[23] == 0x9D && b[24] == 0x01 && b[25] == 0x2A) {
+      return (mime: Photo.webp, width: u16le(26) & 0x3FFF, height: u16le(28) & 0x3FFF);
+    }
+    if (ascii(12, 'VP8L') && b[20] == 0x2F) {
+      final bits = b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24);
+      return (mime: Photo.webp, width: (bits & 0x3FFF) + 1, height: ((bits >> 14) & 0x3FFF) + 1);
+    }
+    if (ascii(12, 'VP8X')) return (mime: Photo.webp, width: u24le(24) + 1, height: u24le(27) + 1);
+  }
+  return null;
+}
+
+/// The bytes of a photo's `data`, or null when it isn't base64.
+List<int>? photoBytes(Object? data) {
+  if (data is! String) return null;
+  try {
+    return base64.decode(data);
+  } on FormatException {
+    return null;
+  }
+}
+
+String? _photoData(String label, Object? v) {
+  if (v is! String) return '$label must be text';
+  if (v.length > (Photo.maxBytes + 2) ~/ 3 * 4) return 'The photo is too big (${Photo.maxBytes ~/ 1024} KB at most)';
+  final bytes = photoBytes(v);
+  if (bytes == null) return '$label isn\'t a photo';
+  if (bytes.length > Photo.maxBytes) return 'The photo is too big (${Photo.maxBytes ~/ 1024} KB at most)';
+  final format = photoFormat(bytes);
+  if (format == null) return 'A photo must be a JPEG or WebP';
+  if (format.width != Photo.side || format.height != Photo.side) {
+    return 'A photo must be ${Photo.side} by ${Photo.side} pixels';
+  }
+  return null;
+}
+
 final FieldCheck _signIn = shape({
   'kind': oneOf(['pin', 'pattern', 'none']),
   'salt': text(max: 100, nullable: true),
   'hash': text(max: 200, nullable: true),
 }, required: {'kind'});
+
+/// Stars a chore or step is worth.
+final FieldCheck _points = number(min: 0, max: 1000);
 
 String? _checker(String label, Object? v) => v == null || (v is String && (v.isEmpty || _idRe.hasMatch(v)))
     ? null
@@ -245,21 +392,60 @@ final Map<String, TypeSpec> typeSpecs = {
     'founderDevice': id(),
     'capture': oneOf(['direct', 'review']),
     'pointsEnabled': flag(),
-    'oversight': dict(shape({'parentsSeePrivate': flag()})),
+    'colors': names(ColorPack.values),
+    'oversight': _oversight,
+    'assistant': shape({
+      'enabled': flag(),
+      'members': listOf(id(), max: 50, unique: true),
+      'kidDailyLimit': number(min: 0, max: 1000),
+      'budgetCents': number(min: 0, max: 100000),
+    }, required: {'enabled'}),
+    'recovery': _recoveryKey('serverKey'),
   }, required: {'name', 'timezone', 'founderDevice'}, space: Space.family, entries: {
-    'oversight': (key, v) => shape({'parentsSeePrivate': flag()})('Oversight', v),
+    'oversight': _oversightEntry,
   }),
   RecordType.member: TypeSpec({
     'name': text(min: 1, max: maxName),
     'role': names(Role.values),
     'tier': names(Tier.values, nullable: true),
-    'marker': names(Marker.values),
+    'marker': oneOf(Marker.allNames),
     'animal': names(Animal.values),
+    'picture': _picture,
     'birthday': localDate(nullable: true),
+    'until': localDate(nullable: true),
     'grants': listOf(names(Grant.values), max: 4, unique: true),
     'signIn': _signIn,
     'order': number(),
+    'recovery': _recoveryKey('key'),
+    // The Google or Apple account that signs in as them, with the hub's proof that it signed in
+    // (account.dart): never an email.
+    'account': shape({
+      'provider': oneOf(accountProviders),
+      'hash': hex64(),
+      'hub': id(),
+      'key': keyText(),
+      'nonce': keyText(),
+      'expires': number(min: 0),
+      'sig': keyText(),
+    }, required: {'provider', 'hash', 'hub', 'key', 'nonce', 'expires', 'sig'}, nullable: true),
   }, required: {'name', 'role'}, space: Space.family),
+  RecordType.signInTries: TypeSpec({
+    'device': id(),
+    'member': id(),
+    'tries': number(min: 1, max: 1000000),
+  }, required: {'device', 'member', 'tries'}, space: Space.family),
+  // An invite that lets someone in at once (invite_keys.dart).
+  RecordType.inviteKey: TypeSpec({
+    'member': id(nullable: true),
+    'home': id(nullable: true),
+    'modes': listOf(names(DeviceMode.values), max: 3, unique: true),
+    'uses': number(min: 1, max: 50),
+    'key': keyText(nullable: true),
+    'by': id(),
+    'device': id(),
+    'expires': number(min: 0),
+    'kept': listOf(id(), max: 50, unique: true),
+  }, required: {'by', 'device', 'expires'}, space: Space.family),
   RecordType.device: TypeSpec({
     'name': text(min: 1, max: maxName),
     'kind': names(DeviceKind.values),
@@ -270,13 +456,16 @@ final Map<String, TypeSpec> typeSpecs = {
     'approved': flag(),
     'approvedBy': id(nullable: true),
     'revoked': flag(),
+    'revokedAfter': number(min: 0),
     'display': shape({'layout': names(DisplayLayout.values), 'openCheckoff': flag()}),
+    'recovery': _recoveryProof,
+    'invite': _inviteProof,
   }, required: {'name', 'kind', 'pubkey', 'mode'}, space: Space.family),
   RecordType.category: TypeSpec({
     'name': text(min: 1, max: maxName),
     'icon': text(max: 40),
   }, required: {'name'}, space: Space.family),
-  RecordType.event: TypeSpec(eventFields, required: {'title', 'start', 'end'}),
+  RecordType.event: TypeSpec(eventFields, required: {'title', 'start', 'end'}, entries: {'drivers': _driverEntry}),
   RecordType.eventException: TypeSpec({
     'event': id(),
     'occurrence': number(min: 0),
@@ -297,7 +486,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'owner': _choreOwner,
     'schedule': _schedule,
     'dueTime': localTime(nullable: true),
-    'points': number(min: 0, max: 1000),
+    'points': _points,
     'steps': _steps,
     'reminders': _reminders,
     'active': flag(),
@@ -309,7 +498,12 @@ final Map<String, TypeSpec> typeSpecs = {
     'doneBy': id(nullable: true),
     'owner': id(nullable: true),
     'steps': dict(_checker, maxKeys: maxSteps),
-  }, required: {'chore', 'date'}, entries: {'steps': (key, v) => _checker('Steps', v)}),
+    'points': _points,
+    'stepPoints': dict(_points, maxKeys: maxSteps),
+  }, required: {'chore', 'date'}, entries: {
+    'steps': (key, v) => _checker('Steps', v),
+    'stepPoints': (key, v) => _points('Step points', v),
+  }),
   RecordType.adjustment: TypeSpec({
     'member': id(),
     'delta': (label, v) => v == 0 ? '$label can\'t be zero' : number(min: -10000, max: 10000)(label, v),
@@ -380,7 +574,13 @@ final Map<String, TypeSpec> typeSpecs = {
     'client': text(max: maxTitle, nullable: true),
     'status': names(ConnectionStatus.values),
     'expires': number(min: 0, nullable: true),
+    'tz': zoneName(nullable: true),
   }, required: {'label', 'kind', 'scopes', 'status'}, space: Space.parents),
+  RecordType.photo: TypeSpec({
+    'member': id(),
+    'mime': oneOf(const [Photo.jpeg, Photo.webp]),
+    'data': _photoData,
+  }, required: {'member', 'mime', 'data'}, space: Space.family),
 };
 
 /// `_from` on a change: what a capture read, and who read it.

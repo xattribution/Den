@@ -1,0 +1,149 @@
+import 'dart:convert';
+
+import 'package:den_app/platform/sync/hub_push.dart';
+import 'package:den_app/design/widgets.dart' show ActionRow;
+import 'package:den_app/features/settings/screens/web_reminders.dart';
+import 'package:den_app/features/today/screens/today_screen.dart';
+import 'package:den_app/platform/web/web_app.dart';
+import 'package:den_app/platform/web/web_insets.dart';
+import 'package:den_core/den_core.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../helpers/shots.dart';
+import 'family_fakes.dart';
+
+/// The hub's push endpoints, answering at once.
+class FakePushClient extends HubPushClient {
+  FakePushClient(super.network);
+
+  @override
+  Future<HubPushStatus> status() async => const HubPushStatus(key: 'BPk-key', subscribed: false);
+}
+
+const homeScreen = WebAppInfo(
+  ios: true,
+  iosVersion: (major: 18, minor: 6),
+  standalone: true,
+  secure: true,
+  worker: true,
+  push: true,
+  permission: 'default',
+  share: true,
+  ready: true,
+);
+
+void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets('A device asking to join for someone is approved from Today with one tap', (tester) async {
+    final state = await demo(tester);
+    final zoe = kidOf(state);
+    final asking = await real(tester, () async {
+      final d = await Den.open(storage: MemoryStorage(), keys: await DeviceKeys.generate());
+      await d.requestJoin(
+        familyId: state.den.familyId!,
+        founderPubkey: state.den.founderPubkey!,
+        deviceName: "${zoe.name}'s iPhone",
+        kind: DeviceKind.phone,
+        memberId: zoe.id,
+      );
+      await state.den.ingest(d.changesSince(const {}));
+      return d;
+    });
+    await pumpScreen(tester, const TodayScreen(), state: state, size: const Size(390, 1400));
+    final ask = findWords("${zoe.name}'s iPhone wants to join as ${zoe.name}");
+    expect(ask, findsOneWidget);
+    await matchShot('today_join_request_phone');
+    final row = find.ancestor(of: ask, matching: find.byType(ActionRow));
+    await tester.runAsync(() async {
+      await tester.tap(find.descendant(of: row, matching: find.text('Approve')));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
+    await tester.pumpAndSettle();
+    final device = state.den.device(asking.deviceId)!;
+    expect(device.approved, isTrue);
+    expect(device.member, zoe.id);
+    expect(find.textContaining('wants to join'), findsNothing);
+    expect(findWords("${zoe.name}'s iPhone joined as ${zoe.name}"), findsOneWidget, reason: 'the row says what it did, in place');
+  });
+
+  testWidgets('Reminders in Safari say to add Den to the Home Screen first', (tester) async {
+    final state = await demo(tester);
+    await pumpScreen(
+      tester,
+      const WebReminders(web: WebAppInfo(ios: true, iosVersion: (major: 18, minor: 6), secure: true, worker: true)),
+      state: state,
+    );
+    expect(find.textContaining('Reminders work once Den is on your Home Screen'), findsOneWidget);
+  });
+
+  testWidgets('Reminders on an iPhone before iOS 16.4 say to update it', (tester) async {
+    final state = await demo(tester);
+    await pumpScreen(
+      tester,
+      const WebReminders(web: WebAppInfo(ios: true, iosVersion: (major: 16, minor: 3), standalone: true, secure: true)),
+      state: state,
+    );
+    expect(find.textContaining('or later. Update it in Settings'), findsOneWidget);
+  });
+
+  testWidgets('Reminders on a Home Screen iPhone: one tap, and an honest note when it fails', (tester) async {
+    final state = await networked(tester);
+    await pumpScreen(tester, WebReminders(web: homeScreen, client: FakePushClient(state.network!)), state: state);
+    expect(find.text('Turn on reminders on this iPhone'), findsOneWidget);
+    await matchShot('settings_web_reminders_phone');
+    await tester.tap(find.text('Turn on reminders on this iPhone'));
+    await tester.pumpAndSettle();
+    expect(find.text("This iPhone couldn't turn on reminders. Try again."), findsOneWidget);
+  });
+
+  testWidgets('The safe areas pad the app on the web, except under the keyboard', (tester) async {
+    late EdgeInsets padding;
+    Widget app(EdgeInsets keyboard) => MediaQuery(
+          data: MediaQueryData(size: const Size(390, 844), viewInsets: keyboard),
+          child: WebSafeArea(
+            insets: const [0, 0, 34, 0],
+            child: Builder(builder: (context) {
+              padding = MediaQuery.paddingOf(context);
+              return const SizedBox.shrink();
+            }),
+          ),
+        );
+    await tester.pumpWidget(app(EdgeInsets.zero));
+    expect(padding.bottom, 34);
+    await tester.pumpWidget(app(const EdgeInsets.only(bottom: 300)));
+    expect(padding.bottom, 0);
+  });
+
+  test('Where reminders can work, and why not', () {
+    const safari = WebAppInfo(ios: true, iosVersion: (major: 18, minor: 6), secure: true);
+    expect(pushAvailability(safari), PushAvailability.addToHomeScreen);
+    expect(pushAvailability(homeScreen), PushAvailability.ready);
+    expect(
+      pushAvailability(const WebAppInfo(ios: true, iosVersion: (major: 16, minor: 3), standalone: true, secure: true)),
+      PushAvailability.updateIos,
+    );
+    expect(pushAvailability(const WebAppInfo(secure: false, push: true)), PushAvailability.needsHttps);
+    expect(
+      pushAvailability(const WebAppInfo(ios: true, iosVersion: (major: 17, minor: 0), standalone: true, secure: true, push: true, permission: 'denied')),
+      PushAvailability.blocked,
+    );
+    expect(pushAvailability(const WebAppInfo(secure: true, push: true, permission: 'default')), PushAvailability.ready);
+    expect(pushAvailability(const WebAppInfo(secure: true)), PushAvailability.unsupported);
+  });
+
+  test("The page's answer reads as the browser it describes", () {
+    final info = WebAppInfo.fromJson(Map<String, Object?>.from(jsonDecode(
+      '{"ios":true,"ios_version":[17,4],"ipad":true,"standalone":true,"secure":true,"worker":true,'
+      '"push":true,"permission":"granted","share":true,"ready":false}',
+    ) as Map));
+    expect(info.iosVersion, (major: 17, minor: 4));
+    expect(info.kind, DeviceKind.tablet);
+    expect(info.needsHomeScreen, isFalse);
+    expect(info.iosTooOld, isFalse);
+    expect(const WebAppInfo(ios: true).kind, DeviceKind.phone);
+    expect(const WebAppInfo().kind, DeviceKind.browser);
+  });
+}

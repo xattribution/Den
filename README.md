@@ -1,124 +1,246 @@
 # Den
 
-The family's calendar, chores, lists and points, on the family's own devices.
+The family's calendar, chores, lists and points, in one app on everyone's phone.
 
-![Den on Android: today's events with person colors, a ride nobody has taken, and chores by person](docs/screens/android-today.png)
+![Den on an iPad and a phone](docs/screens/today-ipad-and-phone.png)
 
-## Quick start
+## Start here
 
-**Just phones.** Install Den on one parent's phone, tap "Start a family", add the kids, and
-invite your partner from Family → Devices → Add a device (a QR code, or four words to read out).
-Every phone keeps the whole family, encrypted, and phones sync with each other when they meet on
-the same Wi-Fi. Nothing to host.
+Den lives on one computer in your house that stays on. Everyone's phones connect to it, and nobody
+outside your family can.
 
-**With a hub (recommended).** An always-on device keeps the family online while phones sleep and
-runs the extras: Home Assistant, AI access over MCP, calendar feeds, reminders.
+1. **Install Den** on the computer that stays on. Pick yours below.
+2. **Open the link Den shows you**, tap **Make your family**, and finish on your phone.
+3. **Invite everyone.** In Den, tap **Family**, then **Invite**, and send each person their link.
 
-- An old Android tablet or a computer: install Den and turn on Settings → This device →
-  "Keep the family online". The hub runs inside the app; on Android it keeps running in the
-  background, with the notification "Den is keeping the family online", until you turn it off.
-- A NAS, mini PC or Raspberry Pi with Docker:
+[Windows](#windows) · [Mac](#mac) · [Linux](#linux) · [NAS or Docker](#nas-or-docker) ·
+[iPhone and iPad](#iphone-and-ipad) · [Android](#android)
 
-  ```bash
-  docker run -d --name den-hub --restart unless-stopped --network host \
-    -v den-hub:/data ghcr.io/xattribution/den-hub:latest
-  ```
+### Windows
 
-  The hub prints a setup code in its log (`docker logs den-hub`). On a parent's phone, go to
-  Family → Devices → Add a device → A hub, pick it from the list or type its address, and enter
-  the code. The phone then shows three words and checks that the hub reports the same three
-  (they're in its log too); approve it if they match. Any browser can then open
-  `http://<hub-address>:47733` and link itself by showing a QR code for a parent's phone to scan.
+1. Download **Den-windows.zip** from the [latest release](https://github.com/xattribution/Den/releases/latest).
+2. Unzip it and open **den_app.exe**.
+3. Tap **Start a family**.
+4. Go to **Settings**, **Advanced**, **Hub and sync**, and turn on **Keep the family online**.
+   Leave this computer on.
 
-**Add anything by sharing it.** Tap Add and type, snap or say it ("soccer every Wednesday at 5
-for Leo"), or share a flyer photo, a screenshot, an email, a link or a PDF to Den from any app.
-Den proposes the events, chores, list items and reminders it found; what needs no look is added
-right away with Undo, or everything waits for you under Settings → AI and automations → "Show me
-first". Den reads on the phone first (Apple Intelligence or Gemini Nano where the phone has it,
-and its own reader everywhere), and nothing leaves the phone unless a parent connects a reader
-there: a model at home (`docker compose -f deploy/compose.yaml --profile model up -d model`,
-then `ollama pull llama3.2`) or Claude with their own API key, kept in that phone's keychain; or
-once on the hub for every device (Settings → AI and automations → The family's hub), where the
-key stays on the hub and each device asks with a request signed by its own key.
+### Mac
 
-**Away from home.** Phones reach the hub through a relay that only ever carries encrypted data.
-Run your own with `deploy/relay`, then enter its address under Settings → This device → Relay.
+1. Download **Den-macos.zip** from the [latest release](https://github.com/xattribution/Den/releases/latest).
+2. Unzip it and drag **Den** into **Applications**.
+3. The first time, right-click **Den** and choose **Open**, then **Open** again.
+4. Tap **Start a family**.
+5. Go to **Settings**, **Advanced**, **Hub and sync**, and turn on **Keep the family online**.
+   Leave this Mac on.
 
-**Moving from Sett.** `den_hub import-sett coord.db --as <your name>` brings members, events with
-their exceptions, chores with steps and check-offs, lists, goals and point adjustments into the
-hub's family.
+### Linux
 
-## What's here
+For an old PC, a mini PC, a Raspberry Pi 4 or 5 (64-bit), or a VPS.
 
-| Path | What |
-| --- | --- |
-| `app/` | The Flutter app for iPhone, iPad, Android, Mac, Windows, Linux and the web |
-| `packages/den_core/` | The engine: data model, signed change log, spaces, permissions, recurrence, chores, points, history |
-| `packages/den_net/` | Encrypted sessions, sync, pairing, key rotation, relay client, encrypted backups |
-| `packages/den_capture/` | Capture: readers (Den's own, a home model, Claude), resolution to the family, checks against den_core, writes with undo |
-| `packages/den_hub/` | The hub library: HTTP API, MCP with OAuth, Home Assistant bridge, reminders, calendar feeds, mDNS |
-| `packages/den_hub_cli/` | The `den_hub` command: serve, MCP over stdio, Sett import, backup and restore |
-| `packages/den_relay/` | The relay: tunnel, mailbox and pairing rendezvous |
-| `packages/den_sett_import/` | Reads Sett's `coord.db` |
-| `integrations/homeassistant/` | The Home Assistant integration (calendars, to-do lists, sensors, services, events) |
-| `deploy/` | Docker images for the hub and the relay |
-| `DESIGN.md` | The design system every screen follows |
-| `ARCHITECTURE.md` | The contract every package builds against |
-| `docs/hub-api.md` | The hub's REST, stream and mDNS contract |
+1. Open a terminal, paste this line and press Enter:
 
-## Status
+   ```sh
+   curl -fsSL https://github.com/xattribution/Den/releases/latest/download/install.sh | sudo sh
+   ```
 
-| Part | Tests | Verified on this machine |
-| --- | --- | --- |
-| Engine (`den_core`) | 186 | Analyzer clean |
-| Networking (`den_net`) | 80 | Two and three devices syncing in memory, over WebSocket and through the relay; two parents revoking while out of touch settle on one key, through a hub and through the relay alone; a rotated key from a device whose approval arrives in the same relay round is taken |
-| Capture (`den_capture`) | 86 | A school flyer's text becomes six calendar events on the phone alone and through a recorded Claude response, including the text ML Kit really found in it on Android, wrapped lines and all; what a notice asks families to bring is kept; typed and spoken sentences, emails, recorded Gemini Nano and Ollama answers |
-| Relay | 20 | Tunnel, mailbox, rendezvous, rate limits |
-| Hub and its command line | 58 + 5 | Compiled binary serves the web app and prints its setup code; a teen's phone reads through the hub's Claude with signed requests over loopback |
-| Sett importer | 8 | A Sett schema v12 fixture |
-| App | 263, with 174 screenshots and the Home Assistant brand images | Release APK on an Android emulator: reminders, phone calendars, the hub kept online in the background and after Den is closed from recent apps; a typed sentence; a flyer photo shared from Files, read by ML Kit into six events and undone; an email's text and a PDF shared in; History saying where each came from. Web build in a browser |
-| Home Assistant integration | 85 | Home Assistant 2026.2 test harness; 30 of 30 contract checks against a live hub; v0.1.0's `den.zip` downloads from den-homeassistant's release with its manifest and brand images |
+2. Wait for it to finish (5 to 15 minutes). It ends with a link and a square code.
+3. Open the link, or scan the code with your phone's camera.
 
-Windows, macOS, iOS and Linux app builds and the Docker images run in CI (`.github/workflows`).
+### NAS or Docker
 
-HACS installs only from the root of a repository, so the Home Assistant integration is published
-from its own, [`xattribution/den-homeassistant`](https://github.com/xattribution/den-homeassistant):
-`integrations/homeassistant/scripts/prepare_hacs_repo.py` writes its files and CI builds its
-release zip (see the integration's README). Its first release, v0.1.0, carries `den.zip`. To
-install, add that repository to HACS as a custom repository of type Integration.
+For Synology, Unraid, TrueNAS, Portainer, or anything else that runs Docker.
 
-Known gaps:
+1. Add a container from `ghcr.io/xattribution/den:stable` with port `47733` and a volume at
+   `/data`. Or run:
 
-- Phones refresh reminders in the background about hourly, but desktops only while Den runs. iOS
-  can't read the device's keys while the phone is locked, so its background refresh waits for an
-  unlocked moment. Browsers get no reminders.
-- Capture's native parts have run only on an Android emulator, where Gemini Nano reports itself
-  unavailable (the image has no AICore), so reading with the phone's own model is untested on a
-  phone that has it. Apple Intelligence, Vision and the iOS share extension are written but not
-  yet built (CI builds iOS and macOS on release tags), and signing the iOS app needs the App Group
-  `group.family.den.denApp` on the developer account.
+   ```sh
+   docker run -d --name den --restart unless-stopped -p 47733:47733 -v den-data:/data ghcr.io/xattribution/den:stable
+   ```
 
-## Develop
+2. Open `http://<the box's address>:47733` on a phone or computer on the same Wi-Fi.
 
-Requirements: Flutter 3.38 (includes Dart 3.10).
+### iPhone and iPad
 
-```bash
-cd packages/den_core && dart test
-cd app && flutter run -d chrome --dart-define=DEN_DEMO=true
+1. Open the invite link a parent sent you, in **Safari**.
+2. Tap **Share**, then **Add to Home Screen**, then **Add**.
+3. Open **Den** from your Home Screen and tap **Join**.
+
+### Android
+
+1. Open the invite link a parent sent you, in **Chrome**.
+2. Tap **⋮**, then **Install app**.
+3. Open **Den** and tap **Join**.
+
+**Save your recovery words.** Every parent should. They get you back in if you lose your phone, and
+they open your backups. In Den: **Family**, your name, **Recovery words**.
+
+## Reach Den from away
+
+At home, Den just works. To reach it from anywhere else, give Den a Cloudflare Tunnel (free; you
+need a domain on Cloudflare). If you use a VPN into your home, that works too, with nothing to set
+up.
+
+### 1. Make the tunnel
+
+Here you make a **tunnel**: a private line from your computer to Cloudflare. You'll come away with
+a long code called a **tunnel token**.
+
+1. Sign in at [dash.cloudflare.com](https://dash.cloudflare.com).
+2. In the menu on the left, open **Networking**, then **Tunnels**.
+   (On some accounts it's under **Zero Trust**, then **Networks**, then **Tunnels**.)
+3. Click **Create Tunnel**. If it asks what kind, pick **Cloudflared**.
+4. Give it a name, like `den`, and click **Create Tunnel** (or **Save tunnel**).
+5. Cloudflare now shows some commands to install something. **Don't run them.** Den does that
+   part itself. Just copy one of the commands: click the copy button next to it.
+
+   The command has your tunnel token in it: a long code starting with `eyJ`. You can paste the
+   whole command into Den's setup page; Den finds the token in it.
+
+   Keep this page open: you come back to it below.
+
+**Keep the token private.** Anyone with it can pretend to be your Den. If it ever gets out, delete
+the tunnel in Cloudflare and make a new one.
+
+### 2. Give Den its address in Cloudflare
+
+Back on the Cloudflare page from above:
+
+1. Click **Continue** (or **Next**). If you closed the page: **Networking**, then **Tunnels**,
+   then click your tunnel's name.
+2. Find **Routes** (or **Public hostnames**) and click **Add route** (or **Add a public
+   hostname**). If it asks what kind, pick **Published application**.
+3. Fill it in:
+   - **Subdomain:** `den`
+   - **Domain:** pick your domain from the list
+   - **Service URL:** `http://hub:47733`
+
+     If the page has two boxes instead, set **Type** to `HTTP` and **URL** to `hub:47733`.
+4. Click **Add route** (or **Save**).
+
+Type it exactly as shown: `hub`, not `localhost` and not your computer's address.
+
+That's your family's address: `den.` plus your domain, like `den.smithfamily.com`.
+
+### 3. Give Den the token
+
+Paste the token on Den's setup page (**Connect Den to the internet**), or later in Den on your
+phone: **Settings**, **Advanced**, **Server**.
+
+## Backups, and your NAS
+
+Den backs up your family **every night** on its own, and keeps the newest 14. You don't need to do
+anything. Any parent's **recovery words** open a backup. If no parent has saved recovery words,
+Den can't make backups, and Settings, **Backups** says so.
+
+**To also keep a copy on a NAS at home** (a Synology, QNAP or similar):
+
+1. On the NAS, make sure **file sharing (SMB)** is on, and make a shared folder for backups if you
+   don't have one. Your NAS's own settings have both.
+2. In Den on your phone: **Settings**, **Backups**, **Back up to a NAS**.
+3. Type your NAS's name or address (like `nas.local` or `192.168.1.20`), then a username and
+   password for the NAS.
+4. Pick the shared folder. Den makes a test copy, and if that works, it saves.
+
+From then on, every night's backup goes to the NAS too. If the NAS can't be reached, Den tells you
+once, and the server still keeps its own copy.
+
+**Back up now:** Settings, **Backups**, **Back up now**.
+
+## Updates
+
+Den updates itself at night. If an update doesn't start properly, Den goes back to the version
+before, by itself. When there's an update, Den shows it in **Settings**, **Advanced**,
+**Server**, with an **Update now** button.
+
+## Moving Den to another computer
+
+1. Install Den on the new computer ([Start here](#start-here)), and give it the **same tunnel token**.
+2. Open the link it shows and choose **Restore from a backup**.
+3. Pick where the backup is: **A file on this device**, **On your NAS**, or **On this server**.
+   Pick the backup (the newest is already chosen) and type your recovery words.
+4. Turn off the old computer, or uninstall Den there: `sudo den uninstall`.
+
+Everyone's phones find the family again on their own, because the address stays the same.
+
+## If something goes wrong
+
+**First, try this:** run the [Linux install line](#linux) again. It's safe to run as many times as
+you want. It fixes what it can and never deletes your family.
+
+To see how Den is doing, type this in the terminal:
+
+```sh
+sudo den status
 ```
 
-`DEN_DEMO=true` starts with a demo family so every screen has something on it. Screenshot tests
-render each screen to `app/test/goldens`; review the images after any UI change:
+**"curl: command not found"** (or **"sudo: command not found"**). Your computer is missing a basic
+tool. On Debian or Ubuntu, type `apt-get install -y curl sudo` and press Enter (as `root`), then try
+again.
 
-```bash
-cd app && flutter test --update-goldens
-```
+**"Den needs to be installed as the computer's administrator."** You left out `sudo`. Copy the
+whole line from [Linux](#linux) again, including `| sudo sh` at the end.
 
-The hub from source:
+**"This Raspberry Pi is running the 32-bit Raspberry Pi OS"**, or **"Den needs 64-bit"**. Den only
+runs on 64-bit systems. Put the 64-bit system on the computer (for a Raspberry Pi, use Raspberry
+Pi Imager and pick **Raspberry Pi OS (64-bit)**), then start again from [Linux](#linux).
 
-```bash
-cd packages/den_hub_cli && dart run bin/den_hub.dart serve --web ../../app/build/web
-```
+**"This computer has ... memory"** or **"... free disk space"**. The computer is too small. Den
+needs 1 GB of memory and 2 GB of free space. On a VPS, pick a bigger plan.
+
+**"Den's download isn't available right now"**. Den's download site turned the computer away.
+That's on Den's side, not yours: wait a while and run the line again. If it keeps happening,
+report it on Den's GitHub page.
+
+**"Couldn't reach download.docker.com"**, **"Couldn't download Den"** or **"Couldn't reach this
+computer's software sources"**. The computer isn't getting to the internet. Check its connection,
+wait a few minutes, and run the line again.
+
+**"Something else on this computer already uses port 47733"**. Something else, often an older
+Den, is in the way. If you set up an older Den by hand, stop it first, then run the line again.
+
+**"This computer has Podman"**. Den needs Docker, and this computer has a look-alike. It's
+simplest to use a fresh computer or VPS.
+
+**"That doesn't look like a tunnel token"**. Copy the command from Cloudflare again ([Make the tunnel](#1-make-the-tunnel), number 5) and paste the whole thing. To give Den the token later: `sudo den tunnel`.
+
+**The tunnel says it didn't connect.** Check the token: make a new one in Cloudflare if you're not
+sure, then `sudo den tunnel` and paste it.
+
+**Den's address shows a Cloudflare error page** (like "Bad gateway" or error 1033).
+- Check [Give Den its address in Cloudflare](#2-give-den-its-address-in-cloudflare): the Service URL must be exactly `http://hub:47733`.
+- Run `sudo den status`. If it says Den isn't running, run the install line again.
+
+**The setup link doesn't open.** It works only once. Make a new one: `sudo den setup-link`.
+
+**Den's address shows a blank page away from home.** That's Den keeping strangers out. A new phone
+gets in by opening an invite a parent sent (or by being on the home Wi-Fi or a VPN into it). A phone
+already in the family opens Den from its Home Screen icon as usual.
+
+**The NAS can't be found.** Type its address as numbers (like `192.168.1.20`) instead of its name.
+You'll find the address in your router's list of devices, or in the NAS's own settings. Den
+needs to be on the same home network as the NAS, so a VPS can't back up to a NAS at home.
+
+**Starting over.** `sudo den reset` deletes everything Den keeps on this computer and starts
+fresh. The family's phones keep their own copy. It asks you to type `RESET` first.
+
+**Removing Den.** `sudo den uninstall`.
+
+Still stuck? Run `sudo den logs`, copy what it shows, and send it to whoever helps you with
+computers.
+
+## Optional extras
+
+- **Sign in with Google.** Parents can also sign in to Den in a web browser with their Google
+  account. In Den on your phone: **Settings**, **Advanced**, **Sign in with Google or Apple**. The
+  screen walks you through it. Apple sign-in needs a paid Apple developer account, so most
+  families skip it.
+- **The AI helper**, which can add things from a photo of a flyer or a sentence like "soccer every
+  Wednesday at 5 for Leo": **Settings**, **AI helper**. It's off until a parent turns it on.
+
+## For the technical folks
+
+How it works, other ways to run it and how to build it:
+[docs/technical.md](docs/technical.md) and [docs/install-technical.md](docs/install-technical.md).
 
 ## License
 

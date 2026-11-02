@@ -5,6 +5,9 @@ import 'package:test/test.dart';
 
 import 'support.dart';
 
+int maxCounter(Den den) =>
+    den.changesSince(const {}).where((c) => c.device == den.deviceId).fold(0, (m, c) => c.counter > m ? c.counter : m);
+
 void main() {
   late TestClock clock;
   late Den den;
@@ -18,7 +21,7 @@ void main() {
 
   group('members and devices', () {
     test('add, change and remove people; removing one revokes their devices', () async {
-      final leo = await den.addMember(name: 'Leo', role: Role.kid, tier: Tier.little, marker: Marker.teal, animal: Animal.fish);
+      final leo = await den.addMember(name: 'Leo', role: Role.kid, tier: Tier.little, marker: Marker.aqua, animal: Animal.fish);
       final maya = await den.addMember(name: 'Maya', role: Role.kid, tier: Tier.teen, grants: {Grant.events});
       expect(den.members.map((m) => m.name), ['Dana', 'Leo', 'Maya']);
       expect(den.member(maya)!.grants, {Grant.events});
@@ -70,6 +73,22 @@ void main() {
       await expectLater(den.updateFamily({'timezone': 'Mars/Olympus'}), throwsA(isA<InvalidInput>()));
       await expectLater(den.updateFamily({'founderDevice': 'someone'}), throwsA(isA<InvalidInput>()));
     });
+
+    test('parents change one person\'s oversight at a time, so changes made at once both count', () async {
+      final leo = await den.addMember(name: 'Leo', role: Role.kid);
+      final maya = await den.addMember(name: 'Maya', role: Role.kid);
+      final sam = await den.addMember(name: 'Sam', role: Role.parent);
+      final samPhone = await joinDevice(den, clock, member: sam);
+      await den.updateFamily({'oversight.$leo': {'parentsSeePrivate': false}});
+      await samPhone.updateFamily({'oversight.$maya': {'parentsSeePrivate': false}});
+      await exchange(den, samPhone);
+      for (final d in [den, samPhone]) {
+        expect(d.family!.parentsSeePrivate(leo), isFalse);
+        expect(d.family!.parentsSeePrivate(maya), isFalse);
+        expect(d.family!.parentsSeePrivate(sam), isTrue);
+      }
+      await expectLater(den.updateFamily({'oversight.$leo': {'parentsSeePrivate': 'no'}}), throwsA(isA<InvalidInput>()));
+    });
   });
 
   group('sign-in on shared screens', () {
@@ -92,6 +111,55 @@ void main() {
       await expectLater(den.setSignIn(zoe, kind: 'pattern', secret: '9999'), throwsA(isA<InvalidInput>()));
       await den.setSignIn(zoe, kind: 'none');
       expect(await den.verifySignIn(zoe, ''), isTrue);
+    });
+
+    test('a shared screen tells the parents about wrong tries, for nobody, and History says so', () async {
+      final leo = await den.addMember(name: 'Leo', role: Role.kid);
+      await den.setSignIn(dana, kind: 'pin', secret: '2468');
+      final display = await joinDevice(den, clock, mode: DeviceMode.shared, name: 'Kitchen', kind: DeviceKind.display);
+      await sync(den, display);
+      clock.advance(const Duration(minutes: 1));
+      display.actAs(leo, window: const Duration(minutes: 5));
+      await display.noteSignInTries(dana, 10);
+      await sync(display, den);
+      final told = den.signInTries.single;
+      expect([told.device, told.member, told.tries], [display.deviceId, dana, 10]);
+      expect(told.rec.createdBy, isNull, reason: 'the screen saw it, not whoever was signed in there');
+      final entry = den.history(type: RecordType.signInTries).single;
+      expect('${entry.actorName} ${entry.verb} ${entry.title}', "Kitchen counted 10 wrong tries at Dana's PIN");
+
+      await expectLater(den.noteSignInTries(dana, 10), throwsA(isA<PermissionDenied>()), reason: 'a phone saw nothing');
+      final tablet = await joinDevice(den, clock, member: leo);
+      clock.advance(const Duration(minutes: 1));
+      final next = <Den, int>{};
+      Future<Change> say(Den from, Map<String, Object?> fields, {String? actor, String? rid, int at = 0}) async => forge(
+            from.keys,
+            counter: next[from] = (next[from] ?? maxCounter(from)) + 1,
+            millis: clock.now + at,
+            type: RecordType.signInTries,
+            rid: rid ?? newId(),
+            fields: fields,
+            actor: actor,
+          );
+      final fromTablet = await say(tablet, {'device': tablet.deviceId, 'member': dana, 'tries': 10}, actor: leo);
+      final asLeo = await say(display, {'device': display.deviceId, 'member': dana, 'tries': 10}, actor: leo);
+      final aboutAnother = await say(display, {'device': tablet.deviceId, 'member': dana, 'tries': 10}, at: 1);
+      final changed = await say(display, {'tries': 1}, rid: told.id, at: 2);
+      final result = await den.ingest([fromTablet, asLeo, aboutAnother, changed]);
+      expect(result.invalid.keys, unorderedEquals([fromTablet.id, asLeo.id, aboutAnother.id, changed.id]));
+      expect(den.signInTries.single.tries, 10);
+    });
+
+    test('a parent with no sign-in never verifies on a shared screen', () async {
+      final leo = await den.addMember(name: 'Leo', role: Role.kid);
+      final display = await joinDevice(den, clock, mode: DeviceMode.shared, name: 'Kitchen', kind: DeviceKind.display);
+      expect(await display.verifySignIn(dana, ''), isFalse, reason: 'anyone at the screen could act as Dana');
+      expect(await display.verifySignIn(leo, ''), isTrue);
+      expect(await den.verifySignIn(dana, ''), isTrue, reason: 'her own phone is hers');
+      await den.setSignIn(dana, kind: 'pin', secret: '2468');
+      await sync(den, display);
+      expect(await display.verifySignIn(dana, '2468'), isTrue);
+      expect(await display.verifySignIn(dana, ''), isFalse);
     });
 
     test('a member sets their own sign-in; only parents set others\'', () async {
@@ -200,7 +268,7 @@ void main() {
         familyName: 'Lee family',
         timezone: 'America/Chicago',
         yourName: 'Sam',
-        marker: Marker.olive,
+        marker: Marker.sunshine,
         animal: Animal.cow,
         deviceName: 'Sam\'s laptop',
         deviceKind: DeviceKind.desktop,

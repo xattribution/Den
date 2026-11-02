@@ -1,4 +1,4 @@
-import '../times.dart';
+import 'package:den_actions/times.dart';
 
 /// A date or date-time from an iCalendar property.
 class IcsTime {
@@ -78,13 +78,16 @@ class IcsEvent {
 /// A parsed calendar.
 class IcsCalendar {
   /// Creates a calendar.
-  IcsCalendar(this.name, this.events);
+  IcsCalendar(this.name, this.events, {this.skipped = 0});
 
   /// X-WR-CALNAME.
   final String? name;
 
   /// Every VEVENT, masters and overrides, in file order.
   final List<IcsEvent> events;
+
+  /// VEVENTs left out because their start (or the occurrence they change) couldn't be read.
+  final int skipped;
 }
 
 /// The iCalendar file couldn't be read.
@@ -192,20 +195,33 @@ String? zoneForTzid(String tzid) {
 final RegExp _dateValue = RegExp(r'^(\d{4})(\d{2})(\d{2})$');
 final RegExp _dateTimeValue = RegExp(r'^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?(Z)?$');
 
-/// Reads one date or date-time value. [zone] applies to floating times and dates.
+/// A wall-clock value from its digits, refusing what isn't a real date or time (month 13, hour
+/// 25) instead of letting [DateTime] roll it over, and years no family calendar holds.
+DateTime _wall(String v, int y, int mo, int d, [int h = 0, int mi = 0, int s = 0]) {
+  if (y < 1900 || y > 2200 || mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60) {
+    throw IcsFormatException('Not a real date or time: "$v"');
+  }
+  final wall = DateTime.utc(y, mo, d, h, mi, s == 60 ? 59 : s);
+  if (wall.month != mo) throw IcsFormatException('Not a real date: "$v"');
+  return wall;
+}
+
+/// Reads one date or date-time value. [zone] applies to floating times and dates. Throws
+/// [IcsFormatException] for anything that isn't one.
 IcsTime _time(String value, Map<String, String> params, String zone) {
   final v = value.trim();
   final tzid = params['TZID'];
   final z = (tzid == null ? null : zoneForTzid(tzid)) ?? zone;
   final d = _dateValue.firstMatch(v);
   if (d != null || params['VALUE'] == 'DATE') {
-    final m = d ?? _dateValue.firstMatch(v.substring(0, 8))!;
-    final wall = DateTime.utc(int.parse(m[1]!), int.parse(m[2]!), int.parse(m[3]!));
+    final m = d ?? (v.length >= 8 ? _dateValue.firstMatch(v.substring(0, 8)) : null);
+    if (m == null) throw IcsFormatException('Not a date: "$v"');
+    final wall = _wall(v, int.parse(m[1]!), int.parse(m[2]!), int.parse(m[3]!));
     return IcsTime(utc: utcOfWall(z, wall), date: true, zone: z, wall: wall);
   }
   final t = _dateTimeValue.firstMatch(v);
   if (t == null) throw IcsFormatException('Not a date or time: "$v"');
-  final wall = DateTime.utc(int.parse(t[1]!), int.parse(t[2]!), int.parse(t[3]!), int.parse(t[4]!), int.parse(t[5]!),
+  final wall = _wall(v, int.parse(t[1]!), int.parse(t[2]!), int.parse(t[3]!), int.parse(t[4]!), int.parse(t[5]!),
       int.parse(t[6] ?? '0'));
   if (t[7] == 'Z') return IcsTime(utc: wall.millisecondsSinceEpoch, date: false, zone: z, wall: wallOf(z, wall.millisecondsSinceEpoch));
   return IcsTime(utc: utcOfWall(z, wall), date: false, zone: z, wall: wall);
@@ -213,17 +229,24 @@ IcsTime _time(String value, Map<String, String> params, String zone) {
 
 final RegExp _durationRe = RegExp(r'^([+-])?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$');
 
-/// Reads an iCalendar DURATION (`PT1H30M`, `P1D`, `-PT15M`).
+/// Reads an iCalendar DURATION (`PT1H30M`, `P1D`, `-PT15M`). Null when it isn't one, or is
+/// longer than a year and a month, which no family event is.
 Duration? parseIcsDuration(String value) {
   final m = _durationRe.firstMatch(value.trim());
   if (m == null) return null;
   int n(int i) => int.tryParse(m[i] ?? '') ?? 0;
+  for (var i = 2; i <= 6; i++) {
+    if ((m[i]?.length ?? 0) > 7) return null;
+  }
   final d = Duration(days: n(2) * 7 + n(3), hours: n(4), minutes: n(5), seconds: n(6));
+  if (d.inDays > 400) return null;
   return m[1] == '-' ? -d : d;
 }
 
 /// Parses an iCalendar file. Times without a zone are read in the calendar's X-WR-TIMEZONE,
-/// else [defaultZone]. Throws [IcsFormatException] when it isn't a calendar.
+/// else [defaultZone]. Throws [IcsFormatException] when it isn't a calendar; a VEVENT whose
+/// start (or RECURRENCE-ID) can't be read is skipped and counted in [IcsCalendar.skipped], and
+/// a bad end, duration or EXDATE value is ignored, so one broken event never stops a feed.
 IcsCalendar parseIcs(String text, {required String defaultZone}) {
   final lines = _lines(text);
   if (!lines.any((l) => l.name == 'BEGIN' && l.value.trim().toUpperCase() == 'VCALENDAR')) {
@@ -239,16 +262,25 @@ IcsCalendar parseIcs(String text, {required String defaultZone}) {
   final events = <IcsEvent>[];
   final stack = <String>[];
   IcsEvent? current;
+  var broken = false;
+  var skipped = 0;
   for (final l in lines) {
     if (l.name == 'BEGIN') {
       stack.add(l.value.trim().toUpperCase());
-      if (stack.last == 'VEVENT') current = IcsEvent();
+      if (stack.last == 'VEVENT') {
+        current = IcsEvent();
+        broken = false;
+      }
       continue;
     }
     if (l.name == 'END') {
       final ended = stack.isEmpty ? '' : stack.removeLast();
       if (ended == 'VEVENT' && current != null) {
-        if (current.start != null && current.uid.isNotEmpty) events.add(current);
+        if (!broken && current.start != null && current.uid.isNotEmpty) {
+          events.add(current);
+        } else if (broken) {
+          skipped++;
+        }
         current = null;
       }
       continue;
@@ -276,14 +308,22 @@ IcsCalendar parseIcs(String text, {required String defaultZone}) {
           current.rrule = l.value.trim();
         case 'EXDATE':
           for (final v in l.value.split(',')) {
-            if (v.trim().isNotEmpty) current.exdates.add(_time(v, l.params, zone));
+            if (v.trim().isEmpty) continue;
+            try {
+              current.exdates.add(_time(v, l.params, zone));
+            } on Object {
+              // One unreadable EXDATE value cancels nothing; the others still count.
+            }
           }
         case 'RECURRENCE-ID':
           current.recurrenceId = _time(l.value, l.params, zone);
       }
-    } on IcsFormatException {
+    } on Object {
+      // Without its start, or the occurrence it changes, the event can't be placed: skip it.
+      // A bad end or duration falls back to the default length.
+      if (l.name == 'DTSTART' || l.name == 'RECURRENCE-ID') broken = true;
       continue;
     }
   }
-  return IcsCalendar(name, events);
+  return IcsCalendar(name, events, skipped: skipped);
 }

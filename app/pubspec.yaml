@@ -31,9 +31,6 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
   go_router: ^17.5.0
   phosphor_flutter: ^2.1.0
   qr_flutter: ^4.1.0
@@ -41,6 +38,11 @@ dependencies:
   timezone: ^0.11.2
   den_core:
     path: ../packages/den_core
+  den_actions:
+    path: ../packages/den_actions
+  # The optional AI helper: its loop, context packer and model adapters (through the hub).
+  den_assistant:
+    path: ../packages/den_assistant
   path_provider: ^2.1.6
   flutter_secure_storage: ^11.2.0
   shared_preferences: ^2.5.5
@@ -63,9 +65,14 @@ dependencies:
   workmanager: ^0.10.10
   image_picker: ^1.2.3
   file_selector: ^1.1.0
+  # Makes a photo small on a phone or computer before it is saved (the browser uses a canvas).
+  image: ^4.12.0
   speech_to_text: ^7.4.0
   den_capture:
     path: ../packages/den_capture
+  web: ^1.1.1
+  # Draws the family's picture pack (assets/pictures).
+  flutter_svg: ^2.1.0
 
 dev_dependencies:
   flutter_test:
@@ -92,6 +99,8 @@ flutter:
   assets:
     # The typeface's SIL Open Font License, shown on Settings > About > Licenses.
     - assets/fonts/OFL.txt
+    # The picture pack: 64 people can pick from, one SVG each. See design/pictures.dart.
+    - assets/pictures/
   fonts:
     - family: AtkinsonHyperlegibleNext
       fonts:

@@ -1,6 +1,7 @@
 import 'package:collection/collection.dart';
 import 'package:meta/meta.dart';
 
+import 'account.dart';
 import 'hlc.dart';
 
 /// Record type names used in [Change.type]. See ARCHITECTURE.md, "Record types and fields".
@@ -21,10 +22,13 @@ abstract final class RecordType {
   static const item = 'item';
   static const subscription = 'subscription';
   static const connection = 'connection';
+  static const photo = 'photo';
+  static const signInTries = 'signInTries';
+  static const inviteKey = 'inviteKey';
 
   static const all = {
     family, member, device, category, event, eventException, chore, completion, adjustment,
-    goal, reward, redemption, list, item, subscription, connection,
+    goal, reward, redemption, list, item, subscription, connection, photo, signInTries, inviteKey,
   };
 }
 
@@ -78,9 +82,127 @@ enum Role { parent, adult, kid, guest }
 
 enum Tier { preReader, little, big, teen }
 
-enum Marker { blue, green, orange, pink, teal, plum, brown, olive, sky, slate }
+/// A person's color: the family pack, in the order new people get them. The app draws each
+/// as a validated hex; color is never the only clue, since every person also has a picture or
+/// initial and a name. Records written before the pack carry one of ten older names, which
+/// [parse] reads as the nearest color.
+enum Marker {
+  sky,
+  grass,
+  lavender,
+  tangerine,
+  aqua,
+  coral,
+  sunshine,
+  bubblegum;
 
+  /// The names earlier versions wrote, read as the nearest family color. `sky` kept its name.
+  static const Map<String, Marker> legacyNames = {
+    'blue': sky,
+    'green': grass,
+    'plum': lavender,
+    'orange': tangerine,
+    'teal': aqua,
+    'pink': bubblegum,
+    'brown': coral,
+    'olive': sunshine,
+    'slate': lavender,
+  };
+
+  /// Every name a record may carry: today's eight and the older ones.
+  static List<String> get allNames => [for (final m in values) m.name, ...legacyNames.keys];
+
+  /// The color [raw] names, older names included; null for anything else.
+  static Marker? parse(Object? raw) {
+    if (raw is! String) return null;
+    for (final m in values) {
+      if (m.name == raw) return m;
+    }
+    return legacyNames[raw];
+  }
+
+  /// The color a new person gets: the first in order nobody has yet or, once all eight are
+  /// taken, the one the fewest people share.
+  static Marker next(Iterable<Marker> taken) {
+    final counts = {for (final m in values) m: 0};
+    for (final m in taken) {
+      counts[m] = counts[m]! + 1;
+    }
+    var best = values.first;
+    for (final m in values) {
+      if (counts[m]! < counts[best]!) best = m;
+    }
+    return best;
+  }
+}
+
+/// Which shades of the eight [Marker] colors a family sees (`family.colors`), the same for
+/// everyone in it. Each person keeps their color's place, so changing packs changes shades, never
+/// who has which color. The app holds each pack's validated hexes; [bright] is the default.
+enum ColorPack {
+  bright,
+  deep,
+  soft,
+  bold;
+
+  /// The pack [raw] names; [bright] for anything else.
+  static ColorPack parse(Object? raw) {
+    for (final p in values) {
+      if (p.name == raw) return p;
+    }
+    return bright;
+  }
+}
+
+/// The animals earlier versions offered as a person's look. Members now have a [Picture]; an
+/// older member's animal is read as the matching picture.
 enum Animal { cat, dog, rabbit, bird, butterfly, fish, horse, cow, bug }
+
+/// What stands for a person: the id of a picture from the app's pack (`fox`, `dinosaur`),
+/// [initial] for the first letter of their name, or `photo:<id>` for a small photo kept as a
+/// [Photo] record in the family space.
+abstract final class Picture {
+  static const initial = 'initial';
+
+  /// What a member's picture starts with when it is a photo: `photo:<photo record id>`.
+  static const photoPrefix = 'photo:';
+
+  /// The picture that shows the photo record [photoId].
+  static String photo(String photoId) => '$photoPrefix$photoId';
+
+  /// The photo record [picture] shows, or null when it isn't a photo.
+  static String? photoIdOf(String picture) =>
+      picture.startsWith(photoPrefix) && picture.length > photoPrefix.length ? picture.substring(photoPrefix.length) : null;
+
+  /// The pack's pictures by id, in the order the app shows them (its test checks they match), so
+  /// surfaces without the artwork (MCP, the assistant) can offer them by name.
+  static const pack = [
+    'fox', 'bear', 'cat', 'dog', 'bunny', 'owl', 'panda', 'frog', //
+    'whale', 'octopus', 'turtle', 'ladybug', 'bee', 'butterfly', 'snail', 'chick',
+    'strawberry', 'avocado', 'pizza', 'cupcake', 'watermelon', 'banana', 'icecream', 'pancakes',
+    'sunflower', 'cactus', 'mushroom', 'tree', 'rainbow', 'sun', 'moon', 'cloud',
+    'soccer', 'basketball', 'rocket', 'guitar', 'palette', 'kite', 'dinosaur', 'robot',
+    'house', 'sailboat', 'balloon', 'teacup', 'tent', 'star', 'crown', 'camera',
+    'firefighter', 'police', 'doctor', 'spy', 'ninja', 'armyman', 'astronaut', 'pirate',
+    'tank', 'jet', 'racecar', 'firetruck', 'helicopter', 'train', 'sheriff', 'revolver',
+  ];
+
+  static final RegExp _key = RegExp(r'^[a-z][a-z0-9:_-]{0,63}$');
+
+  static bool valid(Object? raw) => raw is String && _key.hasMatch(raw);
+
+  /// The picture an older member's animal reads as; the pack has no horse or cow.
+  static String forAnimal(Animal animal) => switch (animal) {
+        Animal.cat => 'cat',
+        Animal.dog => 'dog',
+        Animal.rabbit => 'bunny',
+        Animal.bird => 'owl',
+        Animal.butterfly => 'butterfly',
+        Animal.fish => 'whale',
+        Animal.bug => 'ladybug',
+        Animal.horse || Animal.cow => initial,
+      };
+}
 
 enum DeviceKind { phone, tablet, desktop, browser, hub, display }
 
@@ -100,8 +222,9 @@ enum RedemptionStatus { requested, approved, declined }
 
 enum DisplayLayout { today, week, month, lists, photos }
 
-/// What a capture read: the thing someone photographed, shared, said or typed.
-enum CaptureKind { photo, screenshot, pdf, email, message, link, voice, typed }
+/// What a capture read: the thing someone photographed, shared, said or typed; or, for
+/// [assistant], that the in-app assistant made the change while someone talked to it.
+enum CaptureKind { photo, screenshot, pdf, email, message, link, voice, typed, assistant }
 
 /// Where a record added by capture came from, written as `_from` on the change that made it:
 /// what was read and, when a model read it, which one ("On this phone", "Claude").
@@ -200,9 +323,120 @@ class Family extends RecordView {
   bool get captureNeedsReview => rec.str('capture', 'direct') == 'review';
   bool get pointsEnabled => rec.flag('pointsEnabled', true);
 
+  /// The shades of people's colors everyone in the family sees; [ColorPack.bright] until a
+  /// parent picks another.
+  ColorPack get colors => ColorPack.parse(rec.fields['colors']);
+
   /// Whether parents can read this member's "Just me" items. Defaults to true.
   bool parentsSeePrivate(String memberId) =>
       (rec.map('oversight')[memberId] as Map?)?['parentsSeePrivate'] as bool? ?? true;
+
+  /// One of a person's own settings ([OversightSetting]), or null when no parent has set it.
+  /// Each is an entry of its own, `oversight.<memberId>.<setting>`, so two parents changing
+  /// different settings merge, and the privacy entry keeps the shape older versions read.
+  bool? setting(String memberId, String setting) {
+    final v = rec.map('oversight')['$memberId.$setting'];
+    return v is bool ? v : null;
+  }
+
+  /// Whether [memberId]'s reward requests wait for a parent's OK. Defaults to true; a parent
+  /// can turn it off for one kid, and then a reward they can afford is theirs at once.
+  bool rewardsNeedOk(String memberId) => setting(memberId, OversightSetting.rewardsNeedOk) ?? true;
+
+  /// Whether [member] may change their own picture, a photo too. Parents, grown-ups and
+  /// sitters always may; a kid when a parent allows it, which a teen starts out with and a
+  /// younger kid doesn't.
+  bool ownsPicture(Member member) {
+    if (!member.isKid) return true;
+    return setting(member.id, OversightSetting.ownPicture) ?? member.tier == Tier.teen;
+  }
+
+  /// Who may use the in-app assistant; off until a parent turns it on.
+  AssistantPolicy get assistant => AssistantPolicy.parse(rec.map('assistant'));
+}
+
+/// The per-person settings a parent keeps in `family.oversight` besides privacy, each written
+/// as its own entry `oversight.<memberId>.<setting>` holding a bool.
+abstract final class OversightSetting {
+  /// Whether a kid's reward requests wait for a parent (default true).
+  static const rewardsNeedOk = 'rewardsNeedOk';
+
+  /// Whether a kid may change their own picture (default: teens yes, younger kids no).
+  static const ownPicture = 'ownPicture';
+
+  static const all = {rewardsNeedOk, ownPicture};
+}
+
+/// The family's rules for the in-app assistant (`family.assistant`), set by a parent on their
+/// own device. Off until a parent turns it on; then parents may use it, and anyone else only
+/// when a parent switched it on for them, never a little kid or a pre-reader. The hub's model
+/// proxy holds kids to [kidDailyLimit] requests a day and the family to [budgetCents] a month.
+@immutable
+class AssistantPolicy {
+  const AssistantPolicy({
+    this.enabled = false,
+    this.members = const {},
+    this.kidDailyLimit = defaultKidDailyLimit,
+    this.budgetCents = defaultBudgetCents,
+  });
+
+  /// Requests a day for a kid, unless a parent sets another number.
+  static const int defaultKidDailyLimit = 20;
+
+  /// A month's budget in US cents ($5), unless a parent sets another.
+  static const int defaultBudgetCents = 500;
+
+  /// The policy stored as [raw]; anything missing or malformed is its default.
+  static AssistantPolicy parse(Map<String, Object?> raw) {
+    final members = raw['members'];
+    final limit = raw['kidDailyLimit'];
+    final budget = raw['budgetCents'];
+    return AssistantPolicy(
+      enabled: raw['enabled'] == true,
+      members: {if (members is List) ...members.whereType<String>()},
+      kidDailyLimit: limit is int ? limit : defaultKidDailyLimit,
+      budgetCents: budget is int ? budget : defaultBudgetCents,
+    );
+  }
+
+  /// Whether a parent turned the assistant on.
+  final bool enabled;
+
+  /// Who besides parents may use it (member ids).
+  final Set<String> members;
+
+  /// Requests a kid may make in a day.
+  final int kidDailyLimit;
+
+  /// The family's monthly budget, in US cents.
+  final int budgetCents;
+
+  /// Whether [m] may use the assistant.
+  bool allows(Member m) {
+    if (!enabled) return false;
+    if (m.isParent) return true;
+    if (m.tier == Tier.preReader || m.tier == Tier.little) return false;
+    return members.contains(m.id);
+  }
+
+  /// As `family.assistant` stores it.
+  Map<String, Object?> toJson() => {
+        'enabled': enabled,
+        'members': [...members]..sort(),
+        'kidDailyLimit': kidDailyLimit,
+        'budgetCents': budgetCents,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      other is AssistantPolicy &&
+      other.enabled == enabled &&
+      other.kidDailyLimit == kidDailyLimit &&
+      other.budgetCents == budgetCents &&
+      const SetEquality<String>().equals(other.members, members);
+
+  @override
+  int get hashCode => Object.hash(enabled, kidDailyLimit, budgetCents, Object.hashAllUnordered(members));
 }
 
 class SignIn {
@@ -217,9 +451,33 @@ class Member extends RecordView {
   String get name => rec.str('name');
   Role get role => _enum(Role.values, rec.fields['role']) ?? Role.kid;
   Tier? get tier => _enum(Tier.values, rec.fields['tier']);
-  Marker get marker => _enum(Marker.values, rec.fields['marker']) ?? Marker.slate;
+  Marker get marker => Marker.parse(rec.fields['marker']) ?? Marker.lavender;
   Animal get animal => _enum(Animal.values, rec.fields['animal']) ?? Animal.cat;
+
+  /// Their [Picture]: the one chosen for them or, for a member written before pictures, the
+  /// picture their animal reads as.
+  String get picture {
+    final raw = rec.fields['picture'];
+    if (Picture.valid(raw)) return raw as String;
+    final animal = _enum(Animal.values, rec.fields['animal']);
+    return animal == null ? Picture.initial : Picture.forAnimal(animal);
+  }
+
   String? get birthday => rec.strOrNull('birthday');
+
+  /// For a sitter ([Role.guest]): the last local date (in the family's time zone) they have
+  /// access, or null for no end.
+  String? get until => rec.strOrNull('until');
+
+  /// Whether a sitter's access is over on [today] (a local date): today is past [until].
+  bool accessEndedOn(String today) {
+    final last = until;
+    return role == Role.guest && last != null && today.compareTo(last) > 0;
+  }
+
+  /// The photo record their picture shows, or null.
+  String? get photo => Picture.photoIdOf(picture);
+
   Set<Grant> get grants =>
       rec.strings('grants').map((g) => _enum(Grant.values, g)).whereType<Grant>().toSet();
   SignIn get signIn {
@@ -228,8 +486,29 @@ class Member extends RecordView {
   }
 
   int get order => rec.integer('order');
+
+  /// The Google or Apple account that signs in as them (`member.account`), or null.
+  AccountRef? get account => AccountRef.fromJson(rec.fields['account']);
+
   bool get isParent => role == Role.parent;
   bool get isKid => role == Role.kid;
+}
+
+/// A shared screen saying that someone got a person's PIN or picture pattern wrong [tries] times
+/// in a row there, so the parents hear of it on their own phones. Written by the screen, for
+/// nobody, and never changed.
+class SignInTries extends RecordView {
+  const SignInTries(super.rec);
+
+  /// The shared screen.
+  String get device => rec.str('device');
+
+  /// Whose PIN or pattern.
+  String get member => rec.str('member');
+  int get tries => rec.integer('tries');
+
+  /// When the screen said so (UTC milliseconds).
+  int get at => rec.created.millis;
 }
 
 class Device extends RecordView {
@@ -243,6 +522,10 @@ class Device extends RecordView {
   bool get approved => rec.flag('approved');
   String? get approvedBy => rec.strOrNull('approvedBy');
   bool get revoked => rec.flag('revoked');
+
+  /// The last of this device's changes the device that revoked it held; see ARCHITECTURE.md,
+  /// "Genesis and trust".
+  int? get revokedAfter => rec.intOrNull('revokedAfter');
   DisplayLayout get layout =>
       _enum(DisplayLayout.values, rec.map('display')['layout']) ?? DisplayLayout.today;
   bool get openCheckoff => rec.map('display')['openCheckoff'] as bool? ?? false;
@@ -263,10 +546,31 @@ class EventSource {
   bool get readOnly => kind != 'manual';
 }
 
+/// The legs a ride can have, in the order Den shows them: driving there, picking up.
+const List<String> rideLegs = ['to', 'from'];
+
 class Ride {
   const Ride(this.leg, this.driver);
   final String leg; // to | from
   final String? driver;
+}
+
+/// Rides as a `rides` list holds them.
+List<Ride> _ridesFromList(Object? list) => [
+      for (final r in list is List ? list : const [])
+        if (r is Map) Ride(r['leg'] as String? ?? 'to', r['driver'] as String?),
+    ];
+
+/// Whether a `rides` list written at [rides] came after every write of the drivers [driverTimes]
+/// holds. Den writes drivers in a change of its own right after the `rides` it writes alongside
+/// them, so a newer `rides` came from an older version, which knows nothing else, or (for one
+/// occurrence) said which legs it has: what it says stands.
+bool _ridesAfter(Hlc? rides, Iterable<Hlc> driverTimes) {
+  if (rides == null) return false;
+  for (final t in driverTimes) {
+    if (!(rides > t)) return false;
+  }
+  return true;
 }
 
 class Event extends RecordView {
@@ -287,8 +591,31 @@ class Event extends RecordView {
     return EventSource(raw['kind'] as String? ?? 'manual', raw['ref'] as String?, raw['label'] as String?);
   }
 
-  List<Ride> get rides =>
-      rec.maps('rides').map((r) => Ride(r['leg'] as String? ?? 'to', r['driver'] as String?)).toList();
+  /// Ride legs and who drives each, in [rideLegs] order when they come from `drivers`.
+  ///
+  /// `drivers` holds one entry per leg (`drivers.to`, `drivers.from`: who drives, or null for
+  /// nobody yet), so claims of different legs merge; its keys are the legs the event has. An
+  /// event without `drivers` reads its `rides` list, as does one whose `rides` an older version
+  /// wrote after them ([readsDrivers]).
+  List<Ride> get rides {
+    final drivers = rec.fields['drivers'];
+    if (drivers is! Map || !readsDrivers) return _ridesFromList(rec.fields['rides']);
+    return [
+      for (final leg in rideLegs)
+        if (drivers.containsKey(leg)) Ride(leg, drivers[leg] as String?),
+    ];
+  }
+
+  /// Whether [rides] come from `drivers` rather than the `rides` list.
+  bool get readsDrivers {
+    if (rec.fields['drivers'] is! Map) return false;
+    final times = rec.fieldTimes;
+    return !_ridesAfter(times['rides'], [
+      for (final t in times.entries)
+        if (t.key == 'drivers' || t.key.startsWith('drivers.')) t.value,
+    ]);
+  }
+
   bool get countdown => rec.flag('countdown');
 }
 
@@ -298,6 +625,46 @@ class EventException extends RecordView {
   int get occurrence => rec.integer('occurrence');
   bool get cancelled => rec.flag('cancelled');
   Map<String, Object?> get patch => rec.map('patch');
+
+  /// When the one leg's driver was set for this occurrence (`patch.drivers.<leg>`), if it is.
+  Hlc? _legTime(String leg) =>
+      rec.map('patch')['drivers.$leg'] == null ? null : rec.fieldTimes['patch.drivers.$leg'] ?? rec.fieldTimes['patch'];
+
+  /// Whether `patch.rides` gives this occurrence's rides whole: it was written after every
+  /// per-leg driver (`patch.drivers.<leg>`), by an older version or to change which legs this
+  /// one occurrence has.
+  bool get ridesWhole {
+    if (rec.map('patch')['rides'] is! List) return false;
+    final times = rec.fieldTimes;
+    return _ridesAfter(times['patch.rides'] ?? times['patch'], [
+      for (final leg in rideLegs) ?_legTime(leg),
+    ]);
+  }
+
+  /// This occurrence's rides, over the series' [series]. Each leg's driver may be set for this
+  /// occurrence alone (`patch.drivers.<leg>`: a member id, or `""` for nobody this time; null or
+  /// unset follows the series), and such a leg is there even when the series has none. When
+  /// [ridesWhole], `patch.rides` says them all instead.
+  List<Ride> rides(List<Ride> series) {
+    final patch = rec.map('patch');
+    return ridesWhole ? _ridesFromList(patch['rides']) : ridesOver(series, patch);
+  }
+
+  /// The rides of an occurrence whose [patch] sets drivers per leg (`drivers.<leg>`), over the
+  /// series' [series].
+  static List<Ride> ridesOver(List<Ride> series, Map<String, Object?> patch) {
+    final own = {
+      for (final leg in rideLegs)
+        if (patch['drivers.$leg'] case final String driver) leg: driver.isEmpty ? null : driver,
+    };
+    if (own.isEmpty) return series;
+    final legs = {for (final r in series) r.leg};
+    return [
+      for (final r in series) own.containsKey(r.leg) ? Ride(r.leg, own[r.leg]) : r,
+      for (final e in own.entries)
+        if (!legs.contains(e.key)) Ride(e.key, e.value),
+    ];
+  }
 }
 
 /// Who a chore belongs to.
@@ -404,6 +771,17 @@ class Completion extends RecordView {
   Map<String, String?> get steps =>
       rec.map('steps').map((k, v) => MapEntry(k, v as String?));
 
+  /// What the chore was worth when it was done, or null for a completion from before Den kept
+  /// that (it is worth what the chore is worth now).
+  int? get points => rec.intOrNull('points');
+
+  /// stepId -> what the step was worth when it was checked; steps absent here are worth what
+  /// they are worth now.
+  Map<String, int> get stepPoints => {
+        for (final e in rec.map('stepPoints').entries)
+          if (e.value is num) e.key: (e.value as num).toInt(),
+      };
+
   static String idFor(String choreId, String date) => '$choreId@$date';
 }
 
@@ -486,8 +864,14 @@ class Connection extends RecordView {
   Set<Scope> get scopes =>
       rec.strings('scopes').map((s) => _enum(Scope.values, s)).whereType<Scope>().toSet();
 
-  /// Whose permissions the connection acts with; null means a parent-level automation.
+  /// Whose permissions the connection acts with. Connections approved before every one was
+  /// bound to a person have none: they act as the parent who let them in
+  /// ([Den.connectionActsAs]).
   String? get member => rec.strOrNull('member');
+
+  /// The time zone the connection's person lives in, when a parent set one that differs from
+  /// the family's: answers say which zone their times are in. Null is the family's.
+  String? get tz => rec.strOrNull('tz');
 
   /// SHA-256 hex of the bearer token (token connections, and OAuth access tokens once issued).
   String? get tokenHash => rec.strOrNull('tokenHash');
@@ -508,4 +892,29 @@ class Subscription extends RecordView {
   List<String> get exclude => rec.strings('exclude');
   bool get skipAllDay => rec.flag('skipAllDay');
   String get status => rec.str('status');
+}
+
+/// A person's small photo (`photo` records, space `f`): a 256 px square JPEG or WebP of at most
+/// [maxBytes], made small on the device that took it. A photo never changes; a new picture is a
+/// new record, and the member's `picture` names the one in use (`photo:<id>`).
+class Photo extends RecordView {
+  const Photo(super.rec);
+
+  /// The photo's side, in pixels.
+  static const int side = 256;
+
+  /// The most a photo may weigh, encoded.
+  static const int maxBytes = 40 * 1024;
+
+  static const String jpeg = 'image/jpeg';
+  static const String webp = 'image/webp';
+
+  /// Whose photo it is.
+  String get member => rec.str('member');
+
+  /// `image/jpeg` or `image/webp`.
+  String get mime => rec.str('mime', jpeg);
+
+  /// The encoded image, base64 (standard alphabet, padded).
+  String get data => rec.str('data');
 }

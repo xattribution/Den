@@ -1,0 +1,284 @@
+import 'dart:async';
+
+import 'package:den_core/den_core.dart';
+import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
+
+import '../../../app/app_state.dart';
+import '../../../design/layout.dart';
+import '../../../design/sheet.dart';
+import '../../../design/tokens.dart';
+import '../../../design/widgets.dart';
+import '../../../design/pickers/pattern_pad.dart';
+import '../../../design/pickers/pin_pad.dart';
+import '../../family/family.dart';
+import '../state/sign_in_actions.dart';
+import '../state/sign_in_guard.dart';
+
+/// Asks who is acting on a shared screen: the family's avatars, then that person's PIN or
+/// picture pattern, then [Den.actAs] for [window]. Returns the member, or null if dismissed.
+/// [likely] puts one person first, such as the owner of the chore being checked. After a wrong
+/// try the pad waits a moment, and says for how long ([SignInWait]).
+Future<Member?> showWhoSheet(
+  BuildContext context, {
+  String title = "Who's doing this?",
+  Duration window = const Duration(seconds: 60),
+  String? likely,
+  Member? start,
+}) {
+  return showDenSheet<Member>(
+    context,
+    builder: (sheetContext) => Padding(
+      padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l),
+      child: _WhoSheet(title: title, window: window, likely: likely, start: start),
+    ),
+  );
+}
+
+class _WhoSheet extends StatefulWidget {
+  const _WhoSheet({required this.title, required this.window, this.likely, this.start});
+  final String title;
+  final Duration window;
+  final String? likely;
+
+  /// Skips the avatars and goes straight to this person's PIN or pattern.
+  final Member? start;
+
+  @override
+  State<_WhoSheet> createState() => _WhoSheetState();
+}
+
+class _WhoSheetState extends State<_WhoSheet> {
+  Member? _chosen;
+  String? _error;
+  bool _checking = false;
+
+  /// What the last wrong try was, said with the wait ("That's not Alex's PIN.").
+  String? _wrong;
+  final _pin = GlobalKey<PinPadState>();
+  final _pattern = GlobalKey<PatternPadState>();
+
+  @override
+  void initState() {
+    super.initState();
+    final start = widget.start;
+    if (start == null) return;
+    _chosen = start;
+    if (start.signIn.kind != 'pin' && start.signIn.kind != 'pattern') {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _verify(''));
+    }
+  }
+
+  Future<void> _choose(Member m) async {
+    setState(() {
+      _chosen = m;
+      _error = null;
+      _wrong = null;
+    });
+    if (m.signIn.kind != 'pin' && m.signIn.kind != 'pattern') await _verify('');
+  }
+
+  Future<void> _verify(String secret) async {
+    final m = _chosen!;
+    final den = context.den;
+    final actions = context.signInActions;
+    setState(() => _checking = true);
+    final check = await actions.verify(m.id, secret);
+    if (!mounted) return;
+    setState(() => _checking = false);
+    if (check.ok) {
+      final owner = den.owner;
+      if (owner != null && owner.id != m.id) {
+        setState(() => _error = 'This is ${FamilyWords.possessive(owner.name)} device, so only ${owner.name} can act here.');
+        return;
+      }
+      try {
+        actions.actAs(m.id, window: widget.window);
+      } on PermissionDenied catch (e) {
+        setState(() => _error = e.message);
+        return;
+      }
+      Navigator.of(context).pop(m);
+      return;
+    }
+    setState(() {
+      // A wrong PIN or pattern is said with the wait, plainly, under the pad.
+      _wrong = switch (m.signIn.kind) {
+        'pin' => "That's not ${FamilyWords.possessive(m.name)} PIN.",
+        'pattern' => "That's not ${FamilyWords.possessive(m.name)} pattern.",
+        _ => null,
+      };
+      _error = check.wait > Duration.zero ? null : switch (m.signIn.kind) {
+        'pin' => "That's not ${FamilyWords.possessive(m.name)} PIN. Try again.",
+        'pattern' => "That's not ${FamilyWords.possessive(m.name)} pattern. Try again.",
+        _ when m.isParent => '${m.name} needs a PIN or pattern to act on a shared screen. Add one in Family on your phone.',
+        _ => '${m.name} has no sign-in for shared screens yet. A parent can add one in Family.',
+      };
+    });
+    _pin.currentState?.clear();
+    _pattern.currentState?.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final members = [...context.den.members];
+    if (widget.likely != null) {
+      final i = members.indexWhere((m) => m.id == widget.likely);
+      if (i > 0) members.insert(0, members.removeAt(i));
+    }
+    final chosen = _chosen;
+
+    if (chosen == null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SheetHeader(title: widget.title),
+          Wrap(
+            spacing: Sp.s,
+            runSpacing: Sp.s,
+            children: [for (final m in members) PersonTile(member: m, onTap: () => _choose(m))],
+          ),
+        ],
+      );
+    }
+
+    final kind = chosen.signIn.kind;
+    final waiting = context.signInActions.waitFor(chosen.id) > Duration.zero;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            PageBackButton(
+              onTap: () => setState(() {
+                _chosen = null;
+                _error = null;
+                _wrong = null;
+              }),
+            ),
+            const SizedBox(width: Sp.m),
+            DenAvatar(chosen, size: 40),
+            const SizedBox(width: Sp.m),
+            Expanded(
+              child: Text(
+                switch (kind) {
+                  'pin' => '${FamilyWords.possessive(chosen.name)} PIN',
+                  'pattern' => '${FamilyWords.possessive(chosen.name)} pattern',
+                  _ => chosen.name,
+                },
+                style: context.text.sheetTitle(c.ink),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: Sp.l),
+        if (kind == 'pin') PinPad(key: _pin, onComplete: _verify, enabled: !waiting),
+        if (kind == 'pattern') PatternPad(key: _pattern, onComplete: _verify, hidden: true, enabled: !waiting),
+        if (_checking && kind != 'pin' && kind != 'pattern')
+          const Padding(padding: EdgeInsets.all(Sp.xl), child: CircularProgressIndicator()),
+        if (waiting)
+          Padding(
+            padding: const EdgeInsets.only(top: Sp.m),
+            child: SignInWait(member: chosen.id, lead: _wrong, onDone: () => setState(() => _wrong = null)),
+          )
+        else if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: Sp.m),
+            child: AttentionLine(message: _error!, bad: true),
+          ),
+      ],
+    );
+  }
+}
+
+/// "That's not Alex's PIN. Try again in 20 seconds" while a wrong try makes [member] wait here,
+/// counting down, then [onDone]. Ink words and an hourglass: nothing red, nothing that blames
+/// anyone.
+class SignInWait extends StatefulWidget {
+  const SignInWait({super.key, required this.member, required this.onDone, this.lead});
+
+  final String member;
+  final VoidCallback onDone;
+
+  /// What went wrong, said first; null when the wait was there before this try.
+  final String? lead;
+
+  @override
+  State<SignInWait> createState() => _SignInWaitState();
+}
+
+class _SignInWaitState extends State<SignInWait> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (context.signInActions.waitFor(widget.member) > Duration.zero) {
+        setState(() {});
+      } else {
+        _tick?.cancel();
+        widget.onDone();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final left = context.signInActions.waitFor(widget.member);
+    if (left == Duration.zero) return const SizedBox.shrink();
+    final lead = widget.lead;
+    return NoticeLine(icon: PhosphorIconsBold.hourglassMedium, message: lead == null ? tryAgainIn(left) : '$lead ${tryAgainIn(left)}');
+  }
+}
+
+/// A person to pick on a shared screen: a big avatar over their name, a 72-dp-plus target.
+class PersonTile extends StatelessWidget {
+  const PersonTile({super.key, required this.member, required this.onTap, this.size = 64});
+
+  final Member member;
+  final VoidCallback onTap;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Semantics(
+      button: true,
+      label: member.name,
+      excludeSemantics: true,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(Radii.card),
+        onTap: onTap,
+        child: SizedBox(
+          width: size + Sp.xxxl,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: Sp.s),
+            child: Column(
+              children: [
+                DenAvatar(member, size: size),
+                const SizedBox(height: Sp.s),
+                Text(
+                  member.name,
+                  style: context.type.title(c.ink),
+                  maxLines: 2,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

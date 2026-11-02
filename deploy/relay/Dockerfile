@@ -14,10 +14,10 @@ RUN cd packages/den_relay && dart pub get
 COPY packages/den_core/ packages/den_core/
 COPY packages/den_net/ packages/den_net/
 COPY packages/den_relay/ packages/den_relay/
-RUN cd packages/den_relay \
+RUN mkdir -p /out/data \
+ && cd packages/den_relay \
  && dart pub get --offline \
- && dart compile exe bin/den_relay.dart -o /out/den_relay \
- && mkdir -p /out/data
+ && dart compile exe bin/den_relay.dart -o /out/den_relay
 
 # The dart image's /runtime holds the few shared libraries an AOT executable needs.
 FROM scratch

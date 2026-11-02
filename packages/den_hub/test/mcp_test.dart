@@ -6,7 +6,7 @@ import 'dart:convert';
 
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
-import 'package:test/test.dart';
+import 'support/test.dart';
 
 import 'support/fixture.dart';
 
@@ -45,10 +45,17 @@ void main() {
       final (r, _) = await rpc(token, {'id': 1, 'method': 'initialize', 'params': {'protocolVersion': v}});
       expect(result(r)['protocolVersion'], v);
       expect((result(r)['serverInfo'] as Map)['name'], 'den-hub');
-      expect(result(r)['capabilities'], {'tools': {'listChanged': false}});
+      expect(result(r)['capabilities'], {
+        'tools': {'listChanged': false},
+        'resources': {'subscribe': false, 'listChanged': false},
+        'prompts': {'listChanged': false},
+      });
+      expect(result(r).containsKey('resultType'), isFalse, reason: 'earlier versions keep their shapes');
     }
     final (old, _) = await rpc(token, {'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '1999-01-01'}});
     expect(result(old)['protocolVersion'], '2025-11-25');
+    final (asksNew, _) = await rpc(token, {'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '2026-07-28'}});
+    expect(result(asksNew)['protocolVersion'], '2025-11-25', reason: 'initialize always means the session-based protocol');
     final session = await initialize(token);
     final (note, _) = await rpc(token, {'method': 'notifications/initialized'}, session: session);
     expect(note.status, 202);
@@ -65,7 +72,11 @@ void main() {
     final r = await f.call('POST', '/mcp', body: {'jsonrpc': '2.0', 'id': 1, 'method': 'ping'});
     expect(r.status, 401);
     expect(r.headers['www-authenticate'],
-        'Bearer resource_metadata="http://127.0.0.1:${f.hub.port}/.well-known/oauth-protected-resource"');
+        'Bearer resource_metadata="http://127.0.0.1:${f.hub.port}/.well-known/oauth-protected-resource/mcp", '
+        'scope="read calendar chores lists points"');
+    final bad = await f.call('POST', '/mcp', token: 'den_not_a_token', body: {'jsonrpc': '2.0', 'id': 1, 'method': 'ping'});
+    expect(bad.status, 401);
+    expect(bad.headers['www-authenticate'], endsWith(', error="invalid_token"'));
     final token = await f.token(scopes: {Scope.read}, label: 'Origin test');
     expect((await rpc(token, {'id': 1, 'method': 'ping'}, headers: {'origin': 'http://evil.example'})).$1.status, 403);
     final port = f.hub.port;
@@ -82,24 +93,30 @@ void main() {
     final session = await initialize(admin);
     final (r, _) = await rpc(admin, {'id': 2, 'method': 'tools/list'}, session: session);
     final tools = (result(r)['tools'] as List).cast<Map<String, Object?>>();
+    // A token acts as the parent who made it (MCP eval #4): with admin, everything that parent may.
     expect(tools.map((t) => t['name']).toSet(), {
-      'get_today', 'get_week', 'search', 'get_history', 'list_members', 'list_events', 'create_event', 'update_event',
-      'delete_event', 'list_chores', 'create_chore', 'update_chore', 'complete_chore', 'check_step', 'swap_chore',
-      'list_lists', 'create_list', 'add_items', 'check_item', 'remove_item', 'clear_checked', 'get_points',
-      'adjust_points', 'create_goal', 'list_rewards', 'request_reward', 'decide_redemption',
+      'get_overview', 'get_family', 'list_events', 'list_chores', 'get_lists', 'get_points', 'search', 'get_history',
+      'create_event', 'update_event', 'delete_event', 'set_ride',
+      'create_chore', 'update_chore', 'delete_chore', 'complete_chore', 'swap_chore',
+      'create_list', 'update_list', 'delete_list', 'add_items', 'update_items', 'remove_items',
+      'adjust_points', 'save_goal', 'delete_goal', 'save_reward', 'request_reward', 'decide_reward_request',
+      'add_from_text', 'undo', 'save_category', 'delete_category',
+      'update_family_settings', 'save_member', 'set_picture', 'save_calendar_feed', 'remove_calendar_feed',
     });
     Map<String, Object?> tool(String name) => tools.firstWhere((t) => t['name'] == name);
     expect((tool('create_event')['inputSchema'] as Map)['required'], ['title', 'start']);
     expect(tool('create_event')['annotations'], containsPair('readOnlyHint', false));
     expect(tool('delete_event')['annotations'], containsPair('destructiveHint', true));
-    expect(tool('get_today')['annotations'], containsPair('readOnlyHint', true));
+    expect(tool('get_overview')['annotations'], containsPair('readOnlyHint', true));
     expect(tool('complete_chore')['annotations'], containsPair('idempotentHint', true));
+    expect((tool('get_lists')['outputSchema'] as Map)['type'], 'object');
     final reader = await f.token(scopes: {Scope.read}, label: 'Reader tools');
     final s2 = await initialize(reader);
     final (r2, _) = await rpc(reader, {'id': 2, 'method': 'tools/list'}, session: s2);
     final names = (result(r2)['tools'] as List).map((t) => (t as Map)['name']);
-    expect(names, contains('get_today'));
+    expect(names, contains('get_overview'));
     expect(names, isNot(contains('add_items')));
+    expect(names, isNot(contains('get_today')), reason: 'older names work but aren\'t listed');
   });
 
   test('tools/call reads and writes by name, refuses what the member may not do', () async {
@@ -141,6 +158,28 @@ void main() {
     expect(text(noScope), contains('"calendar" scope'));
   });
 
+  test('only someone who sets points can give a chore stars through a tool', () async {
+    final rosa = await f.token(scopes: {Scope.read, Scope.chores}, member: f.id('Grandma Rosa'), label: 'Rosa assistant');
+    final session = await initialize(rosa);
+    Future<Map<String, Object?>> call(String name, Map<String, Object?> args) async => result((await rpc(
+            rosa, {'id': 9, 'method': 'tools/call', 'params': {'name': name, 'arguments': args}},
+            session: session))
+        .$1);
+
+    final priced = await call('create_chore', {'title': 'Water the tomatoes', 'points': 5});
+    expect(priced['isError'], isTrue);
+    expect(text(priced), startsWith('Den didn\'t allow that'));
+    expect(text(priced), contains('stars'));
+
+    final plain = await call('create_chore', {'title': 'Water the tomatoes'});
+    expect(plain['isError'], isFalse, reason: text(plain));
+    final raised = await call('update_chore', {'chore': 'Water the tomatoes', 'points': 3});
+    expect(raised['isError'], isTrue);
+    expect(text(raised), startsWith('Den didn\'t allow that'));
+    final renamed = await call('update_chore', {'chore': 'Water the tomatoes', 'title': 'Water the garden'});
+    expect(renamed['isError'], isFalse, reason: text(renamed));
+  });
+
   test('creating an event with local times, and an unknown tool', () async {
     final token = await f.token(scopes: {Scope.admin}, label: 'Planner');
     final session = await initialize(token);
@@ -157,6 +196,11 @@ void main() {
     expect(event['assignees'], [f.id('Zoe'), f.id('Priya')]);
     final (unknown, _) = await rpc(token, {'id': 6, 'method': 'tools/call', 'params': {'name': 'nope'}}, session: session);
     expect((unknown.body['error'] as Map)['code'], -32602);
+    final (resource, _) = await rpc(token, {'id': 7, 'method': 'resources/read', 'params': {'uri': 'den://nowhere'}}, session: session);
+    expect((resource.body['error'] as Map)['code'], -32002, reason: 'resource not found, as earlier versions say it');
+    final (lists, _) = await rpc(token, {'id': 8, 'method': 'resources/read', 'params': {'uri': 'den://lists'}}, session: session);
+    expect(((lists.body['result'] as Map)['contents'] as List).single, containsPair('uri', 'den://lists'));
+    expect((lists.body['result'] as Map).containsKey('ttlMs'), isFalse);
   });
 
   test('stdio carries the same protocol, one JSON message per line', () async {

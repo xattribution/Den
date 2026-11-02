@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/args.dart';
@@ -7,6 +6,7 @@ import 'package:den_hub/den_hub.dart';
 
 import 'commands.dart';
 import 'data_dir.dart';
+import 'host_commands.dart';
 
 /// Where a command writes, and what it reads (tests pass their own).
 class CliIo {
@@ -34,6 +34,9 @@ ArgParser _common(ArgParser p) => p
   ..addOption('data', help: 'Data directory (env DEN_DATA, default ./den-data)')
   ..addOption('port', help: 'Port (env DEN_PORT, default 47733)');
 
+ArgParser _family(ArgParser p) =>
+    p..addOption('family', help: 'On a host with several families: which, by its address (den-smith.example.com)');
+
 /// The argument parser for every command.
 ArgParser cliParser() {
   final root = ArgParser()..addFlag('help', abbr: 'h', negatable: false);
@@ -42,25 +45,55 @@ ArgParser cliParser() {
     ..addOption('web', help: 'Static web build to serve at / (env DEN_WEB)')
     ..addOption('relay', help: 'Relay URL for a tunnel (env DEN_RELAY)')
     ..addOption('name', help: 'Hub name before it joins a family (env DEN_NAME)')
-    ..addOption('ha-url', help: 'Home Assistant URL for notifications (env DEN_HA_URL)')
-    ..addOption('ha-token', help: 'Home Assistant long-lived token (env DEN_HA_TOKEN)')
     ..addOption('public-url', help: 'Public base URL for OAuth and link codes (env DEN_PUBLIC_URL)')
+    ..addOption('trusted-proxies',
+        help: 'Reverse proxies whose X-Forwarded-* headers to believe, addresses or CIDRs (env DEN_TRUSTED_PROXIES)')
+    ..addOption('fetch-allow',
+        help: 'Private networks calendar feeds may be fetched from, addresses or CIDRs (env DEN_FETCH_ALLOW)')
+    ..addOption('peer-hubs',
+        help: 'The other families\' hubs on this server, whose shared calendars may be fetched through this '
+            'machine\'s own reverse proxy: https addresses or names (env DEN_PEER_HUBS)')
+    ..addOption('csp', help: 'Replace the web app\'s Content-Security-Policy (env DEN_CSP)')
     ..addOption('log-level', help: 'debug, info, warn or error (env DEN_LOG)')
+    ..addFlag('public',
+        help: 'Reachable from the internet: minimal unauthenticated answers, mDNS off (env DEN_PUBLIC=1; '
+            'default on for an https public URL)',
+        defaultsTo: null)
     ..addFlag('mailbox', help: 'Also sync through the relay mailbox (env DEN_MAILBOX=1)', defaultsTo: null)
-    ..addFlag('mdns', help: 'Advertise on the LAN (env DEN_MDNS=0 turns it off)', defaultsTo: null);
+    ..addFlag('mdns', help: 'Advertise on the LAN (env DEN_MDNS=0 turns it off; off by default when public)', defaultsTo: null);
   _common(root.addCommand('mcp'))
     ..addOption('token', help: 'A token from the Den app (env DEN_TOKEN)')
     ..addOption('hub', help: 'A running hub to bridge to (default http://127.0.0.1:<port>)');
   _common(root.addCommand('import-sett')).addOption('as', help: 'The parent the import acts as (by name)');
-  _common(root.addCommand('setup-code'));
-  _common(root.addCommand('status'));
-  _common(root.addCommand('backup'))
+  _family(_common(root.addCommand('setup-code')));
+  _family(_common(root.addCommand('setup-link')))
+    ..addOption('url', help: "The hub's address, https://den.example.com (env DEN_PUBLIC_URL)")
+    ..addFlag('bare',
+        help: 'Only the link, then its QR code, for an installer to frame (exit 3: already in a family)', negatable: false);
+  _family(_common(root.addCommand('open-linking'))).addOption('minutes', help: 'How long browsers may ask to link (default 10)');
+  _family(_common(root.addCommand('status')));
+  _family(_common(root.addCommand('recover')))
+      .addOption('person', help: 'The parent who lost their phone, by their name in Den (in quotes if it has a space)');
+  _family(_common(root.addCommand('backup')))
     ..addOption('out', help: 'Backup file to write')
-    ..addOption('passphrase-env', help: 'Environment variable holding the passphrase');
-  _common(root.addCommand('restore'))
+    ..addOption('passphrase-env', help: 'Environment variable holding a passphrase that opens it too (optional)');
+  _family(_common(root.addCommand('restore')))
     ..addOption('in', help: 'Backup file to read')
-    ..addOption('passphrase-env', help: 'Environment variable holding the passphrase')
+    ..addOption('passphrase-env', help: 'Environment variable holding the passphrase, for a backup made with one')
+    ..addOption('words-env', help: "Environment variable holding a parent's recovery words (else they're asked for)")
     ..addFlag('force', help: 'Replace an existing hub in the data directory', negatable: false);
+  _common(root.addCommand('add-family'))
+    ..addOption('hostname', help: "The new family's own address, den-smith.example.com")
+    ..addOption('url', help: 'Its address with a scheme and port, when not https on 443')
+    ..addOption('id', help: 'Which family to bring back, when more than one was taken off the address');
+  _common(root.addCommand('adopt'))
+    ..addOption('hostname', help: "The family's own address, den-smith.example.com (its old DEN_PUBLIC_URL)")
+    ..addOption('url', help: 'Its address with a scheme and port, when not https on 443')
+    ..addFlag('dry-run', help: 'Say what it would do, and change nothing', negatable: false);
+  _family(_common(root.addCommand('remove-family')))
+    ..addOption('id', help: 'The family by its id (den_hub families lists them): needed to delete the data of a family still on the host')
+    ..addFlag('delete-data', help: "Delete the family's data too", negatable: false);
+  _common(root.addCommand('families'));
   return root;
 }
 
@@ -84,15 +117,23 @@ Future<int> runCli(List<String> args, {CliIo? io}) async {
   final env = cli.environment;
   final data = DataDir(command['data'] as String? ?? env['DEN_DATA'] ?? 'den-data');
   final port = int.tryParse(command['port'] as String? ?? env['DEN_PORT'] ?? '') ?? defaultHubPort;
+  FamilyTarget target() => familyTarget(data, command['family'] as String?, env);
   try {
     return switch (name) {
       'serve' => await serve(command, data, port, cli),
       'mcp' => await mcp(command, data, port, cli),
       'import-sett' => await importSett(command, data, cli),
-      'setup-code' => await setupCode(data, port, cli),
-      'status' => await status(data, port, cli),
-      'backup' => await backup(command, data, cli),
+      'setup-code' => await setupCode(target(), port, cli),
+      'setup-link' => await setupLinkCommand(command, target(), port, cli),
+      'open-linking' => await openLinking(command, target(), cli),
+      'status' => await status(target(), port, cli),
+      'recover' => await recover(command, target(), port, cli),
+      'backup' => await backup(command, target(), cli),
       'restore' => await restore(command, data, cli),
+      'add-family' => await addFamily(command, data, port, cli),
+      'adopt' => await adopt(command, data, port, cli),
+      'remove-family' => await removeFamily(command, data, port, cli),
+      'families' => await families(command, data, port, cli),
       _ => 64,
     };
   } on StateError catch (e) {
@@ -112,56 +153,72 @@ String _usage(ArgParser parser) => [
       '  mcp --token T     MCP over standard input and output',
       '  import-sett DB --as NAME   Import a Sett coord.db as that parent',
       '  setup-code        Print a fresh hub\'s setup code',
+      '  setup-link [--url U] [--bare]   A link and QR code that start the family on the first parent\'s phone',
+      '  open-linking      Let browsers ask to link to a public hub for 10 minutes',
       '  status            Say what the hub is doing',
-      '  backup --out FILE --passphrase-env VAR',
-      '  restore --in FILE --passphrase-env VAR [--force]',
+      '  recover --person NAME   A one-time link and four words that let a parent\'s new phone in',
+      '                    (only if the family turned on "Let the hub help us get back in")',
+      '  backup --out FILE [--passphrase-env VAR]',
+      '  restore --in FILE [--passphrase-env VAR | --words-env VAR] [--force]',
+      '',
+      'One host, several families (each at its own address, with its own keys and data):',
+      '  add-family --hostname ADDRESS   Another family on this host; prints its setup link',
+      '  adopt DIR --hostname ADDRESS [--dry-run]   Move a hub that ran on its own onto this host;',
+      '                    it keeps its keys, so its phones keep syncing',
+      '  remove-family --family ADDRESS   Take a family off this host; its data stays',
+      '  remove-family --id ID --delete-data   ... and delete its data (or --family ADDRESS of one taken off)',
+      '  families          The families this host serves',
+      '  --family ADDRESS  on setup-code, setup-link, open-linking, status, recover, backup and',
+      '                    restore: that family (the first family without it)',
       '',
       for (final e in parser.commands.entries) '${e.key}:\n${e.value.usage}\n',
     ].join('\n');
 
 LogLevel _level(String? name) => LogLevel.values.firstWhere((l) => l.name == name, orElse: () => LogLevel.info);
 
-Map<String, MemberNotify> _notify(DataDir data, Map<String, String> env) {
-  String? text = env['DEN_NOTIFY'];
-  final file = File('${data.path}${Platform.pathSeparator}notify.json');
-  if (text == null && file.existsSync()) text = file.readAsStringSync();
-  if (text == null || text.trim().isEmpty) return const {};
-  final json = (jsonDecode(text) as Map).cast<String, Object?>();
-  final members = (json['members'] as Map?)?.cast<String, Object?>() ?? json;
-  return {
-    for (final e in members.entries)
-      if (e.value is Map) e.key: MemberNotify.fromJson((e.value as Map).cast<String, Object?>()),
-  };
+/// Settings the hub read from its environment once, and reads no more: what each did is set up
+/// in the app now, or always on. Each one still set gets one line in the log at start, naming it
+/// and never its value, and is otherwise ignored (docs/settings.md).
+const Map<String, String> retiredSettings = {
+  'DEN_GOOGLE_CLIENT_ID': _signIn,
+  'DEN_GOOGLE_CLIENT_SECRET': _signIn,
+  'DEN_APPLE_SERVICES_ID': _signIn,
+  'DEN_APPLE_TEAM_ID': _signIn,
+  'DEN_APPLE_KEY_ID': _signIn,
+  'DEN_APPLE_KEY_FILE': _signIn,
+  'DEN_HOST_PUSH': 'Families on a Den host always share its push key now, for a browser holding several of them.',
+  'DEN_HA_URL': _notifiers,
+  'DEN_HA_TOKEN': _notifiers,
+  'DEN_NOTIFY': _notifiers,
+};
+
+const String _signIn = 'Signing in with Google or Apple is set up in the app: on a parent\'s phone, Settings, Advanced, '
+    'Sign in with Google or Apple.';
+const String _notifiers = 'The hub no longer sends reminders to Home Assistant\'s notify service or ntfy: Home Assistant gets '
+    'them through its Den integration (Settings, Advanced, Home Assistant), and phones and browsers from Den itself.';
+
+/// Says once, in [log], which [retiredSettings] are still in [env] (and whether [data] still has
+/// a `notify.json`), and what took their place. Never a value.
+void warnRetired(Map<String, String> env, DataDir data, HubLog log) {
+  final found = <String, List<String>>{};
+  for (final e in retiredSettings.entries) {
+    if ((env[e.key] ?? '').trim().isNotEmpty) found.putIfAbsent(e.value, () => []).add(e.key);
+  }
+  if (File('${data.path}${Platform.pathSeparator}notify.json').existsSync()) found.putIfAbsent(_notifiers, () => []).add('notify.json');
+  for (final e in found.entries) {
+    final names = e.value.join(', ');
+    log.warn('$names ${e.value.length == 1 ? 'is' : 'are'} no longer read, and changes nothing. ${e.key} '
+        'Take ${e.value.length == 1 ? 'it' : 'them'} out whenever you like.');
+  }
 }
 
 bool? _envFlag(String? v) => v == null ? null : !(v == '0' || v.toLowerCase() == 'false' || v.toLowerCase() == 'no');
 
-/// `den_hub serve`.
+/// `den_hub serve`: the Den host over the data directory. The first family is the one in the
+/// directory itself, as a hub's always was; each other family `den_hub add-family` or `adopt`
+/// put on the host is in `logs/<id>/`, at its own address, and served alongside.
 Future<int> serve(ArgResults a, DataDir data, int port, CliIo io) async {
-  final env = io.environment;
-  String? opt(String name, String envName) => a[name] as String? ?? env[envName];
-  await data.lock();
-  final log = HubLog(level: _level(opt('log-level', 'DEN_LOG')), sink: io.err.writeln);
-  final den = await data.open();
-  final relay = opt('relay', 'DEN_RELAY');
-  final ha = opt('ha-url', 'DEN_HA_URL');
-  final public = opt('public-url', 'DEN_PUBLIC_URL');
-  final hub = await DenHub.start(den, HubConfig(
-    port: port,
-    host: opt('host', 'DEN_HOST'),
-    dataDir: data.path,
-    webDir: opt('web', 'DEN_WEB'),
-    relay: relay == null || relay.isEmpty ? null : Uri.parse(relay),
-    name: opt('name', 'DEN_NAME') ?? 'Den hub',
-    homeAssistantUrl: ha == null || ha.isEmpty ? null : Uri.parse(ha),
-    homeAssistantToken: opt('ha-token', 'DEN_HA_TOKEN'),
-    notify: _notify(data, env),
-    publicUrl: public == null || public.isEmpty ? null : Uri.parse(public),
-    allowedOrigins: [...?env['DEN_ALLOWED_ORIGINS']?.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty)],
-    mailbox: a['mailbox'] as bool? ?? _envFlag(env['DEN_MAILBOX']) ?? false,
-    mdns: a['mdns'] as bool? ?? _envFlag(env['DEN_MDNS']) ?? true,
-    log: log,
-  ));
+  final host = await openHost(a, data, port, io);
   final done = Completer<void>();
   final signals = [ProcessSignal.sigint, if (!Platform.isWindows) ProcessSignal.sigterm];
   final subs = [for (final s in signals) s.watch().listen((_) => done.isCompleted ? null : done.complete())];
@@ -169,8 +226,196 @@ Future<int> serve(ArgResults a, DataDir data, int port, CliIo io) async {
   for (final s in subs) {
     await s.cancel();
   }
-  await hub.stop();
-  await den.close();
-  await data.unlock();
+  await host.stop();
   return 0;
+}
+
+/// Starts the Den host [serve] runs, over [data], holding its lock and each family's until the
+/// host stops ([DenHost.stop] releases them). A family whose data won't open is logged and left
+/// out, and the others are served.
+Future<DenHost> openHost(ArgResults a, DataDir data, int port, CliIo io) async {
+  final env = io.environment;
+  String? opt(String name, String envName) => a[name] as String? ?? env[envName];
+  final List<IpNetwork> proxies;
+  try {
+    proxies = IpNetwork.parseList(opt('trusted-proxies', 'DEN_TRUSTED_PROXIES') ?? '');
+  } on FormatException catch (e) {
+    throw CliUsage('DEN_TRUSTED_PROXIES: ${e.message}');
+  }
+  final List<IpNetwork> fetchAllow;
+  try {
+    fetchAllow = IpNetwork.parseList(opt('fetch-allow', 'DEN_FETCH_ALLOW') ?? '');
+  } on FormatException catch (e) {
+    throw CliUsage('DEN_FETCH_ALLOW: ${e.message}');
+  }
+  final List<Uri> peerHubs;
+  try {
+    peerHubs = parsePeerHubs(opt('peer-hubs', 'DEN_PEER_HUBS') ?? '');
+  } on FormatException catch (e) {
+    throw CliUsage('DEN_PEER_HUBS: ${e.message}');
+  }
+  final public = opt('public-url', 'DEN_PUBLIC_URL');
+  final configuredUrl = public == null || public.isEmpty ? null : Uri.parse(public);
+  // The family's address as the server learned it at first boot (from its Cloudflare tunnel),
+  // when the compose file doesn't name one.
+  Uri? learnedUrl() {
+    final file = File([data.path, 'hub', addressFile].join(Platform.pathSeparator));
+    if (!file.existsSync()) return null;
+    return familyAddressOf(file.readAsStringSync());
+  }
+
+  final publicUrl = configuredUrl ?? learnedUrl();
+  // The Cloudflare tunnel's connector, when the image runs one beside the hub (plumbing the
+  // compose file sets: DEN_CONNECTOR=cloudflared, DEN_CONNECTOR_METRICS=http://tunnel:20241).
+  final connectorOn = env['DEN_CONNECTOR'] == 'cloudflared';
+  final metrics = env['DEN_CONNECTOR_METRICS'];
+  final connector = CloudflaredConnector(
+    dataDir: data.path,
+    available: connectorOn,
+    metrics: metrics == null || metrics.isEmpty ? null : Uri.tryParse(metrics.contains('://') ? metrics : 'http://$metrics'),
+  );
+  final backupPassphrase = env['DEN_BACKUP_PASSPHRASE'];
+  final backupDir = env['DEN_BACKUP_DIR'];
+  final exposed = a['public'] as bool? ?? _envFlag(env['DEN_PUBLIC']);
+  final publicPosture = exposed ?? (publicUrl?.scheme == 'https');
+  final relay = opt('relay', 'DEN_RELAY');
+  final bind = opt('host', 'DEN_HOST');
+  final web = opt('web', 'DEN_WEB');
+  final csp = opt('csp', 'DEN_CSP');
+  final mailbox = a['mailbox'] as bool? ?? _envFlag(env['DEN_MAILBOX']) ?? false;
+  final allowedOrigins = [...?env['DEN_ALLOWED_ORIGINS']?.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty)];
+  final log = HubLog(level: _level(opt('log-level', 'DEN_LOG')), sink: io.err.writeln);
+  warnRetired(env, data, log);
+
+  /// A family's hub: the first family's as `serve` always made it; another family's at its own
+  /// address, labeled in the log, and without mDNS (the first family's home's). Signing in with
+  /// Google and Apple is the host's, set up from a parent's phone in the first family
+  /// (sign_in_setup.dart), and every family shares the host's push key for a browser holding
+  /// several of them.
+  HubConfig configFor(DataDir dir, {Uri? address, HostedLog? hosted}) => HubConfig(
+        port: port,
+        host: bind,
+        dataDir: dir.path,
+        webDir: web,
+        relay: relay == null || relay.isEmpty ? null : Uri.parse(relay),
+        name: opt('name', 'DEN_NAME') ?? 'Den hub',
+        publicUrl: address,
+        allowedOrigins: allowedOrigins,
+        trustedProxies: proxies,
+        fetchAllow: fetchAllow,
+        peerHubs: peerHubs,
+        public: exposed,
+        contentSecurityPolicy: csp,
+        mailbox: mailbox,
+        mdns: hosted == null ? a['mdns'] as bool? ?? _envFlag(env['DEN_MDNS']) ?? !publicPosture : false,
+        log: hosted == null ? log : log.labeled(hosted.hostname ?? hosted.id),
+      );
+
+  Future<HostedTenant> openLog(HostedLog hosted, {required bool fresh}) async {
+    final dir = data.log(hosted.id);
+    if (!fresh && !dir.exists) throw StateError('There\'s no hub in ${dir.path}');
+    await dir.lock();
+    try {
+      final den = await dir.open();
+      return (
+        den: den,
+        config: configFor(dir, address: hosted.publicUrl, hosted: hosted),
+        close: () async {
+          await den.close();
+          await dir.unlock();
+        },
+      );
+    } catch (_) {
+      await dir.unlock();
+      rethrow;
+    }
+  }
+
+  await data.lock();
+  var handedOver = false;
+  try {
+    final host = await DenHost.start(HostConfig(
+      port: port,
+      host: bind,
+      dataDir: data.path,
+      webDir: web,
+      trustedProxies: proxies,
+      contentSecurityPolicy: csp,
+      log: log,
+      fetchAllow: fetchAllow,
+      peerHubs: peerHubs,
+      openLog: (l) => openLog(l, fresh: false),
+      createLog: (l) => openLog(l, fresh: true),
+      // remove-family --delete-data, once the host has let the family go: its own lock says no
+      // backup or restore has it open.
+      deleteLog: (l) async {
+        final dir = data.log(l.id);
+        if (!Directory(dir.path).existsSync()) return;
+        await dir.lock();
+        try {
+          await Directory(dir.path).delete(recursive: true);
+        } finally {
+          await dir.unlock();
+        }
+      },
+      // One family answers at any address while host.json lists no other, as a hub always has.
+      single: true,
+      // Until the first family is attached, its address answers 503, never another family.
+      expected: [?publicUrl?.host],
+      // A family that doesn't open is tried again this often (DEN_HOST_RETRY, seconds).
+      retryInterval: Duration(seconds: int.tryParse(env['DEN_HOST_RETRY'] ?? '')?.clamp(1, 3600) ?? 30),
+      connector: connector,
+      backupPassphrase: backupPassphrase == null || backupPassphrase.isEmpty ? null : backupPassphrase,
+      backupDir: backupDir == null || backupDir.isEmpty ? null : backupDir,
+      // The first-boot pages restored a backup into the data directory: open the first family
+      // again, under the lock, at the address the server has now.
+      reopenOwn: () async {
+        await data.lock();
+        try {
+          final den = await data.open();
+          return (
+            den: den,
+            config: configFor(data, address: configuredUrl ?? learnedUrl()),
+            close: () async {
+              await den.close();
+              await data.unlock();
+            },
+          );
+        } catch (_) {
+          await data.unlock();
+          rethrow;
+        }
+      },
+    ));
+    try {
+      final den = await data.open();
+      try {
+        await host.add(den, configFor(data, address: publicUrl), onClosed: () async {
+          await den.close();
+          await data.unlock();
+        });
+        handedOver = true;
+      } catch (_) {
+        await den.close();
+        rethrow;
+      }
+      // Every other family host.json lists; one that doesn't open is tried again, and its address
+      // answers 503 until it does (den_hub families says why).
+      await host.openConfigured();
+    } catch (_) {
+      await host.stop();
+      rethrow;
+    }
+    if (host.tenants.length > 1) {
+      log.info('Serving ${host.tenants.length} families: '
+          '${[for (final t in host.tenants) t.config.publicUrl?.host ?? '(the first, with no address)'].join(', ')}');
+    }
+    if (publicPosture && proxies.isEmpty) {
+      log.warn('Running in the public posture with no DEN_TRUSTED_PROXIES: behind a reverse proxy, list it so '
+          'limits count each client and the hub knows requests came over HTTPS.');
+    }
+    return host;
+  } finally {
+    if (!handedOver) await data.unlock();
+  }
 }

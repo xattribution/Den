@@ -64,14 +64,19 @@ hourly sweep that rewrites the file.
 
 | Limit | Default |
 | --- | --- |
-| Requests per client address | burst 120, 20/s |
+| Requests per client (an IPv4 address, or an IPv6 /64) | burst 120, 20/s |
 | Appends per mailbox | burst 120, 2/s |
 | Reads per mailbox | burst 240, 4/s |
 | Blob size / WebSocket message size | 1 MiB |
 | Per mailbox | 10,000 blobs, 32 MiB |
 | Mailboxes / total stored | 100,000 / 10 GiB |
+| Per client: bytes stored / mailboxes created (while they hold blobs) | 256 MiB / 1,000 |
 | Read page | 200 blobs or 8 MiB |
 | Tunnels / streams per tunnel | 10,000 / 64 |
-| Waiting rendezvous hosts | 10,000 |
+| Per client: tunnels / streams through one tunnel | 16 / 16 |
+| Waiting rendezvous hosts (total / per client) | 10,000 / 8 |
+
+WebSocket frames are checked as their headers arrive: a frame or message announcing more than
+the message size closes the connection before it is buffered.
 
 Over a rate limit the relay answers 429 with `Retry-After`.

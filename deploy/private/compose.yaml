@@ -1,0 +1,134 @@
+# The family's hub on a private server: only the family's homes and their devices on Tailscale
+# reach it, all at https://DEN_DOMAIN. docs/hosting.md, "Private: home networks plus Tailscale",
+# walks through it; install.sh sets up the server around it (firewall, Tailscale, SSH, updates).
+# From this folder:
+#
+#   sudo ./install.sh                                        # the first time, and after git pull
+#   docker compose exec hub /app/bin/den_hub setup-code
+#   docker compose run --rm backup                           # an encrypted backup into ./backups
+#
+# Everything runs on the server's own network and nothing is published through Docker, so
+# Docker's port rules open nothing: the firewall (nftables/den_fw.nft) is the only gate.
+#   hub      listens on 127.0.0.1:47733 only
+#   caddy    TCP 443, for the homes and the tailnet; the certificate through Cloudflare's DNS
+#   dnsmasq  port 53 on the Tailscale address only: den.<domain> through the tunnel
+#
+# More families on the same server (sudo ./install.sh add-family smith den-smith.example.com):
+# the hub below is a Den host, one process serving every family, each with its own keys, data
+# (in this volume, under logs/) and address; add-family adds one to the running host, and
+# compose.families.yaml, which install.sh writes and .env's COMPOSE_FILE adds to this file, adds
+# its address to Caddy and dnsmasq, all to this one hub. A family can keep a hub container of its
+# own instead (add-family --container: hub-smith, on 47735, ..., with its own volume, and every
+# family's address pointed at Caddy on 127.0.0.1 inside each hub, so shared calendars are fetched
+# on this machine); merge-families moves those onto the host. docs/hosting.md, "Several families".
+name: den
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  hub:
+    build:
+      context: ../..
+      dockerfile: deploy/hub/Dockerfile
+      # The commit, for Settings, About in the app (install.sh sets it).
+      args:
+        DEN_COMMIT: ${DEN_COMMIT:-}
+    # Built from this checkout by default; DEN_IMAGE in .env names a published release instead.
+    image: ${DEN_IMAGE:-den-hub}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DEN_NAME: ${DEN_NAME:-Den hub}
+      DEN_HOST: 127.0.0.1
+      DEN_PORT: ${DEN_PORT:-47733}
+      DEN_PUBLIC_URL: https://${DEN_DOMAIN:?set DEN_DOMAIN in .env, like den.example.com}
+      # The public posture, though the internet can't reach it: limits per address, a parent's
+      # say before a new browser links, minimal answers to strangers. A layer, not the only one.
+      DEN_PUBLIC: "1"
+      # Caddy, on this machine, is the only proxy: its X-Forwarded-* headers count.
+      DEN_TRUSTED_PROXIES: 127.0.0.1
+      # On the server's own network: never advertise on it.
+      DEN_MDNS: "0"
+      DEN_LOG: ${DEN_LOG:-info}
+    volumes:
+      - den-hub:/data
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+  caddy:
+    build:
+      context: .
+      dockerfile: caddy.Dockerfile
+    image: den-caddy:2.11.7-cloudflare
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DEN_DOMAIN: ${DEN_DOMAIN}
+      DEN_PORT: ${DEN_PORT:-47733}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN in .env (Zone:Read and DNS:Edit on the domain)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    # Started with the hub, not after it is healthy: the hub reports unhealthy while it starts
+    # (until every family on it has had its first try at opening), and Caddy needn't wait for that
+    # to serve the families that are open.
+    depends_on:
+      hub:
+        condition: service_started
+    logging: *logging
+
+  dnsmasq:
+    build:
+      dockerfile_inline: |
+        FROM alpine:3.24.3
+        RUN apk add --no-cache dnsmasq
+        ENTRYPOINT ["dnsmasq", "--keep-in-foreground", "--log-facility=-", "--conf-file=/etc/dnsmasq.conf"]
+    image: den-dnsmasq
+    restart: unless-stopped
+    network_mode: host
+    # With more families, compose.families.yaml replaces this with the same two lines for each
+    # family's address.
+    command:
+      - --interface-name=${DEN_DOMAIN},tailscale0/4
+      - --local=/${DEN_DOMAIN}/
+    volumes:
+      - ./dnsmasq.conf:/etc/dnsmasq.conf:ro
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+  # Encrypted backups of every family's hub into ./backups, keeping the newest DEN_BACKUP_KEEP
+  # (14) of each (backup.sh):
+  #   docker compose run --rm backup                   every family; one: ... backup smith
+  #   docker compose run --rm backup restore backups/den-2026-10-28-0317.denbackup   # hub stopped
+  # Root in a short-lived container with no network, so it can write to ./backups and give
+  # restored files back to the hub's user. compose.families.yaml mounts the other families'
+  # volumes in /families.
+  backup:
+    profiles: [backup]
+    image: ${DEN_IMAGE:-den-hub}
+    entrypoint: ["sh", "/den/backup.sh"]
+    user: root
+    network_mode: none
+    environment:
+      DEN_BACKUP_PASSPHRASE: ${DEN_BACKUP_PASSPHRASE:-}
+      DEN_BACKUP_KEEP: ${DEN_BACKUP_KEEP:-14}
+    volumes:
+      - den-hub:/data
+      - ./backups:/backups
+      - ./backup.sh:/den/backup.sh:ro
+
+volumes:
+  den-hub:
+  caddy-data:
+  caddy-config:

@@ -1,6 +1,7 @@
 /// The BIP-39 English word list: 2048 words, sorted, unique in their first four letters.
 ///
-/// Used for spoken pairing codes (4 words, 44 bits) and matching words (3 words, 33 bits).
+/// Used for spoken pairing codes (4 words, 44 bits), matching words (3 words, 33 bits) and
+/// parents' recovery words (12 words, 128 bits and a checksum, the way BIP-39 writes them).
 /// See LICENSE-NOTICE for its origin and license.
 const List<String> wordList = [
   'abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract',

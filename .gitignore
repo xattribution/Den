@@ -8,3 +8,10 @@ __pycache__/
 *.pyc
 /data/
 .env
+
+# Hub backups written by the compose files backup service
+deploy/**/backups/
+
+# Written by deploy/private/install.sh for the other families on a private server
+deploy/private/compose.families.yaml
+deploy/private/Caddyfile.families

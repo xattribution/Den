@@ -1,10 +1,9 @@
-import 'package:den_app/app.dart';
+import 'package:den_app/app/den_app.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
-import 'package:den_app/screens/kids/kid_screen.dart';
-import 'package:den_app/screens/kids/little_kid.dart';
-import 'package:den_app/screens/kids/pre_reader.dart';
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/features/shared_screens/screens/kid_home.dart';
+import 'package:den_app/features/shared_screens/screens/kid_screen.dart';
+import 'package:den_app/app/app_state.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,71 +22,78 @@ Future<(AppState, Member)> kidAs(WidgetTester tester, Tier tier) => real(tester,
     });
 
 void main() {
-  testWidgets('Pre-reader, jobs, phone', (tester) async {
-    final (state, kid) = await kidAs(tester, Tier.preReader);
-    await shootWith(tester, 'kids_prereader_jobs_phone', KidScreen(memberId: kid.id), state: state);
-  });
-
-  testWidgets('Pre-reader, jobs, tablet, night', (tester) async {
-    final (state, kid) = await kidAs(tester, Tier.preReader);
-    await shootWith(tester, 'kids_prereader_jobs_tablet_night', KidScreen(memberId: kid.id), state: state, size: tablet, night: true);
-  });
-
-  testWidgets('Pre-reader, sticker chart, phone', (tester) async {
-    final (state, kid) = await kidAs(tester, Tier.preReader);
-    await shootWith(
-      tester,
-      'kids_prereader_stars_phone',
-      PreReaderApp(kid: kid, header: KidHeader(kid: kid), initialTab: 1),
-      state: state,
-    );
-  });
-
-  testWidgets('Little kid, my jobs, phone', (tester) async {
+  testWidgets('Little kid, phone (Kid.dc.html)', (tester) async {
     final (state, kid) = await kidAs(tester, Tier.little);
-    await shootWith(tester, 'kids_little_jobs_phone', KidScreen(memberId: kid.id), state: state);
+    await shootWith(tester, 'kids_little_phone', KidScreen(memberId: kid.id), state: state, size: const Size(390, 1400));
+    expect(find.text('Hi, ${kid.name}'), findsOneWidget);
   });
 
-  testWidgets('Little kid, my days, phone', (tester) async {
+  testWidgets('Little kid, phone, night', (tester) async {
     final (state, kid) = await kidAs(tester, Tier.little);
-    await shootWith(
-      tester,
-      'kids_little_days_phone',
-      LittleKidApp(kid: kid, header: KidHeader(kid: kid), initialTab: 1),
-      state: state,
-    );
+    await shootWith(tester, 'kids_little_phone_night', KidScreen(memberId: kid.id), state: state, night: true);
   });
 
-  testWidgets('Little kid, my stars, phone, night', (tester) async {
+  testWidgets('Pre-reader, phone: pictures, and her jobs read aloud', (tester) async {
+    final (state, kid) = await kidAs(tester, Tier.preReader);
+    await shootWith(tester, 'kids_prereader_phone', KidScreen(memberId: kid.id), state: state);
+    expect(find.text('Read my jobs to me'), findsOneWidget);
+  });
+
+  testWidgets('Pre-reader, iPad, night: three across', (tester) async {
+    final (state, kid) = await kidAs(tester, Tier.preReader);
+    await shootWith(tester, 'kids_prereader_tablet_night', KidScreen(memberId: kid.id), state: state, size: tablet, night: true);
+  });
+
+  testWidgets('A tap checks a job off, in the kid\'s color', (tester) async {
     final (state, kid) = await kidAs(tester, Tier.little);
-    await shootWith(
-      tester,
-      'kids_little_stars_phone_night',
-      LittleKidApp(kid: kid, header: KidHeader(kid: kid), initialTab: 2),
-      state: state,
-      night: true,
-    );
+    await pumpScreen(tester, KidScreen(memberId: kid.id), state: state, size: const Size(390, 1400));
+    final day = state.den.choresOn(state.today).firstWhere((d) => d.owner == kid.id && !d.done && d.chore.steps.isEmpty);
+    await tester.runAsync(() async {
+      await tester.tap(find.text(day.chore.title));
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    });
+    await tester.pumpAndSettle();
+    expect(state.den.choresOn(state.today).firstWhere((d) => d.chore.id == day.chore.id).done, isTrue);
+    await matchShot('kids_little_checked_phone');
   });
 
-  testWidgets('Little kid on a shared tablet', (tester) async {
+  testWidgets('A job with steps opens them as big tiles', (tester) async {
+    final (state, kid) = await kidAs(tester, Tier.little);
+    final day = state.den.choresOn(state.today).where((d) => d.chore.steps.any((s) => s.owner == kid.id) || (d.owner == kid.id && d.chore.steps.isNotEmpty)).firstOrNull;
+    if (day == null) return;
+    await pumpScreen(tester, KidScreen(memberId: kid.id), state: state, size: const Size(390, 1400));
+    await tester.tap(find.text(day.chore.title));
+    await tester.pumpAndSettle();
+    expect(find.text('Read it to me'), findsOneWidget);
+    await matchShot('kids_steps_sheet_phone');
+  });
+
+  testWidgets('On a shared tablet: Done', (tester) async {
     final (state, kid) = await kidAs(tester, Tier.little);
     await shootWith(
       tester,
       'kids_little_shared_tablet',
-      LittleKidApp(kid: kid, header: KidHeader(kid: kid, onSwitch: () {}, onDone: () {})),
+      KidHome(kid: kid, action: KidHeaderPill(label: 'Done', onTap: () {})),
       state: state,
       size: tablet,
     );
   });
 
-  testWidgets("A little kid's own tablet opens the kids' app", (tester) async {
+  testWidgets("Handed a parent's phone: Grown-ups, and the back gesture doesn't leave", (tester) async {
+    final (state, kid) = await kidAs(tester, Tier.little);
+    await pumpScreen(tester, KidScreen(memberId: kid.id, handed: true), state: state);
+    expect(find.text('Grown-ups'), findsOneWidget);
+    expect(find.byType(PopScope), findsOneWidget);
+  });
+
+  testWidgets("A little kid's own tablet opens the kids' screen", (tester) async {
     final state = await littleKidTablet(tester);
     await tester.pumpWidget(
       DenScope(state: state, child: MaterialApp.router(theme: denTheme(DenColors.day), routerConfig: buildRouter(state))),
     );
     await tester.pumpAndSettle();
     expect(find.byType(KidScreen), findsOneWidget);
-    expect(find.text('My jobs'), findsOneWidget);
+    expect(find.text('Hi, Leo'), findsOneWidget);
+    expect(find.byType(KidHeaderPill), findsNothing, reason: "it's Leo's own, so nobody signs out");
   });
 }
-

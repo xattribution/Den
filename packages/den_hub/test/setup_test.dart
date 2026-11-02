@@ -8,7 +8,7 @@ import 'package:den_core/demo.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
 import 'package:den_net/den_net.dart';
-import 'package:test/test.dart';
+import 'support/test.dart';
 
 import 'support/fixture.dart';
 
@@ -24,10 +24,12 @@ void main() {
       name: 'Basement hub',
       log: HubLog(level: LogLevel.info, sink: logged.add),
       onSetupCode: codes.add,
+      // Lets the test speak for other clients on the network through X-Forwarded-For.
+      trustedProxies: [IpNetwork.parse('127.0.0.1')],
     ));
     addTearDown(hub.stop);
-    Future<ApiResult> call(String method, String path, {String? token, Object? body}) =>
-        apiCall(hub.localUrl, method, path, token: token, body: body);
+    Future<ApiResult> call(String method, String path, {String? token, Object? body, Map<String, String>? from}) =>
+        apiCall(hub.localUrl, method, path, token: token, body: body, headers: from);
 
     final health = await call('GET', '/health');
     expect(health.body['ready'], isFalse);
@@ -45,17 +47,26 @@ void main() {
     addTearDown(phoneNode.close);
     final invite = await phoneNode.createInvite();
 
+    // Someone outside the home who has the setup link's door pass but not the code (on the home
+    // network a fresh hub needs no code at all).
+    final stranger = {
+      ...fromTunnel,
+      'x-forwarded-for': '203.0.113.66',
+      'cookie': await doorPass(hub.localUrl, '/setup/${codes.single}/${hub.den.deviceId}'),
+    };
     for (var i = 1; i <= setupTries; i++) {
-      final wrong = await call('POST', '/api/v1/hub/setup', body: {'code': 'AAAA-AAAA', 'invite': invite.toUrl()});
+      final wrong = await call('POST', '/api/v1/hub/setup', body: {'code': 'AAAA-AAAA', 'invite': invite.toUrl()}, from: stranger);
       expect(wrong.status, 403);
       expect((wrong.error['details'] as Map)['tries_left'], setupTries - i);
     }
-    expect(codes, hasLength(2), reason: 'five wrong tries print a new code');
-    final stale = await call('POST', '/api/v1/hub/setup', body: {'code': codes.first, 'invite': invite.toUrl()});
-    expect(stale.status, 403, reason: 'the old code is gone');
+    final locked = await call('POST', '/api/v1/hub/setup', body: {'code': codes.single, 'invite': invite.toUrl()}, from: stranger);
+    expect(locked.status, 429, reason: 'that address waits now, even with the right code');
+    expect(int.parse(locked.headers['retry-after']!), inInclusiveRange(1, 60));
+    expect(codes, hasLength(1), reason: 'wrong codes from someone else never change the code under its owner');
+    expect(logged.where((l) => l.contains('wrong setup codes from one address')), hasLength(1));
 
     final accepted = await call('POST', '/api/v1/hub/setup',
-        body: {'code': codes.last.toLowerCase(), 'invite': invite.toUrl(), 'direct': true});
+        body: {'code': codes.single.toLowerCase(), 'invite': invite.toUrl(), 'direct': true});
     expect(accepted.status, 202);
     expect(accepted.body['connect'], '/api/v1/hub/setup/ws');
 
@@ -134,5 +145,31 @@ void main() {
     await eventually(() => browser.events.length == f.phone.events.length);
     expect(browser.owner?.name, 'Alex');
     await attempt.peer.close();
+  });
+
+  test('a hub the family removed hears so from the first phone that refuses it, and says so', () async {
+    final logged = <String>[];
+    final f = await HubFixture.start(
+      configure: (c) => HubConfig(port: 0, host: InternetAddress.loopbackIPv4, mdns: false, log: HubLog(level: LogLevel.info, sink: logged.add)),
+    );
+    addTearDown(f.stop);
+    expect((await f.call('GET', '/api/v1/hub/status')).body['stage'], 'ready');
+
+    // Removed on a parent's phone ("Reset the hub, keep the family" left it behind).
+    await f.phone.revokeDevice(f.hubDen.deviceId);
+    final phoneNode = SyncNode(f.phone);
+    addTearDown(phoneNode.close);
+    final peer = await phoneNode.connect(await connectWebSocket(Uri.parse('ws://127.0.0.1:${f.hub.port}/ws')));
+    await peer.closed;
+    expect(peer.closeReason, 'removed');
+
+    final notice = RegExp(r'^This hub was removed from the family on [A-Z][a-z]{2} \d{1,2}; reset it to add it again$');
+    await eventually(() async => (await f.call('GET', '/api/v1/hub/status')).body['stage'] == 'removed');
+    final status = await f.call('GET', '/api/v1/hub/status');
+    expect(status.body['removed'], matches(notice));
+    expect(status.body, containsPair('paired', false));
+    expect(status.body, containsPair('setup_needed', false), reason: 'a setup code would get nowhere');
+    expect(f.hub.setupCode, isNull);
+    expect(logged.where((l) => l.contains('This hub was removed from the family on ')), hasLength(1));
   });
 }

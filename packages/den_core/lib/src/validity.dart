@@ -1,9 +1,13 @@
 import 'package:collection/collection.dart';
 
+import 'account.dart';
 import 'change.dart';
 import 'chores.dart';
+import 'hlc.dart';
+import 'invite_keys.dart';
 import 'model.dart';
 import 'permissions.dart';
+import 'recovery.dart';
 import 'schema.dart';
 import 'store.dart';
 import 'views.dart';
@@ -32,6 +36,28 @@ class Rejection {
   String toString() => '${kind.name}: $message';
 }
 
+/// A revocation that names the last change the revoking device held from the revoked one: a
+/// change from that device numbered past [after] and clocked before [at] was signed after the
+/// revocation, whatever clock it claims.
+class Cutoff {
+  const Cutoff(this.after, this.at);
+
+  /// The `revokedAfter` counter.
+  final int after;
+
+  /// The revocation's clock.
+  final Hlc at;
+
+  bool excludes(int counter, Hlc hlc) => counter > after && hlc < at;
+
+  /// The cutoff a valid change sets, or null when it isn't a revocation naming one.
+  static Cutoff? of(Change c) {
+    if (c.type != RecordType.device || c.fields['revoked'] != true) return null;
+    final after = c.fields['revokedAfter'];
+    return after is int ? Cutoff(after, c.hlc) : null;
+  }
+}
+
 /// What every replica of a family learned out of band: the family id and the founder's key.
 class TrustRoot {
   TrustRoot({this.familyId, this.founderPubkey})
@@ -44,6 +70,16 @@ class TrustRoot {
 Rejection _trust(String m) => Rejection(RejectionKind.trust, m);
 Rejection _deny(String m) => Rejection(RejectionKind.permission, m);
 Rejection _schema(String m) => Rejection(RejectionKind.schema, m);
+
+const String _ownDeviceOnly =
+    'Only a parent on their own device can do that, not a shared screen or an app acting through the hub';
+
+const String _ownPhoneOnly =
+    'Only a parent on their own phone can do that, not the hub, a shared screen or an app acting through the hub';
+
+const String _noProof = 'Only an account the family\'s hub saw sign in for this person can be bound';
+
+const String _accountLater = 'Someone chooses the account they sign in with once they are in the family';
 
 final RegExp _ridRe = RegExp(r'^[A-Za-z0-9_\-:@.]{1,120}$');
 
@@ -58,6 +94,20 @@ class Validator {
   final RecordStore store;
   TrustRoot Function() root;
 
+  /// Device id -> the revocations of it that name the last change the revoking device held
+  /// (`revokedAfter`), with the revocation's clock. The materializer fills this from the whole
+  /// log, so a change the revoked device signed later counts for nothing even when it claims an
+  /// earlier clock.
+  final Map<String, List<Cutoff>> cutoffs = {};
+
+  /// Recovery keys replaced later in the log; the materializer fills this like [cutoffs].
+  final RetiredRecoveryKeys retiredRecoveryKeys = RetiredRecoveryKeys();
+
+  /// The counter of the change by [device] that made its record (its join request, its
+  /// recovery change, or the founder's genesis), whose clock is [created]; null when unknown.
+  /// The materializer, which holds the log, answers.
+  int? Function(String device, Hlc created)? createdCounter;
+
   Rejection? check(Change c) {
     final colon = c.id.lastIndexOf(':');
     final counter = colon > 0 ? int.tryParse(c.id.substring(colon + 1)) : null;
@@ -65,6 +115,9 @@ class Validator {
       return _trust('The change id doesn\'t name its device');
     }
     if (c.hlc.device != c.device) return _trust('The change\'s clock belongs to another device');
+    for (final cut in cutoffs[c.device] ?? const <Cutoff>[]) {
+      if (cut.excludes(counter, c.hlc)) return _trust('This device was removed from the family');
+    }
     final spec = typeSpecs[c.type];
     if (spec == null) return _schema('Den doesn\'t know records of type "${c.type}"');
     if (!_validSpace(c.space)) return _schema('Unknown space "${c.space}"');
@@ -83,8 +136,25 @@ class Validator {
     if (fieldError != null) return _schema(fieldError);
     final crossError = _crossFields(c, existing);
     if (crossError != null) return _schema(crossError);
+    // A cutoff never reaches the change that made the device's record: that would erase the
+    // device itself, everything it wrote and every device it let in, whoever removed it.
+    final after = c.fields['revokedAfter'];
+    if (c.type == RecordType.device && after is int && existing != null) {
+      final made = createdCounter?.call(c.rid, existing.created);
+      if (made != null && after < made) {
+        return _trust('A removal can\'t reach back past the device\'s own request to join');
+      }
+    }
 
     final authorEntry = store.at(Space.family, RecordType.device, c.device);
+    // The one way a device approves itself: as an existing parent's, with a recovery proof.
+    if (c.type == RecordType.device && c.fields.containsKey('recovery')) {
+      return checkRecovery(c, store, trust, retiredRecoveryKeys);
+    }
+    // Or as someone's own, with a proof from an invite key a parent made (invite_keys.dart).
+    if (c.type == RecordType.device && c.fields.containsKey('invite')) {
+      return checkInviteJoin(c, store, trust, excluded: retiredRecoveryKeys.excludes(c));
+    }
     if (c.device == trust.founderDevice && authorEntry == null) {
       return _genesis(c, existing, trust);
     }
@@ -131,6 +201,14 @@ class Validator {
       return _deny('Only parents can add or change parents-only things');
     }
     final privateOwner = Space.memberOf(c.space);
+    // Acting for a connection, the hub writes only where the person it acts for could read
+    // (or, for a connection with no person, where a parent could): what den_actions checks.
+    if (hub && c.fields.containsKey('_via')) {
+      final readable = actor != null
+          ? canRead(actor, c.space, family)
+          : privateOwner == null || (family?.parentsSeePrivate(privateOwner) ?? true);
+      if (!readable) return _deny('This connection can\'t see that, so it can\'t put things there');
+    }
     if (privateOwner != null) {
       final owner = store.liveAt(Space.family, RecordType.member, privateOwner);
       if (owner == null) return _schema('That person isn\'t in the family');
@@ -159,6 +237,7 @@ class Validator {
         if (!familyExists) return _trust('The family isn\'t set up yet');
         if (existing != null) return _trust('The founder can only add people once the family is set up');
         if (c.fields['role'] != Role.parent.name) return _trust('The founder must be a parent');
+        if (c.fields.containsKey('account')) return _trust(_accountLater);
         return null;
       case RecordType.device:
         if (!familyExists) return _trust('The family isn\'t set up yet');
@@ -195,7 +274,7 @@ class Validator {
     }
     if (existing != null &&
         !c.isDelete &&
-        f.keys.any((k) => !const {'name', 'kind', 'xpub', 'revoked', 'approved'}.contains(k))) {
+        f.keys.any((k) => !const {'name', 'kind', 'xpub', 'revoked', 'revokedAfter', 'approved'}.contains(k))) {
       return _trust('A device can\'t change what it asked for while it waits for approval');
     }
     final pubkey = f['pubkey'];
@@ -220,6 +299,10 @@ class Validator {
       if (c.type == RecordType.adjustment) return 'Points adjustments can\'t be changed';
     }
     switch (c.type) {
+      case RecordType.device:
+        if (c.fields.containsKey('revokedAfter') && c.fields['revoked'] != true) {
+          return 'Only a removal says which of a device\'s changes came before it';
+        }
       case RecordType.event:
         final start = merged('start'), end = merged('end');
         if (start is int && end is int && end < start) return 'The end is before the start';
@@ -236,6 +319,11 @@ class Validator {
         if (start is String && end is String && end.compareTo(start) < 0) {
           return 'The goal ends before it starts';
         }
+      case RecordType.photo:
+        final bytes = photoBytes(merged('data'));
+        if (!c.isDelete && bytes != null && photoFormat(bytes)?.mime != merged('mime')) {
+          return 'The photo isn\'t the kind it says it is';
+        }
     }
     return null;
   }
@@ -248,6 +336,8 @@ class Validator {
     RecordType.item: {'list'},
     RecordType.redemption: {'reward', 'member', 'cost'},
     RecordType.connection: {'kind'},
+    RecordType.photo: {'member', 'mime', 'data'},
+    RecordType.inviteKey: {'member', 'home', 'modes', 'uses', 'by', 'device', 'expires'},
   };
 
   Rejection? _permit(_Ctx x, TrustRoot trust) {
@@ -255,9 +345,38 @@ class Validator {
     switch (c.type) {
       case RecordType.family:
         if (x.creating || c.rid != trust.familyId) return _trust('The family already exists');
-        return x.has(DenAction.manageFamily) ? null : _deny('Only parents can change family settings');
+        if (!x.has(DenAction.manageFamily)) return _deny('Only parents can change family settings');
+        // Privacy, and which AI may read the family's day and spend its money, are a parent's
+        // decisions on their own device: never a shared screen or an app acting through the hub.
+        if (c.fields.keys.any((k) => k == 'oversight' || k.startsWith('oversight.') || k == 'assistant') && !x.ownDevice) {
+          return _deny(_ownDeviceOnly);
+        }
+        // So is whether the hub may let a parent's new phone in (recovery.dart).
+        if (c.fields.containsKey('recovery') && !x.ownDevice) return _deny(_ownDeviceOnly);
+        return null;
       case RecordType.member:
+        if (c.fields.containsKey('account')) return _account(x);
+        // A person's role, permissions and sign-in, and whether they are in the family at all,
+        // are trust decisions: never made by the hub (whoever it acts for) or on a shared screen.
+        // Adding someone isn't: nothing can act for them until a parent approves a device or an
+        // assistant for them, on their own device.
+        // A sitter's last day decides when their devices are removed, so it is one too.
+        final trusted = c.fields.containsKey('_deleted') ||
+            (!x.creating && c.fields.keys.any(const {'role', 'grants', 'signIn', 'until'}.contains));
+        if (trusted && !x.ownDevice) return _deny(_ownDeviceOnly);
+        if (c.fields.containsKey('recovery')) {
+          final r = checkRecoveryKey(c, ownDevice: x.ownDevice, actor: x.actor, creating: x.creating);
+          if (r != null) return r;
+        }
+        final photo = c.fields['picture'] is String ? Picture.photoIdOf(c.fields['picture']! as String) : null;
+        if (photo != null && store.liveAt(Space.family, RecordType.photo, photo)?.fields['member'] != c.rid) {
+          return _schema('That photo isn\'t of this person');
+        }
         if (!x.creating && x.only({'signIn'}) && c.actor == c.rid) return null;
+        // People choose their own picture, a kid when a parent allows it.
+        if (!x.creating && x.only({'picture'}) && c.actor == c.rid && !x.has(DenAction.manageFamily)) {
+          return x.mayChangePicture(c.rid) ? null : _deny('${x.who} can\'t change their own picture');
+        }
         if (!x.has(DenAction.manageFamily)) return _deny('Only parents can add or change people');
         if (_leavesNoParent(c, x.existing)) return _deny('The family needs at least one parent');
         return null;
@@ -274,7 +393,14 @@ class Validator {
         }
         return x.has(DenAction.editEvents) ? null : _deny('${x.who} can\'t add or change events');
       case RecordType.chore:
-        return x.has(DenAction.editChores) ? null : _deny('${x.who} can\'t add or change chores');
+        if (!x.has(DenAction.editChores)) return _deny('${x.who} can\'t add or change chores');
+        // Moving a chore to another space writes a copy: one of a chore in everyone's space
+        // (which every replica holding the copy holds too) at the same price sets none.
+        final original = x.existing ?? (c.space == Space.family ? null : store.at(Space.family, RecordType.chore, c.rid));
+        if (_setsPoints(c, original) && !x.has(DenAction.managePoints)) {
+          return _deny('${x.who} can\'t set how many stars a chore is worth');
+        }
+        return null;
       case RecordType.completion:
         return _completion(x);
       case RecordType.adjustment:
@@ -283,6 +409,7 @@ class Validator {
           return _schema('That person isn\'t in the family');
         }
         if (c.fields['by'] != c.actor) return _schema('An adjustment must name who made it');
+        if (member == c.actor) return _deny('${x.who} can\'t give or take their own points');
         return x.has(DenAction.managePoints) ? null : _deny('${x.who} can\'t give or take points');
       case RecordType.goal:
       case RecordType.reward:
@@ -307,8 +434,88 @@ class Validator {
         return x.has(DenAction.manageFamily) ? null : _deny('Only parents can manage calendar feeds');
       case RecordType.connection:
         return _connection(x);
+      case RecordType.signInTries:
+        // A shared screen tells the parents that someone kept getting a person's PIN or pattern
+        // wrong there: a new record each time, about itself, for nobody.
+        if (!x.creating) return _schema('That can\'t be changed after it\'s made');
+        if (x.device.mode != DeviceMode.shared || c.actor != null) {
+          return _deny('Only a shared screen says that, for nobody');
+        }
+        if (c.fields['device'] != c.device) return _schema('A shared screen says that only about itself');
+        final member = c.fields['member'];
+        if (member is! String || store.liveAt(Space.family, RecordType.member, member) == null) {
+          return _schema('That person isn\'t in the family');
+        }
+        return null;
+      case RecordType.inviteKey:
+        return checkInviteKeyWrite(c, x.existing, store, ownDevice: x.ownDevice, actor: x.actor);
+      case RecordType.photo:
+        final member = c.fields['member'] ?? x.existing?.fields['member'];
+        if (member is! String || store.liveAt(Space.family, RecordType.member, member) == null) {
+          return _schema('That person isn\'t in the family');
+        }
+        return x.mayChangePicture(member) ? null : _deny('${x.who} can\'t change that picture');
     }
     return _schema('Den doesn\'t know records of type "${c.type}"');
+  }
+
+  /// Whether a chore change sets what the chore or one of its steps is worth to anything but
+  /// what it was: a new chore or step worth stars, or a new price for one.
+  static bool _setsPoints(Change c, Entry? existing) {
+    if (c.isDelete) return false;
+    int worth(Object? v) => v is num ? v.toInt() : 0;
+    final f = c.fields;
+    if (f.containsKey('points') && worth(f['points']) != worth(existing?.fields['points'])) return true;
+    final steps = f['steps'];
+    if (steps is! List) return false;
+    final before = {
+      for (final s in (existing?.fields['steps'] as List?) ?? const <Object?>[])
+        if (s is Map) s['id']: worth(s['points']),
+    };
+    return steps.any((s) => s is Map && worth(s['points']) != (before[s['id']] ?? 0));
+  }
+
+  /// `member.account`: the Google or Apple account that signs in as this person (account.dart).
+  /// Which account is someone's is a trust decision, and a narrower one than the others: a
+  /// parent binds their own account, on their own personal device, in a change that does nothing
+  /// else. Never the hub (whatever it acts for, its owner included: the hub is what checks the
+  /// sign-in, so it must not also be what says whose it is), a connection through it (`_via`), a
+  /// shared screen, or one parent for another. Taking an account away is the person's own, or
+  /// any parent's, on their own personal device.
+  ///
+  /// A binding also carries the hub's proof that the account really signed in for this member
+  /// (`AccountProof`, its signature checked as the change arrives): signed by an approved hub of
+  /// the family at this place in the log, and not expired at the change's clock. So nobody binds
+  /// a hash they merely computed. Two members with the same account both stand, so no change,
+  /// however it is clocked, takes an account away from someone else; the hub then signs in as
+  /// neither, and parents are told (`Den.sharedAccounts`).
+  Rejection? _account(_Ctx x) {
+    final c = x.c;
+    if (x.creating) return _trust(_accountLater);
+    final actor = x.actor;
+    if (c.fields.containsKey('_via') || x.device.mode != DeviceMode.personal || actor == null || x.device.member != actor.id) {
+      return _deny(_ownPhoneOnly);
+    }
+    if (!x.only({'account'})) return _schema('A sign-in account is set on its own');
+    final value = c.fields['account'];
+    final self = actor.id == c.rid;
+    if (value is! Map) {
+      return self || actor.isParent ? null : _deny('Only a parent can take away the account someone signs in with');
+    }
+    if (!self) return _deny('Only the person themselves can choose the account they sign in with');
+    if (!actor.isParent) return _deny('Only parents sign in with Google or Apple for now');
+    final proof = AccountRef.fromJson(value)?.proof;
+    if (proof == null) return _trust(_noProof);
+    final hubEntry = store.at(Space.family, RecordType.device, proof.hub);
+    final hub = hubEntry == null || hubEntry.deleted ? null : Device(hubEntry.rec);
+    if (hub == null || !hub.approved || hub.revoked || hub.mode != DeviceMode.hub || hub.pubkey != proof.key) {
+      return _trust(_noProof);
+    }
+    final at = c.hlc.millis;
+    if (proof.expires <= at || proof.expires - at > accountProofMaxLife.inMilliseconds) {
+      return _trust('That sign-in is too old to bind. Sign in again');
+    }
+    return null;
   }
 
   bool _leavesNoParent(Change c, Entry? existing) {
@@ -326,11 +533,19 @@ class Validator {
   Rejection? _device(_Ctx x) {
     final c = x.c;
     if (x.creating) return _trust('A device joins by sending its own request');
+    // A hub acting for an API or MCP connection never touches device records, its own included:
+    // a connection could otherwise turn the hub into a personal device and act as its owner.
+    if (c.fields.containsKey('_via')) return _deny(_ownDeviceOnly);
     final target = Device(x.existing!.rec);
     final mode = c.fields.containsKey('mode') ? c.fields['mode'] : target.mode.name;
     final owner = c.fields.containsKey('member') ? c.fields['member'] : target.member;
     if (c.fields.containsKey('mode') && mode == DeviceMode.personal.name && owner == null) {
       return _schema('A personal device needs an owner');
+    }
+    // What a device holds follows its owner, and changing the owner would leave the old owner's
+    // records on it: to give a device to someone else, remove it and add it again.
+    if (c.fields.containsKey('member') && target.approved && !target.revoked && owner != target.member) {
+      return _deny('A device stays with the person it was approved for. Remove it and add it again instead');
     }
     if (c.rid == c.device) {
       final f = c.fields;
@@ -340,15 +555,16 @@ class Validator {
           (f.containsKey('revoked') && f['revoked'] != true)) {
         return _trust('A device can never approve itself or change who owns it');
       }
-      if (x.only({'revoked'}) || c.isDelete) return null;
+      if (x.only({'revoked', 'revokedAfter'}) || c.isDelete) return null;
       final parent = x.actor?.isParent ?? false;
       if (f.containsKey('mode') && !parent) return _deny('Only a parent can change what this device is for');
-      if (parent && x.only({'mode', 'name', 'display', 'kind', 'xpub', 'revoked'})) return null;
+      if (parent && x.only({'mode', 'name', 'display', 'kind', 'xpub', 'revoked', 'revokedAfter'})) return null;
     }
     if (!x.has(DenAction.manageFamily)) return _deny('Only parents can approve or change devices');
     if (c.fields['approved'] == true && !(x.actor?.isParent ?? false)) {
       return _deny('Only a parent can approve a device');
     }
+    if (!x.ownDevice) return _deny(_ownDeviceOnly);
     return null;
   }
 
@@ -358,6 +574,9 @@ class Validator {
     final date = (c.fields['date'] ?? x.existing?.fields['date']) as String?;
     final choreEntry = choreId == null ? null : store.at(c.space, RecordType.chore, choreId);
     if (choreEntry == null || date == null) return _schema('That chore doesn\'t exist');
+    // A removed chore takes no more check-offs: one moved to another space lives on there, and
+    // a device that hadn't heard of the move would otherwise be paid twice.
+    if (choreEntry.deleted && !c.isDelete) return _schema('That chore was removed');
     final chore = Chore(choreEntry.rec);
     final completion = x.existing == null ? null : Completion(x.existing!.rec);
     final ownerBefore = dayOwner(chore, date, completion, x.family?.weekStart ?? 0);
@@ -386,6 +605,25 @@ class Validator {
     }
     for (final e in c.fields.entries) {
       if (e.key.startsWith('steps.')) stepWrites[e.key.substring(6)] = e.value;
+    }
+    // What the chore and its steps were worth when done is kept with the completion, so a new
+    // price later doesn't change what was earned. Only someone who sets prices may record more
+    // than the price at the time.
+    final pricer = x.has(DenAction.managePoints);
+    final worth = c.fields['points'];
+    if (worth is int && worth > chore.points && !pricer) {
+      return _deny('${x.who} can\'t set how many stars a chore is worth');
+    }
+    final stepWorth = <String, Object?>{
+      ...?(c.fields['stepPoints'] as Map?)?.cast<String, Object?>(),
+      for (final e in c.fields.entries)
+        if (e.key.startsWith('stepPoints.')) e.key.substring(11): e.value,
+    };
+    for (final e in stepWorth.entries) {
+      final step = chore.steps.firstWhereOrNull((s) => s.id == e.key);
+      if (step == null) return _schema('That chore has no such step');
+      final v = e.value;
+      if (v is int && v > step.points && !pricer) return _deny('${x.who} can\'t set how many stars a chore is worth');
     }
     for (final e in stepWrites.entries) {
       final step = chore.steps.firstWhereOrNull((s) => s.id == e.key);
@@ -429,11 +667,19 @@ class Validator {
         return _deny('${x.who} can ask for rewards only for themselves');
       }
       final status = c.fields['status'];
+      // A request waits for a parent unless the reward says no asking or a parent let this
+      // person trade their stars without asking: either one is enough.
+      final needsOk = reward.needsApproval && (x.family?.rewardsNeedOk(c.fields['member']! as String) ?? true);
       if (status == RedemptionStatus.declined.name && !manager) {
         return _deny('${x.who} can\'t decline rewards');
       }
-      if (status == RedemptionStatus.approved.name && reward.needsApproval && !manager) {
+      if (status == RedemptionStatus.approved.name && needsOk && !manager) {
         return _deny('A parent needs to approve that reward');
+      }
+      // Someone who may change rewards could make one need no asking and take it: asking for
+      // themselves, a points manager always waits for someone else.
+      if (forSelf && (needsOk || manager) && status != RedemptionStatus.requested.name) {
+        return _deny('Someone else needs to approve ${x.who}\'s reward');
       }
       if (c.fields['decidedBy'] != null && c.fields['decidedBy'] != c.actor) {
         return _schema('A decision must name who made it');
@@ -444,6 +690,9 @@ class Validator {
       return _schema('A reward request can only be approved or declined');
     }
     if (!x.has(DenAction.managePoints)) return _deny('${x.who} can\'t approve rewards');
+    if (c.actor != null && x.existing!.fields['member'] == c.actor) {
+      return _deny('Someone else needs to approve ${x.who}\'s reward');
+    }
     if (c.fields['decidedBy'] != null && c.fields['decidedBy'] != c.actor) {
       return _schema('A decision must name who made it');
     }
@@ -452,7 +701,9 @@ class Validator {
 
   Rejection? _connection(_Ctx x) {
     final c = x.c;
-    final parent = x.actor?.isParent ?? false;
+    // Only a parent on their own device grants access; the hub keeps its own narrow part (asking
+    // for OAuth access, issuing tokens for granted access, revoking).
+    final parent = (x.actor?.isParent ?? false) && x.ownDevice;
     const denied = 'Only a parent can create or approve AI and automation access';
     if (x.creating) {
       final status = c.fields['status'];
@@ -516,6 +767,24 @@ class _Ctx {
   }
 
   String get who => actor?.name ?? device.name;
+
+  /// Whether the change comes from someone's own device: trust decisions (approving and removing
+  /// devices, people's roles, permissions and sign-in, privacy, AI access) are made only there.
+  /// That is a personal device, or a parent's own device running as the family's hub with its
+  /// owner using it; never a shared screen, a hub nobody owns, or an app or assistant acting
+  /// through the hub (whose changes carry `_via`), whoever it acts for.
+  bool get ownDevice {
+    if (c.fields.containsKey('_via')) return false;
+    if (device.mode == DeviceMode.personal) return true;
+    return device.mode == DeviceMode.hub && actor != null && actor!.id == device.member;
+  }
+
+  /// Whether the actor may change [memberId]'s picture ([canChangePicture]).
+  bool mayChangePicture(String memberId) {
+    if (has(DenAction.manageFamily)) return true;
+    final a = actor;
+    return a != null && a.id == memberId && (family?.ownsPicture(a) ?? !a.isKid);
+  }
 
   bool only(Set<String> names) => c.fields.keys.every((k) => k == '_via' || k == '_from' || names.contains(k));
 }

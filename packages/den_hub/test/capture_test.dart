@@ -2,13 +2,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:cryptography/dart.dart';
 import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
 import 'package:den_net/den_net.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:test/test.dart';
+import 'support/test.dart';
 
 import 'support/fixture.dart';
 
@@ -54,6 +55,7 @@ void main() {
   late Phone maya;
   late Phone leo;
   late Phone kitchen;
+  final logged = <String>[];
 
   /// A personal device approved by Alex's phone for [name], or a shared display.
   Future<Den> device(String? name, {DeviceMode mode = DeviceMode.personal}) async {
@@ -74,6 +76,7 @@ void main() {
   }
 
   setUp(() async {
+    logged.clear();
     dir = await Directory.systemTemp.createTemp('den-capture-hub');
     anthropic = FakeAnthropic(claudeFixture('claude_email.json'));
     f = await HubFixture.start(
@@ -83,7 +86,7 @@ void main() {
         host: InternetAddress.loopbackIPv4,
         mdns: false,
         dataDir: dir.path,
-        log: HubLog(level: LogLevel.error, sink: (_) {}),
+        log: HubLog(level: LogLevel.warn, sink: logged.add),
         httpClient: anthropic.client,
       ),
     );
@@ -115,6 +118,9 @@ void main() {
     expect((await maya.client.status())!.ready, isFalse);
     final set = await alex.client.configure(claude);
     expect(set.ready, isTrue);
+    if (!Platform.isWindows) {
+      expect(FileStat.statSync('${dir.path}/hub').modeString(), 'rwx------', reason: 'the hub\'s state is its owner\'s alone');
+    }
     expect(set.reader!.name, 'Claude');
     expect(set.reader!.place, ReaderPlace.provider);
     expect(set.reader!.reads(ReaderInput.image), isTrue);
@@ -178,6 +184,47 @@ void main() {
     expect(receipt.keys, contains('i0'));
   });
 
+  test('reads count against the family\'s AI budget and a kid\'s day, as GET /api/v1/assistant shows', () async {
+    await alex.client.configure(claude);
+    // A cent a month: the recorded answer costs about 0.87 of one with Sonnet's prices.
+    await f.phone.updateFamily({'assistant': const AssistantPolicy(kidDailyLimit: 2, budgetCents: 1).toJson()});
+    await f.toHub();
+    await maya.client.read(CaptureInput.typed('milk'));
+    Future<Map<String, Object?>> status(Phone p) async {
+      final url = f.base.replace(path: '/api/v1/assistant');
+      final r = await apiCall(f.base, 'GET', '/api/v1/assistant', headers: await p.sign('GET', url, const []));
+      expect(r.status, 200, reason: r.text);
+      return r.body;
+    }
+
+    var seen = await status(maya);
+    expect(seen['you'], containsPair('used_today', 1));
+    expect(seen['you'], containsPair('captures_today', 1));
+    final month = (seen['this_month'] as Map).cast<String, Object?>();
+    expect(month['spent_cents'], 1);
+    expect(month['captures'], {'reads': 1, 'spent_cents': 1, 'stopped': false});
+
+    await maya.client.read(CaptureInput.typed('eggs'));
+    await expectLater(
+      maya.client.read(CaptureInput.typed('bread')),
+      throwsA(isA<ReaderException>().having((e) => e.message, 'message', startsWith('That\'s all Den can read for Maya today'))),
+    );
+    await expectLater(
+      alex.client.read(CaptureInput.typed('bread')),
+      throwsA(isA<ReaderException>().having((e) => e.message, 'message', startsWith('Reading with Claude has used this month\'s AI budget'))),
+    );
+    expect(anthropic.sent, hasLength(2), reason: 'nothing past the limits reaches Claude');
+    seen = await status(alex);
+    expect((seen['this_month'] as Map)['captures'], {'reads': 2, 'spent_cents': 2, 'stopped': true});
+    // An assistant reading through the API's add_from_text is held to the same budget: Den's
+    // own reader reads it instead of Claude.
+    final token = await f.token(scopes: {Scope.read, Scope.lists});
+    final api = await f.call('POST', '/api/v1/actions/add_from_text', token: token, body: {'text': 'popcorn and apple juice'});
+    expect(api.status, 200, reason: api.text);
+    expect((api.body['result'] as Map)['reader'], 'Den', reason: api.text);
+    expect(anthropic.sent, hasLength(2));
+  });
+
   test('someone who can\'t add anything, or a display nobody signed in to, can\'t spend the family\'s reader', () async {
     await alex.client.configure(claude);
     await expectLater(
@@ -227,5 +274,61 @@ void main() {
     final headers = await maya.sign('GET', url, const []);
     expect((await apiCall(f.base, 'GET', '/api/v1/capture/reader', headers: headers)).status, 200);
     expect((await apiCall(f.base, 'GET', '/api/v1/capture/reader', headers: headers)).status, 401);
+  });
+
+  /// Starts `POST /api/v1/capture/read` by hand on [socket] with [headers], announcing [length]
+  /// bytes and sending [sent] of them (all by default).
+  Future<void> post(Socket socket, Map<String, String> headers, {required int length, int? sent}) async {
+    socket.write('POST /api/v1/capture/read HTTP/1.1\r\nHost: 127.0.0.1:${f.hub.port}\r\n'
+        'Content-Type: application/json\r\nContent-Length: $length\r\n');
+    headers.forEach((k, v) => socket.write('$k: $v\r\n'));
+    socket.write('\r\n');
+    socket.add(List.filled(sent ?? length, 0x20));
+    await socket.flush();
+  }
+
+  /// The start of the hub's answer on [socket] (or throws if none comes).
+  Future<String> answer(Socket socket) async {
+    try {
+      return utf8.decode(await socket.first.timeout(const Duration(seconds: 10)), allowMalformed: true);
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  Map<String, String> forged(String nonce) => {
+        'x-den-device': f.hubDen.deviceId,
+        'x-den-time': '${DateTime.now().millisecondsSinceEpoch}',
+        'x-den-nonce': nonce,
+        'x-den-signature': base64Url.encode(List.filled(64, 0)),
+      };
+
+  test('a device that signs its body\'s hash in the headers is checked before the body is read', () async {
+    await alex.client.configure(claude);
+    String hex(List<int> bytes) => [for (final b in bytes) b.toRadixString(16).padLeft(2, '0')].join();
+    final hashed = HubCaptureClient(
+      bases: () => [f.base],
+      sign: (method, url, body) async =>
+          {...await maya.sign(method, url, body), 'x-den-body-sha256': hex(const DartSha256().hashSync(body).bytes)},
+    );
+    expect((await hashed.status())!.ready, isTrue);
+    expect((await hashed.read(CaptureInput.typed('Game Saturday Oct 24 at 9')))['wire'], isA<Map<String, Object?>>());
+
+    // The hub's own device id is no secret. Naming it with a made-up signature over a claimed
+    // hash is refused while nearly 20 MB are still unsent: the hub doesn't wait for the body.
+    final socket = await Socket.connect('127.0.0.1', f.hub.port);
+    addTearDown(socket.destroy);
+    await post(socket, {...forged('n1'), 'x-den-body-sha256': '0' * 64}, length: 20 * 1024 * 1024, sent: 1024);
+    await eventually(() => logged.any((l) => l.contains('Refused a signed request: bad-signature')));
+  });
+
+  test('a body whose signature can only be checked once it is in is read one per client at a time', () async {
+    final slow = await Socket.connect('127.0.0.1', f.hub.port);
+    addTearDown(slow.destroy);
+    await post(slow, forged('n2'), length: 20 * 1024 * 1024, sent: 1024);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    final second = await Socket.connect('127.0.0.1', f.hub.port);
+    await post(second, forged('n3'), length: 100);
+    expect(await answer(second), startsWith('HTTP/1.1 429'), reason: 'the first body is still arriving');
   });
 }

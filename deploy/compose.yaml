@@ -1,15 +1,31 @@
-# The family's hub, and optionally your own relay for reaching it from outside the house.
-#   docker compose -f deploy/compose.yaml up -d hub
-#   docker compose -f deploy/compose.yaml --profile relay up -d
-# A fresh hub prints a setup code in its log (docker compose logs hub), or run
-#   docker compose -f deploy/compose.yaml exec hub /app/bin/den_hub setup-code
-# and enter it in the Den app to add the hub to your family.
+# The family's hub on a computer at home, and optionally your own relay for reaching it from
+# outside the house. To host a hub on a server behind HTTPS instead (the web app on phones from
+# anywhere, one or several families), use deploy/hosted/ and docs/hosting.md. From this folder:
+#
+#   docker compose up -d --build                           # the hub
+#   docker compose exec hub /app/bin/den_hub setup-code    # enter it in the Den app
+#   docker compose --profile relay up -d                   # and the relay
+#
+# Backups go to ./backups, sealed with DEN_BACKUP_PASSPHRASE from .env in this folder:
+#   docker compose run --rm backup
+# No `name:` here: the project is named after this folder, so the data volume is deploy_den-hub.
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   hub:
     build:
       context: ..
       dockerfile: deploy/hub/Dockerfile
-    image: ghcr.io/xattribution/den-hub:latest
+      # The commit, for Settings, About in the app:
+      #   DEN_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
+      args:
+        DEN_COMMIT: ${DEN_COMMIT:-}
+    image: ${DEN_IMAGE:-den-hub}
     restart: unless-stopped
     # Host networking lets phones and Home Assistant find the hub by mDNS; it listens on 47733.
     network_mode: host
@@ -17,39 +33,59 @@ services:
       DEN_NAME: "Den hub"
       # DEN_RELAY: "https://relay.den.family"        # reach the hub from anywhere
       # DEN_PUBLIC_URL: "https://den.example.com"    # behind a TLS proxy, for OAuth (claude.ai)
-      # DEN_HA_URL: "http://homeassistant.local:8123"
-      # DEN_HA_TOKEN: "${DEN_HA_TOKEN}"               # Home Assistant long-lived token, for reminders
+      # DEN_TRUSTED_PROXIES: "127.0.0.1"             # that proxy, so the hub believes its X-Forwarded-* headers
       # DEN_LOG: "info"
-    # Reminder targets per person go in notify.json in the volume:
-    #   {"members": {"Alex": {"ha": "mobile_app_alex_phone", "ntfy": "https://ntfy.sh/den-alex-7f3k"}}}
+    # Home Assistant, signing in with Google or Apple and the AI helper are set up in the Den app
+    # on a parent's phone (docs/settings.md), not here.
     volumes:
       - den-hub:/data
+    logging: *logging
 
   relay:
     profiles: [relay]
     build:
       context: ..
       dockerfile: deploy/relay/Dockerfile
-    image: ghcr.io/xattribution/den-relay:latest
+    image: ${DEN_RELAY_IMAGE:-den-relay}
     restart: unless-stopped
     ports:
       - "47734:47734"
     volumes:
       - den-relay:/data
+    logging: *logging
 
   # A model that reads what the family shares (flyers, emails, "soccer every Wednesday at 5")
   # without it leaving the house. Off unless you ask for it:
-  #   docker compose -f deploy/compose.yaml --profile model up -d model
-  #   docker compose -f deploy/compose.yaml exec model ollama pull llama3.2
-  # then on a parent's phone: Settings, AI and automations, A model at home, this computer's address.
+  #   docker compose --profile model up -d model
+  #   docker compose exec model ollama pull llama3.2
+  # Ollama has no sign-in, so it listens on this computer's loopback only: the hub (on the host
+  # network) reads with it for every device. On a parent's phone: Settings, Advanced, AI and
+  # automations, Reading photos and messages, A model at home, on the hub, address
+  # 127.0.0.1:11434. Pinned; change the tag on purpose.
   model:
     profiles: [model]
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.9.0
     restart: unless-stopped
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     volumes:
       - den-model:/root/.ollama
+    logging: *logging
+
+  # An encrypted backup of the hub into ./backups (deploy/hub/den-backup.sh, docs/hosting.md).
+  backup:
+    profiles: [backup]
+    image: ${DEN_IMAGE:-den-hub}
+    entrypoint: ["/app/bin/den-backup"]
+    command: ["backup"]
+    user: root
+    network_mode: none
+    environment:
+      DEN_BACKUP_PASSPHRASE: ${DEN_BACKUP_PASSPHRASE:-}
+      DEN_BACKUP_KEEP: ${DEN_BACKUP_KEEP:-14}
+    volumes:
+      - den-hub:/data
+      - ./backups:/backups
 
 volumes:
   den-hub:

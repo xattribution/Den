@@ -5,13 +5,18 @@
 /// LAN discovery and shelf helpers live in `package:den_net/io.dart`.
 library;
 
+export 'src/admission.dart';
 export 'src/backup.dart';
 export 'src/client.dart';
+export 'src/den_link.dart';
 export 'src/device_request.dart';
 export 'src/invite.dart';
+export 'src/invite_words.dart';
 export 'src/mailbox.dart';
+export 'src/recovery_words.dart';
 export 'src/relay_client.dart';
 export 'src/relay_protocol.dart';
+export 'src/screen_code.dart';
 export 'src/seal.dart';
 export 'src/session.dart';
 export 'src/spoken_code.dart';

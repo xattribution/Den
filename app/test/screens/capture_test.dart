@@ -2,16 +2,18 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:den_app/capture/capture_controller.dart';
-import 'package:den_app/capture/capture_service.dart';
-import 'package:den_app/capture/capture_settings.dart';
-import 'package:den_app/capture/capture_sources.dart';
-import 'package:den_app/capture/platform_capture.dart';
+import 'package:den_app/features/add/state/capture_controller.dart';
+import 'package:den_app/features/add/state/capture_service.dart';
+import 'package:den_app/features/add/state/capture_settings.dart';
+import 'package:den_app/platform/capture/capture_sources.dart';
+import 'package:den_app/platform/capture/platform_capture.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
-import 'package:den_app/screens/capture/capture_screen.dart';
-import 'package:den_app/screens/settings/connections_screen.dart';
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/features/add/screens/capture_screen.dart';
+import 'package:den_app/features/advanced/screens/reader_screen.dart';
+import 'package:den_app/features/settings/screens/family_settings_screen.dart';
+import 'package:den_app/features/lists/lists.dart';
+import 'package:den_app/app/app_state.dart';
 import 'package:den_capture/den_capture.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
@@ -97,6 +99,31 @@ Future<void> settle(WidgetTester tester, CaptureController c) async {
 Future<void> setReview(WidgetTester tester, AppState state, bool review) =>
     write(tester, () => state.den.updateFamily({'capture': review ? 'review' : 'direct'}));
 
+/// Opens Add from the tab bar.
+Future<void> openAdd(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Add'));
+  await tester.pumpAndSettle();
+}
+
+/// Types into Add and waits for Den to read it.
+Future<void> typeInAdd(WidgetTester tester, String words) async {
+  await tester.enterText(find.byType(TextField).first, words);
+  await tester.pump(const Duration(milliseconds: 300));
+  await tester.pumpAndSettle();
+}
+
+/// Taps on the real clock, so the engine can sign what the tap writes, then lets the sheet
+/// catch up.
+Future<void> tapReal(WidgetTester tester, Finder finder) async {
+  await tester.runAsync(() async {
+    await tester.tap(finder);
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+  });
+  await tester.pumpAndSettle();
+  await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -104,12 +131,15 @@ void main() {
   });
 
   group('The Add sheet', () {
-    testWidgets('type, snap or say, over the one-thing choices', (tester) async {
+    testWidgets('type or say anything, over the one-thing choices', (tester) async {
       final state = await demoIn(tester);
-      await shootAt(tester, 'capture_add_sheet_phone', state: state, location: '/today', act: () => tester.tap(find.text('Add')));
+      await shootAt(tester, 'capture_add_sheet_phone', state: state, location: '/today', act: () => openAdd(tester));
+      expect(find.text('Type or say anything'), findsOneWidget);
+      expect(find.text('Event'), findsOneWidget);
+      expect(find.text('Grocery item'), findsOneWidget);
     });
 
-    testWidgets('night', (tester) async {
+    testWidgets('night: what Den found, as you type, with When, Who and Repeats', (tester) async {
       final state = await demoIn(tester);
       await shootAt(
         tester,
@@ -118,36 +148,57 @@ void main() {
         location: '/today',
         night: true,
         act: () async {
-          await tester.tap(find.text('Add'));
-          await tester.pumpAndSettle();
-          await tester.enterText(find.byType(TextField), 'Leo has soccer every Wednesday at 5');
+          await openAdd(tester);
+          await typeInAdd(tester, 'Leo has soccer every Wednesday at 5');
+          expect(find.text('Den found'), findsOneWidget);
+          expect(find.text('Add to calendar'), findsOneWidget);
+          expect(find.bySemanticsLabel(RegExp('^Repeats')), findsOneWidget);
         },
       );
     });
 
-    testWidgets('what was said fills the field, and sending reads it', (tester) async {
+    testWidgets('what was said fills the field, and Den reads it there', (tester) async {
       final state = await demoIn(tester);
-      await setReview(tester, state, true);
       await shootAt(
         tester,
-        'capture_said_review_phone',
+        'capture_said_phone',
         state: state,
         location: '/today',
         act: () async {
-          await tester.tap(find.text('Add'));
-          await tester.pumpAndSettle();
-          await tester.tap(find.byTooltip('Say it'));
+          await openAdd(tester);
+          await tester.tap(find.text('Say it'));
+          await tester.pump(const Duration(milliseconds: 300));
           await tester.pumpAndSettle();
           expect(find.text('soccer every Wednesday at 5 for Leo'), findsOneWidget);
-          await tester.tap(find.byTooltip('Read it'));
-          await tester.pumpAndSettle();
-          expect(find.text('From what you said'), findsOneWidget);
           expect(find.text('Soccer'), findsOneWidget);
-          expect(find.text('Add 1 thing'), findsOneWidget);
+          expect(find.text('Add to calendar'), findsOneWidget);
         },
       );
     });
 
+    testWidgets('One thing, "lemons", goes straight to the groceries, and Undo takes it back in place', (tester) async {
+      final state = await demoIn(tester);
+      final groceries = groceriesList(state.den)!.list.id;
+      bool hasLemons() => state.den.list(groceries)!.items.any((i) => i.text.toLowerCase() == 'lemons' && !i.checked);
+      expect(hasLemons(), isFalse);
+      await shootAt(
+        tester,
+        'capture_added_item_phone',
+        state: state,
+        location: '/today',
+        act: () async {
+          await openAdd(tester);
+          await typeInAdd(tester, 'lemons');
+          expect(find.text('Add to Groceries'), findsOneWidget);
+          await tapReal(tester, find.text('Add to Groceries'));
+          expect(hasLemons(), isTrue);
+          expect(findWords('Added Lemons to Groceries'), findsOneWidget);
+        },
+      );
+      await tapReal(tester, find.text('Undo'));
+      expect(hasLemons(), isFalse);
+      expect(find.widgetWithText(TextField, 'lemons'), findsOneWidget, reason: 'the words come back to change');
+    });
   });
 
   group('Review', () {
@@ -284,7 +335,7 @@ void main() {
       final state = await demoIn(tester);
       final settings = CaptureSettings(secrets: MemoryCaptureSecrets('sk-ant-test'), reader: ReaderChoice.claude, hasClaudeKey: true);
       Capture.service = serviceFor(settings: settings);
-      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
+      await pumpScreen(tester, const ReaderScreen(), state: state, size: tallPhone);
       expect(find.text('API key saved on this device'), findsOneWidget);
       await matchShot('settings_capture_claude_phone');
       final readers = await tester.runAsync(Capture.service.readers);
@@ -293,14 +344,14 @@ void main() {
 
     testWidgets('choosing "Show me first" sets the family to review', (tester) async {
       final state = await demoIn(tester);
-      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
+      await pumpScreen(tester, const FamilySettingsScreen(), state: state, size: tallPhone);
       await tester.runAsync(() async {
         await tester.tap(find.text('Show me first'));
         await Future<void>.delayed(const Duration(milliseconds: 200));
       });
       await tester.pumpAndSettle();
       expect(state.den.family!.captureNeedsReview, isTrue);
-      await matchShot('settings_capture_device_phone');
+      await matchShot('settings_family_review_phone');
     });
 
     testWidgets('a parent choosing Claude first, without the device', (tester) async {
@@ -378,8 +429,8 @@ void main() {
       final state = await withHub(tester);
       final (client, _) = fakeHub(claudeOnHub);
       Capture.service = serviceFor(hub: client);
-      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
-      expect(find.text('Claude on the hub'), findsOneWidget);
+      await pumpScreen(tester, const ReaderScreen(), state: state, size: tallPhone);
+      expect(find.textContaining('Claude on the hub'), findsOneWidget);
       expect(find.text('API key saved on the hub'), findsOneWidget);
       await matchShot('settings_capture_hub_phone');
     });
@@ -388,22 +439,22 @@ void main() {
       final state = await withHub(tester);
       final (client, saved) = fakeHub(HubReaderStatus.none.toJson());
       Capture.service = serviceFor(hub: client);
-      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
-      expect(find.text('Nothing on the hub yet'), findsOneWidget);
+      await pumpScreen(tester, const ReaderScreen(), state: state, size: tallPhone);
+      expect(find.textContaining('Nothing on the hub yet'), findsOneWidget);
       await tester.tap(find.text('A model at home').last);
       await tester.pumpAndSettle();
-      await tester.enterText(find.widgetWithText(TextField, 'Address the hub reaches it at'), '127.0.0.1:11434');
+      await tester.enterText(find.widgetWithText(TextField, '127.0.0.1:11434'), '127.0.0.1:11434');
       await tester.tap(find.text('Save on the hub'));
       await tester.pumpAndSettle();
       expect(saved.single, {'kind': 'home', 'address': '127.0.0.1:11434', 'device_first': true});
-      expect(find.text('Home model on the hub'), findsOneWidget);
+      expect(find.textContaining('Home model on the hub'), findsOneWidget);
     });
 
     testWidgets('without a hub there is nothing to set up there', (tester) async {
       final state = await demoIn(tester);
       final (client, _) = fakeHub(claudeOnHub);
       Capture.service = serviceFor(hub: client);
-      await pumpScreen(tester, const ConnectionsScreen(), state: state, size: tallPhone);
+      await pumpScreen(tester, const ReaderScreen(), state: state, size: tallPhone);
       expect(find.text('The family\'s hub'), findsNothing);
     });
 

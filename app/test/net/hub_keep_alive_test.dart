@@ -1,4 +1,4 @@
-import 'package:den_app/net/hub_keep_alive.dart';
+import 'package:den_app/platform/sync/hub_keep_alive.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -29,6 +29,18 @@ void main() {
     await AndroidHubKeepAlive().start('x');
     messenger.setMockMethodCallHandler(channel, null);
     await AndroidHubKeepAlive().stop();
+  });
+
+  test('on a Mac it uses the same channel, so closing the window keeps the hub running', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    final keepAlive = HubKeepAlive.platform(android: false, mac: true);
+    await keepAlive.start('x');
+    await keepAlive.stop();
+    expect([for (final c in calls) c.method], ['start', 'stop']);
   });
 
   test('elsewhere it does nothing', () async {

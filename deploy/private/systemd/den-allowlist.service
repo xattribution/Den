@@ -1,0 +1,29 @@
+# Looks up the family's homes by their DDNS names and lets their current addresses through Den's
+# firewall (/usr/local/sbin/den-allowlist). den-allowlist.timer runs it every 3 minutes; run it
+# by hand with `systemctl start den-allowlist` after changing DEN_HOMES in .env, and read what
+# it did with `journalctl -u den-allowlist`.
+
+[Unit]
+Description=Den firewall: let in the family's homes, from their DDNS names
+Wants=network-online.target
+After=network-online.target den-firewall.service
+
+[Service]
+Type=oneshot
+# /etc/den/env is a link to deploy/private/.env (install.sh makes it).
+ExecStart=/usr/local/sbin/den-allowlist --config /etc/den/env
+# 2: some name couldn't be looked up, and that home kept its last known addresses. It's logged,
+# and the unit still counts as done; it tries again on the next run.
+SuccessExitStatus=2
+StateDirectory=den
+StateDirectoryMode=0700
+# It needs nothing but the network, nft, its own state, and reading .env wherever the checkout is.
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_READ_SEARCH
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK

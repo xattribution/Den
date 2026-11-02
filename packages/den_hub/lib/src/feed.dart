@@ -1,13 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:den_actions/den_actions.dart' show readableSpacesFor;
+import 'package:den_actions/times.dart';
 import 'package:den_core/den_core.dart';
 import 'package:shelf/shelf.dart';
 
 import 'access.dart';
 import 'config.dart';
 import 'context.dart';
-import 'times.dart';
 
 /// One record a batch touched.
 class ChangedRecord {
@@ -190,13 +191,11 @@ class _Subscriber {
 
   /// Checks the token; says goodbye and closes when it no longer works.
   bool _stillValid() {
-    final current = hub.den.connectionForToken(token);
-    if (current != null && current.id == access.connection.id) return true;
-    final record = hub.den.connections.where((c) => c.id == access.connection.id).firstOrNull;
-    final expired = record != null &&
-        record.status == ConnectionStatus.active &&
-        record.expires != null &&
-        record.expires! <= hub.now();
+    final current = hub.access(token);
+    if (current != null && current.connection.id == access.connection.id) return true;
+    // Still on, but this token no longer works: it expired (an OAuth token lasts an hour).
+    final record = hub.den.connectionWithId(access.connection.id);
+    final expired = record != null && record.status == ConnectionStatus.active;
     goodbye(expired ? 'token_expired' : 'token_revoked');
     return false;
   }

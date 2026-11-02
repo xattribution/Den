@@ -170,7 +170,7 @@ You read what a family shares with Den, their family organizer: photos of school
       CaptureKind.message => 'a message',
       CaptureKind.link => 'a web page',
       CaptureKind.voice => 'what they said out loud',
-      CaptureKind.typed => 'what they typed',
+      CaptureKind.typed || CaptureKind.assistant => 'what they typed',
     };
     final files = input.files.isEmpty ? '' : ' (attached above)';
     return [

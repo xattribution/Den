@@ -2,20 +2,54 @@
 # Den hub: the family's always-on device in a container. Serves the web app, device sync (/ws),
 # the HTTP API, MCP with OAuth, calendar feeds and reminders on one port.
 # Build from the repository root:  docker build -f deploy/hub/Dockerfile -t den-hub .
+# Compiling the web app is the heavy part: about 1.5 GB of memory at its peak (docs/hosting.md,
+# "Building on a small server").
+#
+# The same file makes the published image, ghcr.io/xattribution/den, for x86 and ARM at once
+# (tools/release.sh): the web app builds once, on the machine that builds (it is the same for
+# both), and the hub compiles for each. The image also carries cloudflared, which the
+# installer's `tunnel` service runs (den-connector.sh), and rclone, for backups to a NAS.
 
-FROM ghcr.io/cirruslabs/flutter:3.38.5 AS web
+# 3.38.6 and later keep the app's size while a keyboard is up on Android (flutter/flutter#175074);
+# 3.38.5 left the app a keyboard short after the keyboard's down arrow.
+FROM --platform=$BUILDPLATFORM ghcr.io/cirruslabs/flutter:3.38.10 AS web
 WORKDIR /src
 COPY packages packages
 COPY app app
+COPY deploy/hub/fallback_fonts.sh /usr/local/bin/fallback_fonts.sh
 WORKDIR /src/app
-RUN flutter pub get && flutter build web --release
+# The hub serves the web app under a Content-Security-Policy that allows nothing from a CDN:
+# --csp keeps dart2js from generating code at run time, CanvasKit loads from the hub
+# (build/web/canvaskit/) instead of gstatic.com, and so do the fonts Flutter falls back to for
+# emoji and symbols (build/web/fonts/fallback/). DEN_FALLBACK_FONTS=. ships every script's.
+# --no-wasm-dry-run: the hub serves the JavaScript build, and the WebAssembly compile Flutter
+# would otherwise run alongside it only to print warnings takes more memory than the build itself.
+# Which build this is, for Settings, About in the app: DEN_COMMIT is the commit it's built from
+# (docker build --build-arg DEN_COMMIT=<short commit>; install.sh and the compose files pass
+# it), DEN_BUILT when (the time of this step by default). build.json tells the app what the hub
+# serves now.
+ARG DEN_FALLBACK_FONTS=
+ARG DEN_COMMIT=
+ARG DEN_BUILT=
+RUN built="${DEN_BUILT:-$(date -u +%Y-%m-%dT%H:%MZ)}" \
+ && flutter pub get \
+ && flutter build web --release --csp --no-wasm-dry-run --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ \
+      --dart-define=DEN_COMMIT="$DEN_COMMIT" --dart-define=DEN_BUILT="$built" \
+ && printf '{"commit":"%s","built":"%s"}\n' "$DEN_COMMIT" "$built" > build/web/build.json \
+ && sh /usr/local/bin/fallback_fonts.sh build/web "$DEN_FALLBACK_FONTS"
 
+# The hub for the image's own platform. `dart compile exe --target-arch` would compile it for the
+# other one from here, but it refuses packages with build hooks (sqlite3, for den_sett_import),
+# and `dart build cli`, which runs them, can't cross-compile yet (Dart 3.10): so a multi-platform
+# build compiles the ARM hub under emulation, or on an ARM builder node (docs/install-technical.md).
 FROM dart:3.10 AS hub
 WORKDIR /src
 # Resolve dependencies first so source edits don't invalidate the pub cache layer.
 COPY packages/den_core/pubspec.yaml packages/den_core/pubspec.lock* packages/den_core/
 COPY packages/den_net/pubspec.yaml packages/den_net/pubspec.lock* packages/den_net/
 COPY packages/den_capture/pubspec.yaml packages/den_capture/pubspec.lock* packages/den_capture/
+COPY packages/den_assistant/pubspec.yaml packages/den_assistant/pubspec.lock* packages/den_assistant/
+COPY packages/den_actions/pubspec.yaml packages/den_actions/pubspec.lock* packages/den_actions/
 COPY packages/den_relay/pubspec.yaml packages/den_relay/pubspec.lock* packages/den_relay/
 COPY packages/den_sett_import/pubspec.yaml packages/den_sett_import/pubspec.lock* packages/den_sett_import/
 COPY packages/den_hub/pubspec.yaml packages/den_hub/pubspec.lock* packages/den_hub/
@@ -24,10 +58,16 @@ RUN cd packages/den_hub_cli && dart pub get
 COPY packages packages
 # den_sett_import links SQLite through a build hook, which `dart compile exe` doesn't run;
 # `dart build cli` does, and bundles the library next to the binary (bundle/lib).
-RUN cd packages/den_hub \
+# The entry point lives in den_hub_cli (bin/den_hub.dart); den_hub is the library it serves.
+RUN cd packages/den_hub_cli \
  && dart pub get --offline \
  && dart build cli -t bin/den_hub.dart -o /out \
  && mkdir -p /out/data
+
+# The tunnel's connector and the NAS backups' copier, from their makers' own images (both are
+# static binaries, for every platform the image is). Pinned; change the tags on purpose.
+FROM cloudflare/cloudflared:2026.10.0 AS cloudflared
+FROM rclone/rclone:1.75.2 AS rclone
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -37,12 +77,26 @@ RUN apt-get update \
  && mkdir -p /data /app/web && chown den /data
 COPY --from=hub /out/bundle/ /app/
 COPY --from=web /src/app/build/web /app/web
+COPY --chmod=755 deploy/hub/den-backup.sh /app/bin/den-backup
+COPY --from=cloudflared /usr/local/bin/cloudflared /usr/local/bin/cloudflared
+COPY --from=rclone /usr/local/bin/rclone /usr/local/bin/rclone
+COPY --chmod=755 deploy/hub/den-connector.sh /app/bin/den-connector
+# The installer (deploy/install.sh) copies itself out of the image it runs, as the server's
+# `den` command, so the command and the image are always the same release.
+COPY --chmod=755 deploy/install.sh /app/install.sh
+# The release, for the installer and its updates (tools/release.sh passes it): vX.Y.Z, or dev
+# for an image built from a checkout.
+ARG DEN_VERSION=dev
+LABEL org.opencontainers.image.title="Den" \
+      org.opencontainers.image.source="https://github.com/xattribution/den" \
+      org.opencontainers.image.version="$DEN_VERSION"
+RUN printf '%s\n' "$DEN_VERSION" > /app/VERSION
 USER den
 VOLUME /data
 EXPOSE 47733
 ENV DEN_DATA=/data \
     DEN_WEB=/app/web \
     DEN_PORT=47733
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD curl -fsS http://127.0.0.1:47733/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=2s CMD curl -fsS "http://127.0.0.1:${DEN_PORT:-47733}/health" || exit 1
 ENTRYPOINT ["/app/bin/den_hub"]
 CMD ["serve"]

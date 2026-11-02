@@ -1,4 +1,5 @@
 import 'package:den_core/den_core.dart';
+import 'package:den_core/src/snapshot.dart';
 
 /// A clock tests move by hand.
 class TestClock {
@@ -8,6 +9,39 @@ class TestClock {
   int call() => now;
   void advance(Duration d) => now += d.inMilliseconds;
   void set(DateTime utc) => now = utc.millisecondsSinceEpoch;
+}
+
+/// What tests see of the work an engine does around snapshots.
+extension DenProbe on Den {
+  /// Waits for the check of the stored log [Den.open] started, and any snapshot being written.
+  Future<void> debugIdle() => engineProbes[this]!.idle();
+
+  /// Times the engine replayed its whole log from scratch since it opened.
+  int get debugFullReplays => engineProbes[this]!.fullReplays();
+
+  /// Whether it opened from a stored snapshot.
+  bool get debugOpenedFromSnapshot => engineProbes[this]!.openedFromSnapshot();
+}
+
+/// In-memory storage that keeps a snapshot too, like the app's and the hub's storage.
+class SnapshotMemoryStorage extends MemoryStorage implements SnapshotStorage {
+  String? snapshot;
+  int saves = 0;
+
+  @override
+  Future<String?> loadSnapshot() async => snapshot;
+
+  @override
+  Future<void> saveSnapshot(String text) async {
+    snapshot = text;
+    saves++;
+  }
+
+  @override
+  Future<void> clear() async {
+    snapshot = null;
+    await super.clear();
+  }
 }
 
 Future<Den> openDen(TestClock clock, {DenStorage? storage, DeviceKeys? keys}) async =>
@@ -25,7 +59,7 @@ Future<Den> foundFamily(
     familyName: 'Rivera family',
     timezone: timezone,
     yourName: name,
-    marker: Marker.blue,
+    marker: Marker.sky,
     animal: Animal.cat,
     deviceName: '$name\'s phone',
     deviceKind: DeviceKind.phone,

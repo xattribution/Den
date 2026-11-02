@@ -25,12 +25,17 @@ class RelayConfig {
     this.maxMailboxEntries = 10000,
     this.maxMailboxes = 100000,
     this.maxTotalBytes = 10 * 1024 * 1024 * 1024,
+    this.maxClientBytes = 256 * 1024 * 1024,
+    this.maxClientMailboxes = 1000,
     this.readPageEntries = 200,
     this.readPageBytes = 8 * 1024 * 1024,
     this.slotTtl = const Duration(minutes: 15),
     this.maxSlots = 10000,
     this.maxTunnels = 10000,
     this.maxStreamsPerTunnel = 64,
+    this.maxTunnelsPerClient = 16,
+    this.maxStreamsPerClient = 16,
+    this.maxSlotsPerClient = 8,
     this.maxMessageBytes = maxRelayMessageBytes,
     this.ipRate = const RateSpec(capacity: 120, perSecond: 20),
     this.mailboxWriteRate = const RateSpec(capacity: 120, perSecond: 2),
@@ -68,6 +73,13 @@ class RelayConfig {
   /// Most bytes across every mailbox.
   final int maxTotalBytes;
 
+  /// Most bytes one client (see `clientKeyOf`) may have stored across every mailbox, so no
+  /// client can fill the relay for everyone else.
+  final int maxClientBytes;
+
+  /// Most mailboxes one client may have created that still hold blobs.
+  final int maxClientMailboxes;
+
   /// Most blobs returned by one read.
   final int readPageEntries;
 
@@ -85,6 +97,16 @@ class RelayConfig {
 
   /// Most client streams through one hub's tunnel.
   final int maxStreamsPerTunnel;
+
+  /// Most hub tunnels one client may hold open.
+  final int maxTunnelsPerClient;
+
+  /// Most streams one client may hold open through one hub's tunnel, so no client can take a
+  /// family's every slot.
+  final int maxStreamsPerClient;
+
+  /// Most rendezvous hosts one client may have waiting.
+  final int maxSlotsPerClient;
 
   /// Largest WebSocket message forwarded.
   final int maxMessageBytes;
@@ -121,12 +143,17 @@ class RelayConfig {
         maxMailboxEntries: maxMailboxEntries,
         maxMailboxes: maxMailboxes,
         maxTotalBytes: maxTotalBytes,
+        maxClientBytes: maxClientBytes,
+        maxClientMailboxes: maxClientMailboxes,
         readPageEntries: readPageEntries,
         readPageBytes: readPageBytes,
         slotTtl: slotTtl,
         maxSlots: maxSlots,
         maxTunnels: maxTunnels,
         maxStreamsPerTunnel: maxStreamsPerTunnel,
+        maxTunnelsPerClient: maxTunnelsPerClient,
+        maxStreamsPerClient: maxStreamsPerClient,
+        maxSlotsPerClient: maxSlotsPerClient,
         maxMessageBytes: maxMessageBytes,
         ipRate: ipRate,
         mailboxWriteRate: mailboxWriteRate,

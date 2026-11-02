@@ -77,6 +77,26 @@ have a contiguous vector; the per-space summaries above don't need one, and they
 from out-of-order delivery. Changes new to this replica are forwarded to every other live peer
 once, so a hub relays between its clients and a chain of devices converges.
 
+### A server the client doesn't know, or one the family removed
+
+An unpinned client syncs only with a server it knows as an approved device of its family.
+
+- `vouch` / `vouched {list}`: a server it has never heard of that names the same family (a hub
+  approved on a parent's phone since this device last synced, typically one that replaced the
+  old hub at the same address) is asked for its record. The client keeps the changes to that
+  device record only if they hold its request signed with the key it proved in the handshake
+  and an approval signed by a parent's device the client already trusts, then syncs as usual.
+  Anything else, or no answer in 30 seconds, closes with `unknown-peer`. Whatever else the
+  server sends meanwhile waits.
+- `join_rejected {reason: "removed", list}`: to a server this family revoked, from any client
+  that knows it. `list` holds the signed changes to the server's own device record; the server
+  keeps only those and only as den_core validates them, so it learns it was removed and when,
+  and can say so. A client connected when the server is revoked sends the same on the way out.
+
+`SyncClient` puts an endpoint that closed with `removed` or `unknown-peer` at the back of its
+list and tries the next one at once, so a dead hub still answering at a saved address doesn't
+keep a device from the hub that replaced it. `SyncStatus.device` says which device answered.
+
 ### Space-key epochs
 
 When a parent's device revokes a device, den_core rotates the key of every space it held (one
@@ -103,15 +123,20 @@ lists both revocations, which settles it.
 
 - `pair {kind: "qr", proof}`: proof = base64url HMAC-SHA256(invite secret, raw Ed25519 key of
   the joiner). Invites are single-use.
-- `pair {kind: "code", proof}`: proof = HMAC-SHA256(key = the normalized code, `"den/pair/v1/joiner"
-  0x00 | transcript hash | joiner key`). The inviting side answers with its own proof under the
-  label `"den/pair/v1/host"`, so a joiner never pairs with a device that doesn't know the code.
-  Every wrong proof counts against every live code (a guess doesn't say which code it aimed at);
-  5 burn them. Codes last 10 minutes.
+- `pair {kind: "code", proof}`: proof = HMAC-SHA256(key = the stretched code, `"den/pair/v2/joiner"
+  0x00 | transcript hash | joiner key`), where the stretched code is Argon2id(normalized code,
+  salt `"den/spoken-code/v2"`, 4 MiB, 3 passes, 1 lane, 32 bytes) (`stretchCode`). The inviting
+  side answers with its own proof under the label `"den/pair/v2/host"`, so a joiner never pairs
+  with a device that doesn't know the code; until that proof checks out the joiner ignores
+  anything else the other side sends and closes on any sync message. Every wrong proof counts
+  against every live code (a guess doesn't say which code it aimed at); 5 burn them. Codes last
+  10 minutes.
 - `pair_ok {family, founder, proof?}` / `pair_fail {reason}`.
 - `join {changes}`: the joiner's own unapproved `device` record from `den.requestJoin`; refused
   if any change is not that record, sets `approved` true, `approvedBy`, `revoked`, or another
-  key. A device whose pending record already exists can resume with `join` alone.
+  key. It must follow a good `pair` on the same session, even for a device whose request is
+  already in the log (`not-paired` otherwise). A declined or removed device is refused
+  (`declined`).
 - `join_pending`, `join_rejected {reason}`, `approved`, and `unapproved` (to a known-family
   client the server doesn't consider approved).
 
@@ -125,7 +150,7 @@ those messages; any sync message from the joiner closes the session. Then it sen
   `{"t":"auth","pubkey","sig"}` signing `"den/relay-tunnel/v1|<hubId>|<nonce>"`; after
   `{"t":"ready"}` client streams arrive multiplexed (see `den_relay`'s README).
 - Rendezvous: `wss://relay/rendezvous/<slot>?role=host|guest`; slots are hex SHA-256 of
-  `"den/rendezvous/v1/qr|" | secret` or `"den/rendezvous/v1/code|<normalized code>"`.
+  `"den/rendezvous/v1/qr|" | secret`, or hex HMAC-SHA256(stretched code, `"den/rendezvous/v2/code"`).
 - Mailbox: id = hex HMAC-SHA256(space key, `"mailbox:<epoch>"`); blob = `0x01 | nonce (24) |
   XChaCha20-Poly1305(space key, {"v":1,"changes":[...]}, aad "den/mailbox/v1|<space>|<epoch>")`.
   Dedupe is by change id; only changes from the last 30 days are posted. Devices post under the
@@ -162,4 +187,5 @@ associated data. Defaults: 19 MiB, t=2, p=1. Headers asking for more than 1 GiB,
 
 ## Third-party material
 
-The spoken-code word list is the BIP-39 English list; see `LICENSE-NOTICE`.
+The word list for spoken codes, matching words and recovery words is the BIP-39 English list; see
+`LICENSE-NOTICE`.

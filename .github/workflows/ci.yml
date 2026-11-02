@@ -1,10 +1,15 @@
 name: ci
 
+# Actions minutes cost money on a private repository, and every check here also runs on a
+# developer's machine (tool/local_ci.sh). So CI runs only when asked:
+#   - a release tag (v*) runs everything and publishes the images and the release;
+#   - a pull request runs once it has the label "run-ci" (and on later pushes while it has it);
+#   - "Run workflow" in the Actions tab runs the checks by hand.
 on:
   push:
-    branches: [main]
     tags: ['v*']
   pull_request:
+    types: [labeled, synchronize, reopened]
   workflow_dispatch:
 
 concurrency:
@@ -12,16 +17,68 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FLUTTER_VERSION: '3.38.5'
+  FLUTTER_VERSION: '3.38.10'
 
 jobs:
+  # Decide which jobs a change needs, so a fix to one package doesn't rebuild everything.
+  # Tags, manual runs and changes to this file run every job.
+  changes:
+    name: What changed
+    # Every other job needs this one, so this condition gates the whole run.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-ci')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      packages: ${{ steps.pick.outputs.packages }}
+      app: ${{ steps.pick.outputs.app }}
+      homeassistant: ${{ steps.pick.outputs.homeassistant }}
+      images: ${{ steps.pick.outputs.images }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            ci: ['.github/workflows/**']
+            den_core: ['packages/den_core/**']
+            den_net: ['packages/den_core/**', 'packages/den_net/**']
+            den_capture: ['packages/den_core/**', 'packages/den_capture/**']
+            den_relay: ['packages/den_core/**', 'packages/den_net/**', 'packages/den_relay/**']
+            den_sett_import: ['packages/den_core/**', 'packages/den_sett_import/**']
+            den_assistant: ['packages/den_assistant/**']
+            den_actions: ['packages/den_core/**', 'packages/den_capture/**', 'packages/den_assistant/**', 'packages/den_actions/**']
+            den_hub: ['packages/**', 'deploy/hub/**']
+            den_hub_cli: ['packages/**', 'deploy/hub/**']
+            app: ['packages/den_core/**', 'packages/den_net/**', 'packages/den_capture/**', 'packages/den_actions/**', 'packages/den_assistant/**', 'packages/den_hub/**', 'packages/den_relay/**', 'app/**']
+            homeassistant: ['integrations/**']
+            images: ['packages/**', 'app/**', 'deploy/**']
+      - id: pick
+        env:
+          CHANGES: ${{ steps.f.outputs.changes }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          all='["den_core","den_net","den_capture","den_relay","den_hub","den_hub_cli","den_sett_import","den_assistant","den_actions"]'
+          if [ "$EVENT" = workflow_dispatch ] || [[ "$REF" == refs/tags/* ]] || echo "$CHANGES" | grep -q '"ci"'; then
+            echo "packages=$all" >> "$GITHUB_OUTPUT"; echo "app=true" >> "$GITHUB_OUTPUT"; echo "homeassistant=true" >> "$GITHUB_OUTPUT"; echo "images=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "packages=$(echo "$CHANGES" | jq -c '[.[] | select(startswith("den_"))]')" >> "$GITHUB_OUTPUT"
+          echo "app=$(echo "$CHANGES" | jq 'index("app") != null')" >> "$GITHUB_OUTPUT"
+          echo "homeassistant=$(echo "$CHANGES" | jq 'index("homeassistant") != null')" >> "$GITHUB_OUTPUT"
+          echo "images=$(echo "$CHANGES" | jq 'index("images") != null')" >> "$GITHUB_OUTPUT"
+
   packages:
     name: Dart packages
+    needs: [changes]
+    if: needs.changes.outputs.packages != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        package: [den_core, den_net, den_capture, den_relay, den_hub, den_hub_cli, den_sett_import]
+        package: ${{ fromJSON(needs.changes.outputs.packages) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
@@ -30,12 +87,23 @@ jobs:
       - name: Resolve
         working-directory: packages/${{ matrix.package }}
         run: dart pub get
+      # Failures also become annotations, so they show on the pull request and through the
+      # checks API without the full log.
       - name: Analyze
         working-directory: packages/${{ matrix.package }}
-        run: dart analyze --fatal-infos
+        run: |
+          dart analyze --fatal-infos > analyze.txt 2>&1 && { cat analyze.txt; exit 0; }
+          status=$?
+          cat analyze.txt
+          grep -E ' (error|warning|info) - ' analyze.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
       - name: Test
         working-directory: packages/${{ matrix.package }}
-        run: dart test
+        run: |
+          dart test --reporter github --file-reporter json:test.jsonl && exit 0
+          status=$?
+          python ../../.github/scripts/test_failures.py test.jsonl
+          exit $status
       - name: Build the hub binary
         if: matrix.package == 'den_hub_cli'
         working-directory: packages/den_hub_cli
@@ -43,6 +111,8 @@ jobs:
 
   app:
     name: App analyze and test
+    needs: [changes]
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,16 +123,52 @@ jobs:
           cache: true
       - working-directory: app
         run: flutter pub get
+      # Failures also become an annotation on the check, readable without the log.
       - working-directory: app
-        run: flutter analyze
-      # Golden images are rendered on Windows by the people reviewing them; elsewhere
-      # test/flutter_test_config.dart renders every screen without comparing pixels. The app
-      # icon's source (tagged golden) is skipped.
+        run: |
+          flutter analyze > analyze.txt 2>&1 && { cat analyze.txt; exit 0; }
+          status=$?
+          cat analyze.txt
+          grep -E ' (error|warning|info) [-•] ' analyze.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
+      # Every screen renders (overflows and exceptions fail) but golden pixels aren't compared:
+      # the images are rendered on CI by the screenshots workflow and committed from there
+      # (test/flutter_test_config.dart, DESIGN.md "Screenshots"). The app icon's and Home
+      # Assistant brand sources (tagged golden) are skipped.
       - working-directory: app
-        run: flutter test --exclude-tags golden
+        run: |
+          flutter test --exclude-tags golden --reporter github --file-reporter json:test.jsonl && exit 0
+          status=$?
+          python ../.github/scripts/test_failures.py test.jsonl
+          exit $status
+      # The browser's own storage (IndexedDB), in Chrome.
+      - working-directory: app
+        run: |
+          flutter test --platform chrome --reporter github --file-reporter json:web-test.jsonl test/web && exit 0
+          status=$?
+          python ../.github/scripts/test_failures.py web-test.jsonl
+          exit $status
+      # The service worker, against a fake build, in Node.
+      - working-directory: app
+        run: node test/web/sw_test.mjs web/sw.js
+      # The page around the keyboard (den_web.js, index.html), against a fake iPhone, in Node.
+      - working-directory: app
+        run: node test/web/viewport_test.mjs web/den_web.js web/index.html
+      # The web app as the hub serves it (deploy/hub/Dockerfile): CanvasKit and fonts from the
+      # hub, no CDN; and the fallback fonts the hub image ships are still where the build names
+      # them.
+      - working-directory: app
+        run: |
+          flutter build web --release --csp --dart-define=FLUTTER_WEB_CANVASKIT_URL=canvaskit/ > build.txt 2>&1 && { cat build.txt; sh ../deploy/hub/fallback_fonts.sh build/web '' --list; exit $?; }
+          status=$?
+          cat build.txt
+          grep -iE 'error' build.txt | head -40 | sed 's/^ */::error::/'
+          exit $status
 
   homeassistant:
     name: Home Assistant integration
+    needs: [changes]
+    if: needs.changes.outputs.homeassistant == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,19 +216,27 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: deploy/install.sh
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
         with:
           name: den-homeassistant-zip
           path: dist
+      # install.sh too: the one command people paste fetches it from the latest release.
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/den.zip
+          files: |
+            dist/den.zip
+            deploy/install.sh
           fail_on_unmatched_files: true
 
   build:
     name: Build ${{ matrix.target }}
     needs: [packages, app]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # macOS and Windows minutes cost several times Linux's: release tags only.
+    if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
@@ -133,7 +247,7 @@ jobs:
             artifact: app/build/app/outputs/flutter-apk/app-release.apk
           - target: web
             os: ubuntu-latest
-            command: flutter build web --release
+            command: flutter build web --release --no-web-resources-cdn --csp
             artifact: app/build/web
           - target: linux
             os: ubuntu-latest
@@ -175,6 +289,67 @@ jobs:
           name: den-${{ matrix.target }}
           path: ${{ matrix.artifact }}
 
+  # On a release tag, attach the apps to the release, as the README's download links name them.
+  apps-publish:
+    name: Attach the apps to the release
+    needs: [build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: built
+      - name: Package
+        run: |
+          mkdir -p dist
+          (cd built/den-windows && zip -qr ../../dist/Den-windows.zip .)
+          (cd built/den-macos && zip -qry ../../dist/Den-macos.zip Den.app)
+          cp built/den-android/app-release.apk dist/Den-android.apk
+          tar -C built/den-linux -czf dist/Den-linux.tar.gz .
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+
+  # On a labeled pull request or a manual run, build the hub and relay images when the change
+  # touches them (one platform, nothing pushed), so a broken Dockerfile or a web build that
+  # fails under --csp shows up in review rather than at release.
+  image-check:
+    name: Image builds (${{ matrix.image }})
+    needs: [changes]
+    if: github.event_name != 'push' && needs.changes.outputs.images == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [hub, relay]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          file: deploy/${{ matrix.image }}/Dockerfile
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      # Job logs aren't always readable by reviewers; repeat the failing step's output (the
+      # builder still holds every layer before it, so this is quick) as an annotation.
+      - name: Explain a failed build
+        if: failure() && steps.build.outcome == 'failure'
+        run: |
+          docker buildx build --progress=plain --platform linux/amd64 \
+            -f deploy/${{ matrix.image }}/Dockerfile . > build.log 2>&1 || true
+          msg=$(grep -vE '^#[0-9]+ (sha256:|extracting|resolve|DONE|CACHED|\[internal\]|transferring)' build.log \
+            | tail -n 120 | sed 's/%/%25/g; s/\r/%0D/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::error title=Image build (${{ matrix.image }})::$msg"
+
   images:
     name: Docker images
     needs: [packages]
@@ -201,6 +376,9 @@ jobs:
           file: deploy/${{ matrix.image }}/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          # The hub is also ghcr.io/<owner>/den:stable, the name and channel deploy/install.sh pulls.
           tags: |
             ghcr.io/${{ github.repository_owner }}/den-${{ matrix.image }}:latest
             ghcr.io/${{ github.repository_owner }}/den-${{ matrix.image }}:${{ github.ref_name }}
+            ${{ matrix.image == 'hub' && format('ghcr.io/{0}/den:stable', github.repository_owner) || '' }}
+            ${{ matrix.image == 'hub' && format('ghcr.io/{0}/den:{1}', github.repository_owner, github.ref_name) || '' }}

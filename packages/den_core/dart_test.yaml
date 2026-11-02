@@ -1,0 +1,10 @@
+tags:
+  # The engine benchmarks (test/benchmark_test.dart): minutes long, so skipped unless asked for
+  # with -P benchmark (add -p chrome for dart2js numbers).
+  benchmark:
+    skip: "Benchmarks run with: dart test -P benchmark"
+    presets: {benchmark: {skip: false}}
+
+presets:
+  benchmark:
+    include_tags: benchmark

@@ -1,0 +1,151 @@
+import 'package:den_core/den_core.dart';
+import 'package:flutter/widgets.dart';
+
+import '../../../app/den_scope.dart';
+import '../words/oversight.dart';
+
+/// The family's trust decisions: who is a parent, what a kid may do, how someone signs in on a
+/// shared screen, whether parents see a kid's private items, who may use the AI helper, until
+/// when a sitter has Den, and which devices are in the family. No action offers these, on purpose: the engine takes them
+/// only from a parent on their own device, never from a shared screen, the hub, MCP or an
+/// assistant. They are the only family writes that go to the engine directly.
+class TrustActions {
+  const TrustActions(this._den);
+
+  final Den _den;
+
+  /// Makes [member] a [role]; a kid also gets [tier], and [grants] when given (a role change to
+  /// kid starts from the age group's switches). Making a parent anything else takes their
+  /// recovery words away in the same change ([Den.updateMember]), so old words can't let them
+  /// back in; made a parent again, they make new ones.
+  Future<void> setRole(String member, Role role, {Tier? tier, Set<Grant>? grants}) => _den.updateMember(member, {
+        'role': role.name,
+        'tier': role == Role.kid ? tier?.name : null,
+        if (grants != null) 'grants': _names(role == Role.kid ? grants : const {}),
+      });
+
+  Future<void> setGrants(String member, Set<Grant> grants) => _den.updateMember(member, {'grants': _names(grants)});
+
+  static List<String> _names(Set<Grant> grants) => [
+        for (final g in Grant.values)
+          if (grants.contains(g)) g.name,
+      ];
+
+  /// One of a kid's switches ([KidSwitch]), whichever part of the family it lives in.
+  Future<void> setKidSwitch(Member kid, KidSwitch which, bool on) => switch (which) {
+        KidSwitch.lists || KidSwitch.plans => setGrants(kid.id, grantsWith(which, on, kid.grants)),
+        KidSwitch.rewardsOk => _setRewardsOk(kid, on),
+        KidSwitch.private => setParentsSeePrivate(kid.id, !on),
+        KidSwitch.ownPicture => _setSetting(kid.id, OversightSetting.ownPicture, on),
+        KidSwitch.assistant => setAssistantFor(kid.id, on),
+      };
+
+  /// On: their requests wait for a parent, and they give nobody stars. Off: they trade their
+  /// own stars for rewards without asking.
+  Future<void> _setRewardsOk(Member kid, bool on) async {
+    if (on && kid.grants.contains(Grant.points)) await setGrants(kid.id, grantsWith(KidSwitch.rewardsOk, true, kid.grants));
+    await _setSetting(kid.id, OversightSetting.rewardsNeedOk, on);
+  }
+
+  /// One setting of one person (`oversight.<id>.<setting>`), so parents changing different
+  /// settings at once both count.
+  Future<void> _setSetting(String member, String setting, bool on) => _den.updateFamily({'oversight.$member.$setting': on});
+
+  /// Just this person's entry, so two parents changing different people at once both count.
+  Future<void> setParentsSeePrivate(String member, bool on) => _den.updateFamily({
+        'oversight.$member': {'parentsSeePrivate': on},
+      });
+
+  /// A sitter's last day (a local date), or null for no end.
+  Future<void> setUntil(String member, String? until) => _den.updateMember(member, {'until': until});
+
+  /// Ends a sitter's access now: yesterday becomes their last day and their devices are removed.
+  Future<void> endAccessNow(String member) => _den.endAccessNow(member);
+
+  /// Removes the devices of sitters whose last day has passed; this device's job whenever Den
+  /// is open on a parent's own device. Returns whose.
+  Future<List<String>> endExpiredAccess() => _den.endExpiredAccess();
+
+  /// The family's rules for the AI helper (`family.assistant`).
+  Future<void> setAssistant(AssistantPolicy policy) => _den.updateFamily({'assistant': policy.toJson()});
+
+  /// Lets [member] use the AI helper, or not.
+  Future<void> setAssistantFor(String member, bool on) {
+    final policy = _den.family?.assistant ?? const AssistantPolicy();
+    final members = {...policy.members};
+    on ? members.add(member) : members.remove(member);
+    return setAssistant(AssistantPolicy(
+      enabled: policy.enabled,
+      members: members,
+      kidDailyLimit: policy.kidDailyLimit,
+      budgetCents: policy.budgetCents,
+    ));
+  }
+
+  /// Removes [member]: their devices, and their recovery words in the same commit
+  /// ([Den.removeMember]).
+  Future<void> removePerson(String member) => _den.removeMember(member);
+
+  /// `none`, or a PIN or picture pattern with its [secret].
+  Future<void> setSignIn(String member, String kind, {String? secret}) =>
+      _den.setSignIn(member, kind: kind, secret: secret);
+
+  Future<void> approveDevice(String device, {String? member, required DeviceMode mode}) =>
+      _den.approveDevice(device, member: member, mode: mode);
+
+  Future<void> revokeDevice(String device) => _den.revokeDevice(device);
+
+  /// "That wasn't us" for a phone recovery let in: removes it, turns off what let it in (that
+  /// parent's words, or the hub's help) in the same commit, and says which devices it let in
+  /// since, for [removeDevices] ([Den.disownRecovery]).
+  Future<DisownedRecovery> thatWasntUs(String device) => _den.disownRecovery(device);
+
+  /// "That wasn't Dad" for a device an invite let in by itself: removes it and takes the
+  /// invite's key away in the same commit, and says which devices it let in since, for
+  /// [removeDevices] ([Den.disownInvite]).
+  Future<DisownedInvite> thatWasntThem(String device) => _den.disownInvite(device);
+
+  /// Takes back an invite that lets someone in at once before it is used ([Den.withdrawInviteKey]).
+  Future<void> withdrawInvite(String inviteKey) => _den.withdrawInviteKey(inviteKey);
+
+  /// Removes [devices], one after another.
+  Future<void> removeDevices(Iterable<String> devices) async {
+    for (final d in devices) {
+      await _den.revokeDevice(d);
+    }
+  }
+
+  /// Whether this device may remove one of the family's hubs: a parent's own personal device.
+  /// Never a hub, even one a parent keeps online on their computer, and never a shared screen.
+  static bool mayRemoveHubs(Den den) => den.thisDevice?.mode == DeviceMode.personal;
+
+  /// Removes one of the family's hubs ([mayRemoveHubs]). The hub hears it from the next device
+  /// that reaches it, and says so in `den_hub status` and its log.
+  Future<void> removeHub(String hub) {
+    if (!mayRemoveHubs(_den)) throw const PermissionDenied("A hub is removed on a parent's own phone");
+    if (_den.device(hub)?.mode != DeviceMode.hub) throw const InvalidInput("That isn't one of the family's hubs");
+    return _den.revokeDevice(hub);
+  }
+
+  Future<void> renameDevice(String device, String name) => _den.updateDevice(device, {'name': name});
+
+  /// What a shared display shows ([display] is its whole settings map).
+  Future<void> setDisplay(String device, Map<String, Object?> display) => _den.updateDevice(device, {'display': display});
+
+  /// [member]'s recovery key (the public half of what their 12 words stretch to), or null to
+  /// take their words away. Only the parent themselves sets theirs (state/recovery.dart).
+  Future<void> setRecoveryKey(String member, String? publicKey) => _den.setRecoveryKey(member, publicKey);
+
+  /// "Let the hub help us get back in": the hub's server recovery key, or null to stop it.
+  Future<void> setHubHelp(String? serverKey) => _den.setServerRecoveryKey(serverKey);
+
+  /// The Google or Apple account that signs in as [member] ([Den.setAccount]): the one the hub's
+  /// sign-in just found, read back on this phone, or null to take it away. Only a parent binds
+  /// their own, on their own phone.
+  Future<void> setAccount(String member, AccountRef? account) => _den.setAccount(member, account);
+}
+
+extension TrustActionsOf on BuildContext {
+  /// The family's trust decisions, for a parent on their own device.
+  TrustActions get trustActions => TrustActions(actions.den);
+}

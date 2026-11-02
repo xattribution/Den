@@ -65,6 +65,44 @@ abstract final class Pictograms {
     'party': PhosphorIconsRegular.balloon,
   };
 
+  /// Event kinds by key: the ink line pictogram an event block carries on the person's color
+  /// (ball, tooth, music, car). Bold line weight, so they hold up at 18 on a week cell and at 34
+  /// on an event's page. Never on a tinted disc; never the picture pack, which is for people.
+  static const Map<String, IconData> events = {
+    'calendar': PhosphorIconsBold.calendarBlank,
+    'ball': PhosphorIconsBold.soccerBall,
+    'basketball': PhosphorIconsBold.basketball,
+    'swim': PhosphorIconsBold.swimmingPool,
+    'gym': PhosphorIconsBold.barbell,
+    'tooth': PhosphorIconsBold.tooth,
+    'doctor': PhosphorIconsBold.stethoscope,
+    'music': PhosphorIconsBold.musicNotes,
+    'church': PhosphorIconsBold.church,
+    'food': PhosphorIconsBold.forkKnife,
+    'heart': PhosphorIconsBold.heart,
+    'car': PhosphorIconsBold.car,
+    'bus': PhosphorIconsBold.bus,
+    'people': PhosphorIconsBold.usersThree,
+    'bag': PhosphorIconsBold.handbag,
+    'vote': PhosphorIconsBold.checkSquare,
+    'sitter': PhosphorIconsBold.user,
+    'school': PhosphorIconsBold.backpack,
+    'cake': PhosphorIconsBold.cake,
+    'party': PhosphorIconsBold.balloon,
+    'travel': PhosphorIconsBold.airplaneTilt,
+    'beach': PhosphorIconsBold.umbrellaSimple,
+    'work': PhosphorIconsBold.briefcase,
+    'book': PhosphorIconsBold.books,
+    'art': PhosphorIconsBold.paintBrush,
+    'movie': PhosphorIconsBold.filmSlate,
+    'pet': PhosphorIconsBold.pawPrint,
+    'haircut': PhosphorIconsBold.scissors,
+    'camp': PhosphorIconsBold.tent,
+  };
+
+  /// The pictogram for an event kind ([events]); the plain calendar page for anything else.
+  static IconData event(String? kind) => events[kind] ?? PhosphorIconsBold.calendarBlank;
+
   static const Map<String, IconData> rewards = {
     'gift': PhosphorIconsFill.gift,
     'film': PhosphorIconsFill.filmSlate,
@@ -134,6 +172,16 @@ abstract final class Pictograms {
 
   static IconData category(String? key) =>
       categories[canonical(key ?? '')] ?? PhosphorIconsRegular.calendarBlank;
+
+  /// A device by its kind.
+  static IconData device(DeviceKind k) => switch (k) {
+        DeviceKind.phone => PhosphorIconsRegular.deviceMobile,
+        DeviceKind.tablet => PhosphorIconsRegular.deviceTablet,
+        DeviceKind.desktop => PhosphorIconsRegular.laptop,
+        DeviceKind.browser => PhosphorIconsRegular.browser,
+        DeviceKind.hub => PhosphorIconsRegular.hardDrives,
+        DeviceKind.display => PhosphorIconsRegular.monitor,
+      };
 
   static IconData reward(String key) => rewards[canonical(key)] ?? PhosphorIconsFill.gift;
 }

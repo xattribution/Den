@@ -3,45 +3,68 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 
-import 'app.dart';
-import 'background/background.dart';
-import 'boot/boot.dart';
-import 'boot/boot_screen.dart';
-import 'calendars/device_calendar_source.dart';
-import 'calendars/phone_calendars.dart';
-import 'capture/capture_service.dart';
-import 'capture/capture_settings.dart';
-import 'capture/hub_link.dart';
-import 'capture/platform_capture.dart';
-import 'net/den_network.dart';
-import 'net/net_pairing.dart';
-import 'net/pairing.dart';
-import 'reminders/os_notifications.dart';
-import 'reminders/reminder_scheduler.dart';
-import 'state/app_state.dart';
+import 'app/den_app.dart';
+import 'app/household.dart';
+import 'platform/background/background.dart';
+import 'app/boot_screen.dart';
+import 'app/other_tab_screen.dart';
+import 'platform/capture/platform_capture.dart';
+import 'platform/notifications/reminder_plan.dart';
+import 'platform/sync/pairing.dart';
+import 'platform/notifications/os_notifications.dart';
+import 'platform/notifications/reminder_scheduler.dart';
+import 'app/app_state.dart';
+import 'platform/web/web_app.dart';
+import 'platform/capabilities.dart';
+import 'features/add/add.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const BootScreen());
   tzdata.initializeTimeZones();
-  // A background refresh may have this device's engine open; wait for it to finish.
+  // A background refresh may have this device's engines open; wait for it to finish. One lock
+  // covers every family on the device.
   final lock = await EngineLock.acquire();
-  final den = await Boot.start();
-  final network = await DenNetwork.load(den);
-  Pairing.service = NetPairing(network);
-  Capture.service = CaptureService(settings: await CaptureSettings.load(), hubClient: hubCaptureClient(network));
-  final reminders = ReminderScheduler(den, OsNotifications(), enabled: await remindersEnabled());
-  final phoneCalendars = PhoneCalendars.supported ? PhoneCalendars(den, DeviceCalendarSource()) : null;
-  runApp(DenApp(
-    state: await AppState.load(den, network: network, reminders: reminders, phoneCalendars: phoneCalendars),
-  ));
-  unawaited(network.start());
+  if (Capabilities.web) {
+    // Tabs of one browser share the families' logs; one at a time writes them.
+    if (!await WebApp.holdEngine()) {
+      runApp(const OtherTabScreen());
+      await WebApp.waitForEngine();
+      runApp(const BootScreen());
+    }
+    unawaited(WebApp.persist());
+  }
+  // Every family on this device, each with its own engine, keys and connection.
+  final device = await DevicePrefs.load();
+  final reminders = ReminderScheduler.logs(() => const [], OsNotifications(), enabled: await remindersEnabled());
+  final household = await Household.boot(DeviceHouseholdStore(device: device, reminders: reminders, phoneCalendars: true));
+  // One budget of reminders across every family, followed as families join and leave.
+  reminders.followLogs(
+    () => [
+      for (final l in household.logs)
+        ReminderLog(den: l.den, id: l.id, label: l.name, first: l.membership.primary),
+    ],
+    changed: household,
+    // A family whose engine didn't open keeps the reminders the OS holds for it.
+    unopened: () => [for (final m in household.unopened) m.id],
+  );
+  Pairing.service = household.active.pairing ?? const LocalOnlyPairing();
+  Capture.service = CaptureService(
+    settings: await CaptureSettings.load(),
+    hubClient: hubCaptureClientOf(() => household.active.network),
+  );
+  runApp(DenApp(household: household));
+  for (final log in household.logs) {
+    unawaited(log.network?.start());
+    unawaited(log.state.phoneCalendars?.start());
+  }
   unawaited(reminders.start());
-  unawaited(phoneCalendars?.start());
-  // While the app runs, a background refresh asks it to do the work with its own engine.
+  // While the app runs, a background refresh asks it to do the work with its own engines.
   lock.onRefresh = () async {
     await reminders.reschedule();
-    await phoneCalendars?.sync();
+    for (final log in household.logs) {
+      await log.state.phoneCalendars?.sync();
+    }
   };
   unawaited(scheduleBackgroundRefresh());
   // Shares that opened Den, that arrive while it's open, and that waited while it was away.

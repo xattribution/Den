@@ -1,5 +1,5 @@
-import 'package:den_app/screens/events/recurrence.dart';
-import 'package:den_app/state/format.dart';
+import 'package:den_app/features/calendar/words/recurrence.dart';
+import 'package:den_app/app/format.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 

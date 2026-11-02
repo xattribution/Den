@@ -121,9 +121,13 @@ class MdnsResponder {
         }
       }
       if (joined == 0) socket.joinMulticast(_group);
-      socket.listen((event) {
-        if (event == RawSocketEvent.read) _read(socket);
-      });
+      socket.listen(
+        (event) {
+          if (event == RawSocketEvent.read) _read(socket);
+        },
+        onError: (Object e) => _log.debug('mDNS socket error (${e.runtimeType})'),
+        cancelOnError: false,
+      );
       _socket = socket;
       await _announce();
       _again = Timer(const Duration(seconds: 1), () => unawaited(_announce()));
@@ -134,22 +138,32 @@ class MdnsResponder {
   }
 
   void _read(RawDatagramSocket socket) {
-    final datagram = socket.receive();
-    if (datagram == null) return;
-    final DnsMessage query;
+    Datagram? datagram;
     try {
-      query = DnsMessage.decode(datagram.data);
-    } on FormatException {
-      return;
+      datagram = socket.receive();
+    } on Object catch (e) {
+      _log.debug('mDNS receive failed (${e.runtimeType})');
     }
-    unawaited(_addresses().then((addresses) {
+    if (datagram != null) unawaited(handle(datagram));
+  }
+
+  /// Answers one packet from the network. Anyone on the LAN can send anything, so nothing a
+  /// packet holds may throw out of here: a malformed one is dropped (logged at debug level).
+  Future<void> handle(Datagram datagram) async {
+    try {
+      final query = DnsMessage.decode(datagram.data);
+      final addresses = await _addresses();
       final legacy = datagram.port != _mdnsPort;
       if (query.questions.isNotEmpty) _log.debug('mDNS query for ${query.questions.first.name}${legacy ? ' (unicast)' : ''}');
       final reply = advert.answer(query, addresses, legacy: legacy);
       if (reply == null) return;
       final unicast = legacy || query.questions.every((q) => q.unicast);
       _send(reply, unicast ? datagram.address : _group, unicast ? datagram.port : _mdnsPort);
-    }));
+    } on FormatException {
+      return;
+    } on Object catch (e) {
+      _log.debug('mDNS dropped a packet (${e.runtimeType})');
+    }
   }
 
   void _send(DnsMessage message, InternetAddress to, int port) {

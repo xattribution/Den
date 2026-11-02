@@ -339,4 +339,55 @@ void main() {
       );
     });
   });
+
+  group('peeking at the hello (a host holding several logs)', () {
+    test('says which family the client names, and the session starts as if nobody had looked', () async {
+      final link = pipe<dynamic>();
+      final client = Session.connect(link.a, keys: alice, familyId: 'fam-b');
+      final peeked = await peekHello(link.b);
+      expect(peeked, isNotNull);
+      expect(peeked!.family, 'fam-b');
+      final server = await Session.accept(peeked.channel, keys: hub, familyId: 'fam-b');
+      final c = await client;
+      expect(c.transcriptHash, server.transcriptHash);
+      expect(server.peerFamily, 'fam-b');
+      final got = server.messages.first;
+      await c.send({'t': 'ping'});
+      expect(await got, {'t': 'ping'});
+      final back = c.messages.first;
+      await server.send({'t': 'pong'});
+      expect(await back, {'t': 'pong'});
+    });
+
+    test('a hello that names no family peeks as null, and bytes channels keep their kind', () async {
+      final link = pipe<List<int>>();
+      final client = Session.connect(link.a, keys: alice, familyId: null);
+      final peeked = await peekHello(link.b);
+      expect(peeked!.family, isNull);
+      expect(peeked.channel, isA<StreamChannel<List<int>>>());
+      final server = await Session.accept(peeked.channel, keys: hub, familyId: 'fam');
+      expect((await client).peerFamily, 'fam');
+      expect(server.peerFamily, isNull);
+    });
+
+    test('anything but a hello closes the channel, and so does silence', () async {
+      for (final first in <Object>[
+        'not json',
+        encodeJson({'t': 'auth', 'sig': 'x'}),
+        encodeJson({'t': 'hello', 'family': 7}),
+        '[1, 2]',
+        'x' * (maxHandshakeBytes + 1),
+      ]) {
+        final link = pipe<dynamic>();
+        final closed = link.a.stream.toList();
+        link.a.sink.add(first);
+        expect(await peekHello(link.b), isNull, reason: '$first'.length > 40 ? 'a long one' : '$first');
+        await closed.timeout(const Duration(seconds: 5));
+      }
+      final quiet = pipe<dynamic>();
+      final closed = quiet.a.stream.toList();
+      expect(await peekHello(quiet.b, timeout: const Duration(milliseconds: 50)), isNull);
+      await closed.timeout(const Duration(seconds: 5));
+    });
+  });
 }

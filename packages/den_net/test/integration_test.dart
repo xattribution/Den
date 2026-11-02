@@ -245,6 +245,220 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(fam.founder.changesSince(const {}).any((c) => c.id == sneaky.id), isFalse);
     });
+
+    test('removing a teen\'s old phone keeps the private items the hub held from it', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final tia = await fam.founder.addMember(name: 'Tia', role: Role.kid, tier: Tier.teen, grants: {Grant.events});
+      final hub = await fam.approvedDevice(mode: DeviceMode.hub, kind: DeviceKind.hub, name: 'Hub');
+      final old = await fam.approvedDevice(member: tia, name: 'Tia old phone');
+      // Tia's private items are hers alone: the parent's phone never holds them.
+      await fam.founder.updateFamily({'oversight.$tia': {'parentsSeePrivate': false}});
+      final nodes = [SyncNode(fam.founder), SyncNode(hub), SyncNode(old)];
+      addTearDown(() => Future.wait(nodes.map((n) => n.close())));
+      await (await link(nodes[0], nodes[1])).live;
+      await (await link(nodes[1], nodes[2])).live;
+      await old.addEvent(title: 'Family dinner', start: at(18), end: at(19));
+      for (var i = 0; i < 3; i++) {
+        await old.addEvent(title: 'Diary $i', start: at(20 + i), end: at(21 + i), audience: Audience.justMe);
+      }
+      final wrote = maxOwnCounter(old);
+      await eventually(() => hub.events.length == 4 && fam.founder.events.length == 1);
+      // The hub vouches for the counters it holds, in spaces the parent's phone doesn't receive.
+      await eventually(() => (fam.founder.versionVector[old.deviceId] ?? 0) >= wrote, timeout: const Duration(seconds: 5));
+
+      await fam.founder.revokeDevice(old.deviceId);
+      expect(fam.founder.device(old.deviceId)!.revokedAfter, wrote);
+      await eventually(() => hub.device(old.deviceId)?.revoked ?? false);
+      expect(hub.events.map((e) => e.title), containsAll(['Family dinner', 'Diary 0', 'Diary 1', 'Diary 2']));
+      // Tia's new phone gets them from the hub.
+      expect(fam.founder.device(old.deviceId)!.revoked, isTrue);
+      final fresh = await fam.approvedDevice(member: tia, name: 'Tia new phone');
+      final freshNode = SyncNode(fresh);
+      addTearDown(freshNode.close);
+      await eventually(() => hub.device(fresh.deviceId)?.approved ?? false);
+      await (await link(nodes[1], freshNode)).live;
+      await eventually(() => fresh.events.length == 4);
+    });
+
+    test('only a peer holding every space this device holds vouches for counters, never its own', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final sam = await fam.founder.addMember(name: 'Sam', role: Role.kid, grants: {Grant.events});
+      final hub = await fam.approvedDevice(mode: DeviceMode.hub, kind: DeviceKind.hub, name: 'Hub');
+      final tablet = await fam.approvedDevice(member: sam, kind: DeviceKind.tablet, name: 'Sam tablet');
+      final phoneNode = SyncNode(fam.founder);
+      final hubNode = SyncNode(hub);
+      final tabletNode = SyncNode(tablet);
+      addTearDown(() => Future.wait([phoneNode.close(), hubNode.close(), tabletNode.close()]));
+      final fromHub = await link(phoneNode, hubNode);
+      final fromTablet = await link(phoneNode, tabletNode);
+      await fromHub.live;
+      await fromTablet.live;
+      final someone = await DeviceKeys.generate();
+      final other = await someone.deviceId();
+      int held(String device) => fam.founder.versionVector[device] ?? 0;
+      final hubHeld = held(hub.deviceId), tabletHeld = held(tablet.deviceId);
+      // Sam's tablet holds less than the parent's phone: what it vouches for doesn't count.
+      await fromTablet.session.send({'t': 'push', 'list': const <Object?>[], 'through': {other: 40, tablet.deviceId: 999}});
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(held(other), 0);
+      expect(held(tablet.deviceId), tabletHeld);
+      // The hub holds every space: it vouches for others' changes, never for its own.
+      await fromHub.session.send({'t': 'push', 'list': const <Object?>[], 'through': {other: 40, hub.deviceId: 999}});
+      await eventually(() => held(other) == 40);
+      expect(held(hub.deviceId), hubHeld);
+    });
+  });
+
+  group('a hub this device has not heard of', () {
+    test('shows its record and syncs, when a parent approved it', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final laptop = await fam.approvedDevice(member: fam.parent, kind: DeviceKind.desktop, name: 'Pat laptop');
+      final phoneNode = SyncNode(fam.founder);
+      final laptopNode = SyncNode(laptop);
+      addTearDown(() => Future.wait([phoneNode.close(), laptopNode.close()]));
+      final earlier = await link(phoneNode, laptopNode);
+      await earlier.live;
+      await earlier.close();
+      // A new hub, approved on the phone after the laptop last synced.
+      final hub = await fam.approvedDevice(mode: DeviceMode.hub, kind: DeviceKind.hub, name: 'Den hub');
+      final hubNode = SyncNode(hub);
+      addTearDown(hubNode.close);
+      await (await link(phoneNode, hubNode)).live;
+      await fam.founder.addEvent(title: 'Since then', start: at(9), end: at(10));
+      await converge([fam.founder, hub]);
+      expect(laptop.device(hub.deviceId), isNull);
+
+      final peer = await link(hubNode, laptopNode, pin: false);
+      await peer.live;
+      await converge([fam.founder, hub, laptop]);
+      expect(laptop.device(hub.deviceId)!.approved, isTrue);
+    });
+
+    test('is a stranger when nobody approved it', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final laptop = await fam.approvedDevice(member: fam.parent, kind: DeviceKind.desktop, name: 'Pat laptop');
+      final phoneNode = SyncNode(fam.founder);
+      final laptopNode = SyncNode(laptop);
+      addTearDown(() => Future.wait([phoneNode.close(), laptopNode.close()]));
+      await (await link(phoneNode, laptopNode)).live;
+      // Asked to join this family (its own signed request) but never approved.
+      final stranger = await openDen();
+      await stranger.requestJoin(
+        familyId: fam.founder.familyId!,
+        founderPubkey: fam.founderPubkey,
+        deviceName: 'Den hub',
+        kind: DeviceKind.hub,
+        mode: DeviceMode.hub,
+      );
+      final strangerNode = SyncNode(stranger);
+      addTearDown(strangerNode.close);
+      final p = pipe<dynamic>();
+      final served = Session.accept(p.b, keys: stranger.keys, familyId: fam.founder.familyId);
+      final client = laptopNode.connect(p.a);
+      final session = await served;
+      final asked = session.messages.firstWhere((m) => m['t'] == 'vouch');
+      final peer = await client;
+      await asked;
+      await session.send({
+        't': 'vouched',
+        'list': [for (final c in stranger.changesSince(const {})) c.toJson()],
+      });
+      await peer.closed;
+      expect(peer.closeReason, 'unknown-peer');
+      expect(laptop.device(stranger.deviceId), isNull, reason: 'no join request turns up out of nowhere');
+    });
+  });
+
+  group('a removed hub', () {
+    Future<({TestFamily fam, Den oldHub, Den newHub, SyncNode phone, SyncNode old, SyncNode next})> twoHubs() async {
+      final fam = await TestFamily.create();
+      // "Reset the hub, keep the family": two approved hubs with the same name.
+      final oldHub = await fam.approvedDevice(mode: DeviceMode.hub, kind: DeviceKind.hub, name: 'Den hub');
+      final newHub = await fam.approvedDevice(mode: DeviceMode.hub, kind: DeviceKind.hub, name: 'Den hub');
+      final phone = SyncNode(fam.founder);
+      final old = SyncNode(oldHub);
+      final next = SyncNode(newHub);
+      addTearDown(() => Future.wait([phone.close(), old.close(), next.close()]));
+      for (final hubNode in [old, next]) {
+        final boot = await link(phone, hubNode);
+        await boot.live;
+        await boot.close();
+      }
+      return (fam: fam, oldHub: oldHub, newHub: newHub, phone: phone, old: old, next: next);
+    }
+
+    test('hears it was removed, and a phone goes straight on to the hub that replaced it', () async {
+      if (await skipUnlessDenCore()) return;
+      final t = await twoHubs();
+      await t.fam.founder.revokeDevice(t.oldHub.deviceId);
+
+      // The old hub still answers at the address saved first. The phone tries it, refuses it,
+      // tells it why, and tries the new hub at once rather than after the (long) backoff.
+      final client = SyncClient(
+        node: t.phone,
+        endpoints: [Uri.parse('memory://old'), Uri.parse('memory://new')],
+        minBackoff: const Duration(minutes: 5),
+        connector: (uri) async {
+          final p = pipe<dynamic>();
+          unawaited((uri.host == 'old' ? t.old : t.next).serve(p.b));
+          return p.a;
+        },
+      );
+      addTearDown(client.stop);
+      final refused = client.statusChanges.firstWhere((s) => s.lastError == 'removed');
+      client.start();
+      await client.whenLive();
+      expect(client.status.device, t.newHub.deviceId);
+      expect((await refused).device, t.oldHub.deviceId);
+      await eventually(() => t.oldHub.thisDevice!.revoked);
+      expect(t.oldHub.isApproved, isFalse);
+      expect(t.oldHub.thisDevice!.rec.fieldTimes['revoked'], isNotNull, reason: 'when it was removed');
+
+      // Reconnecting later, the refused address waits at the back of the line.
+      await client.peer!.close();
+      await eventually(() => client.status.state == SyncState.live && client.status.device == t.newHub.deviceId);
+    });
+
+    test('a hub removed while a phone is connected hears it at once', () async {
+      if (await skipUnlessDenCore()) return;
+      final t = await twoHubs();
+      final peer = await link(t.old, t.phone, pin: false);
+      await peer.live;
+      await t.fam.founder.revokeDevice(t.oldHub.deviceId);
+      await peer.closed;
+      expect(peer.closeReason, 'removed');
+      await eventually(() => t.oldHub.thisDevice!.revoked);
+    });
+
+    test('only someone who may remove a hub can tell it it was removed', () async {
+      if (await skipUnlessDenCore()) return;
+      final t = await twoHubs();
+      final sam = await t.fam.founder.addMember(name: 'Sam', role: Role.kid);
+      final tablet = await t.fam.approvedDevice(member: sam, kind: DeviceKind.tablet, name: 'Sam tablet');
+      final tabletNode = SyncNode(tablet);
+      addTearDown(tabletNode.close);
+      await (await link(t.phone, tabletNode)).live;
+      await (await link(t.phone, t.old)).live;
+      await eventually(() => t.oldHub.device(tablet.deviceId)?.approved ?? false);
+      final peer = await link(t.old, tabletNode, pin: false);
+      final forged = await forgeChange(
+        keys: tablet.keys,
+        deviceId: tablet.deviceId,
+        counter: maxOwnCounter(tablet) + 1,
+        type: RecordType.device,
+        rid: t.oldHub.deviceId,
+        actor: sam,
+        fields: {'revoked': true},
+      );
+      await peer.session.send({'t': 'join_rejected', 'reason': 'removed', 'list': [forged.toJson()]});
+      await peer.closed;
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(t.oldHub.isApproved, isTrue);
+    });
   });
 
   group('pairing', () {
@@ -369,6 +583,132 @@ void main() {
       await expectLater((await attempt(code.text)).completed, throwsA(isA<JoinException>()));
     });
 
+    test('a spoken-code joiner trusts nothing from a peer that hasn\'t proved it knows the code', () async {
+      if (await skipUnlessDenCore()) return;
+      // Whatever answered (a fake hub on the network, say) skips the proof and acts as if the
+      // joiner were approved: it sends its own family's changes and says it's done.
+      final impostor = await TestFamily.create(name: 'Mallory');
+      final joinerDen = await openDen();
+      final joiner = SyncNode(joinerDen);
+      addTearDown(joiner.close);
+      final p = pipe<dynamic>();
+      final fake = Session.accept(p.b, keys: impostor.founder.keys, familyId: impostor.founder.familyId);
+      final attempt = await joiner.joinWithCode(p.a, 'zoo zone zero zebra', deviceName: 'Grandma phone', kind: DeviceKind.phone);
+      final server = await fake;
+      final changes = [for (final c in impostor.founder.changesSince(const {})) c.toJson()];
+      await server.send({'t': 'approved'}).catchError((Object _) {});
+      await server.send({'t': 'have', 'vv': <String, Object?>{}, 'keys': <String, Object?>{}}).catchError((Object _) {});
+      await server.send({'t': 'changes', 'list': changes, 'done': true}).catchError((Object _) {});
+      await expectLater(attempt.completed, throwsA(isA<JoinException>()));
+      expect(attempt.stage, isNot(JoinStage.done));
+      expect(joinerDen.changesSince(const {}), isEmpty);
+      expect(joinerDen.hasFamily, isFalse);
+    });
+
+    test('a waiting device can\'t ask again without a new invite, and one declined stays declined', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final phoneNode = SyncNode(fam.founder);
+      addTearDown(phoneNode.close);
+      final stranger = await openDen();
+      final strangerNode = SyncNode(stranger);
+      addTearDown(strangerNode.close);
+      Future<List<PendingJoin>> nextPending() => phoneNode.pendingJoinsChanges.firstWhere((l) => l.isNotEmpty);
+      Future<JoinAttempt> join() async {
+        final p = pipe<dynamic>();
+        unawaited(phoneNode.serve(p.b));
+        return strangerNode.joinWithInvite(p.a, await phoneNode.createInvite(), deviceName: 'Stranger', kind: DeviceKind.phone);
+      }
+
+      var pending = nextPending();
+      final first = await join();
+      await pending;
+      await first.cancel();
+      await eventually(() => phoneNode.pendingJoins.isEmpty);
+
+      // Back with the request it made before and no invite: refused.
+      final p2 = pipe<dynamic>();
+      unawaited(phoneNode.serve(p2.b));
+      final session = await Session.connect(p2.a, keys: stranger.keys, familyId: fam.founder.familyId);
+      final reply = session.messages.firstWhere((m) => m['t'] == 'join_rejected');
+      await session.send({
+        't': 'join',
+        'changes': [for (final c in stranger.changesSince(const {})) c.toJson()],
+      });
+      expect((await reply)['reason'], 'not-paired');
+      expect(phoneNode.pendingJoins, isEmpty);
+
+      // With a new invite it may ask again. Declined, it is refused from then on, invite or not.
+      pending = nextPending();
+      final second = await join();
+      await phoneNode.decline((await pending).single);
+      await expectLater(second.completed, throwsA(isA<JoinException>().having((e) => e.reason, 'reason', 'declined')));
+      expect(fam.founder.device(stranger.deviceId)!.revoked, isTrue, reason: 'declining revokes the request');
+      final third = await join();
+      await expectLater(third.completed, throwsA(isA<JoinException>().having((e) => e.reason, 'reason', 'declined')));
+      expect(phoneNode.pendingJoins, isEmpty);
+    });
+
+    test('devices nobody approved get a few places of their own, briefly', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final laptop = await fam.approvedDevice(member: fam.parent, name: 'Pat laptop');
+      final phoneNode = SyncNode(fam.founder, maxPairingPeers: 2, unpairedTimeout: const Duration(milliseconds: 500));
+      addTearDown(phoneNode.close);
+      Future<Session> stranger() async {
+        final p = pipe<dynamic>();
+        unawaited(phoneNode.serve(p.b));
+        return Session.connect(p.a, keys: await DeviceKeys.generate(), timeout: const Duration(seconds: 5));
+      }
+
+      final first = await stranger();
+      final second = await stranger();
+      await expectLater(stranger(), throwsA(isA<SessionException>()), reason: 'no place left for strangers');
+      final laptopNode = SyncNode(laptop);
+      addTearDown(laptopNode.close);
+      await (await link(phoneNode, laptopNode)).live;
+
+      // Strangers that prove nothing are sent away, and their places free up.
+      await first.done.timeout(const Duration(seconds: 5));
+      await second.done.timeout(const Duration(seconds: 5));
+      expect(await stranger(), isA<Session>());
+    });
+
+    test('each client has its own share of those places, so one address can\'t keep everyone out', () async {
+      if (await skipUnlessDenCore()) return;
+      final fam = await TestFamily.create();
+      final phoneNode = SyncNode(fam.founder, maxPairingPeers: 5, maxPairingPerClient: 2);
+      addTearDown(phoneNode.close);
+      final open = <Session>[];
+      addTearDown(() async {
+        for (final s in open) {
+          await s.close();
+        }
+      });
+      Future<Session> stranger(String? client) async {
+        final p = pipe<dynamic>();
+        unawaited(phoneNode.serve(p.b, client: client));
+        final s = await Session.connect(p.a, keys: await DeviceKeys.generate(), timeout: const Duration(seconds: 5));
+        open.add(s);
+        return s;
+      }
+
+      await stranger('203.0.113.7');
+      await stranger('203.0.113.7');
+      await expectLater(stranger('203.0.113.7'), throwsA(isA<SessionException>()), reason: 'that address used its share');
+      await stranger('2001:db8:1:2::/64');
+      await stranger('2001:db8:1:2::/64');
+      // Sessions that don't say where they came from (a relay tunnel) count as one client.
+      await stranger(null);
+      await expectLater(stranger(null), throwsA(isA<SessionException>()), reason: 'five places in all');
+      await expectLater(stranger('198.51.100.1'), throwsA(isA<SessionException>()), reason: 'five places in all');
+      // Approved devices never wait for a place.
+      final laptop = await fam.approvedDevice(member: fam.parent, name: 'Pat laptop');
+      final laptopNode = SyncNode(laptop);
+      addTearDown(laptopNode.close);
+      await (await link(phoneNode, laptopNode)).live;
+    });
+
     test('a joiner cannot approve itself, end to end', () async {
       if (await skipUnlessDenCore()) return;
       final fam = await TestFamily.create();
@@ -404,13 +744,14 @@ void main() {
       expect(fam.founder.changesSince(const {}).any((c) => c.id == forged.id), isFalse);
       expect(fam.founder.device(intruder.deviceId)!.approved, isFalse);
 
-      // 3. Smuggled inside a (resumed) join request: refused.
+      // 3. Smuggled inside a join request on a new session: refused, as every request is that
+      //    doesn't come with a fresh invite or code.
       final p2 = pipe<dynamic>();
       unawaited(phoneNode.serve(p2.b));
       final session = await Session.connect(p2.a, keys: intruder.keys, familyId: fam.founder.familyId);
       final replies = session.messages.where((m) => m['t'] == 'join_rejected').first;
       await session.send({'t': 'join', 'changes': [forged.toJson()]});
-      expect((await replies)['reason'], 'bad-request');
+      expect((await replies)['reason'], 'not-paired');
 
       // 4. Even if it reached the log directly, the engine would not count it.
       await fam.founder.ingest([forged]);

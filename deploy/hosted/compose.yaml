@@ -1,0 +1,137 @@
+# The older, advanced setup: deploy/install.sh (docs/install-technical.md) is the one-command way.
+# One family's hub on a server, reachable over HTTPS from anywhere, so phones can use the web
+# app from their Home Screen. docs/hosting.md walks through it. From this folder:
+#
+#   cp env.example .env                # then set DEN_DOMAIN
+#   docker compose up -d --build       # builds the hub (the first time takes a while) and starts it
+#   docker compose exec hub /app/bin/den_hub setup-code
+#
+# .env says what runs next to the hub (COMPOSE_PROFILES), so every command stays a plain
+# `docker compose ...`: `caddy` answers on ports 80 and 443 and gets the certificate for
+# DEN_DOMAIN by itself; `tunnel` runs a Cloudflare Tunnel instead; with neither, the hub listens
+# only on this machine's 127.0.0.1:DEN_PORT, for Tailscale Serve or a proxy you run yourself.
+# `model` adds a model the hub reads with. `backup` runs only when asked:
+#   docker compose run --rm backup
+name: den
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  hub:
+    build:
+      context: ../..
+      dockerfile: deploy/hub/Dockerfile
+      # The commit, for Settings, About in the app:
+      #   DEN_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
+      args:
+        DEN_COMMIT: ${DEN_COMMIT:-}
+    # Built from this checkout by default; DEN_IMAGE in .env names a published release instead.
+    image: ${DEN_IMAGE:-den-hub}
+    restart: unless-stopped
+    environment:
+      DEN_NAME: ${DEN_NAME:-Den hub}
+      DEN_PORT: ${DEN_PORT:-47733}
+      DEN_PUBLIC_URL: https://${DEN_DOMAIN:?set DEN_DOMAIN in .env, like den.example.com}
+      # Caddy, cloudflared, and proxies on this machine (through the network's gateway) reach the
+      # hub from this network: their X-Forwarded-* headers count; anyone else's are ignored.
+      DEN_TRUSTED_PROXIES: 172.30.73.0/24
+      # The https public URL turns on the public posture; nobody on the internet needs mDNS.
+      DEN_MDNS: "0"
+      DEN_LOG: ${DEN_LOG:-info}
+    ports:
+      # Loopback only, for a proxy on this machine. The internet comes in through Caddy.
+      - "127.0.0.1:${DEN_PORT:-47733}:${DEN_PORT:-47733}"
+    volumes:
+      - den-hub:/data
+    networks: [den, models]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+  caddy:
+    profiles: [caddy]
+    image: caddy:2.10.0
+    restart: unless-stopped
+    environment:
+      DEN_DOMAIN: ${DEN_DOMAIN}
+      DEN_PORT: ${DEN_PORT:-47733}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [den]
+    depends_on:
+      hub:
+        condition: service_healthy
+    logging: *logging
+
+  # A Cloudflare Tunnel: no open ports. In the Cloudflare dashboard, give the tunnel the public
+  # hostname DEN_DOMAIN with the service http://hub:47733, and put its token in .env.
+  tunnel:
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:2026.10.0
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    networks: [den]
+    depends_on:
+      hub:
+        condition: service_healthy
+    logging: *logging
+
+  # A model that reads what the family shares, on a network only the hub reaches (no ports).
+  # Add `model` to COMPOSE_PROFILES in .env, then:
+  #   docker compose up -d
+  #   docker compose exec model ollama pull llama3.2
+  # Then on a parent's phone: Settings, Advanced, AI and automations, Reading photos and
+  # messages, A model at home, on the hub, address model:11434.
+  model:
+    profiles: [model]
+    image: ollama/ollama:0.9.0
+    restart: unless-stopped
+    volumes:
+      - den-model:/root/.ollama
+    networks: [models]
+    logging: *logging
+
+  # An encrypted backup of the hub into ./backups, keeping the newest DEN_BACKUP_KEEP (14):
+  #   docker compose run --rm backup
+  #   docker compose run --rm backup restore backups/den-2026-10-28-0317.denbackup   # hub stopped
+  # Root in a short-lived container with no network, so it can write to ./backups and give
+  # restored files back to the hub's user (deploy/hub/den-backup.sh).
+  backup:
+    profiles: [backup]
+    image: ${DEN_IMAGE:-den-hub}
+    entrypoint: ["/app/bin/den-backup"]
+    command: ["backup"]
+    user: root
+    network_mode: none
+    environment:
+      DEN_BACKUP_PASSPHRASE: ${DEN_BACKUP_PASSPHRASE:-}
+      DEN_BACKUP_KEEP: ${DEN_BACKUP_KEEP:-14}
+    volumes:
+      - den-hub:/data
+      - ./backups:/backups
+
+networks:
+  den:
+    ipam:
+      config:
+        - subnet: 172.30.73.0/24
+  models:
+    internal: true
+
+volumes:
+  den-hub:
+  den-model:
+  caddy-data:
+  caddy-config:

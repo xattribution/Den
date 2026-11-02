@@ -1,0 +1,170 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:den_core/den_core.dart';
+import 'package:den_hub/den_hub.dart';
+import 'package:den_net/den_net.dart';
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'hub_keep_alive.dart';
+import 'local_hub.dart';
+import '../capabilities.dart';
+
+/// Desktops and Android can keep a hub running; iPhones and iPads stop apps in the background.
+bool get localHubSupported => Capabilities.runsHub;
+
+LocalHub createLocalHub({int port = defaultHubPort, bool mdns = true, String? dataDir, String name = 'hub', HubKeepAlive? keepAlive}) =>
+    _IoHub(
+      port: port,
+      mdns: mdns,
+      dataDir: dataDir,
+      name: name,
+      keepAlive: keepAlive ?? HubKeepAlive.platform(android: Capabilities.android, mac: Capabilities.macOS),
+    );
+
+/// Deletes `<app support>/<name>`, the data of a hub this app ran for a family it left.
+Future<void> forgetLocalHub(String name) async {
+  final dir = await _IoHub._dataDir(name);
+  if (dir == null) return;
+  final d = Directory(dir);
+  if (await d.exists()) await d.delete(recursive: true);
+}
+
+class _IoHub extends LocalHub {
+  _IoHub({required this.port, required this.mdns, required this.keepAlive, required this.name, this.dataDir});
+
+  final int port;
+  final bool mdns;
+  final String? dataDir;
+
+  /// The data directory's name under the app's support directory: `hub` or `hub-<slot>`.
+  final String name;
+
+  /// The hub this app runs now, for whichever family: one at a time, since every one would
+  /// answer on the same port and advertise itself the same way.
+  static _IoHub? _running;
+
+  /// Keeps the app, and so the hub, running in the background while the hub is on.
+  final HubKeepAlive keepAlive;
+
+  DenHub? _hub;
+  LocalHubState _state = LocalHubState.off;
+  String? _error;
+  List<Uri> _addresses = const [];
+  int _connected = 0;
+  Timer? _tick;
+
+  @override
+  LocalHubState get state => _state;
+
+  @override
+  String? get error => _error;
+
+  @override
+  List<Uri> get addresses => _addresses;
+
+  @override
+  int get connected => _connected;
+
+  @override
+  SyncNode? get node => _hub?.node;
+
+  @override
+  Future<void> start(Den den, {Uri? relay}) async {
+    if (_state == LocalHubState.running || _state == LocalHubState.starting) return;
+    final other = _running;
+    if (other != null && !identical(other, this)) {
+      _state = LocalHubState.failed;
+      _error = 'This device keeps another of your families online already. It can run one family\'s hub at a time: '
+          'turn that one off first.';
+      notifyListeners();
+      return;
+    }
+    _running = this;
+    _state = LocalHubState.starting;
+    _error = null;
+    notifyListeners();
+    try {
+      final hub = await DenHub.start(
+        den,
+        HubConfig(
+          port: port,
+          dataDir: dataDir ?? await _dataDir(name),
+          relay: relay,
+          name: den.thisDevice?.name ?? 'Den hub',
+          mdns: mdns,
+          log: HubLog(level: kDebugMode ? LogLevel.info : LogLevel.warn, sink: (line) => debugPrint('hub: $line')),
+        ),
+      );
+      _hub = hub;
+      final lan = await _lanAddresses(hub.port);
+      // Without a home network (a test machine, say) the hub still answers on this device.
+      _addresses = lan.isNotEmpty ? lan : [Uri(scheme: 'http', host: '127.0.0.1', port: hub.port)];
+      _state = LocalHubState.running;
+      await keepAlive.start(keepAliveDetail(0));
+      _tick = Timer.periodic(const Duration(seconds: 3), (_) {
+        final n = hub.node.peers.length;
+        if (n != _connected) {
+          _connected = n;
+          notifyListeners();
+          unawaited(keepAlive.update(keepAliveDetail(n)));
+        }
+      });
+    } on SocketException catch (e) {
+      if (identical(_running, this)) _running = null;
+      _state = LocalHubState.failed;
+      final code = e.osError?.errorCode;
+      final inUse = code == 98 || code == 48 || code == 10048 || (e.message.toLowerCase().contains('address already in use'));
+      _error = inUse
+          ? 'Port $port is already in use, maybe by another Den hub on this computer. Stop that one, then turn this on again.'
+          : "The hub couldn't open port $port on this device. Check its firewall, then turn this on again.";
+    } on Object catch (e) {
+      if (identical(_running, this)) _running = null;
+      _state = LocalHubState.failed;
+      _error = "The hub couldn't start (${e.runtimeType}). Turn this off and on again, or restart Den.";
+    }
+    notifyListeners();
+  }
+
+  @override
+  Future<void> stop() async {
+    if (identical(_running, this)) _running = null;
+    _tick?.cancel();
+    _tick = null;
+    final hub = _hub;
+    _hub = null;
+    if (hub != null) await keepAlive.stop();
+    _connected = 0;
+    _addresses = const [];
+    _state = LocalHubState.off;
+    _error = null;
+    notifyListeners();
+    await hub?.stop();
+  }
+
+  static Future<String?> _dataDir(String name) async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      return '${dir.path}${Platform.pathSeparator}$name';
+    } on Object {
+      return null;
+    }
+  }
+
+  static Future<List<Uri>> _lanAddresses(int port) async {
+    try {
+      final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLoopback: false);
+      return [
+        for (final i in interfaces)
+          for (final a in i.addresses)
+            if (_private(a.rawAddress)) Uri(scheme: 'http', host: a.address, port: port),
+      ];
+    } on Object {
+      return const [];
+    }
+  }
+
+  static bool _private(List<int> b) =>
+      b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] < 32) || (b[0] == 192 && b[1] == 168);
+}

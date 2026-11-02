@@ -4,8 +4,13 @@ import 'dart:typed_data';
 
 import 'package:shelf/shelf.dart';
 
+import 'edge.dart';
+
 /// Largest request body the API reads.
 const int maxBodyBytes = 256 * 1024;
+
+/// How long the hub waits for a request body to arrive, at most.
+const Duration bodyDeadline = Duration(seconds: 60);
 
 /// An error answered with the API's error body (docs/hub-api.md, "Errors").
 class ApiError implements Exception {
@@ -53,6 +58,37 @@ class ApiError implements Exception {
         'This hub isn\'t part of a family yet, or is still starting.',
       );
 
+  /// `503 not_ready`, with `Retry-After`: a Den host serves this address, and the family at it
+  /// is starting (or didn't open, and is tried again). Clients wait and try again; a calendar's
+  /// subscribers keep their copies.
+  factory ApiError.starting([int retryAfter = 10]) => ApiError(
+        503,
+        'not_ready',
+        'This family\'s Den is starting. Try again in a moment.',
+        details: {'retry_after': retryAfter},
+        headers: {'retry-after': '$retryAfter'},
+      );
+
+  /// `503 catching_up`, with `Retry-After`: the hub was restored from a backup and writes nothing
+  /// until a device of the family has synced with it (`HubContext.catchingUp`).
+  factory ApiError.catchingUp() => ApiError(
+        503,
+        'catching_up',
+        'The hub is catching up after a restore. Open Den on a phone or tablet in the family, then try again.',
+        details: {'retry_after': catchUpRetry},
+        headers: {'retry-after': '$catchUpRetry'},
+      );
+
+  /// Seconds a client waits before trying a write again while the hub catches up.
+  static const int catchUpRetry = 60;
+
+  /// `429 rate_limited`, with `Retry-After` in seconds.
+  factory ApiError.rateLimited(int retryAfter, [String message = 'Too many tries from here. Wait a minute and try again.']) =>
+      ApiError(429, 'rate_limited', message, details: {'retry_after': retryAfter}, headers: {'retry-after': '$retryAfter'});
+
+  /// `413 too_large`.
+  factory ApiError.tooLarge() => ApiError(413, 'too_large', 'That request is too large.');
+
   /// HTTP status.
   final int status;
 
@@ -88,14 +124,22 @@ Response jsonResponse(Object? body, {int status = 200, Map<String, String> heade
       headers: {'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers},
     );
 
-/// Reads the request body, refusing more than [limit] bytes with `413 too_large`.
-Future<Uint8List> readBodyBytes(Request request, {int limit = maxBodyBytes}) async {
+/// Reads the request body, refusing more than [limit] bytes with `413 too_large` (a declared
+/// length before reading anything, a streamed one as soon as it passes the limit) and a body
+/// that takes longer than [deadline] with `408 timeout`.
+Future<Uint8List> readBodyBytes(Request request, {int limit = maxBodyBytes, Duration deadline = bodyDeadline}) async {
   final declared = request.contentLength;
-  if (declared != null && declared > limit) throw ApiError(413, 'too_large', 'That request is too large.');
+  if (declared != null && declared > limit) throw ApiError.tooLarge();
   final out = BytesBuilder(copy: false);
-  await for (final chunk in request.read()) {
-    out.add(chunk);
-    if (out.length > limit) throw ApiError(413, 'too_large', 'That request is too large.');
+  final watch = Stopwatch()..start();
+  try {
+    await for (final chunk in request.read().timeout(deadline)) {
+      out.add(chunk);
+      if (out.length > limit) throw ApiError.tooLarge();
+      if (watch.elapsed > deadline) throw TimeoutException('slow body');
+    }
+  } on TimeoutException {
+    throw ApiError(408, 'timeout', 'That request took too long to arrive.');
   }
   return out.takeBytes();
 }
@@ -202,17 +246,30 @@ bool queryBool(Request request, String name, bool fallback) {
   throw ApiError.invalid('"$name" must be true or false.', field: name);
 }
 
-/// The public base URL a request came to: `https://den.example.com`, honoring a proxy's
-/// forwarded scheme and host.
-Uri requestBase(Request request, Uri? configured) {
+/// The public base URL a request came to: `https://den.example.com`. The configured public URL
+/// wins; else a [trusted] reverse proxy's `X-Forwarded-Proto` and `X-Forwarded-Host`, else the
+/// request's own `Host`. Forwarded headers from anyone but a trusted proxy are ignored.
+Uri requestBase(Request request, Uri? configured, {List<IpNetwork> trusted = const []}) {
   if (configured != null) return configured.replace(path: '', query: null, fragment: null);
-  final proto = request.headers['x-forwarded-proto']?.split(',').first.trim();
-  final host = request.headers['x-forwarded-host']?.split(',').first.trim() ?? request.headers['host'];
+  final proxied = viaTrustedProxy(request, trusted);
+  final proto = proxied ? request.headers['x-forwarded-proto']?.split(',').first.trim() : null;
+  final forwardedHost = proxied ? request.headers['x-forwarded-host']?.split(',').first.trim() : null;
+  final host = forwardedHost ?? request.headers['host'];
   final scheme = (proto == 'https' || proto == 'http') ? proto! : request.requestedUri.scheme;
   if (host == null || host.isEmpty) {
     return Uri(scheme: scheme, host: request.requestedUri.host, port: request.requestedUri.port);
   }
   return Uri.parse('$scheme://$host');
+}
+
+/// Whether [request] itself came over HTTPS: to the hub directly over TLS, or to a [trusted]
+/// reverse proxy that says so in `X-Forwarded-Proto`. Unlike [requestBase], the configured
+/// public URL doesn't count: a request to the hub's LAN port is plain HTTP whatever the family's
+/// address is.
+bool arrivedOverHttps(Request request, List<IpNetwork> trusted) {
+  if (request.requestedUri.scheme == 'https' && !request.headers.containsKey('x-forwarded-proto')) return true;
+  if (!viaTrustedProxy(request, trusted)) return false;
+  return request.headers['x-forwarded-proto']?.split(',').first.trim().toLowerCase() == 'https';
 }
 
 /// [base] and [path] joined as a string without a trailing slash.

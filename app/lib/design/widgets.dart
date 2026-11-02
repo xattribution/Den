@@ -5,31 +5,29 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import 'pictograms.dart';
+import 'avatar.dart';
+import 'motion.dart';
 import 'tokens.dart';
 
-/// A person: their chosen animal on their marker color.
-class DenAvatar extends StatelessWidget {
-  const DenAvatar(this.member, {super.key, this.size = 32});
-
-  final Member member;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Semantics(
-      label: member.name,
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(color: c.marker(member.marker), shape: BoxShape.circle),
-        alignment: Alignment.center,
-        child: Icon(Pictograms.animal(member.animal), size: size * 0.6, color: c.onMarker),
-      ),
-    );
-  }
-}
+export 'avatar.dart';
+export 'photos.dart';
+export 'feedback.dart';
+export 'pickers/people_picker.dart';
+export 'pickers/sheet_pickers.dart';
+export 'widgets/buttons.dart';
+export 'widgets/chips.dart';
+export 'widgets/choices.dart';
+export 'widgets/disclosure.dart';
+export 'widgets/inputs.dart';
+export 'widgets/navigation.dart';
+export 'widgets/page.dart';
+export 'widgets/progress.dart';
+export 'widgets/rows.dart';
+export 'widgets/section.dart';
+export 'widgets/sheet_header.dart';
+export 'widgets/source_tag.dart';
+export 'widgets/states.dart';
+export 'widgets/switch_line.dart';
 
 /// The vertical marker bar beside an event or chore: one segment per person it belongs to.
 /// Items for everyone show every member's segment.
@@ -43,7 +41,7 @@ class PersonBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final segments = markers.isEmpty ? [c.rule] : markers.map(c.marker).toList();
+    final segments = markers.isEmpty ? [c.line] : markers.map(c.marker).toList();
     return ConstrainedBox(
       constraints: BoxConstraints(minHeight: minHeight),
       child: SizedBox(
@@ -97,87 +95,45 @@ class CheckDot extends StatelessWidget {
           width: target,
           height: target,
           child: Center(
-            child: AnimatedContainer(
-              duration: Motion.of(context, Motion.state),
-              curve: Motion.curve,
-              width: size,
-              height: size,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: done ? c.ink : Colors.transparent,
-                border: Border.all(color: done ? c.ink : (enabled ? c.ink2 : c.ink3), width: 2),
-              ),
-              child: done ? Icon(PhosphorIconsBold.check, size: size * 0.62, color: c.onInk) : null,
+            // Fills on the check spring, like every check (CheckRing).
+            child: SpringValue(
+              value: done ? 1 : 0,
+              spring: DenMotion.check,
+              builder: (context, fill, _) {
+                final on = fill.clamp(0.0, 1.0);
+                return SizedBox.square(
+                  dimension: size,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Color.lerp(enabled ? c.ink2 : c.ink3, c.ink, on)!, width: 2),
+                        ),
+                        child: SizedBox.square(dimension: size),
+                      ),
+                      if (fill > 0.001)
+                        Transform.scale(
+                          scale: fill.clamp(0.0, 1.1),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(shape: BoxShape.circle, color: c.ink),
+                            child: SizedBox.square(
+                              dimension: size,
+                              child: Icon(PhosphorIconsBold.check, size: size * 0.62, color: c.onPrimary),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ),
       ),
     );
   }
-}
-
-/// Progress through a chore's steps; turns into a solid check when the last step lands.
-class StepRing extends StatelessWidget {
-  const StepRing({super.key, required this.done, required this.total, this.size = 26});
-
-  final int done;
-  final int total;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final complete = total > 0 && done >= total;
-    return Semantics(
-      label: '$done of $total steps',
-      child: SizedBox(
-        width: math.max(size + 16, Targets.adult),
-        height: math.max(size + 16, Targets.adult),
-        child: Center(
-          child: complete
-              ? Container(
-                  width: size,
-                  height: size,
-                  decoration: BoxDecoration(color: c.ink, shape: BoxShape.circle),
-                  child: Icon(PhosphorIconsBold.check, size: size * 0.62, color: c.onInk),
-                )
-              : CustomPaint(
-                  size: Size.square(size),
-                  painter: _RingPainter(done / math.max(total, 1), c.ink, c.rule),
-                  child: SizedBox.square(
-                    dimension: size,
-                    child: Center(
-                      child: Text('$done/$total', style: context.type.meta(c.ink2).copyWith(fontSize: size * 0.34)),
-                    ),
-                  ),
-                ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RingPainter extends CustomPainter {
-  _RingPainter(this.fraction, this.ink, this.track);
-  final double fraction;
-  final Color ink;
-  final Color track;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final stroke = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round;
-    canvas.drawArc(rect.deflate(1.25), 0, math.pi * 2, false, stroke..color = track);
-    if (fraction > 0) {
-      canvas.drawArc(rect.deflate(1.25), -math.pi / 2, math.pi * 2 * fraction, false, stroke..color = ink);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_RingPainter old) => old.fraction != fraction || old.ink != ink || old.track != track;
 }
 
 /// Points: the star sticker shape in star gold with an edge for contrast, and the number.
@@ -241,7 +197,7 @@ class PersonChip extends StatelessWidget {
       selected: selected,
       button: true,
       child: Material(
-        color: selected ? c.ink : c.well,
+        color: selected ? c.ink : c.card,
         shape: const StadiumBorder(),
         child: InkWell(
           customBorder: const StadiumBorder(),
@@ -255,7 +211,7 @@ class PersonChip extends StatelessWidget {
                 children: [
                   DenAvatar(member, size: 30),
                   const SizedBox(width: Sp.s),
-                  Text(member.name, style: context.type.body(selected ? c.onInk : c.ink)),
+                  Text(member.name, style: context.type.body(selected ? c.onPrimary : c.ink)),
                 ],
               ),
             ),
@@ -279,7 +235,7 @@ class Segmented<T> extends StatelessWidget {
     final c = context.colors;
     return Container(
       padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(color: c.well, borderRadius: BorderRadius.circular(Radii.control + 2)),
+      decoration: BoxDecoration(color: c.fill, borderRadius: BorderRadius.circular(Radii.pill)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -289,9 +245,9 @@ class Segmented<T> extends StatelessWidget {
               button: true,
               child: Material(
                 color: entry.key == value ? c.ink : Colors.transparent,
-                borderRadius: BorderRadius.circular(Radii.control),
+                borderRadius: BorderRadius.circular(Radii.pill),
                 child: InkWell(
-                  borderRadius: BorderRadius.circular(Radii.control),
+                  borderRadius: BorderRadius.circular(Radii.pill),
                   onTap: () => onChanged(entry.key),
                   child: Container(
                     constraints: const BoxConstraints(minHeight: 38, minWidth: 48),
@@ -299,7 +255,7 @@ class Segmented<T> extends StatelessWidget {
                     alignment: Alignment.center,
                     child: Text(
                       entry.value,
-                      style: entry.key == value ? context.type.bodyStrong(c.onInk) : context.type.body(c.ink2),
+                      style: entry.key == value ? context.type.bodyStrong(c.onPrimary) : context.type.body(c.ink2),
                     ),
                   ),
                 ),
@@ -369,8 +325,8 @@ class InfoTip extends StatelessWidget {
   }
 }
 
-/// A state that needs a person: caution (a gap, a conflict, an approval) or bad (late, failed).
-/// Always icon plus words; color is never the only signal.
+/// A state that needs a person (a gap, a conflict, an approval) in ink, or one that went wrong
+/// (late, failed) in destructive red. Always icon plus words; there is no caution color.
 class AttentionLine extends StatelessWidget {
   const AttentionLine({super.key, required this.message, this.bad = false, this.action});
 
@@ -381,7 +337,7 @@ class AttentionLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final color = bad ? c.bad : c.caution;
+    final color = bad ? c.destructive : c.ink;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: Sp.xs),
       child: Row(
@@ -419,35 +375,63 @@ class EmptyLine extends StatelessWidget {
   }
 }
 
-/// Shows a message with Undo, the way reversible actions confirm themselves.
-void showUndo(BuildContext context, String message, VoidCallback onUndo) {
-  final messenger = ScaffoldMessenger.of(context);
-  messenger.hideCurrentSnackBar();
-  messenger.showSnackBar(
-    SnackBar(
-      content: Text(message),
-      action: SnackBarAction(label: 'Undo', onPressed: onUndo),
-      duration: const Duration(seconds: 6),
-    ),
-  );
-}
+/// A fact on a detail page: its label in a column on the left, the value beside it.
+///
+/// [FactRow] is the event page's: inside the page gutters, with a label column that grows with
+/// the text. [center] is for a value that holds a button: the label centers on it, and the
+/// button's own 48 px height stands in for the row's padding. [FactRow.compact] is the chore
+/// page's: inside the page's own padding, read by screen readers as one phrase.
+class FactRow extends StatelessWidget {
+  const FactRow({super.key, required this.label, required this.child, this.center = false}) : _compact = false;
 
-/// Shows a plain message (errors name the cause and the way out).
-void showNote(BuildContext context, String message) {
-  final messenger = ScaffoldMessenger.of(context);
-  messenger.hideCurrentSnackBar();
-  messenger.showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 5)));
-}
+  const FactRow.compact({super.key, required this.label, required this.child})
+      : center = false,
+        _compact = true;
 
-/// Runs a write and turns permission or input errors into a note instead of a crash.
-Future<bool> attempt(BuildContext context, Future<void> Function() write) async {
-  try {
-    await write();
-    return true;
-  } on PermissionDenied catch (e) {
-    if (context.mounted) showNote(context, e.message);
-  } on InvalidInput catch (e) {
-    if (context.mounted) showNote(context, e.message);
+  final String label;
+  final Widget child;
+  final bool center;
+  final bool _compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    if (_compact) {
+      return MergeSemantics(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: Sp.s - 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 108,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(label, style: context.type.meta(c.ink2)),
+                ),
+              ),
+              Expanded(child: child),
+            ],
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: EdgeInsets.fromLTRB(Sp.l, center ? 0 : Sp.s, Sp.l, center ? 0 : Sp.s),
+      child: Row(
+        crossAxisAlignment: center ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96 * context.type.scale,
+            child: Padding(
+              padding: EdgeInsets.only(top: center ? 0 : 2),
+              child: Text(label, style: context.type.meta(c.ink2)),
+            ),
+          ),
+          const SizedBox(width: Sp.s),
+          Expanded(child: child),
+        ],
+      ),
+    );
   }
-  return false;
 }

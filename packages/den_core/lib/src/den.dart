@@ -1,21 +1,30 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
 
+import 'account.dart';
 import 'calendar.dart';
 import 'change.dart';
 import 'chores.dart';
+import 'family_controls.dart';
 import 'hlc.dart';
 import 'ids.dart';
+import 'invite_keys.dart';
 import 'materializer.dart';
 import 'model.dart';
+import 'names.dart';
 import 'order_keys.dart';
+import 'parallel.dart';
 import 'permissions.dart';
 import 'points.dart';
+import 'recovery.dart';
 import 'rrule.dart';
 import 'schema.dart';
 import 'secrets.dart';
+import 'snapshot.dart';
 import 'space_keys.dart';
 import 'storage.dart';
 import 'store.dart';
@@ -44,6 +53,42 @@ class ReminderDue {
 
   /// Who it is for; empty means everyone who can see the item.
   final List<String> members;
+}
+
+/// What [Den.disownInvite] did about a device an invite let in that nobody recognized: whose
+/// it was meant to be, and the devices it let in since, still in the family.
+class DisownedInvite {
+  const DisownedInvite({required this.member, required this.letIn});
+
+  /// Who the invite was for; null for a shared screen or the hub.
+  final String? member;
+
+  /// Devices the removed one let in, directly or through ones it let in, still in the family.
+  final List<Device> letIn;
+}
+
+/// What [Den.disownRecovery] did about a phone recovery let in that nobody recognized.
+class DisownedRecovery {
+  const DisownedRecovery({required this.member, required this.kind, required this.retired, required this.letIn});
+
+  /// The parent it got in as.
+  final String member;
+
+  /// Whether their words or the hub's help let it in.
+  final RecoveryKind kind;
+
+  /// Whether those were turned off now; false when they had been replaced or turned off since.
+  final bool retired;
+
+  /// Devices it let in, directly or through devices it let in, still in the family.
+  final List<Device> letIn;
+}
+
+/// What [Den.undo] will write, and what it leaves alone.
+class _UndoPlan {
+  _UndoPlan(this.drafts, this.skipped);
+  final List<_Draft> drafts;
+  final List<UndoSkip> skipped;
 }
 
 class _Draft {
@@ -86,9 +131,36 @@ class Den {
   String? _actingVia;
   Timer? _actingTimer;
   Future<void> _tail = Future.value();
-  int _cacheVersion = -1;
-  String? _cacheActor;
-  final Map<String, Object?> _cache = {};
+
+  /// Memoized views, least recently used first ([_memo]).
+  final Map<String, _Memo> _memos = {};
+
+  /// The occurrences of each repeating event (or one with changed occurrences) in the windows
+  /// asked for lately, by the event's record as it is now.
+  Map<Rec, _EventOccurrences> _occurrenceCache = {};
+
+  // Snapshots (see [SnapshotStorage]): written only to storage that keeps them.
+  late final bool _snapshots = _storage is SnapshotStorage;
+
+  /// Change id -> its digest hash ([changeHash]), for every change held, once known.
+  final Map<String, Uint8List> _hashes = {};
+
+  /// False while [open]'s background check of the stored log runs; no snapshot is written until
+  /// it has vouched for every change.
+  bool _settled = true;
+  bool _closed = false;
+
+  /// Bumped when the device leaves its family, so work started before can't write after.
+  int _generation = 0;
+
+  /// How many changes the stored snapshot covers, and its window's first change: a change
+  /// ordered before that makes the next open replay from scratch, so the snapshot is written
+  /// again ([_staleMarks]).
+  int _snapshotCount = 0;
+  Change? _snapshotBoundary;
+  int _staleMarks = 0;
+  int _staleSaved = 0;
+  Future<void>? _snapshotting;
 
   // ---------------------------------------------------------------- lifecycle and identity
 
@@ -97,7 +169,12 @@ class Den {
     required DenStorage storage,
     required DeviceKeys keys,
     int Function()? now,
-  }) async {
+  }) =>
+      _open(storage, keys, now);
+
+  /// [open]; with [copying], the state is copied from that engine's (whose log [storage] holds)
+  /// instead of replayed.
+  static Future<Den> _open(DenStorage storage, DeviceKeys keys, int Function()? now, {Materializer? copying}) async {
     final den = Den._(
       storage,
       keys,
@@ -109,7 +186,26 @@ class Den {
     den._pubkeys[den.deviceId] = keys.pubkey;
     final changes = await storage.loadChanges();
     changes.forEach(den._learnKey);
-    den._mat.add(changes);
+    SnapshotHeader? snapshot;
+    if (storage is SnapshotStorage && copying == null) {
+      try {
+        final text = await (storage as SnapshotStorage).loadSnapshot();
+        if (text != null) snapshot = SnapshotHeader.parse(text);
+      } on Object {
+        snapshot = null;
+      }
+    }
+    if (snapshot != null && (snapshot.familyId != den._root.familyId || snapshot.founderPubkey != den._root.founderPubkey)) {
+      snapshot = null;
+    }
+    // From the snapshot, with the changes it doesn't cover on top; else the whole log.
+    final rest = snapshot == null ? null : den._mat.restore(snapshot, changes, root: den._root);
+    den._fromSnapshot = rest != null;
+    if (copying != null) {
+      den._mat.copyFrom(copying);
+    } else {
+      den._mat.add(rest ?? changes);
+    }
     den._observeApplied();
     var own = 0;
     for (final c in changes) {
@@ -118,21 +214,195 @@ class Den {
       own = math.max(own, c.counter);
     }
     den._counter = math.max(den._counter, own);
+    if (den._snapshots && copying == null) {
+      den._settled = false;
+      den._settling = den._settle(changes, snapshot, restored: rest != null);
+    }
+    engineProbes[den] = den._probe;
     return den;
+  }
+
+  Future<void>? _settling;
+  bool _fromSnapshot = false;
+
+  /// What tests see of the work [open] started.
+  EngineProbe get _probe => EngineProbe(
+        fullReplays: () => _mat.fullReplays,
+        openedFromSnapshot: () => _fromSnapshot,
+        idle: () async {
+          await _settling;
+          while (_snapshotting != null) {
+            await _snapshotting;
+          }
+        },
+      );
+
+  /// After [open], off the critical path: checks the stored log against the snapshot it opened
+  /// from. The changes the snapshot covers must still give its digest (so stored changes that were
+  /// altered are caught without checking every signature again); the others, stored since it was
+  /// written, have their signatures checked. A change that fails is dropped, as if it had never
+  /// arrived. Without a snapshot (a log from before snapshots, or one that couldn't be used) the
+  /// stored log is trusted as before, every change having been checked when it arrived.
+  ///
+  /// Then, with every change vouched for, a snapshot is written if one is due.
+  Future<void> _settle(List<Change> held, SnapshotHeader? snapshot, {required bool restored}) async {
+    final generation = _generation;
+    bool gone() => _closed || generation != _generation;
+    try {
+      await Future<void>.delayed(Duration.zero);
+      final seen = <String>{};
+      final covered = <Change>[], unvouched = <Change>[];
+      for (final c in held) {
+        if (!seen.add(c.id) || !_mat.contains(c.id)) continue;
+        (snapshot == null || snapshot.covers(c.id) ? covered : unvouched).add(c);
+      }
+      final bad = <String>{};
+      var mismatch = false;
+      final checked = await checkChanges(unvouched, pubkeys: [for (final c in unvouched) _pubkeys[c.device]]);
+      if (gone()) return;
+      for (var i = 0; i < unvouched.length; i++) {
+        final h = checked[i];
+        if (h == null || !await recoveryProofHolds(unvouched[i], familyId) || !await inviteProofHolds(unvouched[i], familyId) ||
+            !await accountProofHolds(unvouched[i], familyId)) {
+          bad.add(unvouched[i].id);
+        } else {
+          _hashes[unvouched[i].id] = h;
+        }
+      }
+      // The digest of everything else is a lot of hashing: not while the first screens draw.
+      await Future<void>.delayed(snapshotCheckDelay);
+      if (gone()) return;
+      final hashes = await checkChanges(covered, verify: false);
+      if (gone()) return;
+      for (var i = 0; i < covered.length; i++) {
+        _hashes[covered[i].id] = hashes[i]!;
+      }
+      if (snapshot != null) {
+        covered.sort(changeOrder);
+        final digest = digestOf([for (final c in covered) _hashes[c.id]!]);
+        if (!_sameBytes(digest, snapshot.digest)) {
+          // Stored changes the snapshot vouched for aren't the ones it saw: check them all, and
+          // build the state from what is stored rather than from the snapshot.
+          final again = await checkChanges(covered, pubkeys: [for (final c in covered) _pubkeys[c.device]]);
+          if (gone()) return;
+          for (var i = 0; i < covered.length; i++) {
+            if (again[i] == null) bad.add(covered[i].id);
+          }
+          mismatch = true;
+          _staleMarks++;
+        } else {
+          _snapshotCount = snapshot.count;
+          final first = snapshot.windowFirst;
+          _snapshotBoundary = first != null ? _mat.byId(first) : (covered.isEmpty ? null : covered.last);
+          if (!restored) _staleMarks++;
+        }
+      }
+      if (bad.isNotEmpty || mismatch) {
+        await _locked(() async {
+          if (gone()) return;
+          final types = mismatch ? RecordType.all : {for (final id in bad) ?_mat.byId(id)?.type};
+          for (final id in bad) {
+            _hashes.remove(id);
+          }
+          _mat.remove(bad);
+          if (mismatch) _mat.replay();
+          _staleMarks++;
+          _emit(types);
+        });
+      }
+      if (gone()) return;
+      _settled = true;
+      _maybeSnapshot();
+    } on Object {
+      // Left unsettled: no snapshot is written this time, and the next open checks again.
+    }
+  }
+
+  static bool _sameBytes(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// Writes a snapshot when enough has changed since the last, or the last no longer fits. A log
+  /// shorter than [snapshotEvery] replays quickly enough without one.
+  void _maybeSnapshot() {
+    if (!_snapshots || !_settled || _closed || _snapshotting != null || !hasFamily) return;
+    final held = _mat.log.length;
+    if (held < snapshotEvery) return;
+    if (_staleMarks == _staleSaved && held - _snapshotCount < snapshotEvery) return;
+    _snapshotting = _writeSnapshot().whenComplete(() {
+      _snapshotting = null;
+      if (_mat.log.length >= snapshotEvery && (_staleMarks != _staleSaved || _mat.log.length - _snapshotCount >= snapshotEvery)) {
+        // Still behind (it moved on while this one was written): only if this one got written.
+        if (_lastSnapshotOk) _maybeSnapshot();
+      }
+    });
+  }
+
+  bool _lastSnapshotOk = false;
+
+  /// Copies the state (inside the lock, so no write is half applied), encodes it while the engine
+  /// moves on, and saves it unless the device left its family meanwhile.
+  Future<void> _writeSnapshot() async {
+    _lastSnapshotOk = false;
+    try {
+      await Future<void>.delayed(Duration.zero);
+      final generation = _generation;
+      SnapshotCapture? capture;
+      var marks = 0;
+      await _locked(() async {
+        if (_closed || generation != _generation || !hasFamily) return;
+        final log = _mat.log;
+        final hashes = <List<int>>[];
+        for (final c in log) {
+          final h = _hashes[c.id];
+          if (h == null) return;
+          hashes.add(h);
+        }
+        marks = _staleMarks;
+        capture = _mat.capture(root: _root, windowFrom: _now() - snapshotWindow.inMilliseconds, digest: digestOf(hashes));
+      });
+      final taken = capture;
+      if (taken == null) return;
+      final text = await taken.encode();
+      await _locked(() async {
+        if (generation != _generation) return;
+        await (_storage as SnapshotStorage).saveSnapshot(text);
+        _snapshotCount = taken.log.length;
+        _snapshotBoundary = taken.boundary;
+        _staleSaved = marks;
+        _lastSnapshotOk = true;
+      });
+    } on Object {
+      // Not written: the next open replays more of the log, and a later write tries again.
+    }
+  }
+
+  /// Notes changes just added to the log: one ordered before the stored snapshot's window means
+  /// the snapshot should be written again.
+  void _noteAdded(Iterable<Change> added) {
+    final boundary = _snapshotBoundary;
+    if (!_snapshots || boundary == null) return;
+    if (added.any((c) => changeOrder(c, boundary) < 0)) _staleMarks++;
   }
 
   /// Keeps this device's clock past every valid change, so its next write is the newest. Invalid
   /// changes don't move it: a device nobody approved can't push the family's clocks ahead.
   void _observeApplied() {
-    final applied = _mat.applied;
-    if (applied.isNotEmpty) _clock.observe(applied.last.change.hlc);
+    final newest = _mat.newestApplied;
+    if (newest != null) _clock.observe(newest);
   }
 
   /// Ends the [onChange] stream and the acting window's timer.
-  Future<void> close() {
+  Future<void> close() async {
+    _closed = true;
     _actingTimer?.cancel();
     _actingTimer = null;
-    return _changes.close();
+    await _snapshotting;
+    await _changes.close();
   }
 
   /// The engine's clock: UTC milliseconds now.
@@ -238,24 +508,48 @@ class Den {
     _emit({actingChanged});
   }
 
-  /// Checks a PIN or picture pattern against the member's sign-in for shared screens.
+  /// Checks a PIN or picture pattern against the member's sign-in for shared screens. A parent
+  /// with no sign-in never verifies on a shared display: anyone there could act as them.
   Future<bool> verifySignIn(String memberId, String secret) async {
     final m = member(memberId);
     if (m == null) return false;
     final signIn = m.signIn;
-    if (signIn.kind == 'none') return true;
+    if (signIn.kind == 'none') return !(m.isParent && thisDevice?.mode == DeviceMode.shared);
     if (signIn.salt == null || signIn.hash == null) return false;
     if (!signInSecretValid(signIn.kind, secret)) return false;
     return verifySignInHash(secret, signIn.salt!, signIn.hash!);
   }
+
+  /// On a shared screen: tells the family's parents that someone got [memberId]'s PIN or picture
+  /// pattern wrong [tries] times in a row here (a `signInTries` record in the family space, so
+  /// it travels like any change and History shows it). Written for nobody, whoever is acting:
+  /// it is the screen that saw it.
+  Future<void> noteSignInTries(String memberId, int tries) async {
+    if (thisDevice?.mode != DeviceMode.shared) throw const PermissionDenied('Only a shared screen says that');
+    if (member(memberId) == null) throw const InvalidInput('That person isn\'t in the family');
+    await _commit([
+      _Draft(RecordType.signInTries, newId(), Space.family, {'device': deviceId, 'member': memberId, 'tries': tries},
+          actor: null, setsActor: true),
+    ]);
+  }
+
+  /// What shared screens said about wrong PIN and pattern tries ([noteSignInTries]), newest
+  /// first.
+  List<SignInTries> get signInTries => _memo('signInTries', const {RecordType.signInTries}, visible: false, () {
+        return [
+          for (final e in _mat.store.liveOfType(RecordType.signInTries))
+            if (e.space == Space.family) SignInTries(e.rec),
+        ]..sort((a, b) => b.rec.created.compareTo(a.rec.created));
+      });
 
   /// Writes the genesis changes: the family, the founding parent and this device, approved.
   Future<void> createFamily({
     required String familyName,
     required String timezone,
     required String yourName,
-    required Marker marker,
-    required Animal animal,
+    Marker marker = Marker.sky,
+    Animal animal = Animal.cat,
+    String picture = Picture.initial,
     required String deviceName,
     required DeviceKind deviceKind,
     DeviceMode mode = DeviceMode.personal,
@@ -287,6 +581,7 @@ class Den {
               'tier': null,
               'marker': marker.name,
               'animal': animal.name,
+              'picture': picture,
               'birthday': null,
               'grants': <String>[],
               'signIn': {'kind': 'none', 'salt': null, 'hash': null},
@@ -342,6 +637,101 @@ class Den {
         ]);
       });
 
+  /// Lets this new device into the family as [proof]'s parent's own device: one change to its
+  /// own device record, approved, carrying the proof (see recovery.dart). This device holds
+  /// none of the family's log yet, so it can't check the change itself; it is written as is,
+  /// counts for nothing here until the family's log arrives, and every device that receives it
+  /// decides by the same rules.
+  Future<void> requestRecovery({
+    required String familyId,
+    required String founderPubkey,
+    required String deviceName,
+    required DeviceKind kind,
+    required RecoveryProof proof,
+  }) =>
+      _selfApprove(familyId: familyId, founderPubkey: founderPubkey, fields: {
+        'name': deviceName,
+        'kind': kind.name,
+        'pubkey': _keys.pubkey,
+        'xpub': _keys.xpub,
+        'member': proof.member,
+        'mode': DeviceMode.personal.name,
+        'approved': true,
+        'recovery': proof.toJson(),
+      });
+
+  /// Writes this new device's own record letting itself in with [fields] (a recovery or invite
+  /// proof among them), as is: it can't check the change before the family's log arrives.
+  Future<void> _selfApprove({
+    required String familyId,
+    required String founderPubkey,
+    required Map<String, Object?> fields,
+  }) =>
+      _locked(() async {
+        if (hasFamily && this.familyId != familyId) throw StateError('This device already belongs to a family');
+        if (isApproved) throw StateError('This device is already in the family');
+        if (deviceIdOf(founderPubkey) == null) throw const InvalidInput('The founder key isn\'t valid');
+        if (!hasFamily) {
+          _setRoot(familyId, founderPubkey);
+          _mat.replay();
+        }
+        var counter = _counter + 1;
+        while (_mat.contains('$deviceId:$counter')) {
+          counter++;
+        }
+        final unsigned = Change(
+          id: '$deviceId:$counter',
+          space: Space.family,
+          hlc: _clock.next(),
+          type: RecordType.device,
+          rid: deviceId,
+          fields: fields,
+          device: deviceId,
+          actor: null,
+          sig: '',
+        );
+        final signed = Change(
+          id: unsigned.id,
+          space: unsigned.space,
+          hlc: unsigned.hlc,
+          type: unsigned.type,
+          rid: unsigned.rid,
+          fields: unsigned.fields,
+          device: deviceId,
+          actor: null,
+          sig: await _keys.sign(unsigned.signedBytes),
+        );
+        await _storage.appendChanges([signed]);
+        _mat.add([signed]);
+        _counter = counter;
+        await _saveMeta();
+        _emit({RecordType.device});
+      });
+
+  /// Lets this new device into the family as [proof]'s person's own device with an invite a
+  /// parent made (invite_keys.dart): one change to its own device record, approved, carrying
+  /// the proof. Like [requestRecovery], this device holds none of the family's log yet, so the
+  /// change counts for nothing here until the log arrives, and every device that receives it
+  /// decides by the same rules.
+  Future<void> requestInviteJoin({
+    required String familyId,
+    required String founderPubkey,
+    required String deviceName,
+    required DeviceKind kind,
+    required InviteProof proof,
+  }) =>
+      _selfApprove(familyId: familyId, founderPubkey: founderPubkey, fields: {
+        'name': deviceName,
+        'kind': kind.name,
+        'pubkey': _keys.pubkey,
+        'xpub': _keys.xpub,
+        'member': proof.member,
+        'mode': proof.mode.name,
+        'approved': true,
+        if (proof.mode == DeviceMode.shared) 'display': _defaultDisplay,
+        'invite': proof.toJson(),
+      });
+
   /// Forgets the family on this device: wipes its log and metadata from storage and returns the
   /// engine to a fresh device's state, so a declined device or one the family no longer uses can
   /// start over. A family remembers devices it declined or removed, so join again with new keys.
@@ -360,8 +750,14 @@ class Den {
           ..clear()
           ..[deviceId] = _keys.pubkey;
         _mat.clear();
-        _cache.clear();
-        _cacheVersion = -1;
+        _memos.clear();
+        _occurrenceCache = {};
+        _generation++;
+        _hashes.clear();
+        _snapshotCount = 0;
+        _snapshotBoundary = null;
+        _staleMarks = _staleSaved = 0;
+        _settled = true;
         await _saveMeta();
         _emit({...RecordType.all, actingChanged});
       });
@@ -383,7 +779,7 @@ class Den {
   int get _weekStart => family?.weekStart ?? 0;
 
   /// Members in display order, removed members excluded.
-  List<Member> get members => _memo('members', () {
+  List<Member> get members => _memo('members', const {RecordType.member}, visible: false, () {
         final list = [
           for (final e in _mat.store.liveOfType(RecordType.member))
             if (e.space == Space.family) Member(e.rec),
@@ -402,7 +798,7 @@ class Den {
     return e == null ? null : Member(e.rec);
   }
 
-  List<Device> get devices => _memo('devices', () {
+  List<Device> get devices => _memo('devices', const {RecordType.device}, visible: false, () {
         return [
           for (final e in _mat.store.liveOfType(RecordType.device))
             if (e.space == Space.family) Device(e.rec),
@@ -420,7 +816,7 @@ class Den {
   /// Devices waiting for a parent's approval.
   List<Device> get pendingDevices => devices.where((d) => !d.approved && !d.revoked).toList();
 
-  List<EventCategory> get categories => _memo('categories', () {
+  List<EventCategory> get categories => _memo('categories', const {RecordType.category}, visible: false, () {
         return [
           for (final e in _mat.store.liveOfType(RecordType.category))
             if (e.space == Space.family) EventCategory(e.rec),
@@ -443,19 +839,26 @@ class Den {
 
   /// The spaces whose records the current actor on this device may see: what the device holds,
   /// narrowed to what the acting member may read.
-  Set<String> get readableSpaces {
-    if (!isApproved) return const {};
-    final held = spacesForDevice(deviceId);
-    final a = actor;
-    if (a == null) return held;
-    final f = family;
-    return {for (final s in held) if (canRead(a, s, f)) s};
-  }
+  Set<String> get readableSpaces => _memo('readable', _whoReadsWhat, visible: false, () {
+        if (!isApproved) return const <String>{};
+        final held = spacesForDevice(deviceId);
+        final a = actor;
+        if (a == null) return held;
+        final f = family;
+        return Set<String>.unmodifiable({for (final s in held) if (canRead(a, s, f)) s});
+      });
+
+  /// What decides who may read which spaces: the family's policy, its people and its devices.
+  static const Set<String> _whoReadsWhat = {RecordType.family, RecordType.member, RecordType.device};
 
   Future<void> updateFamily(Map<String, Object?> patch) async {
     final id = familyId;
     if (id == null || family == null) throw const InvalidInput('There is no family yet');
-    final fields = _cleanPatch(patch, {'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'oversight'});
+    final fields = _cleanPatch(patch, {
+      'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'colors', 'oversight', 'assistant',
+      // One person's entry, `oversight.<memberId>`, so parents changing different people merge.
+      for (final k in patch.keys) if (k.startsWith('oversight.')) k,
+    });
     final tz = fields['timezone'];
     if (tz is String && !isKnownZone(tz)) throw InvalidInput('Den doesn\'t know the time zone "$tz"');
     await _commit([_Draft(RecordType.family, id, Space.family, fields)]);
@@ -465,20 +868,23 @@ class Den {
     required String name,
     required Role role,
     Tier? tier,
-    Marker marker = Marker.blue,
+    Marker? marker,
     Animal animal = Animal.cat,
+    String picture = Picture.initial,
     String? birthday,
     Set<Grant> grants = const {},
   }) async {
     final id = newId();
+    final color = marker ?? Marker.next(members.map((m) => m.marker));
     final order = members.isEmpty ? 0 : members.map((m) => m.order).reduce(math.max) + 1;
     await _commit([
       _Draft(RecordType.member, id, Space.family, {
         'name': name,
         'role': role.name,
         'tier': tier?.name,
-        'marker': marker.name,
+        'marker': color.name,
         'animal': animal.name,
+        'picture': picture,
         'birthday': birthday,
         'grants': [for (final g in Grant.values) if (grants.contains(g)) g.name],
         'signIn': {'kind': 'none', 'salt': null, 'hash': null},
@@ -489,28 +895,55 @@ class Den {
     return id;
   }
 
-  Future<void> updateMember(String id, Map<String, Object?> patch) async {
-    if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
-    final fields = _cleanPatch(patch, {'name', 'role', 'tier', 'marker', 'animal', 'birthday', 'grants', 'order'});
-    final grants = fields['grants'];
-    if (grants is Iterable) fields['grants'] = [for (final g in grants) g is Enum ? g.name : g];
-    await _commit([_Draft(RecordType.member, id, Space.family, fields)]);
-  }
+  /// Changes a person. Making a parent anything else takes their recovery words away in the
+  /// same change ([_noRecovery]): if they're a parent again later, they make new ones.
+  Future<void> updateMember(String id, Map<String, Object?> patch) => _locked(() async {
+        final m = member(id);
+        if (m == null) throw const InvalidInput('That person isn\'t in the family');
+        final fields = _cleanPatch(patch, {'name', 'role', 'tier', 'marker', 'animal', 'picture', 'birthday', 'until', 'grants', 'order'});
+        final grants = fields['grants'];
+        if (grants is Iterable) fields['grants'] = [for (final g in grants) g is Enum ? g.name : g];
+        final role = fields['role'];
+        final demoted = role != null && role != Role.parent.name;
+        if (demoted) fields.addAll(_noRecovery(m));
+        await _commitNow([
+          // Their invites let nobody in now, even a device clocked before this. First, while
+          // whoever does this is still a parent (they may be changing their own role).
+          if (demoted) ..._retireInvites((k) => k.by == id),
+          _Draft(RecordType.member, id, Space.family, fields),
+        ]);
+      });
 
   /// Removes a member and revokes the devices they own, rotating the keys of the spaces those
-  /// devices held.
-  Future<void> removeMember(String id) async {
-    if (member(id) == null) throw const InvalidInput('That person isn\'t in the family');
-    final owned = [
-      for (final d in devices)
-        if (d.member == id && d.id != deviceId && !d.revoked) d.id,
-    ];
-    final held = {for (final d in owned) ...spacesForDevice(d)};
-    await _commit([
-      for (final d in owned) _Draft(RecordType.device, d, Space.family, {'revoked': true}),
-      _Draft(RecordType.member, id, Space.family, {'_deleted': true}),
-    ]);
-    await _locked(() => _rotateNow(held));
+  /// devices held. Their recovery words go first, in the same commit ([_noRecovery]).
+  Future<void> removeMember(String id) => _locked(() async {
+        final m = member(id);
+        if (m == null) throw const InvalidInput('That person isn\'t in the family');
+        final owned = [
+          for (final d in devices)
+            if (d.member == id && d.id != deviceId && !d.revoked) d.id,
+        ];
+        final held = {for (final d in owned) ...spacesForDevice(d)};
+        final words = _noRecovery(m);
+        await _commitNow([
+          // The invites they made, and those for them, let nobody in now.
+          ..._retireInvites((k) => k.by == id || k.member == id || owned.contains(k.device)),
+          for (final d in owned) _revocation(d),
+          if (words.isNotEmpty) _Draft(RecordType.member, id, Space.family, words),
+          _Draft(RecordType.member, id, Space.family, {'_deleted': true}),
+        ]);
+        await _rotateNow(held);
+      });
+
+  /// The fields that take [m]'s recovery words away, naming the devices they let in that this
+  /// device holds (which stay), or nothing when they have none. Old words can then let nobody
+  /// in, even with a recovery change clocked before this one (recovery.dart).
+  Map<String, Object?> _noRecovery(Member m) {
+    final key = recoveryKeyOf(m);
+    if (key == null) return const {};
+    return {
+      'recovery': {'key': null, 'kept': keptBy(_mat.store, key: key, member: m.id)},
+    };
   }
 
   /// Sets how a member signs in on shared screens: `pin` (4 digits), `pattern` (4 animals as
@@ -530,6 +963,59 @@ class Den {
     }
     final value = await hashSignIn(kind, secret);
     await _commit([_Draft(RecordType.member, memberId, Space.family, {'signIn': value})]);
+  }
+
+  /// Binds [account] (from the hub's sign-in with Google or Apple, ARCHITECTURE.md "Accounts") to
+  /// [memberId], so that account signs in as them; null takes it away. Only a parent binds their
+  /// own, on their own personal device; they, or any parent there, may take one away. The hub can
+  /// never write this (validity.dart).
+  Future<void> setAccount(String memberId, AccountRef? account) async {
+    final m = member(memberId);
+    if (m == null) throw const InvalidInput('That person isn\'t in the family');
+    final a = actor;
+    final d = thisDevice;
+    if (a == null || d == null || d.mode != DeviceMode.personal || d.member != a.id) {
+      throw const PermissionDenied('Only a parent on their own phone can do that');
+    }
+    if (account != null && (a.id != memberId || !a.isParent)) {
+      throw const PermissionDenied('Only the parent themselves can choose the account they sign in with');
+    }
+    if (account == null && a.id != memberId && !a.isParent) {
+      throw const PermissionDenied('Only a parent can take away the account someone signs in with');
+    }
+    if (account != null) {
+      // The hub's proof, checked here as every replica checks it when the change arrives.
+      final proof = account.proof;
+      final family = familyId;
+      if (proof == null || family == null || !await proof.verifies(family: family, member: memberId, account: account)) {
+        throw const PermissionDenied('Only an account the family\'s hub saw sign in for you can be bound');
+      }
+    }
+    await _commit([_Draft(RecordType.member, memberId, Space.family, {'account': account?.toJson()})]);
+  }
+
+  /// The earliest time (UTC milliseconds) the next change this engine makes can be clocked at:
+  /// now, or the latest change it has made or seen, when that is later. A proof that must still
+  /// hold at a change's clock (`AccountProof.expires`) counts from here.
+  int get clockMillis => math.max(now(), _clock.millis);
+
+  /// The member [account] signs in as, or null for none, or when more than one member has it
+  /// (two bindings made while apart both stand: the hub then signs in as neither, and
+  /// [sharedAccounts] tells the parents).
+  Member? memberWithAccount(AccountRef account) {
+    final found = [for (final m in members) if (m.account == account) m];
+    return found.length == 1 ? found.single : null;
+  }
+
+  /// Accounts bound to more than one member, each with those members: none of them signs in
+  /// with it until all but one take it away. Parents see it in Needs you.
+  List<List<Member>> sharedAccounts() {
+    final by = <AccountRef, List<Member>>{};
+    for (final m in members) {
+      final a = m.account;
+      if (a != null) (by[a] ??= []).add(m);
+    }
+    return [for (final list in by.values) if (list.length > 1) list];
   }
 
   Future<void> approveDevice(String deviceId, {String? member, DeviceMode? mode}) async {
@@ -554,11 +1040,26 @@ class Den {
 
   /// Revokes a device. Revoking another device also rotates the keys of every space it held
   /// (a new random key, one epoch on), so it can't read what the family writes next.
-  Future<void> revokeDevice(String deviceId) async {
-    if (device(deviceId) == null) throw const InvalidInput('That device isn\'t in the family');
-    final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
-    await _commit([_Draft(RecordType.device, deviceId, Space.family, {'revoked': true})]);
-    await _locked(() => _rotateNow(held));
+  ///
+  /// The revocation records the last of the device's changes this one holds (`revokedAfter`):
+  /// anything it signs after that counts for nothing, whatever clock it claims.
+  Future<void> revokeDevice(String deviceId) => _locked(() async {
+        if (device(deviceId) == null) throw const InvalidInput('That device isn\'t in the family');
+        final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
+        // The invites made on it go with it, taken away first: a device may remove itself.
+        await _commitNow([..._retireInvites((k) => k.device == deviceId), _revocation(deviceId)]);
+        await _rotateNow(held);
+      });
+
+  /// Revokes [device], naming the last of its changes this device holds: its counters held here,
+  /// and those a peer vouched for in spaces this device doesn't receive. Runs inside the lock,
+  /// so nothing arrives between counting and signing.
+  _Draft _revocation(String device) {
+    var last = device == deviceId ? _counter : _floor[device] ?? 0;
+    for (final n in _mat.counters[device] ?? const <int>{}) {
+      if (n > last) last = n;
+    }
+    return _Draft(RecordType.device, device, Space.family, {'revoked': true, 'revokedAfter': last});
   }
 
   /// Changes another device's settings (parents), or this device's own name, display settings or
@@ -589,6 +1090,195 @@ class Den {
 
   static const Map<String, Object?> _defaultDisplay = {'layout': 'week', 'openCheckoff': false};
 
+  // ---------------------------------------------------------------- recovery (recovery.dart)
+
+  /// Sets [memberId]'s recovery key: the public half of the key their 12 recovery words stretch
+  /// to (den_net's `RecoveryWords`), or null to remove it. Only the parent themselves sets
+  /// theirs, on their own device; any parent there may remove one. Replacing a key names the
+  /// devices the old one let in that this device holds, so old words can't let in a phone
+  /// clocked before the change.
+  Future<void> setRecoveryKey(String memberId, String? publicKey) => _locked(() async {
+        final m = member(memberId);
+        if (m == null) throw const InvalidInput('That person isn\'t in the family');
+        final old = recoveryKeyOf(m);
+        await _commitNow([
+          _Draft(RecordType.member, memberId, Space.family, {
+            'recovery': {
+              'key': publicKey,
+              'kept': old == null ? <String>[] : keptBy(_mat.store, key: old, member: memberId),
+            },
+          }),
+        ]);
+      });
+
+  /// Lets the hub with server recovery key [publicKey] help a parent back in (`family.recovery`),
+  /// or with null stops it, after which that key lets nobody in. A parent on their own device.
+  Future<void> setServerRecoveryKey(String? publicKey) => _locked(() async {
+        final id = familyId;
+        final f = family;
+        if (id == null || f == null) throw const InvalidInput('There is no family yet');
+        final old = serverRecoveryKeyOf(f);
+        await _commitNow([
+          _Draft(RecordType.family, id, Space.family, {
+            'recovery': {
+              'serverKey': publicKey,
+              'kept': old == null ? <String>[] : keptBy(_mat.store, key: old, hub: true),
+            },
+          }),
+        ]);
+      });
+
+  /// "That wasn't us", for a phone recovery let in ([recoveryOf]): removes it (rotating the keys
+  /// of what it held), and takes away what let it in while the family still trusts it, in the
+  /// same commit: that parent's words (keeping the devices they let in that this device holds,
+  /// the phone among them, so what it did stays on record), or the hub's help. Whoever used them
+  /// can then let nobody in, even with a recovery change clocked before this one. Returns that,
+  /// and the devices the phone let in since, directly or through devices it let in, still in
+  /// the family: for the parent to remove too ([revokeDevice]).
+  Future<DisownedRecovery> disownRecovery(String deviceId) => _locked(() async {
+        final d = device(deviceId);
+        final proof = d == null ? null : recoveryOf(d);
+        if (d == null || proof == null) throw const InvalidInput('That device wasn\'t let in by recovery');
+        final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
+        var retired = false;
+        final drafts = <_Draft>[..._retireInvites((k) => k.device == deviceId), if (!d.revoked) _revocation(deviceId)];
+        final m = member(proof.member);
+        final f = family;
+        if (proof.kind == RecoveryKind.words && m != null && recoveryKeyOf(m) == proof.key) {
+          retired = true;
+          drafts.add(_Draft(RecordType.member, m.id, Space.family, {
+            'recovery': {'key': null, 'kept': keptBy(_mat.store, key: proof.key, member: m.id)},
+          }));
+        } else if (proof.kind == RecoveryKind.hub && f != null && serverRecoveryKeyOf(f) == proof.key) {
+          retired = true;
+          drafts.add(_Draft(RecordType.family, familyId!, Space.family, {
+            'recovery': {'serverKey': null, 'kept': keptBy(_mat.store, key: proof.key, hub: true)},
+          }));
+        }
+        await _commitNow(drafts);
+        await _rotateNow(held);
+        return DisownedRecovery(member: proof.member, kind: proof.kind, retired: retired, letIn: letInBy(deviceId));
+      });
+
+  // ---------------------------------------------------------------- invites (invite_keys.dart)
+
+  /// Every invite key the family made, newest first, withdrawn and used ones too.
+  List<InviteKeyRecord> get inviteKeys => _memo('inviteKeys', const {RecordType.inviteKey}, visible: false, () {
+        return [
+          for (final e in _mat.store.ofType(RecordType.inviteKey))
+            if (e.space == Space.family) InviteKeyRecord(e.rec),
+        ]..sort((a, b) => b.rec.created.compareTo(a.rec.created));
+      });
+
+  /// The invite key [id], or null.
+  InviteKeyRecord? inviteKey(String id) {
+    final e = _mat.store.at(Space.family, RecordType.inviteKey, id);
+    return e == null ? null : InviteKeyRecord(e.rec);
+  }
+
+  /// How many more devices the invite key of [record] may let in, not counting [except].
+  int inviteUses(InviteKeyRecord record, {String? except}) => inviteUsesLeft(_mat.store, record, except: except);
+
+  /// The device an invite key let in, or null while nobody used it.
+  Device? usedInvite(String id) => devices.firstWhereOrNull((d) => inviteOf(d)?.invite == id);
+
+  /// Makes an invite that lets [uses] devices in at once, until [expires] (UTC milliseconds, at
+  /// most [inviteKeyMaxLife] away): as [member]'s own, or, for no one, as a shared screen or the
+  /// hub ([modes]). The public half of its key goes in the family's log, signed by this parent's
+  /// own device; the secret half goes in the invite. Returns the record's id ([inviteKeyIdOf] the
+  /// key), which the proof names.
+  Future<String> createInviteKey({
+    required String? member,
+    required String publicKey,
+    required int expires,
+    Set<DeviceMode> modes = const {DeviceMode.personal},
+    int uses = 1,
+  }) =>
+      _locked(() async {
+        if (member != null && this.member(member) == null) throw const InvalidInput('That person isn\'t in the family');
+        final id = inviteKeyIdOf(publicKey);
+        if (id == null) throw const InvalidInput('That isn\'t an invite key');
+        if (inviteKey(id) != null) throw const InvalidInput('That invite key was used before');
+        await _commitNow([
+          _Draft(RecordType.inviteKey, id, Space.family, {
+            'member': member,
+            if (modes.length != 1 || modes.single != DeviceMode.personal)
+              'modes': [for (final m in DeviceMode.values) if (modes.contains(m)) m.name],
+            if (uses != 1) 'uses': uses,
+            'key': publicKey,
+            'by': actor?.id,
+            'device': deviceId,
+            'expires': expires,
+          }),
+        ]);
+        return id;
+      });
+
+  /// Withdraws invite [id]: its key lets nobody else in, even a device clocked before this.
+  /// A device it already let in stays (it is named in `kept`).
+  Future<void> withdrawInviteKey(String id) => _locked(() async {
+        final k = inviteKey(id);
+        if (k == null) throw const InvalidInput('That invite doesn\'t exist');
+        if (k.key == null) return;
+        await _commitNow([_retire(k)]);
+      });
+
+  /// "That wasn't Dad", for a device an invite let in ([inviteOf]): removes it (rotating the
+  /// keys of what it held) and takes the invite's key away in the same commit, keeping the
+  /// device on record so what it did stays in History. Returns whose it was meant to be and
+  /// the devices it let in since, still in the family, for the parent to remove too.
+  Future<DisownedInvite> disownInvite(String deviceId) => _locked(() async {
+        final d = device(deviceId);
+        final proof = d == null ? null : inviteOf(d);
+        if (d == null || proof == null) throw const InvalidInput('That device didn\'t join with an invite');
+        final held = deviceId == this.deviceId ? const <String>{} : spacesForDevice(deviceId);
+        final k = inviteKey(proof.invite);
+        await _commitNow([
+          if (k != null && k.key != null) _retire(k),
+          ..._retireInvites((other) => other.device == deviceId),
+          if (!d.revoked) _revocation(deviceId),
+        ]);
+        await _rotateNow(held);
+        return DisownedInvite(member: proof.member, letIn: letInBy(deviceId));
+      });
+
+  /// Takes the keys away from the live invites [which] picks, each naming the devices it let in
+  /// that this device holds (which stay).
+  List<_Draft> _retireInvites(bool Function(InviteKeyRecord k) which) => [
+        for (final k in inviteKeys)
+          if (k.key != null && which(k)) _retire(k),
+      ];
+
+  _Draft _retire(InviteKeyRecord k) =>
+      _Draft(RecordType.inviteKey, k.id, Space.family, {'key': null, 'kept': inviteKeptBy(_mat.store, k.key!)});
+
+  /// The devices still in the family that [deviceId] approved, then those they approved, and
+  /// so on, each device's in the order it approved them.
+  List<Device> letInBy(String deviceId) {
+    final byApprover = <String, List<Device>>{};
+    for (final d in devices) {
+      // A device an invite let in approved itself: it counts as let in by the invite's device.
+      final invite = inviteOf(d);
+      final made = invite == null ? null : _mat.store.at(Space.family, RecordType.inviteKey, invite.invite);
+      final by = made != null ? InviteKeyRecord(made.rec).device : d.rec.fieldTimes['approved']?.device;
+      if (by != null && by != d.id && d.approved) (byApprover[by] ??= []).add(d);
+    }
+    for (final list in byApprover.values) {
+      list.sort((a, b) => a.rec.fieldTimes['approved']!.compareTo(b.rec.fieldTimes['approved']!));
+    }
+    final out = <Device>[];
+    final seen = {deviceId};
+    final queue = [deviceId];
+    while (queue.isNotEmpty) {
+      for (final d in byApprover[queue.removeAt(0)] ?? const <Device>[]) {
+        if (!seen.add(d.id)) continue;
+        queue.add(d.id);
+        if (!d.revoked) out.add(d);
+      }
+    }
+    return out;
+  }
+
   Future<String> addCategory({required String name, String icon = 'calendar'}) async {
     final id = newId();
     await _commit([_Draft(RecordType.category, id, Space.family, {'name': name, 'icon': icon})]);
@@ -608,40 +1298,538 @@ class Den {
   /// Undoes a removal: the record comes back exactly as it was, with whatever belonged to it (an
   /// event's changed occurrences, a list's items, a chore's completions). Needs the same
   /// permission as editing it.
-  Future<void> restore(String type, String id) async {
-    final e = _mat.store.find(type, id);
-    if (e == null || !readableSpaces.contains(e.space)) throw const InvalidInput('That doesn\'t exist');
-    if (!e.deleted) return;
-    await _commit([_Draft(type, id, e.space, {'_deleted': false})]);
+  Future<void> restore(String type, String id) => restoreAll(type, [id]);
+
+  /// [restore] for several records of one type, in one commit: the items "Clear done" removed.
+  Future<void> restoreAll(String type, Iterable<String> ids) async {
+    final drafts = <_Draft>[];
+    for (final id in ids) {
+      final e = _mat.store.find(type, id);
+      if (e == null || !readableSpaces.contains(e.space)) throw const InvalidInput('That doesn\'t exist');
+      if (e.deleted) drafts.add(_Draft(type, id, e.space, {'_deleted': false}));
+    }
+    await _commit(drafts);
+  }
+
+  // ---------------------------------------------------------------- recording, undo and previews
+
+  /// The zone value [recording] keeps its lists of change ids under.
+  static final Object _recorders = Object();
+
+  /// The zone value [attributed] keeps its origin under.
+  static final Object _origins = Object();
+
+  /// Runs [body] with every change this device commits from its zone marked as coming from
+  /// [origin] (`_from`, which History shows): what the in-app assistant changes while someone
+  /// talks to it reads "from the assistant". A removal carries no `_from`, and a change that
+  /// names its own origin keeps it.
+  Future<T> attributed<T>(CaptureOrigin origin, FutureOr<T> Function() body) =>
+      runZoned(() => Future<T>.sync(body), zoneValues: {_origins: origin});
+
+  /// Runs [body] and returns what it returned with the ids of the changes this device committed
+  /// while it ran: the changes an action made, for its receipt. Only writes made from [body]'s own
+  /// zone count, not writes other callers make meanwhile. Recordings nest; an outer one also sees
+  /// what an inner one recorded.
+  ///
+  /// With [undoOnError], a body that throws after writing has what it wrote taken back ([undo])
+  /// before the error is passed on, so an action that fails half way leaves nothing behind.
+  Future<Recorded<T>> recording<T>(FutureOr<T> Function() body, {bool undoOnError = false}) async {
+    final ids = <String>[];
+    final outer = Zone.current[_recorders];
+    final sinks = <List<String>>[if (outer is List<List<String>>) ...outer, ids];
+    try {
+      final value = await runZoned(() => Future<T>.sync(body), zoneValues: {_recorders: sinks});
+      return Recorded(value, List.unmodifiable(ids));
+    } on Object {
+      if (undoOnError && ids.isNotEmpty) {
+        try {
+          await undo(ids);
+        } on Object {
+          // The body's error is the one to report.
+        }
+      }
+      rethrow;
+    }
+  }
+
+  /// Takes back the changes [changeIds] names, field by field, as the actor and with the
+  /// permission each change back needs (refused as a whole, with [PermissionDenied], when one
+  /// isn't allowed):
+  ///
+  /// - a record they made is removed (and can be restored again);
+  /// - a record they removed comes back as it was ([restore]);
+  /// - a field they changed gets its old value back, one entry of a map field (`steps.<id>`,
+  ///   `patch.<field>`) at a time, ride drivers one leg at a time with the `rides` list older
+  ///   versions read written again from them (or an older version's list put back, when that
+  ///   was what the record read);
+  /// - points given or taken get a new adjustment the other way, since adjustments never change.
+  ///
+  /// What it leaves alone is reported in [UndoResult.skipped]: fields someone changed since
+  /// (theirs is newer), a record someone removed or restored since, and what Den can't take
+  /// back: adding or removing a person (removal revokes their devices and rotates keys), device
+  /// and AI-access changes, and asking for a reward.
+  Future<UndoResult> undo(Iterable<String> changeIds) => _locked(() async {
+        final plan = _planUndo(changeIds);
+        final made = await _commitNow(_closingRequests(plan.drafts));
+        return UndoResult(changes: [for (final c in made) c.id], skipped: plan.skipped);
+      });
+
+  /// Whether [undo] would write anything back for [changeIds] now. It may still be refused.
+  bool canUndo(Iterable<String> changeIds) {
+    try {
+      return _planUndo(changeIds).drafts.isNotEmpty;
+    } on InvalidInput {
+      return false;
+    }
+  }
+
+  /// A copy of this engine in memory, with the same log, keys and acting member, to try a change
+  /// on before making it (a preview). What it writes is never stored or sent: don't sync it.
+  /// Close it when done.
+  Future<Den> fork() async {
+    final storage = MemoryStorage();
+    await storage.appendChanges(List.of(_mat.log));
+    await storage.saveMeta({
+      ..._meta,
+      'counter': _counter,
+      'floor': Map<String, Object?>.of(_floor),
+      'spaceKeys': _keyringJson(),
+    });
+    final copy = await Den._open(storage, _keys, _now, copying: _mat);
+    copy
+      .._actingMember = _actingMember
+      .._actingUntil = _actingUntil
+      .._actingVia = _actingVia;
+    return copy;
+  }
+
+  static const String _trustRecords = 'Devices and AI access change only on a parent\'s own device';
+
+  /// What a field that was never set means, for fields an undo may have to write back that way
+  /// and whose schema takes no null. Other such fields are left as they are: without the rest
+  /// of the record's changes taken back they mean nothing (what a step was worth when checked).
+  static const Map<String, Object?> _unsetValues = {
+    'completion.done': false,
+    'eventException.cancelled': false,
+    'item.checked': false,
+    'item.toGroceries': false,
+    'event.allDay': false,
+    'event.countdown': false,
+    'list.pinned': false,
+    'subscription.skipAllDay': false,
+    'chore.active': true,
+    'reward.active': true,
+    'reward.needsApproval': true,
+    'family.pointsEnabled': true,
+    'family.colors': 'bright',
+  };
+
+  /// Whether [c] wrote [field]: the field itself, any entry of it when it's a map, or the whole
+  /// map when [field] is one entry.
+  static bool _touches(Change c, String field) {
+    final dot = field.indexOf('.');
+    for (final k in c.fields.keys) {
+      if (k == field) return true;
+      if (dot > 0 && k == field.substring(0, dot)) return true;
+      if (dot < 0 && k.startsWith('$field.')) return true;
+    }
+    return false;
+  }
+
+  /// Whether the actor may remove a completion, which needs completing anyone's chores.
+  bool get _mayRemoveCompletions {
+    final a = actor;
+    return a == null || can(a, DenAction.completeAnyChore);
+  }
+
+  /// A completion back to nothing done, for someone who may not remove it; null when it records
+  /// a swap, which only a removal takes back.
+  static Map<String, Object?>? _completionReset(Entry e) {
+    if (e.fields.containsKey('owner')) return null;
+    final steps = e.fields['steps'];
+    return {
+      if (e.fields['done'] == true || e.fields['doneBy'] != null) ...{'done': false, 'doneBy': null},
+      if (steps is Map)
+        for (final s in steps.entries)
+          if (s.value != null) 'steps.${s.key}': null,
+    };
+  }
+
+  /// Who has a chore on a completion's day before any swap.
+  String? _scheduledOwnerOf(Entry completion) {
+    final chore = _mat.store.at(completion.space, RecordType.chore, '${completion.fields['chore']}');
+    final date = completion.fields['date'];
+    if (chore == null || date is! String) return null;
+    return scheduledOwner(Chore(chore.rec), date, _weekStart);
+  }
+
+  static String _undoReason(String reason) {
+    final text = reason.trim().isEmpty ? 'Undo' : 'Undo: ${reason.trim()}';
+    return text.length > maxTitle ? text.substring(0, maxTitle) : text;
+  }
+
+  /// The drafts [undo] writes for [changeIds], newest record first, and what it leaves alone.
+  _UndoPlan _planUndo(Iterable<String> changeIds) {
+    final want = <String>{};
+    for (final id in changeIds) {
+      if (!_mat.contains(id)) throw const InvalidInput('Den doesn\'t know that change');
+      if (!_mat.rejected.containsKey(id)) want.add(id);
+    }
+    final drafts = <_Draft>[];
+    final skipped = <UndoSkip>[];
+    if (want.isEmpty) return _UndoPlan(drafts, skipped);
+    // Walk back from the newest valid change until every one to undo is found; the others met on
+    // the way came after the first of them.
+    final ours = <Applied>[];
+    final others = <Applied>[];
+    final applied = _mat.applied;
+    for (var i = applied.length - 1; i >= 0 && want.isNotEmpty; i--) {
+      final a = applied[i];
+      if (want.remove(a.change.id)) {
+        ours.add(a);
+      } else {
+        others.add(a);
+      }
+    }
+    String keyOf(Change c) => '${c.space}\u0000${c.type}\u0000${c.rid}';
+    // Record -> the changes to undo that touched it, oldest first.
+    final records = <String, List<Applied>>{};
+    for (final a in ours.reversed) {
+      (records[keyOf(a.change)] ??= []).add(a);
+    }
+    // Record -> later changes by anyone else, newest first.
+    final since = <String, List<Applied>>{};
+    for (final a in others) {
+      final k = keyOf(a.change);
+      if (records.containsKey(k)) (since[k] ??= []).add(a);
+    }
+    final readable = readableSpaces;
+    final me = actor;
+    // What was made last is taken back first: items before their list.
+    for (final k in records.keys.toList().reversed) {
+      final list = records[k]!;
+      final first = list.first;
+      final c0 = first.change;
+      final type = c0.type;
+      final entry = _mat.store.at(c0.space, type, c0.rid);
+      if (entry == null) continue;
+      if (!readable.contains(c0.space)) throw const InvalidInput('That doesn\'t exist');
+      final title = titleOf(entry, _mat.store);
+      UndoSkip skip(String reason, [String? field]) =>
+          UndoSkip(type: type, id: c0.rid, title: title, reason: reason, field: field);
+      _Draft draft(Map<String, Object?> fields) => _Draft(type, c0.rid, c0.space, fields);
+
+      if (type == RecordType.device || type == RecordType.connection) {
+        skipped.add(skip(_trustRecords));
+        continue;
+      }
+      if (type == RecordType.member && list.any((a) => a.created || a.change.fields.containsKey('_deleted'))) {
+        skipped.add(skip(first.created
+            ? 'Den can\'t take back adding someone; a parent can remove them in the app'
+            : 'Den can\'t bring back someone who was removed, since their devices were too; a parent can add them again'));
+        continue;
+      }
+      if (type == RecordType.redemption && first.created) {
+        skipped.add(skip('Asking for a reward can\'t be taken back; a parent can decline it'));
+        continue;
+      }
+      if (type == RecordType.adjustment) {
+        if (first.created) {
+          final adjustment = Adjustment(entry.rec);
+          drafts.add(_Draft(RecordType.adjustment, newId(), Space.family, {
+            'member': adjustment.member,
+            'delta': -adjustment.delta,
+            'reason': _undoReason(adjustment.reason),
+            'by': me?.id,
+          }));
+        }
+        continue;
+      }
+      if (first.created) {
+        if (entry.deleted) continue;
+        if (type == RecordType.completion && !_mayRemoveCompletions) {
+          final reset = _completionReset(entry);
+          if (reset == null) {
+            skipped.add(skip('${me?.name ?? 'This screen'} can\'t take back a swap; a parent can'));
+          } else if (reset.isNotEmpty) {
+            drafts.add(draft(reset));
+          }
+          continue;
+        }
+        drafts.add(draft({'_deleted': true}));
+        continue;
+      }
+
+      final later = since[k] ?? const <Applied>[];
+      if (later.any((o) => o.change.fields.containsKey('_deleted'))) {
+        skipped.add(skip(entry.deleted ? 'It was removed since' : 'It was removed and put back since'));
+        continue;
+      }
+      final firstTouch = <String, Applied>{};
+      for (final a in list) {
+        for (final f in a.change.fields.keys) {
+          if (f != '_via' && f != '_from') firstTouch.putIfAbsent(f, () => a);
+        }
+      }
+      // Ride drivers and the list written for older versions alongside them
+      // ([_olderVersionsFirst]): see [_undoRides].
+      final mirror = switch (type) { RecordType.event => 'rides', RecordType.eventException => 'patch.rides', _ => null };
+      bool isDrivers(String f) => type == RecordType.event ? f == 'drivers' || f.startsWith('drivers.') : f.startsWith('patch.drivers.');
+      final rides = mirror != null && firstTouch.keys.any(isDrivers);
+      UndoSkip? mirrorSkipped;
+      final restore = <String, Object?>{};
+      for (final e in firstTouch.entries) {
+        final f = e.key;
+        final at = e.value;
+        final dot = f.indexOf('.');
+        if (dot > 0) {
+          // An entry written after its whole map: taking the map back covers it.
+          final whole = firstTouch[f.substring(0, dot)];
+          if (whole != null && changeOrder(whole.change, at.change) < 0) continue;
+        }
+        // Only ever written as it already was (an occurrence's `event` and `occurrence`, which every
+        // change to it names): nothing to take back, and nobody's change since is in the way.
+        if (!at.absent.contains(f) &&
+            list.every((a) => !a.change.fields.containsKey(f) || const DeepCollectionEquality().equals(a.change.fields[f], at.before[f]))) {
+          continue;
+        }
+        final newer = later.firstWhereOrNull((o) => o.change.hlc > at.change.hlc && _touches(o.change, f));
+        if (newer != null) {
+          final s = skip('${_historyEntry(newer).actorName} changed it since', f);
+          if (rides && f == mirror) {
+            mirrorSkipped = s;
+          } else {
+            skipped.add(s);
+          }
+          continue;
+        }
+        Object? value = copyJson(at.before[f]);
+        if (value == null && at.absent.contains(f)) {
+          final unset = '$type.$f';
+          if (type == RecordType.completion && f == 'owner') {
+            // A swap to anyone stores a null owner: unswapped is the owner the schedule gives.
+            value = _scheduledOwnerOf(entry);
+          } else if (_unsetValues.containsKey(unset)) {
+            value = _unsetValues[unset];
+          } else if (checkFields(type, {f: null}, creating: false) != null) {
+            continue;
+          }
+        }
+        restore[f] = value;
+      }
+      // An entry first written before its whole map goes into the map's old value.
+      for (final f in [for (final key in restore.keys) if (key.indexOf('.') > 0) key]) {
+        final dot = f.indexOf('.');
+        final head = f.substring(0, dot);
+        if (!restore.containsKey(head)) continue;
+        final value = restore.remove(f);
+        final whole = restore[head];
+        if (whole is Map) {
+          final merged = Map<String, Object?>.from(whole);
+          if (value == null && firstTouch[f]!.absent.contains(f)) {
+            merged.remove(f.substring(dot + 1));
+          } else {
+            merged[f.substring(dot + 1)] = value;
+          }
+          restore[head] = merged;
+        }
+      }
+      if (rides) {
+        final unset = {for (final e in firstTouch.entries) if (e.value.absent.contains(e.key)) e.key};
+        if (!_undoRides(entry, c0, restore, isDrivers, unset)) mirrorSkipped = null;
+      }
+      if (mirrorSkipped != null) skipped.add(mirrorSkipped);
+      if (firstTouch.containsKey('_deleted')) {
+        final wasRemoved = restore.remove('_deleted') == true;
+        if (wasRemoved) {
+          // They restored it: put back what else they changed, then remove it again.
+          if (restore.isNotEmpty) drafts.add(draft(restore));
+          drafts.add(draft({'_deleted': true}));
+        } else {
+          drafts.add(draft({'_deleted': false, ...restore}));
+        }
+      } else if (restore.isNotEmpty) {
+        drafts.add(draft(restore));
+      }
+    }
+    return _UndoPlan(drafts, skipped);
+  }
+
+  /// What [_planUndo] puts back of an event's or occurrence's rides, in [restore] (the field
+  /// values it would put back) for changes from [c0] on. When the record read its whole `rides`
+  /// list before [c0] (an older version's, or one occurrence's own legs), that list comes back,
+  /// with the drivers kept out of its way. Otherwise the drivers come back, field by field, and
+  /// the list is written again from what they read then: the one there may only have said what
+  /// drivers said at some other time. An event's leg the changes added ([unset] names the fields
+  /// they first set) goes, with the whole map. Returns whether the list itself comes back, so
+  /// that someone having changed it since is worth saying.
+  bool _undoRides(Entry entry, Change c0, Map<String, Object?> restore, bool Function(String) isDrivers, Set<String> unset) {
+    final event = entry.type == RecordType.event;
+    final before = _recBefore(c0);
+    final whole = before != null && (event ? !Event(before).readsDrivers : EventException(before).ridesWhole);
+    if (whole) {
+      if (event) {
+        restore.removeWhere((k, _) => isDrivers(k));
+      } else {
+        for (final k in [...restore.keys.where(isDrivers)]) {
+          restore[k] = null;
+        }
+      }
+      return true;
+    }
+    restore.remove(event ? 'rides' : 'patch.rides');
+    if (!restore.keys.any(isDrivers)) return false;
+    if (event) {
+      final map = restore['drivers'] ?? entry.fields['drivers'];
+      final added = {for (final k in restore.keys) if (k.startsWith('drivers.') && unset.contains(k)) k};
+      final after = <String, Object?>{
+        if (map is Map) ...Map<String, Object?>.from(map),
+        for (final k in restore.keys)
+          if (k.startsWith('drivers.') && !added.contains(k)) k.substring(8): restore[k],
+      }..removeWhere((leg, _) => added.contains('drivers.$leg'));
+      if (added.isNotEmpty) {
+        restore
+          ..removeWhere((k, _) => k.startsWith('drivers.'))
+          ..['drivers'] = after;
+      }
+      restore['rides'] = ridesJson([
+        for (final leg in rideLegs)
+          if (after.containsKey(leg)) Ride(leg, after[leg] as String?),
+      ]);
+    } else {
+      final after = {
+        ...EventException(entry.rec).patch,
+        for (final e in restore.entries)
+          if (e.key.startsWith('patch.')) e.key.substring(6): e.value,
+      }..remove('rides');
+      final series = _mat.store.at(entry.space, RecordType.event, '${entry.fields['event']}');
+      final own = rideLegs.any((leg) => after['drivers.$leg'] != null);
+      restore['patch.rides'] = own && series != null ? ridesJson(EventException.ridesOver(Event(series.rec).rides, after)) : null;
+    }
+    return false;
+  }
+
+  /// The record [c] changed as it was just before [c]: its own earlier changes, applied again.
+  Rec? _recBefore(Change c) {
+    final store = RecordStore();
+    for (final a in _mat.applied) {
+      final x = a.change;
+      if (changeOrder(x, c) >= 0) break;
+      if (x.type == c.type && x.rid == c.rid && x.space == c.space) store.apply(x);
+    }
+    return store.at(c.space, c.type, c.rid)?.rec;
   }
 
   // ---------------------------------------------------------------- calendar
 
   /// Live events the actor may see, by start.
-  List<Event> get events => _memo('events', () {
-        return [for (final e in _visibleLive(RecordType.event)) Event(e.rec)]
+  List<Event> get events => _memo('events', const {RecordType.event}, () {
+        return [for (final e in _visibleLive(RecordType.event)) _eventOf(e.rec)]
           ..sort((a, b) => a.start != b.start ? a.start.compareTo(b.start) : a.id.compareTo(b.id));
       });
 
-  Map<String, Map<int, EventException>> get _exceptions => _memo('exceptions', () {
-        final out = <String, Map<int, EventException>>{};
+  /// One [Event] per version of an event record, wherever it's asked for.
+  final Expando<Event> _eventViews = Expando();
+  Event _eventOf(Rec rec) => _eventViews[rec] ??= Event(rec);
+
+  /// The live events the actor may see, sorted for windows: those that happen once and have no
+  /// changed occurrence, by start (with the longest one's length, how far before a window one can
+  /// start and still reach into it), and the rest, which repeat or have changed occurrences.
+  ({List<Entry> once, List<int> starts, int longest, List<Entry> others}) get _eventIndex =>
+      _memo('eventIndex', const {RecordType.event, RecordType.eventException}, () {
+        final exceptions = _exceptions;
+        final once = <(int, Entry)>[];
+        final others = <Entry>[];
+        var longest = 0;
+        for (final e in _visibleLive(RecordType.event)) {
+          final f = e.fields;
+          if (_repeats(f['rrule']) || (exceptions[e.space]?.containsKey(e.id) ?? false)) {
+            others.add(e);
+          } else {
+            final start = (f['start'] as num).toInt();
+            once.add((start, e));
+            final length = (f['end'] as num).toInt() - start;
+            if (length > longest) longest = length;
+          }
+        }
+        once.sort((a, b) {
+          final s = a.$1.compareTo(b.$1);
+          return s != 0 ? s : a.$2.id.compareTo(b.$2.id);
+        });
+        return (once: [for (final o in once) o.$2], starts: [for (final o in once) o.$1], longest: longest, others: others);
+      });
+
+  /// Whether an event with this `rrule` repeats, as [ruleOf] reads it.
+  static bool _repeats(Object? rrule) {
+    if (rrule is! String || rrule.isEmpty) return false;
+    try {
+      RecurrenceRule.parse(rrule);
+      return true;
+    } on FormatException {
+      return false;
+    }
+  }
+
+  /// Changed occurrences the actor may see: space -> event id -> series start -> the change.
+  Map<String, Map<String, Map<int, EventException>>> get _exceptions =>
+      _memo('exceptions', const {RecordType.eventException}, () {
+        final out = <String, Map<String, Map<int, EventException>>>{};
         for (final e in _visibleLive(RecordType.eventException)) {
           final x = EventException(e.rec);
-          (out['${e.space}|${x.event}'] ??= {})[x.occurrence] = x;
+          ((out[e.space] ??= {})[x.event] ??= {})[x.occurrence] = x;
         }
         return out;
       });
 
-  Map<int, EventException> _exceptionsFor(Event e) => _exceptions['${e.space}|${e.id}'] ?? const {};
+  Map<int, EventException> _exceptionsFor(Event e) => _exceptions[e.space]?[e.id] ?? const {};
 
   /// Occurrences overlapping [start, end) (UTC ms), exceptions applied, sorted by start.
-  List<Occurrence> occurrences(int start, int end) {
-    final zoneName = _zone;
-    final out = <Occurrence>[
-      for (final e in events) ...occurrencesOf(e, _exceptionsFor(e), start, end, zoneName),
-    ];
-    out.sort(compareOccurrences);
-    return out;
+  List<Occurrence> occurrences(int start, int end) => List.of(_occurrencesIn(start, end));
+
+  /// [occurrences], shared: kept until an event, an occurrence or the family's time zone changes,
+  /// and then worked out again only for the events that changed.
+  List<Occurrence> _occurrencesIn(int start, int end) =>
+      _memo('occurrences|$start|$end', const {RecordType.event, RecordType.eventException, RecordType.family}, () {
+        final zoneName = _zone;
+        final index = _eventIndex;
+        final out = <Occurrence>[];
+        // Events that happen once: only those starting in the window, or before it by no more
+        // than the longest one lasts, can reach into it.
+        final starts = index.starts;
+        var lo = 0, hi = starts.length;
+        final from = start - index.longest;
+        while (lo < hi) {
+          final mid = (lo + hi) >> 1;
+          if (starts[mid] < from) {
+            lo = mid + 1;
+          } else {
+            hi = mid;
+          }
+        }
+        for (var i = lo; i < starts.length && starts[i] < end; i++) {
+          out.addAll(occurrencesOf(_eventOf(index.once[i].rec), const {}, start, end, zoneName));
+        }
+        // The rest, kept per event and window until the event or its occurrences change.
+        final kept = _occurrenceCache;
+        final next = <Rec, _EventOccurrences>{};
+        for (final entry in index.others) {
+          final e = _eventOf(entry.rec);
+          final exceptions = _exceptionsFor(e);
+          var cached = kept[e.rec];
+          if (cached == null || !cached.holds(exceptions, zoneName)) cached = _EventOccurrences(exceptions, zoneName);
+          next[e.rec] = cached;
+          out.addAll(cached.window(start, end) ?? cached.keep(start, end, occurrencesOf(e, exceptions, start, end, zoneName)));
+        }
+        _occurrenceCache = next;
+        out.sort(_compareOccurrences);
+        return out;
+      });
+
+  /// [compareOccurrences], then which occurrence of the series: so an occurrence moved onto
+  /// another's start always sorts the same way.
+  static int _compareOccurrences(Occurrence a, Occurrence b) {
+    final c = compareOccurrences(a, b);
+    return c != 0 ? c : a.seriesStart.compareTo(b.seriesStart);
   }
 
   Event? event(String id) {
@@ -673,6 +1861,7 @@ class Den {
     CaptureOrigin? from,
   }) async {
     final id = newId();
+    _checkDrivers(rides, const []);
     await _commit([
       _Draft(RecordType.event, id, space ?? _spaceFor(audience), {
         'title': title,
@@ -689,7 +1878,7 @@ class Den {
         'source': source == null || source.kind == 'manual'
             ? {'kind': 'manual'}
             : {'kind': source.kind, 'ref': source.ref, 'label': source.label},
-        'rides': [for (final r in rides) {'leg': r.leg, 'driver': r.driver}],
+        if (rides.isEmpty) 'rides': const <Object?>[] else ...eventRideFields(rides),
         'countdown': countdown,
         '_from': ?from?.toJson(),
       }),
@@ -709,21 +1898,25 @@ class Den {
   }) async {
     final entry = _requireLive(RecordType.event, id, 'That event doesn\'t exist');
     final event = Event(entry.rec);
-    final fields = _cleanPatch(patch, {...eventFields.keys, 'audience'});
+    final fields = _cleanPatch(patch, {...eventFields.keys.where((k) => k != 'drivers'), 'audience'});
     final audience = fields.remove('audience');
     if (fields.containsKey('rrule')) fields['rrule'] = _normalizeRule(fields['rrule'] as String?);
-    if (fields['rides'] is List) {
-      fields['rides'] = [for (final r in fields['rides'] as List) r is Ride ? {'leg': r.leg, 'driver': r.driver} : r];
-    }
+    final rides = fields.containsKey('rides') ? _ridesInput(fields.remove('rides')) : null;
     if (audience != null) {
       final target = _spaceFor(_audienceOf(audience));
       if (target != entry.space) {
-        await _commit(_moveDrafts(entry, target, fields, RecordType.eventException, 'event'));
+        if (rides != null) _checkDrivers(rides, event.rides);
+        await _commit(_moveDrafts(entry, target, fields, RecordType.eventException, 'event', rides: rides));
         return;
       }
     }
-    if (fields.isEmpty) return;
+    if (fields.isEmpty && rides == null) return;
     if (event.rrule == null || scope == EditScope.all) {
+      if (rides != null) {
+        _checkDrivers(rides, event.rides);
+        fields.addAll(eventRideFields(rides, existing: event));
+        if (fields.isEmpty) return;
+      }
       await _commit(_seriesDrafts(entry, event, fields, occurrence));
       return;
     }
@@ -733,21 +1926,32 @@ class Den {
       if (fields.keys.any((k) => !patchableEventFields.contains(k))) {
         throw const InvalidInput('That can only be changed for the whole series');
       }
+      final x = _exceptionAt(entry, occurrence);
+      final ridesFields = <String, Object?>{};
+      if (rides != null) {
+        _checkDrivers(rides, x?.rides(event.rides) ?? event.rides);
+        ridesFields.addAll(occurrenceRideFields(rides, event.rides, x));
+      }
+      if (fields.isEmpty && ridesFields.isEmpty) return;
       await _commit([
         _Draft(RecordType.eventException, '$id@$occurrence', entry.space, {
           'event': id,
           'occurrence': occurrence,
           'cancelled': false,
           for (final e in fields.entries) 'patch.${e.key}': e.value,
+          ...ridesFields,
         }),
       ]);
       return;
     }
+    if (rides != null) _checkDrivers(rides, event.rides);
     if (occurrence == firstSeriesStart(event, _zone)) {
+      if (rides != null) fields.addAll(eventRideFields(rides, existing: event));
+      if (fields.isEmpty) return;
       await _commit(_seriesDrafts(entry, event, fields, occurrence));
       return;
     }
-    await _commit(_splitDrafts(entry, event, fields, occurrence));
+    await _commit(_splitDrafts(entry, event, fields, occurrence, rides: rides));
   }
 
   List<_Draft> _seriesDrafts(Entry entry, Event event, Map<String, Object?> fields, int? occurrence) {
@@ -755,15 +1959,19 @@ class Den {
     final out = Map<String, Object?>.of(fields);
     final zoneName = eventZone(event, _zone);
     final repeating = event.rrule != null;
-    final duration = event.end - event.start;
     if (fields['start'] is int) {
       final newStart = fields['start'] as int;
       final anchor = occurrence ?? event.start;
       final delta = wallDelta(zoneName, anchor, newStart);
-      final length = fields['end'] is int ? (fields['end'] as int) - newStart : duration;
       final seriesStart = repeating ? shiftWall(zoneName, event.start, delta) : newStart;
+      final newEnd = fields['end'] is int ? fields['end'] as int : null;
       out['start'] = seriesStart;
-      out['end'] = seriesStart + length;
+      // The length people see, on the wall clock (or in days), carries over to the series start.
+      out['end'] = newEnd == null
+          ? occurrenceEnd(event, seriesStart, _zone)
+          : seriesStart == newStart
+              ? newEnd
+              : shiftWall(zoneName, seriesStart, wallDelta(zoneName, newStart, newEnd));
       if (repeating && delta != Duration.zero) {
         for (final x in _exceptionsFor(event).values) {
           final moved = shiftWall(zoneName, x.occurrence, delta);
@@ -774,29 +1982,29 @@ class Den {
               'event': event.id,
               'occurrence': moved,
               'cancelled': x.cancelled,
-              'patch': x.patch,
+              'patch': _patchToCopy(x, _seriesRidesAfter(event, fields)),
             }));
         }
       }
     } else if (fields['end'] is int && repeating && occurrence != null) {
-      out['end'] = event.start + (fields['end'] as int) - occurrence;
+      out['end'] = shiftWall(zoneName, event.start, wallDelta(zoneName, occurrence, fields['end'] as int));
     }
     return [_Draft(RecordType.event, event.id, entry.space, out), ...drafts];
   }
 
-  List<_Draft> _splitDrafts(Entry entry, Event event, Map<String, Object?> fields, int occurrence) {
+  List<_Draft> _splitDrafts(Entry entry, Event event, Map<String, Object?> fields, int occurrence, {List<Ride>? rides}) {
     final rule = ruleOf(event)!;
     final zoneName = eventZone(event, _zone);
     final before = countBefore(event, _zone, occurrence);
     final oldRule = rule.count != null ? rule.copyWith(count: () => before) : rule.endingBefore(occurrence);
     final newRule = rule.count != null ? rule.copyWith(count: () => rule.count! - before) : rule;
-    final duration = event.end - event.start;
     final nextId = newId();
     final newStart = fields['start'] is int ? fields['start'] as int : occurrence;
-    final newEnd = fields['end'] is int ? fields['end'] as int : newStart + duration;
+    final newEnd = fields['end'] is int ? fields['end'] as int : occurrenceEnd(event, newStart, _zone);
     final next = <String, Object?>{
       for (final k in eventFields.keys)
         if (entry.fields.containsKey(k)) k: entry.fields[k],
+      ..._eventRidesToCopy(entry, rides),
       ...fields,
       'start': newStart,
       'end': newEnd,
@@ -816,7 +2024,7 @@ class Den {
           'event': nextId,
           'occurrence': moved,
           'cancelled': x.cancelled,
-          'patch': x.patch,
+          'patch': _patchToCopy(x, rides ?? event.rides),
         }));
     }
     return drafts;
@@ -857,35 +2065,136 @@ class Den {
     ]);
   }
 
-  /// Sets the driver of a ride leg for one occurrence (null releases it).
+  /// Undoes [deleteEvent] with the same [scope] and [occurrence], in one commit: the event with
+  /// its changed occurrences, the one occurrence, or every occurrence from [occurrence] on, where
+  /// [rrule] is the repeat rule the series had before.
+  Future<void> restoreEvent(String id, {EditScope scope = EditScope.all, int? occurrence, String? rrule}) async {
+    final entry = _mat.store.find(RecordType.event, id);
+    if (entry == null || !readableSpaces.contains(entry.space)) throw const InvalidInput('That event doesn\'t exist');
+    if (entry.deleted || scope == EditScope.all) {
+      await restore(RecordType.event, id);
+      return;
+    }
+    if (occurrence == null) throw const InvalidInput('Choose which occurrence to put back');
+    final exceptions = [
+      for (final x in _mat.store.ofType(RecordType.eventException))
+        if (x.space == entry.space && x.fields['event'] == id) x,
+    ];
+    if (scope == EditScope.one) {
+      final x = exceptions.firstWhereOrNull((x) => x.id == '$id@$occurrence' && !x.deleted);
+      if (x == null || x.fields['cancelled'] != true) return;
+      await _commit([_Draft(RecordType.eventException, x.id, entry.space, {'cancelled': false})]);
+      return;
+    }
+    if (rrule == null) throw const InvalidInput('Choose how the event repeated');
+    // The changed occurrences removed with the series' end: removed no earlier than its rule changed.
+    final from = occurrence;
+    final cut = entry.times['rrule'];
+    bool removedWithEnd(Entry x) {
+      final at = x.times['_deleted'];
+      final when = x.fields['occurrence'];
+      return x.deleted && cut != null && at != null && !(at < cut) && when is int && when >= from;
+    }
+
+    await _commit([
+      _Draft(RecordType.event, id, entry.space, {'rrule': _normalizeRule(rrule)}),
+      for (final x in exceptions)
+        if (removedWithEnd(x)) _Draft(RecordType.eventException, x.id, entry.space, {'_deleted': false}),
+    ]);
+  }
+
+  /// Sets the driver of a ride leg for one occurrence (null releases it). Only a parent or an
+  /// adult drives ([canDrive]).
+  ///
+  /// It writes that leg alone (`drivers.<leg>`, or `patch.drivers.<leg>` for one occurrence of a
+  /// series), so two people taking different legs at once both count, after the whole `rides`
+  /// list older versions read ([eventRideFields], [occurrenceRideFields]). Nothing is written
+  /// when that leg already has that driver.
   Future<void> claimRide(String eventId, {required int occurrence, required String leg, String? driver}) async {
-    if (leg != 'to' && leg != 'from') throw const InvalidInput('A ride leg is "to" or "from"');
-    if (driver != null && member(driver) == null) throw const InvalidInput('That person isn\'t in the family');
+    if (!rideLegs.contains(leg)) throw const InvalidInput('A ride leg is "to" or "from"');
+    if (driver != null) _checkDriver(driver);
     final entry = _requireLive(RecordType.event, eventId, 'That event doesn\'t exist');
     final event = Event(entry.rec);
     if (event.rrule == null) {
-      await _commit([
-        _Draft(RecordType.event, eventId, entry.space, {'rides': ridesWith(event.rides, leg, driver)}),
-      ]);
+      final fields = eventRideFields(ridesWith(event.rides, leg, driver), existing: event);
+      if (fields.isNotEmpty) await _commit([_Draft(RecordType.event, eventId, entry.space, fields)]);
       return;
     }
     if (!isSeriesStart(event, _zone, occurrence)) throw const InvalidInput('That isn\'t an occurrence of this event');
-    final xid = '$eventId@$occurrence';
-    final existing = _mat.store.liveAt(entry.space, RecordType.eventException, xid);
-    final x = existing == null ? null : EventException(existing.rec);
-    final rides = buildOccurrence(event, occurrence, x).rides;
+    final x = _exceptionAt(entry, occurrence);
+    final fields = occurrenceRideFields(ridesWith(x?.rides(event.rides) ?? event.rides, leg, driver), event.rides, x);
+    if (fields.isEmpty) return;
     await _commit([
-      _Draft(RecordType.eventException, xid, entry.space, {
+      _Draft(RecordType.eventException, '$eventId@$occurrence', entry.space, {
         'event': eventId,
         'occurrence': occurrence,
-        'patch.rides': ridesWith(rides, leg, driver),
+        ...fields,
       }),
     ]);
   }
 
+  /// The live change to the occurrence of [entry] whose series start is [occurrence], if any.
+  EventException? _exceptionAt(Entry entry, int occurrence) {
+    final x = _mat.store.liveAt(entry.space, RecordType.eventException, '${entry.id}@$occurrence');
+    return x == null ? null : EventException(x.rec);
+  }
+
+  /// Refuses a driver who isn't in the family or may not drive ([canDrive]).
+  void _checkDriver(String id) {
+    final m = member(id);
+    if (m == null) throw const InvalidInput('That person isn\'t in the family');
+    if (!canDrive(m)) throw InvalidInput('${m.name} can\'t drive: in Den, parents and adults drive');
+  }
+
+  /// [_checkDriver] for each driver [rides] names that [now] doesn't already have on that leg.
+  void _checkDrivers(List<Ride> rides, List<Ride> now) {
+    for (final r in rides) {
+      final driver = r.driver;
+      if (driver != null && !now.any((n) => n.leg == r.leg && n.driver == driver)) _checkDriver(driver);
+    }
+  }
+
+  /// Rides as [updateEvent] takes them: [Ride]s, or maps like the `rides` field's.
+  static List<Ride> _ridesInput(Object? raw) {
+    if (raw == null) return const [];
+    if (raw is! List) throw const InvalidInput('Rides must be a list');
+    return [
+      for (final Object? r in raw)
+        switch (r) {
+          final Ride ride when rideLegs.contains(ride.leg) => ride,
+          final Map map when rideLegs.contains(map['leg']) && (map['driver'] == null || map['driver'] is String) =>
+            Ride(map['leg'] as String, map['driver'] as String?),
+          _ => throw const InvalidInput('Each ride is a leg, "to" or "from", and who drives it'),
+        },
+    ];
+  }
+
+  /// The ride fields of an event record about to be copied into a new one (a split series, a
+  /// move to another space), which gets one time for all its fields: what it reads now, or
+  /// [rides] instead, in both forms. Nothing for an event that has only a `rides` list and isn't
+  /// given new ones: its copy reads the same.
+  static Map<String, Object?> _eventRidesToCopy(Entry entry, List<Ride>? rides) {
+    if (rides == null && !entry.fields.containsKey('drivers')) return const {};
+    return eventRideFields(rides ?? Event(entry.rec).rides);
+  }
+
+  /// An occurrence's patch to copy into a new record, which gets one time for all of it, over its
+  /// series' [series]: without its per-leg drivers when `patch.rides` says its rides whole, so the
+  /// copy reads the same; else with `rides` as it reads now, for older versions.
+  static Map<String, Object?> _patchToCopy(EventException x, List<Ride> series) {
+    final patch = x.patch;
+    if (x.ridesWhole) return patch..removeWhere((k, _) => k.startsWith('drivers.'));
+    if (rideLegs.any((leg) => patch['drivers.$leg'] != null)) patch['rides'] = ridesJson(x.rides(series));
+    return patch;
+  }
+
+  /// The rides a series has once [fields] (a series edit's) are written.
+  static List<Ride> _seriesRidesAfter(Event event, Map<String, Object?> fields) =>
+      fields['rides'] is List ? _ridesInput(fields['rides']) : event.rides;
+
   // ---------------------------------------------------------------- chores
 
-  List<Chore> get chores => _memo('chores', () {
+  List<Chore> get chores => _memo('chores', const {RecordType.chore}, () {
         return [for (final e in _visibleLive(RecordType.chore)) Chore(e.rec)]
           ..sort((a, b) {
             final t = a.title.compareTo(b.title);
@@ -904,10 +2213,21 @@ class Den {
   }
 
   /// Chores scheduled on [date] (local), plus earlier one-off chores still not done.
-  List<ChoreDay> choresOn(String date) {
+  List<ChoreDay> choresOn(String date) => List.of(_choresOn(date));
+
+  /// What chores and their check-offs show, with who's who and the family's week.
+  static const Set<String> _choreReads = {RecordType.chore, RecordType.completion, RecordType.member, RecordType.family};
+
+  /// [choresOn], shared: kept until a chore, a check-off or who's who changes, or the minute does
+  /// (a chore turns late at its due time).
+  List<ChoreDay> _choresOn(String date) {
     final today = todayDate();
     final wall = wallTime(_zone, _now());
     final nowMinutes = wall.hour * 60 + wall.minute;
+    return _memo('choresOn|$date|$today|$nowMinutes', _choreReads, () => _choresOnNow(date, today, nowMinutes));
+  }
+
+  List<ChoreDay> _choresOnNow(String date, String today, int nowMinutes) {
     ChoreDay dayOf(Chore c, String d) => choreDay(
           chore: c,
           date: d,
@@ -940,6 +2260,22 @@ class Den {
       final t = a.chore.title.compareTo(b.chore.title);
       return t != 0 ? t : a.chore.id.compareTo(b.chore.id);
     });
+    return out;
+  }
+
+  /// Chores not done by their day, oldest first: every chore on the chart in the [days] days
+  /// before today that wasn't done (a repeating one too, which [choresOn] doesn't carry over),
+  /// one-off chores until they're done, and today's chores past their due time.
+  List<ChoreDay> lateChores({int days = 2}) {
+    final today = todayDate();
+    final seen = <String>{};
+    final out = <ChoreDay>[];
+    for (var i = days; i >= 0; i--) {
+      for (final cd in _choresOn(addDays(today, -i))) {
+        if (cd.late && seen.add('${cd.chore.id}@${cd.date}')) out.add(cd);
+      }
+    }
+    mergeSort(out, compare: (a, b) => a.date.compareTo(b.date));
     return out;
   }
 
@@ -1010,7 +2346,19 @@ class Den {
     if (audience != null) {
       final target = _spaceFor(_audienceOf(audience));
       if (target != entry.space) {
-        await _commit(_moveDrafts(entry, target, fields, RecordType.completion, 'chore'));
+        final after = {...entry.fields, ...fields};
+        final prices = {
+          for (final s in (after['steps'] as List?) ?? const <Object?>[])
+            if (s is Map) '${s['id']}': (s['points'] as num?)?.toInt() ?? 0,
+        };
+        final price = (after['points'] as num?)?.toInt() ?? 0;
+        final pricer = _mayPrice;
+        await _commit([
+          for (final d in _moveDrafts(entry, target, fields, RecordType.completion, 'chore'))
+            d.type == RecordType.completion && d.space == target
+                ? _Draft(d.type, d.rid, d.space, _movedCompletion(d.fields, price, prices, pricer: pricer))
+                : d,
+        ]);
         return;
       }
     }
@@ -1018,9 +2366,57 @@ class Den {
     await _commit([_Draft(RecordType.chore, id, entry.space, fields)]);
   }
 
+  /// Whether the actor may set what chores are worth: a points manager, or a hub acting for a
+  /// connection with no member.
+  bool get _mayPrice {
+    final a = actor;
+    if (a == null) return thisDevice?.mode == DeviceMode.hub;
+    return can(a, DenAction.managePoints);
+  }
+
+  /// A completion's fields as copied with its chore into another space: checks of steps the
+  /// chore no longer has are left behind, and someone who doesn't set prices carries over what
+  /// it was worth only up to what the chore is worth now.
+  static Map<String, Object?> _movedCompletion(
+    Map<String, Object?> fields,
+    int price,
+    Map<String, int> prices, {
+    required bool pricer,
+  }) {
+    int capped(int v, int max) => pricer || v <= max ? v : max;
+    final out = Map<String, Object?>.of(fields);
+    final steps = out['steps'];
+    if (steps is Map) {
+      out['steps'] = {
+        for (final e in steps.entries)
+          if (prices.containsKey(e.key)) '${e.key}': e.value,
+      };
+    }
+    final worth = out['stepPoints'];
+    if (worth is Map) {
+      out['stepPoints'] = {
+        for (final e in worth.entries)
+          if (prices.containsKey(e.key) && e.value is int) '${e.key}': capped(e.value as int, prices[e.key]!),
+      };
+    }
+    final points = out['points'];
+    if (points is int) out['points'] = capped(points, price);
+    return out;
+  }
+
   Future<void> deleteChore(String id) async {
     final entry = _requireLive(RecordType.chore, id, 'That chore doesn\'t exist');
     await _commit([_Draft(RecordType.chore, id, entry.space, {'_deleted': true})]);
+  }
+
+  /// Refuses checking off a day still to come for anyone who may complete only their own chores
+  /// (a kid, a guest, open check-off): its stars would count now. Someone who may complete
+  /// anyone's can, when a chore really was done early.
+  void _notAhead(String date) {
+    if (date.compareTo(todayDate()) <= 0) return;
+    final a = actor;
+    if (a != null && can(a, DenAction.completeAnyChore)) return;
+    throw const InvalidInput('That day hasn\'t come yet; a chore is checked off on its day');
   }
 
   /// Who gets credit for a step checked on a shared screen with nobody signed in.
@@ -1037,6 +2433,7 @@ class Den {
   Future<void> setChoreDoneBy(String choreId, String date, bool done, String? doneBy) async {
     if (!isLocalDate(date)) throw const InvalidInput('That isn\'t a date');
     if (doneBy != null && member(doneBy) == null) throw const InvalidInput('That person isn\'t in the family');
+    if (done) _notAhead(date);
     final chore = _requireChore(choreId);
     final completion = _completionOf(chore, date);
     final me = doneBy;
@@ -1048,10 +2445,12 @@ class Den {
         'date': date,
         'done': done,
         'doneBy': done ? me : null,
+        if (done) 'points': chore.points,
         for (final s in chore.steps)
-          if (done && checked[s.id] == null)
-            'steps.${s.id}': me ?? _anonymousChecker(s, owner)
-          else if (!done && checked[s.id] != null)
+          if (done && checked[s.id] == null) ...{
+            'steps.${s.id}': me ?? _anonymousChecker(s, owner),
+            'stepPoints.${s.id}': s.points,
+          } else if (!done && checked[s.id] != null)
             'steps.${s.id}': null,
       }),
     ]);
@@ -1067,6 +2466,7 @@ class Den {
   Future<void> setStepBy(String choreId, String date, String stepId, bool checked, String? checkedBy) async {
     if (!isLocalDate(date)) throw const InvalidInput('That isn\'t a date');
     if (checkedBy != null && member(checkedBy) == null) throw const InvalidInput('That person isn\'t in the family');
+    if (checked) _notAhead(date);
     final chore = _requireChore(choreId);
     final step = chore.steps.firstWhereOrNull((s) => s.id == stepId);
     if (step == null) throw const InvalidInput('That chore has no such step');
@@ -1082,6 +2482,7 @@ class Den {
         'chore': chore.id,
         'date': date,
         'steps.$stepId': value,
+        if (checked) ...{'stepPoints.$stepId': step.points, 'points': chore.points},
         if (checked && allChecked && !wasDone) ...{'done': true, 'doneBy': me},
         if (!checked && wasDone) ...{'done': false, 'doneBy': null},
       }),
@@ -1108,7 +2509,7 @@ class Den {
   // ---------------------------------------------------------------- lists
 
   /// Lists in display order with their items: pinned first, then by order.
-  List<ListState> get lists => _memo('lists', () {
+  List<ListState> get lists => _memo('lists', const {RecordType.list, RecordType.item}, () {
         final items = <String, List<Item>>{};
         for (final e in _visibleLive(RecordType.item)) {
           final item = Item(e.rec);
@@ -1362,6 +2763,21 @@ class Den {
 
   PointsSummary points() => pointsSummary(_pointsInput());
 
+  /// Every reward the actor may see, retired ones too ([PointsSummary.rewards] has only those
+  /// that can be asked for), cheapest first.
+  List<Reward> get rewards => _memo('rewards', const {RecordType.reward}, () {
+        return [for (final e in _visibleLive(RecordType.reward)) Reward(e.rec)]
+          ..sort((a, b) {
+            final c = a.cost.compareTo(b.cost);
+            return c != 0 ? c : a.title.compareTo(b.title);
+          });
+      });
+
+  /// Every goal the actor may see, by title.
+  List<Goal> get goals => _memo('goals', const {RecordType.goal}, () {
+        return [for (final e in _visibleLive(RecordType.goal)) Goal(e.rec)]..sort((a, b) => a.title.compareTo(b.title));
+      });
+
   Future<void> adjustPoints(String memberId, int delta, String reason) async {
     if (member(memberId) == null) throw const InvalidInput('That person isn\'t in the family');
     await _commit([
@@ -1425,40 +2841,92 @@ class Den {
     return id;
   }
 
+  /// Changes a reward. Retiring it (`active: false`) declines the requests for it still waiting
+  /// for a parent, so nobody waits on a reward that's gone; bringing it back doesn't reopen
+  /// them (undo does).
   Future<void> updateReward(String id, Map<String, Object?> patch) async {
     _requireLive(RecordType.reward, id, 'That reward doesn\'t exist');
-    await _commit([
+    await _commit(_closingRequests([
       _Draft(RecordType.reward, id, Space.family,
           _cleanPatch(patch, typeSpecs[RecordType.reward]!.fields.keys.toSet())),
-    ]);
+    ]));
+  }
+
+  /// [drafts], plus a decline for every request waiting on a reward they retire or remove. A
+  /// request the actor made for themselves stays: nobody decides their own.
+  List<_Draft> _closingRequests(List<_Draft> drafts) {
+    final closing = {
+      for (final d in drafts)
+        if (d.type == RecordType.reward && (d.fields['active'] == false || d.fields['_deleted'] == true)) d.rid,
+    };
+    if (closing.isEmpty) return drafts;
+    final who = actor?.id;
+    return [
+      ...drafts,
+      for (final e in _mat.store.liveOfType(RecordType.redemption))
+        if (e.space == Space.family &&
+            closing.contains(e.fields['reward']) &&
+            e.fields['status'] == RedemptionStatus.requested.name &&
+            (who == null || e.fields['member'] != who))
+          _Draft(RecordType.redemption, e.id, Space.family, {
+            'status': RedemptionStatus.declined.name,
+            'decidedBy': who,
+          }),
+    ];
   }
 
   /// Asks to spend points on a reward for [member] (default: the actor). Rewards that don't
-  /// need approval are approved at once. Refused when the balance is short.
+  /// need approval, and anyone's whose parents turned off "Rewards need my OK"
+  /// ([Family.rewardsNeedOk]), are approved at once, except a points manager's own request,
+  /// which always waits for someone else (they could make any reward need no asking). Refused
+  /// when the balance, less what requests still waiting for a parent would spend, is short.
   Future<String> requestReward(String rewardId, {String? member}) async {
     final rewardEntry = _requireLive(RecordType.reward, rewardId, 'That reward doesn\'t exist');
     final reward = Reward(rewardEntry.rec);
     final who = member ?? actor?.id;
     if (who == null || this.member(who) == null) throw const InvalidInput('Choose who the reward is for');
-    final balance = points().totals[who] ?? 0;
-    if (balance < reward.cost) {
-      throw InvalidInput('${this.member(who)!.name} needs ${reward.cost - balance} more stars for ${reward.title}');
+    final summary = points();
+    final available = summary.available(who);
+    if (available < reward.cost) {
+      final waiting = (summary.totals[who] ?? 0) - available;
+      throw InvalidInput('${this.member(who)!.name} needs ${reward.cost - available} more stars for ${reward.title}'
+          '${waiting > 0 ? ', since $waiting are waiting on a request' : ''}');
     }
     final id = newId();
+    final a = actor;
+    final ownAsManager = a != null && a.id == who && can(a, DenAction.managePoints);
     await _commit([
       _Draft(RecordType.redemption, id, Space.family, {
         'reward': rewardId,
         'member': who,
         'cost': reward.cost,
-        'status': reward.needsApproval ? RedemptionStatus.requested.name : RedemptionStatus.approved.name,
+        // No OK is needed when the reward says so or a parent let this person trade without asking.
+        'status': ownAsManager || (reward.needsApproval && (family?.rewardsNeedOk(who) ?? true))
+            ? RedemptionStatus.requested.name
+            : RedemptionStatus.approved.name,
         'decidedBy': null,
       }),
     ]);
     return id;
   }
 
+  /// Approving is refused when the balance no longer covers the request, so approving several
+  /// requests made at once can't overdraw it.
+  /// Approving needs someone other than the person it's for and the person who asked for it
+  /// (a parent asking on a kid's behalf waits for the other parent, like anyone): otherwise a
+  /// connection acting as a parent could ask and approve in two calls.
   Future<void> decideRedemption(String id, {required bool approve}) async {
-    _requireLive(RecordType.redemption, id, 'That request doesn\'t exist');
+    final r = Redemption(_requireLive(RecordType.redemption, id, 'That request doesn\'t exist').rec);
+    final who = actor?.id;
+    if (approve && r.status == RedemptionStatus.requested && who != null && (r.member == who || r.rec.createdBy == who)) {
+      throw PermissionDenied(r.member == who
+          ? 'Someone else needs to approve ${member(who)?.name ?? 'your'}\'s reward'
+          : '${member(who)?.name ?? 'Whoever'} asked for this, so someone else needs to approve it');
+    }
+    final balance = points().totals[r.member] ?? 0;
+    if (approve && r.status == RedemptionStatus.requested && balance < r.cost) {
+      throw InvalidInput('${member(r.member)?.name ?? 'They'} has $balance stars, not the ${r.cost} this costs');
+    }
     await _commit([
       _Draft(RecordType.redemption, id, Space.family, {
         'status': approve ? RedemptionStatus.approved.name : RedemptionStatus.declined.name,
@@ -1469,34 +2937,47 @@ class Den {
 
   // ---------------------------------------------------------------- AI and automation connections
 
-  List<Connection> get connections => _memo('connections', () {
+  List<Connection> get connections => _memo('connections', const {RecordType.connection}, () {
         return [for (final e in _visibleLive(RecordType.connection)) Connection(e.rec)]
           ..sort((a, b) => a.label.compareTo(b.label));
       });
 
   /// Creates an active token connection and returns the bearer token, which is shown once and
-  /// stored only as a hash. Parents only.
+  /// stored only as a hash. Parents only. It acts as [member], by default the parent making it:
+  /// every connection acts as someone, so "me" means a person and a request and its approval
+  /// can be told apart. [tz] is the time zone its person lives in, when not the family's.
   Future<String> addTokenConnection({
     required String label,
     required Set<Scope> scopes,
     String? member,
     int? expires,
+    String? tz,
   }) async {
     if (member != null && this.member(member) == null) throw const InvalidInput('That person isn\'t in the family');
+    final who = member ?? actor?.id;
     final token = newBearerToken();
     await _commit([
       _Draft(RecordType.connection, newId(), Space.parents, {
         'label': label,
         'kind': ConnectionKind.token.name,
         'scopes': _scopeNames(scopes),
-        'member': member,
+        'member': ?who,
         'tokenHash': hashToken(token),
         'client': null,
         'status': ConnectionStatus.active.name,
         'expires': expires,
+        'tz': ?_connectionZone(tz),
       }),
     ]);
     return token;
+  }
+
+  /// [tz] as a connection keeps it: null for none or the family's own zone.
+  String? _connectionZone(String? tz) {
+    final t = tz?.trim();
+    if (t == null || t.isEmpty || t == _zone) return null;
+    if (!isKnownZone(t)) throw InvalidInput('Den doesn\'t know the time zone "$t"');
+    return t;
   }
 
   List<String> _scopeNames(Set<Scope> scopes) => [for (final s in Scope.values) if (scopes.contains(s)) s.name];
@@ -1519,22 +3000,56 @@ class Den {
     return id;
   }
 
-  /// Parents approve a pending connection, optionally narrowing its scopes and choosing whose
-  /// permissions it acts with.
-  Future<void> approveConnection(String id, {Set<Scope>? scopes, String? member}) async {
+  /// Parents approve a pending connection, optionally narrowing its scopes, and choose who it acts
+  /// as: [member], by default the parent approving it. [tz] is the time zone its person lives
+  /// in, when not the family's.
+  Future<void> approveConnection(String id, {Set<Scope>? scopes, String? member, String? tz}) async {
     _requireLive(RecordType.connection, id, 'That connection doesn\'t exist');
     if (member != null && this.member(member) == null) throw const InvalidInput('That person isn\'t in the family');
+    final who = member ?? actor?.id;
     await _commit([
       _Draft(RecordType.connection, id, Space.parents, {
         'status': ConnectionStatus.active.name,
         if (scopes != null) 'scopes': _scopeNames(scopes),
-        'member': ?member,
+        'member': ?who,
+        'tz': ?_connectionZone(tz),
       }),
     ]);
   }
 
-  /// Records the hash of an OAuth access token issued for an approved connection (hubs only).
-  Future<void> setConnectionToken(String id, String tokenHash, {int? expires}) async {
+  /// Changes who an approved connection acts as, or the time zone its person lives in (an empty
+  /// [tz] for the family's). Parents, on their own device.
+  Future<void> updateConnection(String id, {String? member, String? tz}) async {
+    final entry = _requireLive(RecordType.connection, id, 'That connection doesn\'t exist');
+    if (member != null && this.member(member) == null) throw const InvalidInput('That person isn\'t in the family');
+    final current = Connection(entry.rec);
+    final zone = tz == null ? current.tz : _connectionZone(tz);
+    final fields = <String, Object?>{
+      if (member != null && member != current.member) 'member': member,
+      if (zone != current.tz) 'tz': zone,
+    };
+    if (fields.isEmpty) return;
+    await _commit([_Draft(RecordType.connection, id, Space.parents, fields)]);
+  }
+
+  /// Who [c] acts as: its member, or, for a connection approved before every connection was
+  /// bound to a person, the parent who let it in (the owner of the device that made it active;
+  /// only a parent's own device can). Null when that parent is no longer a parent in the
+  /// family, or [c] isn't active: such a connection only reads.
+  String? connectionActsAs(Connection c) {
+    final named = c.member;
+    if (named != null) return member(named) == null ? null : named;
+    if (c.status != ConnectionStatus.active) return null;
+    final at = c.rec.fieldTimes['status'];
+    final owner = at == null ? null : device(at.device)?.member;
+    final m = owner == null ? null : member(owner);
+    return m != null && m.isParent ? m.id : null;
+  }
+
+  /// Records the hash of an OAuth access token issued for an approved connection, or clears it
+  /// with null (hubs only). A hub now keeps the hashes of the hourly tokens it issues in its own
+  /// state, not the log, and clears the one an older hub recorded here.
+  Future<void> setConnectionToken(String id, String? tokenHash, {int? expires}) async {
     if (thisDevice?.mode != DeviceMode.hub) throw const PermissionDenied('Only the hub issues access tokens');
     _requireLive(RecordType.connection, id, 'That connection doesn\'t exist');
     await _commit([
@@ -1563,10 +3078,149 @@ class Den {
     return null;
   }
 
+  /// The live connection with [id], whoever is acting: for a hub checking an access token it
+  /// keeps the hash of outside the log.
+  Connection? connectionWithId(String id) {
+    final e = _mat.store.liveAt(Space.parents, RecordType.connection, id);
+    return e == null ? null : Connection(e.rec);
+  }
+
+  // ---------------------------------------------------------------- pictures, sitters, privacy
+
+  /// A person's photo record, or null.
+  Photo? photo(String id) {
+    final e = _mat.store.liveAt(Space.family, RecordType.photo, id);
+    return e == null ? null : Photo(e.rec);
+  }
+
+  /// Makes [bytes] (a [Photo.side]-pixel square JPEG or WebP of at most [Photo.maxBytes], made
+  /// small on this device) [memberId]'s picture: a new photo record in the family space and
+  /// their `picture` naming it, in one commit. A parent may set anyone's; a person their own,
+  /// a kid when a parent allows it ([Family.ownsPicture]). Returns the photo's id.
+  Future<String> setPhoto(String memberId, List<int> bytes) async {
+    final m = member(memberId);
+    if (m == null) throw const InvalidInput('That person isn\'t in the family');
+    final format = photoFormat(bytes);
+    if (format == null) throw const InvalidInput('A photo must be a JPEG or WebP');
+    if (bytes.length > Photo.maxBytes) throw InvalidInput('That photo is too big (${Photo.maxBytes ~/ 1024} KB at most)');
+    if (!canChangePicture(actor, m, family)) {
+      throw PermissionDenied('${actor?.name ?? 'This screen'} can\'t change ${m.name}\'s picture');
+    }
+    final id = newId();
+    await _commit([
+      _Draft(RecordType.photo, id, Space.family, {'member': memberId, 'mime': format.mime, 'data': base64.encode(bytes)}),
+      _Draft(RecordType.member, memberId, Space.family, {'picture': Picture.photo(id)}),
+    ]);
+    return id;
+  }
+
+  /// Sets [memberId]'s picture to one from the pack or their initial (or back to a photo of
+  /// theirs). A parent may set anyone's; a person their own, a kid when a parent allows it.
+  Future<void> setPicture(String memberId, String picture) async {
+    final m = member(memberId);
+    if (m == null) throw const InvalidInput('That person isn\'t in the family');
+    if (!Picture.valid(picture)) throw const InvalidInput('That isn\'t a picture Den knows');
+    if (!canChangePicture(actor, m, family)) {
+      throw PermissionDenied('${actor?.name ?? 'This screen'} can\'t change ${m.name}\'s picture');
+    }
+    await _commit([_Draft(RecordType.member, memberId, Space.family, {'picture': picture})]);
+  }
+
+  /// Whether [deviceId] belongs to a sitter whose last day ([Member.until]) has passed, by this
+  /// device's clock: a device serving sync stops syncing with it, whether or not a parent's
+  /// device has removed it yet.
+  bool accessEnded(String deviceId) {
+    final d = device(deviceId);
+    final m = d?.member == null ? null : member(d!.member!);
+    return m != null && m.accessEndedOn(todayDate());
+  }
+
+  /// Removes the devices of every sitter whose last day has passed, the usual way (a
+  /// revocation naming the last change held from each, and new keys for what they held).
+  /// Only a parent's own device does this, when Den opens there; anywhere else it does
+  /// nothing. Returns the sitters whose devices it removed.
+  Future<List<String>> endExpiredAccess() => _locked(() async {
+        if (!_parentsOwnDevice) return const <String>[];
+        final today = todayDate();
+        final ended = <String>[];
+        final owned = <String>[];
+        for (final m in members) {
+          if (!m.accessEndedOn(today)) continue;
+          final theirs = _liveDevicesOf(m.id);
+          if (theirs.isEmpty) continue;
+          ended.add(m.id);
+          owned.addAll(theirs);
+        }
+        if (owned.isEmpty) return const <String>[];
+        final held = {for (final d in owned) ...spacesForDevice(d)};
+        await _commitNow([for (final d in owned) _revocation(d)]);
+        await _rotateNow(held);
+        return ended;
+      });
+
+  /// Ends a sitter's access now: their last day becomes yesterday and their devices are
+  /// removed, as [endExpiredAccess] would. To let them back in, a parent sets a later day and
+  /// invites them again.
+  Future<void> endAccessNow(String memberId) => _locked(() async {
+        final m = member(memberId);
+        if (m == null) throw const InvalidInput('That person isn\'t in the family');
+        if (m.role != Role.guest) throw const InvalidInput('Only a sitter\'s access has a last day');
+        final today = todayDate();
+        final theirs = _liveDevicesOf(memberId);
+        final held = {for (final d in theirs) ...spacesForDevice(d)};
+        await _commitNow([
+          if (!m.accessEndedOn(today)) _Draft(RecordType.member, memberId, Space.family, {'until': addDays(today, -1)}),
+          for (final d in theirs) _revocation(d),
+        ]);
+        await _rotateNow(held);
+      });
+
+  /// [memberId]'s approved devices that aren't removed, besides this one.
+  List<String> _liveDevicesOf(String memberId) => [
+        for (final d in devices)
+          if (d.member == memberId && d.approved && !d.revoked && d.id != deviceId) d.id,
+      ];
+
+  /// A parent acting on their own device: a personal one, or the hub its owner is using.
+  bool get _parentsOwnDevice {
+    final d = thisDevice, a = actor;
+    if (d == null || a == null || !a.isParent || !isApproved) return false;
+    return d.mode == DeviceMode.personal || (d.mode == DeviceMode.hub && d.member == a.id && actingVia == null);
+  }
+
+  /// The latest change that turned whether parents see [memberId]'s "Just me" items one way or
+  /// the other, or null when nobody ever has: what that person's Today and History tell them.
+  PrivacyChange? privacyChange(String memberId) =>
+      _memo('privacy|$memberId', const {RecordType.family}, visible: false, () => _privacyChange(memberId));
+
+  PrivacyChange? _privacyChange(String memberId) {
+    final entry = 'oversight.$memberId';
+    bool sees(Object? v) => (v is Map ? v['parentsSeePrivate'] : null) as bool? ?? true;
+    final applied = _mat.appliedToFamily;
+    for (var i = applied.length - 1; i >= 0; i--) {
+      final a = applied[i];
+      final c = a.change;
+      if (c.type != RecordType.family) continue;
+      final Object? before, after;
+      if (c.fields.containsKey(entry)) {
+        before = a.before[entry];
+        after = c.fields[entry];
+      } else if (c.fields['oversight'] is Map) {
+        before = (a.before['oversight'] as Map?)?[memberId];
+        after = (c.fields['oversight']! as Map)[memberId];
+      } else {
+        continue;
+      }
+      if (sees(before) == sees(after)) continue;
+      return PrivacyChange(change: c.id, member: memberId, by: c.actor, at: c.hlc.millis, parentsSee: sees(after));
+    }
+    return null;
+  }
+
   // ---------------------------------------------------------------- calendar feeds
 
   /// Subscribed ICS calendars the actor may see (parents and hubs), by label.
-  List<Subscription> get subscriptions => _memo('subscriptions', () {
+  List<Subscription> get subscriptions => _memo('subscriptions', const {RecordType.subscription}, () {
         return [for (final e in _visibleLive(RecordType.subscription)) Subscription(e.rec)]
           ..sort((a, b) {
             final l = a.label.compareTo(b.label);
@@ -1666,7 +3320,7 @@ class Den {
       }
     }
     if (dates.isNotEmpty) {
-      final all = occurrences(dayStart(dates.first), dayStart(addDays(dates.last, 1)));
+      final all = _occurrencesIn(dayStart(dates.first), dayStart(addDays(dates.last, 1)));
       for (final d in dates) {
         final start = dayStart(d), end = dayStart(addDays(d, 1));
         for (final o in all) {
@@ -1681,7 +3335,7 @@ class Den {
             }
           }
         }
-        for (final cd in choresOn(d)) {
+        for (final cd in _choresOn(d)) {
           if (cd.date == d && cd.owner != null && ids.contains(cd.owner)) cellChores[(d, cd.owner!)]!.add(cd);
         }
       }
@@ -1704,6 +3358,7 @@ class Den {
       if (!readable.contains(c.space)) continue;
       if (type != null && c.type != type) continue;
       if (member != null && c.actor != member) continue;
+      if (_driversEcho(c)) continue;
       final entry = _historyEntry(a);
       if (q != null && q.isNotEmpty && !_historyMatches(entry, q)) continue;
       out.add(entry);
@@ -1737,13 +3392,80 @@ class Den {
       space: c.space,
       via: c.fields['_via'] as String?,
       from: CaptureOrigin.parse(c.fields['_from']),
+      change: c.id,
     );
+  }
+
+  /// History entries for the changes [changeIds] names (what [recording] returned, say), oldest
+  /// first. Changes that didn't count, or that the actor may not read, are left out.
+  List<HistoryEntry> historyOf(Iterable<String> changeIds) {
+    final want = changeIds.toSet();
+    final readable = readableSpaces;
+    final out = <HistoryEntry>[];
+    final applied = _mat.applied;
+    for (var i = applied.length - 1; i >= 0 && want.isNotEmpty; i--) {
+      final a = applied[i];
+      if (!want.remove(a.change.id) || !readable.contains(a.change.space) || _driversEcho(a.change)) continue;
+      out.add(_historyEntry(a));
+    }
+    return out.reversed.toList();
+  }
+
+  /// Whether [c] writes only an event's `drivers` (an occurrence's `patch.drivers.<leg>`), saying
+  /// again what the `rides` its device wrote in the change just before says
+  /// ([_olderVersionsFirst]). History shows the two as one change: that one.
+  bool _driversEcho(Change c) {
+    final event = c.type == RecordType.event;
+    if (!event && c.type != RecordType.eventException) return false;
+    final legs = <String, Object?>{};
+    var whole = false;
+    for (final e in c.fields.entries) {
+      final k = e.key;
+      if (k.startsWith('_')) continue;
+      if (event && k == 'drivers' && e.value is Map) {
+        whole = true;
+        legs.addAll(Map<String, Object?>.from(e.value as Map));
+      } else if (event && k.startsWith('drivers.')) {
+        legs[k.substring(8)] = e.value;
+      } else if (!event && k.startsWith('patch.drivers.')) {
+        legs[k.substring(14)] = e.value;
+      } else {
+        return false;
+      }
+    }
+    if (legs.isEmpty && !whole) return false;
+    final colon = c.id.lastIndexOf(':');
+    final counter = int.tryParse(c.id.substring(colon + 1));
+    if (colon < 0 || counter == null) return false;
+    final before = _mat.byId('${c.id.substring(0, colon)}:${counter - 1}');
+    if (before == null || before.type != c.type || before.rid != c.rid || before.space != c.space) return false;
+    if (_mat.rejected.containsKey(before.id)) return false;
+    final patch = before.fields['patch'];
+    final rides = event ? before.fields['rides'] : before.fields['patch.rides'] ?? (patch is Map ? patch['rides'] : null);
+    if (rides is! List) return false;
+    final said = {for (final r in rides.reversed) if (r is Map) r['leg']: r['driver']};
+    if (whole && said.length != legs.length) return false;
+    for (final e in legs.entries) {
+      // A leg handed back to the series: the list says the series' driver, which isn't here.
+      if (!event && e.value == null) continue;
+      if (!said.containsKey(e.key) || said[e.key] != (e.value == '' ? null : e.value)) return false;
+    }
+    return true;
   }
 
   static Object? _redact(String field, Object? value) {
     if (value == null) return null;
     if (field == 'signIn' && value is Map) return {'kind': value['kind']};
     if (field == 'tokenHash' || field == 'pubkey' || field == 'xpub') return '•••';
+    if (field == 'recovery' && value is Map) {
+      return value.containsKey('kind')
+          ? {'kind': value['kind'], 'member': value['member']}
+          : {'on': (value['key'] ?? value['serverKey']) != null};
+    }
+    // A device's invite proof says which invite and for whom; an invite's key says only that it
+    // is there (it lets someone in) or was taken away.
+    if (field == 'invite' && value is Map) return {'invite': value['invite'], 'member': value['member'], 'mode': value['mode']};
+    if (field == 'key' && value is String) return '•••';
     return value;
   }
 
@@ -1762,9 +3484,24 @@ class Den {
         e.diffs.any((d) => has(d.after) || has(d.before));
   }
 
-  List<SearchHit> search(String query, {int limit = 50}) {
+  /// Words a question asked of search carries that don't name anything.
+  static const Set<String> _searchFiller = {
+    'a', 'an', 'the', 'is', 'are', 'when', 'what', 'where', 'who', 'at', 'on', 'in', 'for', 'to', 'of', 'my', 'our',
+    'and', 'with', 'next', 'this', 'whats', "what's", 'find',
+  };
+
+  /// Finds people, events, chores, lists and items by words, best first. A record matches when
+  /// the whole query is in its title (best), in its place or notes, or when every word of the
+  /// query is somewhere in it: its title, place, notes, store, list, or the people it's for (so
+  /// "dentist jimmy" finds Jimmy's dentist visit, and "Jimmy" his events and chores too). A word
+  /// of four letters or more also matches one a letter or two off ("socer"). Removed things,
+  /// which History keeps, are left out unless [includeHistory].
+  List<SearchHit> search(String query, {int limit = 50, bool includeHistory = false}) {
     final q = query.trim().toLowerCase();
     if (q.isEmpty) return const [];
+    final all = searchWords(q);
+    final content = [for (final w in all) if (!_searchFiller.contains(w)) w];
+    final words = content.isEmpty ? all : content;
     final hits = <(int, int, SearchHit)>[];
     final seen = <String>{};
     int rank(String text) {
@@ -1775,39 +3512,60 @@ class Den {
       return t.contains(q) ? 3 : -1;
     }
 
-    void add(int typeOrder, String text, SearchHit hit, [List<String> also = const []]) {
+    void add(int typeOrder, String text, SearchHit hit, [List<String> also = const [], List<String> people = const []]) {
       var r = rank(text);
       for (final extra in also) {
         final ar = rank(extra);
         if (ar >= 0 && (r < 0 || ar + 4 < r)) r = ar + 4;
       }
+      if (r < 0 && words.isNotEmpty) {
+        // People's names count from three letters on: "ma" typed on the way to "Maya" shouldn't
+        // list everything of hers yet.
+        final named = words.every((w) => w.length >= 3) ? people : const <String>[];
+        final hay = searchWords([text, ...also, ...named].join(' ').toLowerCase());
+        final exact = words.every((w) => hay.any((h) => h.startsWith(w) || (w.length >= 3 && h.contains(w))));
+        if (exact) {
+          r = 8;
+        } else if (words.every((w) => hay.any((h) => h.startsWith(w) || nearlySame(w, h)))) {
+          r = 10;
+        }
+      }
       if (r < 0 || !seen.add('${hit.type}/${hit.id}')) return;
       hits.add((r, typeOrder, hit));
     }
 
+    List<String> names(Iterable<String> ids) => [for (final id in ids) ?member(id)?.name];
     for (final m in members) {
       add(0, m.name, SearchHit(type: RecordType.member, id: m.id, title: m.name));
     }
     final now = _now();
     for (final e in events) {
       final next = seriesStarts(e, _zone, notBefore: now).firstOrNull ?? e.start;
-      add(1, e.title, SearchHit(type: RecordType.event, id: e.id, title: e.title, detail: e.location.isEmpty ? null : e.location, when: next), [e.location, e.notes]);
+      add(1, e.title, SearchHit(type: RecordType.event, id: e.id, title: e.title, detail: e.location.isEmpty ? null : e.location, when: next),
+          [e.location, e.notes], names(e.assignees));
     }
     for (final c in chores) {
-      add(2, c.title, SearchHit(type: RecordType.chore, id: c.id, title: c.title), [c.notes]);
+      final owners = switch (c.owner) {
+        OwnerMember(:final id) => [id],
+        OwnerRotation(:final ids) => ids,
+        OwnerAnyone() => const <String>[],
+      };
+      add(2, c.title, SearchHit(type: RecordType.chore, id: c.id, title: c.title), [c.notes], names(owners));
     }
     for (final l in lists) {
       add(3, l.list.title, SearchHit(type: RecordType.list, id: l.list.id, title: l.list.title));
       for (final i in l.items) {
-        add(4, i.text, SearchHit(type: RecordType.item, id: i.id, title: i.text, detail: l.list.title), [i.store ?? '']);
+        add(4, i.text, SearchHit(type: RecordType.item, id: i.id, title: i.text, detail: l.list.title), [i.store ?? ''], [l.list.title]);
       }
     }
-    final readable = readableSpaces;
-    for (final a in _mat.applied.reversed) {
-      final c = a.change;
-      if (!readable.contains(c.space) || a.title.isEmpty) continue;
-      if (!const {RecordType.event, RecordType.chore, RecordType.list, RecordType.item}.contains(c.type)) continue;
-      add(5, a.title, SearchHit(type: c.type, id: c.rid, title: a.title, detail: 'History', when: c.hlc.millis));
+    if (includeHistory) {
+      final readable = readableSpaces;
+      for (final a in _mat.applied.reversed) {
+        final c = a.change;
+        if (!readable.contains(c.space) || a.title.isEmpty) continue;
+        if (!const {RecordType.event, RecordType.chore, RecordType.list, RecordType.item}.contains(c.type)) continue;
+        add(12, a.title, SearchHit(type: c.type, id: c.rid, title: a.title, detail: 'History', when: c.hlc.millis));
+      }
     }
     hits.sort((a, b) {
       if (a.$1 != b.$1) return a.$1.compareTo(b.$1);
@@ -1821,7 +3579,17 @@ class Den {
       joinNames([for (final id in ids) member(id)?.name ?? 'someone']);
 
   List<Gap> gaps(int start, int end) {
-    final occ = occurrences(start, end);
+    final today = todayDate();
+    final wall = wallTime(_zone, _now());
+    final nowMinutes = wall.hour * 60 + wall.minute;
+    return List.of(_memo('gaps|$start|$end|$today|$nowMinutes', const {
+      RecordType.event, RecordType.eventException, RecordType.chore, RecordType.completion, //
+      RecordType.member, RecordType.family,
+    }, () => _gapsNow(start, end)));
+  }
+
+  List<Gap> _gapsNow(int start, int end) {
+    final occ = _occurrencesIn(start, end);
     final out = <Gap>[];
     for (final o in occ) {
       for (final r in o.rides) {
@@ -1830,18 +3598,19 @@ class Den {
         final message = r.leg == 'from'
             ? (who.isEmpty ? 'Nobody is picking up from ${o.title}' : 'Nobody is picking up $who from ${o.title}')
             : (who.isEmpty ? 'Nobody is driving to ${o.title}' : 'Nobody is driving $who to ${o.title}');
-        out.add(Gap(kind: GapKind.noDriver, message: message, occurrences: [o], members: o.assignees));
+        out.add(Gap(kind: GapKind.noDriver, message: message, occurrences: [o], members: o.assignees, leg: r.leg));
       }
     }
+    // Only people named on both events: an event for everyone would flag nearly everything.
     final everyoneIds = [for (final m in members) m.id];
-    final timed = occ.where((o) => !o.allDay && o.end > o.start).toList();
+    final timed = occ.where((o) => !o.allDay && o.end > o.start && o.assignees.isNotEmpty).toList();
+    // [occ] is sorted by start, so the events overlapping timed[i] that start no earlier are the
+    // run right after it: a sweep, not every pair.
     for (var i = 0; i < timed.length; i++) {
-      for (var j = i + 1; j < timed.length; j++) {
+      for (var j = i + 1; j < timed.length && timed[j].start < timed[i].end; j++) {
         final a = timed[i], b = timed[j];
         if (!(a.start < b.end && b.start < a.end)) continue;
-        final pa = a.assignees.isEmpty ? everyoneIds : a.assignees;
-        final pb = b.assignees.isEmpty ? everyoneIds : b.assignees;
-        final both = [for (final id in everyoneIds) if (pa.contains(id) && pb.contains(id)) id];
+        final both = [for (final id in everyoneIds) if (a.assignees.contains(id) && b.assignees.contains(id)) id];
         if (both.isEmpty) continue;
         out.add(Gap(
           kind: GapKind.overlap,
@@ -1851,12 +3620,49 @@ class Den {
         ));
       }
     }
+    out.addAll(_busyDrivers(occ));
     final today = todayDate();
     if (dayStart(today) < end && dayStart(addDays(today, 1)) > start) {
-      for (final cd in choresOn(today)) {
+      for (final cd in _choresOn(today)) {
         if (cd.date == today && cd.owner == null && !cd.done) {
           out.add(Gap(kind: GapKind.unowned, message: '${cd.chore.title} is up for grabs', occurrences: const []));
         }
+      }
+    }
+    return out;
+  }
+
+  /// How close two rides by one driver may be, from different places: a leg is driven at its
+  /// event's start (to) or end (from).
+  static const int rideGap = 30 * 60 * 1000;
+
+  /// Someone driving two places at once: two ride legs of different occurrences, less than
+  /// [rideGap] apart, with the same driver, unless both events are at the same place.
+  List<Gap> _busyDrivers(List<Occurrence> occ) {
+    final legs = <(String, int, Occurrence)>[
+      for (final o in occ)
+        if (!o.allDay)
+          for (final r in o.rides)
+            if (r.driver != null) (r.driver!, r.leg == 'from' ? o.end : o.start, o),
+    ]..sort((a, b) => a.$2.compareTo(b.$2));
+    final out = <Gap>[];
+    final seen = <String>{};
+    String key(Occurrence o) => '${o.event.id}@${o.seriesStart}';
+    for (var i = 0; i < legs.length; i++) {
+      for (var j = i + 1; j < legs.length && legs[j].$2 - legs[i].$2 < rideGap; j++) {
+        final (driver, _, a) = legs[i];
+        final (other, _, b) = legs[j];
+        if (driver != other || key(a) == key(b)) continue;
+        final place = a.location.trim().toLowerCase();
+        if (place.isNotEmpty && place == b.location.trim().toLowerCase()) continue;
+        final pair = [key(a), key(b)]..sort();
+        if (!seen.add('$driver|${pair.join('|')}')) continue;
+        out.add(Gap(
+          kind: GapKind.driverBusy,
+          message: '${member(driver)?.name ?? 'Someone'} is driving two places at once: ${a.title} and ${b.title}',
+          occurrences: [a, b],
+          members: [driver],
+        ));
       }
     }
     return out;
@@ -1872,12 +3678,12 @@ class Den {
         maxLead = math.max(maxLead, m);
       }
     }
-    for (final x in _exceptions.values.expand((m) => m.values)) {
+    for (final x in _exceptions.values.expand((byEvent) => byEvent.values).expand((m) => m.values)) {
       for (final m in (x.patch['reminders'] as List? ?? const [])) {
         maxLead = math.max(maxLead, (m as num).toInt());
       }
     }
-    for (final o in occurrences(from, to + maxLead * 60000 + 1)) {
+    for (final o in _occurrencesIn(from, to + maxLead * 60000 + 1)) {
       if (memberId != null && o.assignees.isNotEmpty && !o.assignees.contains(memberId)) continue;
       for (final minutes in o.reminders.toSet()) {
         final at = o.start - minutes * 60000;
@@ -1903,7 +3709,7 @@ class Den {
     final lastDate = addDays(dateIn(zoneName, to + choreLead * 60000), 1);
     final seen = <String>{};
     for (var d = firstDate; d.compareTo(lastDate) <= 0; d = addDays(d, 1)) {
-      for (final cd in choresOn(d)) {
+      for (final cd in _choresOn(d)) {
         final due = cd.chore.dueTime;
         if (cd.done || due == null || !isLocalTime(due) || cd.chore.reminders.isEmpty) continue;
         if (!seen.add('${cd.chore.id}@${cd.date}')) continue;
@@ -1983,37 +3789,64 @@ class Den {
         candidates.values.forEach(_learnKey);
         final accepted = <Change>[];
         final rejected = <String, String>{};
+        final toCheck = <Change>[];
         for (final c in candidates.values) {
-          final pubkey = _pubkeys[c.device];
-          if (pubkey == null) {
+          if (_pubkeys[c.device] == null) {
             _pending[c.id] = c;
-          } else if (await verifySignature(c.signedBytes, c.sig, pubkey)) {
-            accepted.add(c);
           } else {
+            toCheck.add(c);
+          }
+        }
+        // Checked as a batch: in worker isolates where there are any, else in slices that let
+        // the page draw in between.
+        final checked = await checkChanges(
+          toCheck,
+          pubkeys: [for (final c in toCheck) _pubkeys[c.device]],
+          hash: _snapshots,
+        );
+        for (var i = 0; i < toCheck.length; i++) {
+          final c = toCheck[i], h = checked[i];
+          // A recovery or invite proof is checked with the signature: signed by the key it names.
+          if (h == null || !await recoveryProofHolds(c, familyId) || !await inviteProofHolds(c, familyId) || !await accountProofHolds(c, familyId)) {
             rejected[c.id] = 'The signature doesn\'t verify';
+          } else {
+            accepted.add(c);
+            if (_snapshots) _hashes[c.id] = h;
           }
         }
         while (_pending.length > maxPending) {
           _pending.remove(_pending.keys.first);
         }
         var invalid = const <String, String>{};
+        var metaMoved = false;
         if (accepted.isNotEmpty) {
           await _storage.appendChanges(accepted);
           invalid = _mat.add(accepted);
+          _noteAdded(accepted);
           _observeApplied();
+          // This device's own changes coming back from a peer (after a restore from an older
+          // backup, say): never number a new change with an id the family already holds.
+          for (final c in accepted) {
+            if (c.device != deviceId) continue;
+            _clock.observe(c.hlc);
+            if (c.counter > _counter) {
+              _counter = c.counter;
+              metaMoved = true;
+            }
+          }
         }
-        var floorMoved = false;
         if (through != null && rejected.isEmpty && _pending.isEmpty) {
           for (final e in through.entries) {
             if (e.value > (_floor[e.key] ?? 0)) {
               _floor[e.key] = e.value;
-              floorMoved = true;
+              metaMoved = true;
             }
           }
         }
-        if (floorMoved) await _saveMeta();
+        if (metaMoved) await _saveMeta();
         if (accepted.isNotEmpty) _emit({for (final c in accepted) c.type});
         if (accepted.isNotEmpty) await _afterKeyFacts();
+        _maybeSnapshot();
         return IngestResult(
           added: accepted.length,
           duplicate: duplicate,
@@ -2024,12 +3857,12 @@ class Den {
       });
 
   /// The spaces the given device should hold, per its owner, mode and the family's policy.
-  Set<String> spacesForDevice(String deviceId) {
-    final d = device(deviceId);
-    if (d == null || !d.approved || d.revoked) return {};
-    final owner = d.member == null ? null : member(d.member!);
-    return spacesFor(device: d, owner: owner, family: family, members: members);
-  }
+  Set<String> spacesForDevice(String deviceId) => _memo('spaces|$deviceId', _whoReadsWhat, visible: false, () {
+        final d = device(deviceId);
+        if (d == null || !d.approved || d.revoked) return const <String>{};
+        final owner = d.member == null ? null : member(d.member!);
+        return Set<String>.unmodifiable(spacesFor(device: d, owner: owner, family: family, members: members));
+      });
 
   // ---------------------------------------------------------------- space keys
 
@@ -2389,28 +4222,66 @@ class Den {
 
   Future<List<Change>> _commit(List<_Draft> drafts) => _locked(() => _commitNow(drafts));
 
+  /// A draft that writes an event's `drivers` (an occurrence's `patch.drivers.<leg>`) with other
+  /// fields, as two: the others, then the drivers. An older version refuses a whole change with a
+  /// field it doesn't know, so what it can read (the `rides` written for it, a new event, an
+  /// occurrence moved with its series) comes in a change of its own; and `drivers` coming after
+  /// that `rides` is how readers tell it from a `rides` an older version wrote
+  /// ([Event.readsDrivers], [EventException.ridesWhole]).
+  static List<_Draft> _olderVersionsFirst(_Draft d) {
+    final event = d.type == RecordType.event;
+    if (d.hlc != null || (!event && d.type != RecordType.eventException)) return [d];
+    final rest = <String, Object?>{}, drivers = <String, Object?>{};
+    for (final e in d.fields.entries) {
+      final k = e.key;
+      if (event ? k == 'drivers' || k.startsWith('drivers.') : k.startsWith('patch.drivers.')) {
+        drivers[k] = e.value;
+      } else if (!event && k == 'patch' && e.value is Map) {
+        final patch = Map<String, Object?>.from(e.value as Map);
+        for (final key in [...patch.keys.where((key) => key.startsWith('drivers.'))]) {
+          drivers['patch.$key'] = patch.remove(key);
+        }
+        rest[k] = patch;
+      } else {
+        rest[k] = e.value;
+      }
+    }
+    if (drivers.isEmpty || rest.isEmpty) return [d];
+    return [
+      _Draft(d.type, d.rid, d.space, rest, actor: d.actor, setsActor: d.setsActor),
+      _Draft(d.type, d.rid, d.space, drivers, actor: d.actor, setsActor: d.setsActor),
+    ];
+  }
+
   Future<List<Change>> _commitNow(List<_Draft> drafts) async {
     if (drafts.isEmpty) return const [];
     final made = <Change>[];
     var counter = _counter;
     final acting = actor?.id;
     final via = thisDevice?.mode == DeviceMode.hub ? actingVia : null;
+    final zoned = Zone.current[_origins];
+    final origin = zoned is CaptureOrigin ? zoned : null;
     try {
-      for (final d in drafts) {
+      for (final d in drafts.expand(_olderVersionsFirst)) {
         counter++;
+        while (_mat.contains('$deviceId:$counter')) {
+          counter++;
+        }
+        final from = origin != null && d.fields['_deleted'] != true && !d.fields.containsKey('_from') ? origin.toJson() : null;
         final unsigned = Change(
           id: '$deviceId:$counter',
           space: d.space,
           hlc: d.hlc ?? _clock.next(),
           type: d.type,
           rid: d.rid,
-          fields: {...d.fields, '_via': ?via},
+          fields: {...d.fields, '_from': ?from, '_via': ?via},
           device: deviceId,
           actor: d.setsActor ? d.actor : acting,
           sig: '',
         );
         final rejection = _mat.check(unsigned);
         if (rejection != null) throw rejection.toException();
+        final bytes = unsigned.signedBytes;
         final signed = Change(
           id: unsigned.id,
           space: unsigned.space,
@@ -2420,19 +4291,30 @@ class Den {
           fields: unsigned.fields,
           device: deviceId,
           actor: unsigned.actor,
-          sig: await _keys.sign(unsigned.signedBytes),
+          sig: await _keys.sign(bytes),
         );
         final invalid = _mat.add([signed]);
         if (invalid.isNotEmpty) throw PermissionDenied(invalid.values.first);
         made.add(signed);
+        if (_snapshots) _hashes[signed.id] = changeHash(signed, bytes);
       }
       await _storage.appendChanges(made);
     } on Object {
       _mat.remove([for (final c in made) c.id]);
+      for (final c in made) {
+        _hashes.remove(c.id);
+      }
       rethrow;
     }
     _counter = counter;
     await _saveMeta();
+    _maybeSnapshot();
+    final sinks = Zone.current[_recorders];
+    if (sinks is List<List<String>>) {
+      for (final ids in sinks) {
+        ids.addAll([for (final c in made) c.id]);
+      }
+    }
     _emit({for (final c in made) c.type});
     return made;
   }
@@ -2441,14 +4323,42 @@ class Den {
     if (!_changes.isClosed && types.isNotEmpty) _changes.add(types);
   }
 
-  T _memo<T>(String key, T Function() build) {
+  /// Memoized views kept at most; the least recently used goes first.
+  static const int _maxMemos = 256;
+
+  /// [build]'s value, kept until a record of one of [types] changes. A [visible] view reads only
+  /// what the actor may see, so it is kept through changes in spaces they can't read and worked
+  /// out again when who is acting, or what they may read, changes.
+  T _memo<T>(String key, Set<String> types, T Function() build, {bool visible = true}) {
+    final store = _mat.store;
     final actorId = actor?.id;
-    if (_cacheVersion != _mat.store.version || _cacheActor != actorId) {
-      _cache.clear();
-      _cacheVersion = _mat.store.version;
-      _cacheActor = actorId;
+    final kept = _memos.remove(key);
+    if (kept != null && kept.storeVersion == store.version && kept.actor == actorId) {
+      _memos[key] = kept;
+      return kept.value as T;
     }
-    return _cache.putIfAbsent(key, build) as T;
+    final readable = visible ? readableSpaces : null;
+    var version = 0;
+    if (readable != null) {
+      version = store.versionOf(types, readable);
+    } else {
+      for (final t in types) {
+        version += store.versionOfType(t);
+      }
+    }
+    if (kept != null &&
+        kept.epoch == store.epoch &&
+        kept.actor == actorId &&
+        identical(kept.readable, readable) &&
+        kept.version == version) {
+      kept.storeVersion = store.version;
+      _memos[key] = kept;
+      return kept.value as T;
+    }
+    final value = build();
+    _memos[key] = _Memo(store.version, store.epoch, actorId, readable, version, value);
+    if (_memos.length > _maxMemos) _memos.remove(_memos.keys.first);
+    return value;
   }
 
   Iterable<Entry> _visibleLive(String type) {
@@ -2501,11 +4411,16 @@ class Den {
   }
 
   /// Moves a record and its children (records whose [parentField] names it) to another space,
-  /// keeping ids: new copies in the target space, removals in the old one.
-  List<_Draft> _moveDrafts(Entry entry, String target, Map<String, Object?> patch, String childType, String parentField) {
+  /// keeping ids: new copies in the target space, removals in the old one. An event's copy reads
+  /// the rides it has now, or [rides].
+  List<_Draft> _moveDrafts(Entry entry, String target, Map<String, Object?> patch, String childType, String parentField,
+      {List<Ride>? rides}) {
     Map<String, Object?> copyOf(Entry e) => {
           for (final f in e.fields.entries)
             if (!f.key.startsWith('_')) f.key: f.value,
+          if (e.type == RecordType.event) ..._eventRidesToCopy(e, rides),
+          if (e.type == RecordType.eventException && e.fields['patch'] is Map)
+            'patch': _patchToCopy(EventException(e.rec), rides ?? Event(entry.rec).rides),
         };
     final children = [
       for (final c in _mat.store.liveOfType(childType))
@@ -2517,5 +4432,56 @@ class Den {
       for (final c in children) _Draft(childType, c.id, entry.space, {'_deleted': true}),
       _Draft(entry.type, entry.id, entry.space, {'_deleted': true}),
     ];
+  }
+}
+
+/// One memoized view and what it was worked out from.
+class _Memo {
+  _Memo(this.storeVersion, this.epoch, this.actor, this.readable, this.version, this.value);
+
+  /// [RecordStore.version] when last found current: unchanged means nothing at all changed.
+  int storeVersion;
+  final int epoch;
+  final String? actor;
+  final Set<String>? readable;
+  final int version;
+  final Object? value;
+}
+
+/// One event's occurrences in the windows asked for lately, while its changed occurrences and the
+/// family's time zone stay as they were (the event itself is the cache's key).
+class _EventOccurrences {
+  _EventOccurrences(this._exceptions, this._zone)
+      : _recs = _exceptions.isEmpty ? const {} : {for (final e in _exceptions.entries) e.key: e.value.rec};
+
+  final Map<int, EventException> _exceptions;
+  final Map<int, Rec> _recs;
+  final String _zone;
+  final List<(int, int, List<Occurrence>)> _windows = [];
+
+  /// Windows kept per event.
+  static const int _keep = 6;
+
+  bool holds(Map<int, EventException> exceptions, String zone) {
+    if (zone != _zone) return false;
+    if (identical(exceptions, _exceptions)) return true;
+    if (exceptions.length != _recs.length) return false;
+    for (final x in exceptions.entries) {
+      if (!identical(_recs[x.key], x.value.rec)) return false;
+    }
+    return true;
+  }
+
+  List<Occurrence>? window(int start, int end) {
+    for (final w in _windows) {
+      if (w.$1 == start && w.$2 == end) return w.$3;
+    }
+    return null;
+  }
+
+  List<Occurrence> keep(int start, int end, List<Occurrence> found) {
+    if (_windows.length >= _keep) _windows.removeAt(0);
+    _windows.add((start, end, found.isEmpty ? const <Occurrence>[] : found));
+    return found;
   }
 }

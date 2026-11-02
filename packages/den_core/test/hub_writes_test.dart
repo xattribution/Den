@@ -43,6 +43,41 @@ void main() {
     expect(phone.history(type: RecordType.event).first.via, 'Home Assistant');
   });
 
+  test('acting for a connection, a hub writes only where the person it acts for could read', () async {
+    final maya = await phone.addMember(name: 'Maya', role: Role.kid, tier: Tier.teen, grants: {Grant.events});
+    await phone.updateMember(leo, {'grants': [Grant.events]});
+    await phone.updateFamily({'oversight.$maya': {'parentsSeePrivate': false}});
+    await sync(phone, hub);
+    Future<String> add(String space) => hub.addEvent(title: 'Note', start: clock.now, end: clock.now + 1, space: space);
+    // Leo's token: his own space and everyone's, never the parents' or his sister's.
+    hub.actAs(leo, via: 'Leo\'s assistant');
+    await add(Space.member(leo));
+    await add(Space.family);
+    await expectLater(add(Space.parents), throwsA(isA<PermissionDenied>()));
+    await expectLater(add(Space.member(maya)), throwsA(isA<PermissionDenied>()));
+    // A parent-level connection: everything parents see, not a teen's own space when parents
+    // don't see it.
+    hub.actAs(null, via: 'Home Assistant');
+    await add(Space.parents);
+    await add(Space.member(leo));
+    await expectLater(add(Space.member(maya)), throwsA(isA<PermissionDenied>()));
+    // The hub's own writes (feeds, say) name no connection and go anywhere.
+    hub.actAs(null);
+    await add(Space.member(maya));
+    // A forged one says the same on every replica.
+    final forged = await forge(
+      hub.keys,
+      counter: 900,
+      millis: clock.now + 5,
+      type: RecordType.event,
+      rid: 'forgedintoparents',
+      space: Space.parents,
+      actor: leo,
+      fields: {'title': 'Sneaky', 'start': clock.now, 'end': clock.now + 1, '_via': 'Leo\'s assistant'},
+    );
+    expect((await phone.ingest([forged])).invalid[forged.id], contains('can\'t see that'));
+  });
+
   test('imported events carry their source and stay readable as such', () async {
     final id = await hub.addEvent(
       title: 'Picture day',
@@ -118,6 +153,113 @@ void main() {
     expect(phone.subscription(id)!.status, '12 events, updated 3:42 PM');
     await phone.removeSubscription(id);
     expect(phone.subscriptions, isEmpty);
+  });
+
+  group('trust decisions are made only on a parent\'s own device', () {
+    late Den ownHub;
+    late Den waiting;
+
+    setUp(() async {
+      // A parent's own phone running as the family's hub ("Keep the family online").
+      ownHub = await joinDevice(phone, clock, member: dana, mode: DeviceMode.hub, name: 'Dana phone (hub)');
+      waiting = await joinDevice(phone, clock, member: leo, name: 'Leo tablet', approve: false);
+      await sync(phone, ownHub);
+      expect(ownHub.owner?.id, dana);
+    });
+
+    test('an assistant acting through the hub as its owner can\'t make any of them', () async {
+      final kidTablet = await joinDevice(phone, clock, member: leo, name: 'Leo old tablet');
+      final pending = await phone.requestOAuthConnection(label: 'Claude', client: 'https://claude.ai', scopes: {Scope.read});
+      await sync(phone, ownHub);
+      ownHub.actAs(dana, via: 'Claude');
+      expect(ownHub.actor?.id, dana);
+      final refused = <String, Future<Object?> Function()>{
+        'approve a device': () => ownHub.approveDevice(waiting.deviceId, member: leo),
+        'revoke a device': () => ownHub.revokeDevice(kidTablet.deviceId),
+        'rename another device': () => ownHub.updateDevice(kidTablet.deviceId, {'name': 'Mine now'}),
+        'switch the hub to a personal device': () => ownHub.setThisDeviceMode(DeviceMode.personal),
+        'change a role': () => ownHub.updateMember(leo, {'role': Role.parent}),
+        'change grants': () => ownHub.updateMember(leo, {'grants': [Grant.points]}),
+        'remove a person': () => ownHub.removeMember(leo),
+        'set a sign-in': () => ownHub.setSignIn(leo, kind: 'none'),
+        'change oversight': () => ownHub.updateFamily({
+              'oversight': {leo: {'parentsSeePrivate': false}},
+            }),
+        'make a token': () => ownHub.addTokenConnection(label: 'Backdoor', scopes: {Scope.admin}),
+        'approve access': () => ownHub.approveConnection(pending, scopes: {Scope.admin}),
+      };
+      for (final e in refused.entries) {
+        await expectLater(e.value(), throwsA(isA<PermissionDenied>()), reason: e.key);
+      }
+      // Everyday writes through the hub still work, adding someone included: nothing acts for
+      // them until a parent approves a device or an assistant for them.
+      await ownHub.updateMember(leo, {'name': 'Leonardo'});
+      final grandpa = await ownHub.addMember(name: 'Grandpa Joe', role: Role.adult);
+      await expectLater(ownHub.updateMember(grandpa, {'role': Role.parent}), throwsA(isA<PermissionDenied>()));
+      await ownHub.updateFamily({'name': 'The Riveras'});
+      ownHub.actAs(null);
+      await sync(ownHub, phone);
+      expect(phone.member(leo)!.name, 'Leonardo');
+      expect(phone.member(leo)!.role, Role.kid);
+      expect(phone.device(waiting.deviceId)!.approved, isFalse);
+    });
+
+    test('a change from the hub that names its connection can\'t lose that name on the way', () async {
+      ownHub.actAs(dana, via: 'Claude');
+      await ownHub.updateMember(leo, {'name': 'Leonardo'});
+      ownHub.actAs(null);
+      final signed = ownHub.changesSince(const {}).lastWhere((c) => c.device == ownHub.deviceId);
+      expect(signed.fields['_via'], 'Claude');
+      final stripped = Change(
+        id: signed.id,
+        space: signed.space,
+        hlc: signed.hlc,
+        type: signed.type,
+        rid: signed.rid,
+        fields: {...signed.fields}..remove('_via'),
+        device: signed.device,
+        actor: signed.actor,
+        sig: signed.sig,
+      );
+      final result = await phone.ingest([stripped]);
+      expect(result.rejected.keys, [stripped.id]);
+      expect(phone.member(leo)!.name, 'Leo');
+    });
+
+    test('a forged approval signed by the hub for a connection is invalid on every replica', () async {
+      final forged = await forge(
+        ownHub.keys,
+        counter: 900,
+        millis: clock.now + 10,
+        type: RecordType.device,
+        rid: waiting.deviceId,
+        fields: {'approved': true, 'approvedBy': dana, 'member': leo, 'mode': 'personal', '_via': 'Claude'},
+        actor: dana,
+      );
+      final result = await phone.ingest([forged]);
+      expect(result.invalid.keys, [forged.id]);
+      expect(phone.device(waiting.deviceId)!.approved, isFalse);
+    });
+
+    test('the parent using their own hub phone still can; a hub nobody owns and a shared screen can\'t', () async {
+      await ownHub.approveDevice(waiting.deviceId, member: leo);
+      expect(ownHub.device(waiting.deviceId)!.approved, isTrue);
+      await ownHub.setThisDeviceMode(DeviceMode.personal);
+
+      final joiner = await joinDevice(phone, clock, member: leo, name: 'Leo phone', approve: false);
+      await sync(phone, hub);
+      await expectLater(hub.approveDevice(joiner.deviceId, member: leo), throwsA(isA<PermissionDenied>()));
+      hub.actAs(dana, via: 'Home Assistant');
+      await expectLater(hub.approveDevice(joiner.deviceId, member: leo), throwsA(isA<PermissionDenied>()));
+      hub.actAs(null);
+
+      final display = await joinDevice(phone, clock, mode: DeviceMode.shared, name: 'Kitchen', kind: DeviceKind.display);
+      await sync(phone, display);
+      display.actAs(dana);
+      await expectLater(display.setSignIn(leo, kind: 'none'), throwsA(isA<PermissionDenied>()));
+      await expectLater(display.updateMember(leo, {'role': Role.adult}), throwsA(isA<PermissionDenied>()));
+      await expectLater(display.addTokenConnection(label: 'x', scopes: {Scope.read}), throwsA(isA<PermissionDenied>()));
+    });
   });
 
   test('kids don\'t see calendar feeds and can\'t add them', () async {

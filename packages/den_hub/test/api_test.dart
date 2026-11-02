@@ -3,7 +3,7 @@ library;
 
 import 'package:den_core/den_core.dart';
 import 'package:den_hub/den_hub.dart';
-import 'package:test/test.dart';
+import 'support/test.dart';
 
 import 'support/fixture.dart';
 
@@ -95,10 +95,11 @@ void main() {
       final body = r.body;
       expect(body['hub'], {'device': f.hubDen.deviceId, 'name': 'Kitchen hub', 'version': hubVersion});
       expect((body['family'] as Map)['timezone'], 'America/Chicago');
-      expect(body['token'], {'label': 'Home Assistant', 'member': null, 'scopes': ['admin'], 'expires': null, 'expires_ms': null});
+      // A token acts as the parent who made it (MCP eval #4).
+      expect(body['token'], {'label': 'Home Assistant', 'member': f.id('Alex'), 'scopes': ['admin'], 'expires': null, 'expires_ms': null});
       final members = (body['members'] as List).cast<Map<String, Object?>>();
       expect(members.map((m) => m['name']), ['Alex', 'Priya', 'Maya', 'Leo', 'Zoe', 'Grandma Rosa']);
-      expect(members.first.keys.toSet(), {'id', 'name', 'role', 'tier', 'marker', 'animal', 'birthday', 'grants', 'order'});
+      expect(members.first.keys.toSet(), {'id', 'name', 'role', 'tier', 'marker', 'picture', 'animal', 'birthday', 'until', 'grants', 'order'});
       expect(r.text, isNot(contains('salt')));
       expect(r.text, isNot(contains('hash')));
       expect((body['categories'] as List).length, 6);
@@ -305,6 +306,72 @@ void main() {
     });
   });
 
+  group('actions', () {
+    test('GET /api/v1/actions lists what the token may run, with schemas', () async {
+      final r = await f.call('GET', '/api/v1/actions', token: readOnly);
+      expect(r.status, 200, reason: r.text);
+      final actions = (r.body['actions'] as List).cast<Map<String, Object?>>();
+      expect(actions.every((a) => a['effect'] == 'read'), isTrue);
+      final overview = actions.firstWhere((a) => a['name'] == 'get_overview');
+      expect(overview['scopes'], ['read']);
+      expect((overview['input_schema'] as Map)['type'], 'object');
+      final writer = await f.call('GET', '/api/v1/actions', token: all);
+      expect((writer.body['actions'] as List).map((a) => (a as Map)['name']), contains('add_from_text'));
+    });
+
+    test('a Shortcut adds what someone said with add_from_text', () async {
+      final shortcut = await f.token(scopes: {Scope.lists}, member: f.id('Priya'), label: 'Siri');
+      final r = await f.call('POST', '/api/v1/actions/add_from_text', token: shortcut, body: {'text': 'we need oat milk and coffee filters'});
+      expect(r.status, 200, reason: r.text);
+      expect(r.body['status'], 'done');
+      final added = (((r.body['result'] as Map)['added']) as List).cast<Map>();
+      expect(added.map((a) => '${a['title']}'.toLowerCase()), containsAll(['oat milk', 'coffee filters']));
+      expect((r.body['receipt'] as Map)['tool'], 'add_from_text');
+      expect(f.hubDen.history(type: 'item').first.via, 'Siri');
+      final undo = await f.call('POST', '/api/v1/actions/undo', token: shortcut, body: {});
+      expect(undo.status, 200, reason: undo.text);
+      final items = f.hubDen.lists.expand((l) => l.items).map((i) => i.text.toLowerCase());
+      expect(items, isNot(contains('coffee filters')));
+    });
+
+    test('preview, a two-step confirmation, idempotent retries and errors', () async {
+      final preview = await f.call('POST', '/api/v1/actions/add_items?preview=1',
+          token: all, body: {'list': 'Groceries', 'items': ['Flour']});
+      expect(preview.body['status'], 'preview');
+      expect(f.hubDen.lists.expand((l) => l.items).any((i) => i.text == 'Flour'), isFalse);
+
+      final ask = await f.call('POST', '/api/v1/actions/delete_list', token: all, body: {'list': 'Meal plan'});
+      expect(ask.status, 200);
+      expect(ask.body['status'], 'needs_confirmation');
+      final token = ((ask.body['result'] as Map)['confirm'] as Map)['token'];
+      final yes = await f.call('POST', '/api/v1/actions/delete_list', token: all, body: {'list': 'Meal plan', 'confirm': token});
+      expect(yes.body['status'], 'done', reason: yes.text);
+
+      final once = await f.call('POST', '/api/v1/actions/adjust_points',
+          token: all, body: {'person': 'Zoe', 'delta': 2, 'reason': 'Fed the fish'}, headers: {'idempotency-key': 'zoe-fish-1'});
+      final twice = await f.call('POST', '/api/v1/actions/adjust_points',
+          token: all, body: {'person': 'Zoe', 'delta': 2, 'reason': 'Fed the fish'}, headers: {'idempotency-key': 'zoe-fish-1'});
+      expect(twice.body, once.body);
+      expect(twice.headers['idempotent-replayed'], 'true');
+      final other = await f.call('POST', '/api/v1/actions/adjust_points',
+          token: all, body: {'person': 'Zoe', 'delta': 3, 'reason': 'Fed the fish'}, headers: {'idempotency-key': 'zoe-fish-1'});
+      expect(other.status, 409);
+
+      final bad = await f.call('POST', '/api/v1/actions/adjust_points', token: all, body: {'person': 'Zoe', 'delta': 'two', 'reason': 'x'});
+      expect(bad.status, 400);
+      expect(bad.error['details'], {'field': 'delta'});
+      final scope = await f.call('POST', '/api/v1/actions/adjust_points', token: readOnly, body: {'person': 'Zoe', 'delta': 1, 'reason': 'x'});
+      expect(scope.status, 403);
+      expect(scope.error['code'], 'insufficient_scope');
+      final missing = await f.call('POST', '/api/v1/actions/nope', token: all, body: {});
+      expect(missing.status, 404);
+      final leo = await f.token(scopes: {Scope.admin}, member: f.id('Leo'), label: 'Leo REST');
+      final denied = await f.call('POST', '/api/v1/actions/create_event', token: leo, body: {'title': 'Party', 'start': '2026-11-20'});
+      expect(denied.status, 403);
+      expect(denied.error['code'], 'permission_denied');
+    });
+  });
+
   group('points, history and search', () {
     test('points summary and adjustments', () async {
       final r = await f.call('GET', '/api/v1/points?recent=5', token: all);
@@ -318,7 +385,7 @@ void main() {
       expect(adjusted.status, 201);
       expect(adjusted.body['balance'], before + 5);
       expect((adjusted.body['adjustment'] as Map)['id'], isA<String>());
-      expect((adjusted.body['adjustment'] as Map)['by'], isNull);
+      expect((adjusted.body['adjustment'] as Map)['by'], f.id('Alex'), reason: 'the token acts as the parent who made it');
       final zero = await f.call('POST', '/api/v1/points/adjust', token: all, body: {'member': f.id('Leo'), 'delta': 0, 'reason': 'x'});
       expect(zero.error['details'], {'field': 'delta'});
     });
@@ -329,7 +396,7 @@ void main() {
       final entry = ((r.body['entries'] as List).first as Map).cast<String, Object?>();
       expect(entry['via'], 'Home Assistant');
       expect(entry['device'], f.hubDen.deviceId);
-      expect(entry['actor'], isNull);
+      expect(entry['actor'], f.id('Alex'), reason: 'the token acts as the parent who made it');
       expect(entry['hlc'], startsWith('${entry['when_ms']}'.padLeft(13, '0')));
       final leo = await f.token(member: f.id('Leo'), label: 'Leo reader');
       final kid = await f.call('GET', '/api/v1/history?limit=200', token: leo);

@@ -1,8 +1,9 @@
-import 'package:den_app/calendars/phone_calendars.dart';
-import 'package:den_app/screens/events/event_detail.dart';
-import 'package:den_app/screens/settings/phone_calendars_screen.dart';
-import 'package:den_app/screens/settings/settings_screen.dart';
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/platform/calendars/phone_calendars.dart';
+import 'package:den_app/features/calendar/screens/event_detail.dart';
+import 'package:den_app/features/settings/screens/calendars_screen.dart';
+import 'package:den_app/features/settings/screens/phone_calendars_screen.dart';
+import 'package:den_app/features/settings/screens/settings_screen.dart';
+import 'package:den_app/app/app_state.dart';
 import 'package:den_core/den_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -107,8 +108,11 @@ void main() {
   testWidgets('Settings shows the calendars brought in', (tester) async {
     final (state, _) = await withPhoneCalendars(tester);
     await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state);
+    expect(find.text('Calendars'), findsOneWidget);
+    expect(find.text('4'), findsOneWidget);
+    await pumpScreen(tester, const CalendarsScreen(), state: state);
     expect(find.text('Calendars on this phone'), findsOneWidget);
-    expect(find.text('4 brought in'), findsOneWidget);
+    expect(find.text('4'), findsOneWidget);
   });
 
   testWidgets('An event from a phone calendar, phone', (tester) async {

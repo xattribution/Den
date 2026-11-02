@@ -115,13 +115,79 @@ void main() {
       expect(a.list(groceries)!.items.map((i) => i.text), containsAll(['Eggs', 'Bread', 'Butter']));
       final occ = a.occurrences(occurrence, occurrence + 1).single;
       expect(occ.title, 'Soccer, early', reason: 'one occurrence\'s title and rides merge per field');
-      expect(occ.rides.map((r) => r.driver).where((d) => d != null), isNotEmpty);
+      expect({for (final r in occ.rides) r.leg: r.driver}, {'to': dana, 'from': priya}, reason: 'and each ride leg on its own');
       for (final d in [b, h]) {
         final other = d.occurrences(occurrence, occurrence + 1).single;
         expect(other.rides.map((r) => r.driver), occ.rides.map((r) => r.driver));
       }
     });
   }
+
+  test('two devices adding different ride legs to an event at once both count', () async {
+    final clock = TestClock.at(DateTime.utc(2026, 5, 4, 15));
+    final a = await foundFamily(clock);
+    final dana = a.actor!.id;
+    final priya = await a.addMember(name: 'Priya', role: Role.parent);
+    final b = await joinDevice(a, clock, member: priya, name: 'Priya phone', kind: DeviceKind.phone);
+    final start = DateTime.utc(2026, 5, 5, 21).millisecondsSinceEpoch;
+    final party = await a.addEvent(title: 'Party', start: start, end: start + 3600000, rides: const [Ride('to', null)]);
+    await sync(a, b);
+    clock.advance(const Duration(seconds: 30));
+    // Dana takes the drive there; Priya, not having heard, adds a pickup she'll do.
+    await a.claimRide(party, occurrence: start, leg: 'to', driver: dana);
+    await b.updateEvent(party, {'rides': [const Ride('to', null), Ride('from', priya)]});
+    await exchange(a, b);
+    for (final d in [a, b]) {
+      expect({for (final r in d.event(party)!.rides) r.leg: r.driver}, {'to': dana, 'from': priya});
+    }
+  });
+
+  group('two devices taking different ride legs at once both count', () {
+    for (final repeating in [false, true]) {
+      for (final fromLast in [false, true]) {
+        for (final fromArrivesFirst in [false, true]) {
+          final what = repeating ? 'one occurrence of a series' : 'an event';
+          test('$what, ${fromLast ? 'from' : 'to'} written last, ${fromArrivesFirst ? 'from' : 'to'} arriving first', () async {
+            final clockA = TestClock.at(DateTime.utc(2026, 5, 4, 15));
+            final a = await foundFamily(clockA);
+            final dana = a.actor!.id;
+            final priya = await a.addMember(name: 'Priya', role: Role.parent);
+            final clockB = TestClock(clockA.now);
+            final b = await joinDevice(a, clockB, member: priya, name: 'Priya phone', kind: DeviceKind.phone);
+            final h = await joinDevice(a, TestClock(clockA.now), mode: DeviceMode.hub, name: 'Hub', kind: DeviceKind.hub);
+            final start = DateTime.utc(2026, 5, 5, 21).millisecondsSinceEpoch;
+            final soccer = await a.addEvent(
+              title: 'Soccer',
+              start: start,
+              end: start + 3600000,
+              rrule: repeating ? 'FREQ=WEEKLY' : null,
+              rides: const [Ride('to', null), Ride('from', null)],
+            );
+            await sync(a, b);
+            await sync(a, h);
+
+            // Neither has heard of the other's: Dana drives there, Priya picks up.
+            (fromLast ? clockB : clockA).advance(const Duration(seconds: 30));
+            final to = await a.recording(() => a.claimRide(soccer, occurrence: start, leg: 'to', driver: dana));
+            final from = await b.recording(() => b.claimRide(soccer, occurrence: start, leg: 'from', driver: priya));
+            List<Change> made(Den d, List<String> ids) => [for (final c in d.changesSince({})) if (ids.contains(c.id)) c];
+            final toChanges = made(a, to.changes), fromChanges = made(b, from.changes);
+            for (final batch in fromArrivesFirst ? [fromChanges, toChanges] : [toChanges, fromChanges]) {
+              await h.ingest(batch);
+            }
+            await exchange(a, b);
+
+            Map<String, String?> legs(Den d) => {for (final r in d.occurrences(start, start + 1).single.rides) r.leg: r.driver};
+            for (final d in [a, b, h]) {
+              expect(legs(d), {'to': dana, 'from': priya}, reason: d.thisDevice?.name);
+            }
+            expect(jsonEncode(b.exportJson()), jsonEncode(a.exportJson()));
+            expect(jsonEncode(h.exportJson()), jsonEncode(a.exportJson()));
+          });
+        }
+      }
+    }
+  });
 
   test('a late change older than everything applied triggers a replay with the same result', () async {
     final clock = TestClock.at(DateTime.utc(2026, 5, 4, 15));

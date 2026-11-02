@@ -4,7 +4,20 @@ import 'package:den_core/den_core.dart';
 
 import 'state.dart';
 
-/// A client registered with `/oauth/register`.
+/// How the hub knows an OAuth client.
+enum OAuthClientKind {
+  /// It registered itself with `/oauth/register` (dynamic client registration).
+  registered,
+
+  /// Its `client_id` is the https address of its metadata document, read when it signs in.
+  document,
+
+  /// A parent created it in the Den app, for an assistant that can't register itself (Alexa+).
+  static,
+}
+
+/// An OAuth client: registered with `/oauth/register`, described by a metadata document, or
+/// created by a parent.
 class OAuthClient {
   /// Creates a client record.
   OAuthClient({
@@ -14,6 +27,7 @@ class OAuthClient {
     required this.authMethod,
     this.secretHash,
     required this.created,
+    this.kind = OAuthClientKind.registered,
   });
 
   /// Reads a stored client.
@@ -24,7 +38,11 @@ class OAuthClient {
         authMethod: json['auth'] as String? ?? 'none',
         secretHash: json['secret'] as String?,
         created: json['created'] as int? ?? 0,
+        kind: json['static'] == true ? OAuthClientKind.static : OAuthClientKind.registered,
       );
+
+  /// How the hub knows it.
+  final OAuthClientKind kind;
 
   /// `client_id`.
   final String id;
@@ -51,6 +69,7 @@ class OAuthClient {
         'auth': authMethod,
         'secret': ?secretHash,
         'created': created,
+        if (kind == OAuthClientKind.static) 'static': true,
       };
 }
 
@@ -76,7 +95,10 @@ class RefreshGrant {
   Map<String, Object?> toJson() => {'connection': connection, 'client': client, 'expires': expires};
 }
 
-/// OAuth clients and refresh-token hashes, kept in the hub's state (`oauth.json`).
+/// OAuth clients and the hashes of access and refresh tokens, kept in the hub's state
+/// (`oauth.json`, in `<data>/hub/`, its owner's alone and in backups). An access token lasts an
+/// hour; its hash stays here, never in the family's log, which keeps only what lasts about a
+/// connection (who it is for, its scopes, whether it is on).
 class OAuthStore {
   /// Opens the store in [state].
   OAuthStore(this.state);
@@ -142,12 +164,72 @@ class OAuthStore {
     return state.save('oauth');
   }
 
-  /// Drops every refresh token of [connection].
+  /// Drops every access and refresh token of [connection].
   Future<void> revokeConnection(String connection) {
     _section('refresh').removeWhere((_, v) => v is Map && v['connection'] == connection);
+    _section('access').removeWhere((_, v) => v is Map && v['connection'] == connection);
     return state.save('oauth');
   }
 
-  /// Drops expired refresh tokens.
-  void prune(int now) => _section('refresh').removeWhere((_, v) => v is! Map || (v['expires'] as int? ?? 0) <= now);
+  /// Keeps access token [token] for [connection] and [client] until [expires] (UTC ms), in place
+  /// of the connection's earlier one: a connection has one access token at a time.
+  Future<void> issueAccess(String token, {required String connection, required String client, required int expires}) {
+    _section('access').removeWhere((_, v) => v is Map && v['connection'] == connection);
+    return keepAccess(hashToken(token), connection: connection, client: client, expires: expires);
+  }
+
+  /// Keeps the access token whose hash is [hash] (one an older hub wrote into the log).
+  Future<void> keepAccess(String hash, {required String connection, required String? client, required int expires}) {
+    _section('access')[hash] = {'connection': connection, 'client': ?client, 'expires': expires};
+    return state.save('oauth');
+  }
+
+  /// The connection access token [token] was issued for, while it is good at [now]; else null.
+  String? accessConnection(String token, int now) {
+    final raw = _section('access')[hashToken(token)];
+    if (raw is! Map || (raw['expires'] as int? ?? 0) <= now) return null;
+    final connection = raw['connection'];
+    return connection is String ? connection : null;
+  }
+
+  /// Drops expired access and refresh tokens.
+  void prune(int now) {
+    bool gone(String _, Object? v) => v is! Map || (v['expires'] as int? ?? 0) <= now;
+    _section('refresh').removeWhere(gone);
+    _section('access').removeWhere(gone);
+  }
+
+  /// Clients that hold a refresh or access token.
+  Set<String> get clientsWithTokens => {
+        for (final section in ['refresh', 'access'])
+          for (final v in _section(section).values)
+            if (v is Map && v['client'] is String) v['client'] as String,
+      };
+
+  /// Forgets clients registered before [before] (seconds) that aren't in [keep]: registrations
+  /// that never led to a connection, so strangers registering can't fill the hub's list.
+  /// Clients a parent created stay until a parent removes them.
+  Future<void> pruneClients({required int before, required Set<String> keep}) async {
+    final clients = _section('clients');
+    final count = clients.length;
+    clients.removeWhere((id, v) =>
+        !keep.contains(id) && (v is! Map || (v['static'] != true && (v['created'] as int? ?? 0) < before)));
+    if (clients.length != count) await state.save('oauth');
+  }
+
+  /// The clients parents created, oldest first.
+  List<OAuthClient> get staticClients => [
+        for (final e in _section('clients').entries)
+          if (e.value is Map && (e.value as Map)['static'] == true)
+            OAuthClient.fromJson(e.key, (e.value as Map).cast<String, Object?>()),
+      ]..sort((a, b) => a.created.compareTo(b.created));
+
+  /// Forgets client [id] and every refresh token it holds. Returns whether it was there.
+  Future<bool> removeClient(String id) async {
+    final removed = _section('clients').remove(id) != null;
+    _section('refresh').removeWhere((_, v) => v is Map && v['client'] == id);
+    _section('access').removeWhere((_, v) => v is Map && v['client'] == id);
+    await state.save('oauth');
+    return removed;
+  }
 }

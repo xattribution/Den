@@ -1,15 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:den_actions/den_actions.dart';
+import 'package:den_actions/times.dart';
+import 'package:den_capture/den_capture.dart' show CaptureReader;
 import 'package:den_core/den_core.dart';
 import 'package:shelf/shelf.dart';
 
 import 'access.dart';
+import 'config.dart';
 import 'api_writes.dart';
 import 'context.dart';
 import 'http_util.dart';
 import 'log.dart';
-import 'times.dart';
-import 'wire.dart';
 
 /// One authenticated API call: who is calling, what they may read, and how to answer.
 class Call {
@@ -44,18 +47,89 @@ class Call {
   bool canSee(String space) => readable.contains(space);
 }
 
-/// The `/api/v1` REST API from docs/hub-api.md.
+class _Replay {
+  _Replay(this.action, this.body, this.status, this.json, this.at);
+  final String action;
+  final String body;
+  final int status;
+  final Object? json;
+  final int at;
+}
+
+/// The `/api/v1` REST API from docs/hub-api.md. Its writes run through den_actions, the same
+/// actions MCP offers: `/api/v1/actions` lists and runs every one, and the older routes are
+/// adapters over them that answer as they always have.
 class RestApi {
-  /// Creates the API over [hub].
-  RestApi(this.hub);
+  /// Creates the API over [hub], running actions with [runner]; [reader] supplies what reads
+  /// text for `add_from_text`.
+  RestApi(this.hub, {ActionRunner? runner, this.reader}) : runner = runner ?? standardRunner();
 
   /// Shared hub context.
   final HubContext hub;
+
+  /// Runs the actions, and keeps their receipts and confirmation tokens.
+  final ActionRunner runner;
+
+  /// The family's capture reader, when the hub has one.
+  final CaptureReader? Function()? reader;
+
+  /// Answers kept by `Idempotency-Key`, per connection.
+  final Map<String, _Replay> _replays = {};
+
+  /// Most answers kept for `Idempotency-Key`.
+  static const int maxReplays = 1000;
+
+  /// How long an `Idempotency-Key` answer is kept.
+  static const Duration replayFor = Duration(hours: 24);
+
+  /// The context an action from [access] runs in.
+  ActionContext actionContext(Access access) => ActionContext(
+        hub.den,
+        member: access.member,
+        scopes: access.scopes,
+        surface: Surface.rest,
+        caller: access.connection.id,
+        readable: access.readable(hub.den),
+        reader: reader?.call(),
+        via: access.label,
+        viewZone: access.timezone,
+      );
+
+  /// The REST error for a failed action.
+  static ApiError errorOf(ActionResult r) {
+    final code = r.code ?? 'invalid_input';
+    final status = switch (code) {
+      'permission_denied' || 'insufficient_scope' => 403,
+      'not_found' || 'unknown_action' => 404,
+      'read_only' => 409,
+      _ => 400,
+    };
+    final details = <String, Object?>{
+      ...?(r.data['details'] as Map?)?.cast<String, Object?>(),
+      if (r.data['field'] != null) 'field': r.data['field'],
+    };
+    return ApiError(status, code, r.message ?? r.text, details: details.isEmpty ? null : details);
+  }
+
+  /// The `POST /api/v1/actions/{name}` body for [r].
+  static Map<String, Object?> actionJson(ActionResult r) => {
+        'status': switch (r.status) {
+          ActionStatus.done => 'done',
+          ActionStatus.preview => 'preview',
+          ActionStatus.needsConfirmation => 'needs_confirmation',
+          ActionStatus.failed => 'failed',
+        },
+        'text': r.text,
+        'result': r.structured,
+        if (r.receipt != null) 'receipt': r.receipt!.toJson(),
+      };
 
   /// Adds every `/api/v1` route except hub setup and linking.
   void register(Routes routes) {
     final writes = RestWrites(this);
     routes
+      ..add('GET', '/api/v1/actions', (r, _) => _listActions(r))
+      ..add('POST', '/api/v1/actions/<name>', (r, p) => _runAction(r, p['name']!))
       ..add('GET', '/api/v1/members', (r, _) => _call(r, Scope.read, _members))
       ..add('GET', '/api/v1/today', (r, _) => _call(r, Scope.read, _today))
       ..add('GET', '/api/v1/events', (r, _) => _call(r, Scope.read, _events))
@@ -78,8 +152,10 @@ class RestApi {
   }
 
   /// Authenticates [request], checks [scope], then runs [body] with the token's member acting.
+  /// Every scope but `read` writes, which waits while the hub catches up after a restore.
   Future<Response> _call(Request request, Scope scope, FutureOr<Response> Function(Call call) body) async {
     final access = authenticate(request, scope);
+    if (scope != Scope.read) hub.requireCaughtUp();
     try {
       return await hub.gate.run(access.member, access.label, () async {
         final call = Call(hub, request, access, access.readable(hub.den), Wire(hub.den));
@@ -94,13 +170,77 @@ class RestApi {
     }
   }
 
-  /// The caller's access for [request], requiring [scope]. Throws `503`, `401` or `403`.
-  Access authenticate(Request request, Scope scope) {
+  /// The caller's access for [request], requiring [scope] when given. Throws `503`, `401` or
+  /// `403`, and `429` once a client has sent too many tokens that don't work.
+  Access authenticate(Request request, Scope? scope) {
     if (!hub.ready) throw ApiError.notReady();
-    final access = accessForToken(hub.den, bearerToken(request.headers['authorization']));
-    if (access == null) throw ApiError.unauthorized();
-    if (!access.has(scope)) throw ApiError.scope(scope.name);
+    hub.checkFailures(request);
+    final access = hub.access(bearerToken(request.headers['authorization']));
+    if (access == null) {
+      hub.failed(request);
+      throw ApiError.unauthorized();
+    }
+    if (scope != null && !access.has(scope)) throw ApiError.scope(scope.name);
     return access;
+  }
+
+  // ------------------------------------------------------------------ actions
+
+  /// `GET /api/v1/actions`: what this token may run.
+  Future<Response> _listActions(Request request) async {
+    final access = authenticate(request, null);
+    final available = await hub.gate.run(access.member, access.label, () => runner.available(actionContext(access)));
+    return jsonResponse({'actions': [for (final s in available) s.restJson()]});
+  }
+
+  /// `POST /api/v1/actions/{name}`: runs an action. `?preview=1` only shows what would change;
+  /// an `Idempotency-Key` header makes a retry answer as the first try did. A write waits while
+  /// the hub catches up after a restore (`503 catching_up`).
+  Future<Response> _runAction(Request request, String name) async {
+    final access = authenticate(request, null);
+    final spec = runner.spec(name);
+    if (spec == null) {
+      throw ApiError.notFound(type: 'action', id: name, message: 'Den has no action called "$name".');
+    }
+    if (!spec.readOnly && !queryBool(request, 'preview', false)) hub.requireCaughtUp();
+    final bytes = await readBodyBytes(request);
+    final Map<String, Object?> body;
+    try {
+      final decoded = bytes.isEmpty ? <String, Object?>{} : jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map) throw ApiError.invalid('The body must be a JSON object of the action\'s input.');
+      body = decoded.cast<String, Object?>();
+    } on FormatException {
+      throw ApiError.invalid('The body isn\'t valid JSON.');
+    }
+    final preview = queryBool(request, 'preview', false);
+    final key = request.headers['idempotency-key']?.trim();
+    final replayKey = key == null || key.isEmpty ? null : '${access.connection.id} ${key.length > 200 ? key.substring(0, 200) : key}';
+    final bodyText = jsonEncode(body);
+    if (replayKey != null) {
+      final now = hub.now();
+      _replays.removeWhere((_, r) => now - r.at > replayFor.inMilliseconds);
+      final kept = _replays[replayKey];
+      if (kept != null) {
+        if (kept.action != name || kept.body != bodyText) {
+          throw ApiError(409, 'idempotency_conflict', 'That Idempotency-Key was used for a different request.');
+        }
+        return jsonResponse(kept.json, status: kept.status, headers: const {'idempotent-replayed': 'true'});
+      }
+    }
+    final result = await hub.gate.run(
+      access.member,
+      access.label,
+      () => runner.run(actionContext(access), name, body, mode: preview ? RunMode.preview : RunMode.run),
+    );
+    if (result.isError) throw errorOf(result);
+    final json = actionJson(result);
+    if (replayKey != null && result.status == ActionStatus.done) {
+      while (_replays.length >= maxReplays) {
+        _replays.remove(_replays.keys.first);
+      }
+      _replays[replayKey] = _Replay(name, bodyText, 200, json, hub.now());
+    }
+    return jsonResponse(json);
   }
 
   // ------------------------------------------------------------------ reads
@@ -108,11 +248,11 @@ class RestApi {
   Response _members(Call c) {
     final connection = c.access.connection;
     return jsonResponse({
-      'hub': c.wire.hub(hub.config.name),
+      'hub': {'device': c.den.deviceId, 'name': c.den.thisDevice?.name ?? hub.config.name, 'version': hubVersion},
       'family': c.wire.family(),
       'token': {
         'label': connection.label,
-        'member': connection.member,
+        'member': c.access.member,
         'scopes': [for (final s in Scope.values) if (connection.scopes.contains(s)) s.name],
         ...c.wire.instant('expires', connection.expires),
       },
@@ -146,7 +286,7 @@ class RestApi {
       'chore_summary': Wire.choreSummary(chores),
       'lists': [for (final l in view.lists) if (c.canSee(l.list.space)) Wire.list(l)],
       'gaps': [
-        for (final g in view.gaps)
+        for (final g in visibleGaps(c.den, view.gaps, c.readable))
           if (g.occurrences.every((o) => visible.contains(Wire.uidOf(o)))) c.wire.gap(g),
       ],
     });
@@ -209,14 +349,17 @@ class RestApi {
     });
   }
 
-  Response _lists(Call c) => jsonResponse({
-        'lists': [for (final l in c.den.lists) if (c.canSee(l.list.space)) Wire.list(l)],
-        'stores': c.den.stores,
-      });
+  Response _lists(Call c) {
+    final lists = [for (final l in c.den.lists) if (c.canSee(l.list.space)) l];
+    return jsonResponse({
+      'lists': [for (final l in lists) Wire.list(l)],
+      'stores': storesOf(lists),
+    });
+  }
 
   Response _points(Call c) {
     final recent = queryInt(c.request, 'recent', 50, min: 0, max: 200);
-    return jsonResponse(c.wire.points(c.den.points(), recent: recent));
+    return jsonResponse(c.wire.points(visiblePoints(c.den, c.den.points(), c.readable), recent: recent));
   }
 
   Response _history(Call c) {
@@ -240,41 +383,13 @@ class RestApi {
     if (q.isEmpty || q.length > 200) throw ApiError.invalid('"q" must be 1 to 200 characters.', field: 'q');
     final limit = queryInt(c.request, 'limit', 50, min: 1, max: 100);
     final hits = [
-      for (final h in c.den.search(q, limit: limit + 50))
+      for (final h in c.den.search(q, limit: limit + 50, includeHistory: queryBool(c.request, 'include_removed', false)))
         if (searchHitVisible(c.den, h, c.readable)) h,
     ];
     return jsonResponse({
       'results': [for (final h in hits.take(limit)) c.wire.searchHit(h)],
     });
   }
-}
-
-/// Whether a search hit belongs to a space in [readable].
-bool searchHitVisible(Den den, SearchHit hit, Set<String> readable) {
-  String? space;
-  switch (hit.type) {
-    case RecordType.member:
-      space = Space.family;
-    case RecordType.event:
-      space = den.event(hit.id)?.space;
-    case RecordType.chore:
-      space = den.chore(hit.id)?.space;
-    case RecordType.list:
-      space = den.list(hit.id)?.list.space;
-    case RecordType.item:
-      for (final l in den.lists) {
-        if (l.items.any((i) => i.id == hit.id)) space = l.list.space;
-      }
-  }
-  if (space == null) {
-    for (final h in den.history(type: hit.type, limit: 500)) {
-      if (h.rid == hit.id) {
-        space = h.space;
-        break;
-      }
-    }
-  }
-  return space != null && readable.contains(space);
 }
 
 extension on List<ChoreDay> {

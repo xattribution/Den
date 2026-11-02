@@ -1,9 +1,9 @@
-import 'package:den_app/app.dart';
-import 'package:den_app/design/parts/family_sign_in.dart';
+import 'package:den_app/app/den_app.dart';
+import 'package:den_app/features/shared_screens/widgets/sign_in.dart';
 import 'package:den_app/design/theme.dart';
 import 'package:den_app/design/tokens.dart';
-import 'package:den_app/screens/wall/wall_screen.dart';
-import 'package:den_app/state/app_state.dart';
+import 'package:den_app/features/shared_screens/screens/wall_screen.dart';
+import 'package:den_app/app/app_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -64,6 +64,9 @@ void main() {
 
   testWidgets('Use as wall display sends Today to the wall', (tester) async {
     final state = await demo(tester, wall: true);
+    // The real font: the test font's square glyphs make the wall's header (date, tabs, clock)
+    // wider than any screen draws it.
+    await loadFonts();
     await tester.pumpWidget(
       DenScope(state: state, child: MaterialApp.router(theme: denTheme(DenColors.day), routerConfig: buildRouter(state))),
     );

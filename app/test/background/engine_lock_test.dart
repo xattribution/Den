@@ -1,7 +1,7 @@
 import 'dart:isolate';
 import 'dart:ui' show IsolateNameServer;
 
-import 'package:den_app/background/engine_lock.dart';
+import 'package:den_app/platform/background/engine_lock.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

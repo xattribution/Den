@@ -6,11 +6,12 @@ import 'dart:io';
 
 import 'den_core.dart';
 
-/// Keeps a device's change log as append-only JSON lines (`changes.jsonl`) and its metadata as
-/// `meta.json` in [directoryPath]. Appends are flushed to disk before returning; metadata is
-/// written to a temporary file and renamed over the old one, so a crash leaves either the old or
-/// the new version. A last line cut short by a crash is dropped and trimmed on the next load.
-class FileStorage implements DenStorage {
+/// Keeps a device's change log as append-only JSON lines (`changes.jsonl`), its metadata as
+/// `meta.json` and the engine's snapshot as `snapshot.json` in [directoryPath]. Appends are
+/// flushed to disk before returning; metadata and the snapshot are written to a temporary file
+/// and renamed over the old one, so a crash leaves either the old or the new version. A last line
+/// cut short by a crash is dropped and trimmed on the next load.
+class FileStorage implements DenStorage, SnapshotStorage {
   FileStorage(this.directoryPath);
 
   final String directoryPath;
@@ -19,6 +20,8 @@ class FileStorage implements DenStorage {
   File get _log => File('$directoryPath${Platform.pathSeparator}changes.jsonl');
   File get _meta => File('$directoryPath${Platform.pathSeparator}meta.json');
   File get _metaTemp => File('$directoryPath${Platform.pathSeparator}meta.json.tmp');
+  File get _snapshot => File('$directoryPath${Platform.pathSeparator}snapshot.json');
+  File get _snapshotTemp => File('$directoryPath${Platform.pathSeparator}snapshot.json.tmp');
 
   Future<T> _locked<T>(Future<T> Function() body) {
     final run = _tail.then((_) => body());
@@ -102,22 +105,40 @@ class FileStorage implements DenStorage {
 
   @override
   Future<void> clear() => _locked(() async {
-        for (final file in [_log, _meta, _metaTemp]) {
+        for (final file in [_log, _meta, _metaTemp, _snapshot, _snapshotTemp]) {
           if (await file.exists()) await file.delete();
         }
       });
 
   @override
-  Future<void> saveMeta(Map<String, Object?> meta) => _locked(() async {
-        await _ensureDirectory();
-        final temp = _metaTemp;
-        final raf = await temp.open(mode: FileMode.write);
+  Future<void> saveMeta(Map<String, Object?> meta) => _locked(() => _replace(_metaTemp, _meta, jsonEncode(meta)));
+
+  @override
+  Future<String?> loadSnapshot() => _locked(() async {
+        final file = _snapshot;
+        if (!await file.exists()) return null;
         try {
-          await raf.writeString(jsonEncode(meta));
-          await raf.flush();
-        } finally {
-          await raf.close();
+          return await file.readAsString();
+        } on FileSystemException {
+          return null;
+        } on FormatException {
+          return null;
         }
-        await temp.rename(_meta.path);
       });
+
+  @override
+  Future<void> saveSnapshot(String snapshot) => _locked(() => _replace(_snapshotTemp, _snapshot, snapshot));
+
+  /// Writes [text] to [temp], flushes it, and renames it over [target].
+  Future<void> _replace(File temp, File target, String text) async {
+    await _ensureDirectory();
+    final raf = await temp.open(mode: FileMode.write);
+    try {
+      await raf.writeString(text);
+      await raf.flush();
+    } finally {
+      await raf.close();
+    }
+    await temp.rename(target.path);
+  }
 }
