@@ -17,6 +17,9 @@ final MimeTypeResolver _types = MimeTypeResolver()
   ..addExtension('mjs', 'text/javascript')
   ..addExtension('webmanifest', 'application/manifest+json');
 
+/// The web app's files worth compressing: the app's code, CanvasKit, fonts and text.
+const Set<String> _compressible = {'js', 'mjs', 'wasm', 'json', 'css', 'html', 'ttf', 'otf', 'svg', 'txt', 'map', 'webmanifest'};
+
 /// The `Cache-Control` for the web app file at [path]: a year (immutable) for files whose names
 /// carry a content hash, else `no-cache`, so `index.html`, `flutter_bootstrap.js`, the service
 /// worker, `manifest.json` and Flutter's other fixed names are checked with the hub on every
@@ -75,6 +78,43 @@ Handler? webAppHandler(String? directory, {String Function(Request request, List
     return hashes;
   }
 
+  // Each compressed file once, while it stays the same: the app's code and CanvasKit are about
+  // 15 MB as they are and about 4 MB compressed, which is what a phone on a slow VPN waits for.
+  final gzipped = <String, ({DateTime modified, List<int> bytes})>{};
+  Response compressed(Request request, Response response) {
+    if (response.statusCode != 200 || request.method != 'GET') return response;
+    if (response.headers['content-encoding'] != null) return response;
+    final accepts = (request.headers['accept-encoding'] ?? '').split(',').map((e) => e.trim());
+    if (!accepts.any((e) => e == 'gzip' || e == '*' || e.startsWith('gzip;') && !e.endsWith('q=0'))) return response;
+    final segments = request.url.pathSegments.where((s) => s.isNotEmpty).toList();
+    final last = segments.isEmpty ? '' : segments.last;
+    final dot = last.lastIndexOf('.');
+    final File file;
+    if (dot < 0) {
+      file = index;
+    } else {
+      if (!_compressible.contains(last.substring(dot + 1).toLowerCase())) return response;
+      file = File([directory, ...segments].join(Platform.pathSeparator));
+    }
+    try {
+      final modified = file.lastModifiedSync();
+      var kept = gzipped[file.path];
+      if (kept == null || kept.modified != modified) {
+        kept = (modified: modified, bytes: gzip.encode(file.readAsBytesSync()));
+        gzipped[file.path] = kept;
+      }
+      final headers = {
+        for (final h in response.headers.entries)
+          if (h.key != 'content-length' && h.key != 'accept-ranges') h.key: h.value,
+        'content-encoding': 'gzip',
+        'vary': 'accept-encoding',
+      };
+      return Response.ok(kept.bytes, headers: headers);
+    } on FileSystemException {
+      return response;
+    }
+  }
+
   Response finish(Request request, Response response) {
     final html = (response.headers['content-type'] ?? '').startsWith('text/html');
     return response.change(headers: {
@@ -94,6 +134,6 @@ Handler? webAppHandler(String? directory, {String Function(Request request, List
         );
       }
     }
-    return finish(request, response);
+    return finish(request, compressed(request, response));
   };
 }
