@@ -289,6 +289,30 @@ jobs:
           name: den-${{ matrix.target }}
           path: ${{ matrix.artifact }}
 
+  # On a release tag, attach the apps to the release, as the README's download links name them.
+  apps-publish:
+    name: Attach the apps to the release
+    needs: [build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: built
+      - name: Package
+        run: |
+          mkdir -p dist
+          (cd built/den-windows && zip -qr ../../dist/Den-windows.zip .)
+          (cd built/den-macos && zip -qry ../../dist/Den-macos.zip Den.app)
+          cp built/den-android/app-release.apk dist/Den-android.apk
+          tar -C built/den-linux -czf dist/Den-linux.tar.gz .
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+
   # On a labeled pull request or a manual run, build the hub and relay images when the change
   # touches them (one platform, nothing pushed), so a broken Dockerfile or a web build that
   # fails under --csp shows up in review rather than at release.
