@@ -2674,9 +2674,9 @@ whose `Host` or `X-Forwarded-Proto` makes no address is `400` anywhere on the ho
 
 The hub sorts every request by where it came from (`packages/den_hub/lib/src/server/outside.dart`).
 
-**Inside** is this machine, the home network, the family's tailnet (`100.64.0.0/10`,
+**Inside** is this machine, the home network, a VPN into it (`100.64.0.0/10`,
 `fd7a:115c:a1e0::/48`), or a proxy on this machine or in `DEN_TRUSTED_PROXIES` whose right-most
-`X-Forwarded-For` hop is one of those (Tailscale Serve). Inside, everything works as described
+`X-Forwarded-For` hop is one of those. Inside, everything works as described
 above, and a fresh hub is open to claim: `GET /api/v1/hub/status` says `"open": true`, and the
 first-boot endpoints and `POST /api/v1/hub/setup` take no setup code.
 
