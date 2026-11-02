@@ -302,6 +302,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: built
+          # Only the apps: the Docker build records beside them fail to download.
+          pattern: den-*
       - name: Package
         run: |
           mkdir -p dist
