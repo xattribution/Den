@@ -28,8 +28,8 @@ void main() {
       trustedProxies: [IpNetwork.parse('127.0.0.1')],
     ));
     addTearDown(hub.stop);
-    Future<ApiResult> call(String method, String path, {String? token, Object? body, String? from}) =>
-        apiCall(hub.localUrl, method, path, token: token, body: body, headers: {'x-forwarded-for': ?from});
+    Future<ApiResult> call(String method, String path, {String? token, Object? body, Map<String, String>? from}) =>
+        apiCall(hub.localUrl, method, path, token: token, body: body, headers: from);
 
     final health = await call('GET', '/health');
     expect(health.body['ready'], isFalse);
@@ -47,7 +47,13 @@ void main() {
     addTearDown(phoneNode.close);
     final invite = await phoneNode.createInvite();
 
-    const stranger = '192.168.1.66';
+    // Someone outside the home who has the setup link's door pass but not the code (on the home
+    // network a fresh hub needs no code at all).
+    final stranger = {
+      ...fromTunnel,
+      'x-forwarded-for': '203.0.113.66',
+      'cookie': await doorPass(hub.localUrl, '/setup/${codes.single}/${hub.den.deviceId}'),
+    };
     for (var i = 1; i <= setupTries; i++) {
       final wrong = await call('POST', '/api/v1/hub/setup', body: {'code': 'AAAA-AAAA', 'invite': invite.toUrl()}, from: stranger);
       expect(wrong.status, 403);

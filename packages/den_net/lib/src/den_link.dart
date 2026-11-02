@@ -55,8 +55,16 @@ class DenLink {
         _ => '/${_paths.entries.firstWhere((e) => e.value == kind).key}/${words!.replaceAll(' ', '-')}',
       };
 
-  /// The link in full, at [base] (or [hub]).
-  Uri link([Uri? base]) => (base ?? hub)!.replace(path: '/', fragment: route);
+  /// The link in full, at [base] (or [hub]). Invites and setup links carry their words or code
+  /// in the path (`https://den.example.com/join/maple-river-canoe-tiger`), so the hub can let a
+  /// browser in from outside for a link that works; the hub sends it on to the app's route.
+  Uri link([Uri? base]) {
+    final b = (base ?? hub)!;
+    if (kind == DenLinkKind.family || kind == DenLinkKind.setup) {
+      return Uri(scheme: b.scheme, host: b.host, port: b.hasPort ? b.port : null, path: route);
+    }
+    return b.replace(path: '/', fragment: route);
+  }
 
   /// Reads [text]; null when it holds no Den link and isn't four words. Four words with no
   /// link are taken as an invite to a family.

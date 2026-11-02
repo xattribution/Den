@@ -2669,3 +2669,38 @@ whose `Host` or `X-Forwarded-Proto` makes no address is `400` anywhere on the ho
 | `POST /api/v1/host/logs {"id", "public_url", "adopted_from"}` | Serves the hub `den_hub adopt` copied into `logs/<id>/`. `409 conflict` when the host already serves its hub, its family or its address |
 | `DELETE /api/v1/host/families/{id or address}` | Stops serving that family; its data stays |
 | `DELETE /api/v1/host/families/{id or address}?delete_data=1` | Stops serving it and deletes its data and its record, in the running host. A family still on the host only by its id (`409 in_use` by its address); `409 busy` when something (a backup) has its data open |
+
+## Inside and outside
+
+The hub sorts every request by where it came from (`packages/den_hub/lib/src/server/outside.dart`).
+
+**Inside** is this machine, the home network, the family's tailnet (`100.64.0.0/10`,
+`fd7a:115c:a1e0::/48`), or a proxy on this machine or in `DEN_TRUSTED_PROXIES` whose right-most
+`X-Forwarded-For` hop is one of those (Tailscale Serve). Inside, everything works as described
+above, and a fresh hub is open to claim: `GET /api/v1/hub/status` says `"open": true`, and the
+first-boot endpoints and `POST /api/v1/hub/setup` take no setup code.
+
+**Outside** is everything else: anything with a `CF-*` or `CDN-Loop` header (a Cloudflare tunnel),
+a public address, or no address at all (the relay's tunnel). From outside the hub answers only:
+
+| What | Why it's safe |
+| --- | --- |
+| `GET /ws` | The sync hello names a device of the family, or the joiner's invite |
+| Anything signed by a device, or with a bearer token | The family checks the signature or token |
+| `GET /ics/<secret>/<file>` | The calendar link's secret |
+| `/.well-known/*`, `/oauth/*`, `/mcp`, `/auth/*`, passkey sign-in, account providers | Each needs a parent's approval or proves who it is |
+| `POST /api/v1/invites`, `/invites/redeem`, `/recovery/redeem`, `/api/v1/link/*` | Each needs its words or code, counted when wrong |
+| `/manifest.json`, `/favicon.png`, `/icons/*` | Fetched without cookies when someone adds Den to their Home Screen |
+
+Everything else, the app itself included, gets an empty `404` unless the browser holds a **door
+pass**: the cookie `__Host-den_pass`, an expiry signed with the host's key (`host/door.key`).
+
+- `GET /join/<w>-<w>-<w>-<w>` and `GET /setup/<code>/<hub device>` (the links Den sends) check the
+  invite or setup code without using it, set a pass for a day, and redirect to the app's route
+  (`/#/join/...`). A link that doesn't work gets the empty `404` from outside, and is counted as a
+  failed try.
+- `POST /api/v1/door/pass`, signed by a device of the family, sets a pass for 90 days. The app
+  asks for it each time it starts syncing in a browser at an `https` address.
+
+A pass only loads the app (and `GET /api/v1/hub/status`); the family's data still needs a device's
+signature.

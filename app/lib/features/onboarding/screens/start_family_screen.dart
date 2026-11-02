@@ -87,6 +87,9 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
   /// The link brought the setup code.
   bool get _linked => widget.setupCode != null && !_typeCode;
 
+  /// A fresh hub on the home network, which is this device's to claim with no code.
+  bool get _open => _hub?.open == true && !_hub!.paired;
+
   /// The hub that answered isn't the one the setup link names.
   bool get _wrongHub {
     final hub = _hub;
@@ -139,7 +142,7 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
     if (_family.text.trim().isEmpty || _name.text.trim().isEmpty) return;
     final hub = _adopting ? _hub : null;
     final code = _linked ? widget.setupCode! : _code.text.trim();
-    if (hub != null && code.isEmpty) return;
+    if (hub != null && code.isEmpty && !_open) return;
     if (_wrongHub) return;
     setState(() {
       _saving = true;
@@ -212,8 +215,8 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
     final color = PersonColor.forMarker(_marker).color;
     final web = widget.web ?? WebApp.info;
     final served = _hub;
-    if (_linked && !_hereInstead && (widget.firstBoot != null || (served?.firstBoot == 'start' && !served!.paired))) {
-      final source = _firstBoot ??= widget.firstBoot ?? HubFirstBoot(served!.base, widget.setupCode!);
+    if ((_linked || _open) && !_hereInstead && (widget.firstBoot != null || (served?.firstBoot == 'start' && !served!.paired))) {
+      final source = _firstBoot ??= widget.firstBoot ?? HubFirstBoot(served!.base, widget.setupCode ?? '');
       return FirstBootScreen(source: source, onMakeHere: () => setState(() => _hereInstead = true));
     }
     if ((widget.browser ?? Capabilities.web) && web.needsHomeScreen && !_inSafari) {
@@ -297,7 +300,7 @@ class _StartFamilyScreenState extends State<StartFamilyScreen> {
             actionLabel: 'Type the setup code instead',
             onAction: () => setState(() => _typeCode = true),
           )
-        else if (_adopting && _linked)
+        else if (_adopting && (_linked || _open))
           NoticeLine(icon: PhosphorIconsRegular.hardDrives, message: "${_hub!.name} joins as the family's hub")
         else if (_adopting)
           LabeledField(

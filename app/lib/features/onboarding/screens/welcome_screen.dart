@@ -62,6 +62,11 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   HubInfo? _hub;
   bool _asked = false;
 
+  /// In a browser, whether the hub has answered (or 2 seconds passed): until then the page stays
+  /// blank, so the rows don't change under the person's finger once it does.
+  bool _settled = false;
+  Timer? _wait;
+
   /// A passkey challenge is armed in the page: the button opens the sheet at once.
   bool _armed = false;
 
@@ -87,18 +92,32 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     _asked = true;
     _hub = widget.hub;
     if (_hub == null) {
+      _wait = Timer(const Duration(seconds: 2), () {
+        if (mounted && !_settled) setState(() => _settled = true);
+      });
       Pairing.of(context).servingHub().then((hub) {
         if (!mounted) return;
-        setState(() => _hub = hub);
+        _wait?.cancel();
+        setState(() {
+          _hub = hub;
+          _settled = true;
+        });
+        // A fresh hub on the home network is this browser's to set up: straight to it.
+        if (hub != null && hub.open && !hub.paired) {
+          context.go('/welcome/start');
+          return;
+        }
         _arm();
       });
     } else {
+      _settled = true;
       _arm();
     }
   }
 
   @override
   void dispose() {
+    _wait?.cancel();
     _rearm?.cancel();
     super.dispose();
   }
@@ -204,6 +223,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_browser && !_settled) return ColoredBox(color: context.colors.bg, child: const SizedBox.expand());
     final web = widget.web ?? WebApp.info;
     final hub = _hub;
     final steps = _browser && web.needsHomeScreen && !_inSafari;

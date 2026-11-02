@@ -575,7 +575,8 @@ void main() {
       expect((await _admin(host, dir.path, 'GET', '/api/v1/host')).statusCode, 200);
       for (final header in ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-server', 'x-forwarded-port', 'via', 'cf-connecting-ip', 'true-client-ip']) {
         final r = await _admin(host, dir.path, 'GET', '/api/v1/host', headers: {header: header == 'x-forwarded-proto' ? 'https' : '1.2.3.4'});
-        expect(r.statusCode, 403, reason: header);
+        // Through a proxy it is from outside, where the gate answers nothing (404); else 403.
+        expect(r.statusCode, isIn([403, 404]), reason: header);
       }
       final bad = await http.get(host.localUrl.resolve('/health'), headers: {'x-forwarded-proto': '1.2.3.4'});
       expect(bad.statusCode, 400);

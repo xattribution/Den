@@ -216,13 +216,20 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: deploy/install.sh
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
         with:
           name: den-homeassistant-zip
           path: dist
+      # install.sh too: the one command people paste fetches it from the latest release.
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/den.zip
+          files: |
+            dist/den.zip
+            deploy/install.sh
           fail_on_unmatched_files: true
 
   build:
@@ -345,6 +352,9 @@ jobs:
           file: deploy/${{ matrix.image }}/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          # The hub is also ghcr.io/<owner>/den:stable, the name and channel deploy/install.sh pulls.
           tags: |
             ghcr.io/${{ github.repository_owner }}/den-${{ matrix.image }}:latest
             ghcr.io/${{ github.repository_owner }}/den-${{ matrix.image }}:${{ github.ref_name }}
+            ${{ matrix.image == 'hub' && format('ghcr.io/{0}/den:stable', github.repository_owner) || '' }}
+            ${{ matrix.image == 'hub' && format('ghcr.io/{0}/den:{1}', github.repository_owner, github.ref_name) || '' }}

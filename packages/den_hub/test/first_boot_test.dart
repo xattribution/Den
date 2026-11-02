@@ -33,19 +33,21 @@ void main() {
     final status = await apiCall(s.base, 'GET', '/api/v1/hub/status');
     expect(status.body['first_boot'], {'next': 'start'});
 
-    final none = await apiCall(s.base, 'GET', '/api/v1/hub/first-boot');
+    // From outside the home, even with the setup link's door pass, the code is what counts.
+    final outside = await s.outsideHeaders();
+    final none = await apiCall(s.base, 'GET', '/api/v1/hub/first-boot', headers: outside);
     expect(none.status, 403);
-    final wrong = await s.withCode('GET', '/api/v1/hub/first-boot', code: 'AAAA-AAAA');
+    final wrong = await s.withCode('GET', '/api/v1/hub/first-boot', code: 'AAAA-AAAA', outside: true);
     expect(wrong.status, 403);
     expect((wrong.error['details'] as Map)['tries_left'], setupTries - 1);
-    final put = await s.withCode('PUT', '/api/v1/hub/first-boot/internet', code: 'AAAA-AAAA', body: {'token': fakeTunnelToken()});
+    final put = await s.withCode('PUT', '/api/v1/hub/first-boot/internet', code: 'AAAA-AAAA', body: {'token': fakeTunnelToken()}, outside: true);
     expect(put.status, 403);
     expect(s.connector.tokens, isEmpty, reason: 'nothing was saved without the code');
 
     final ok = await s.withCode('GET', '/api/v1/hub/first-boot');
     expect(ok.status, 200, reason: ok.text);
     expect((ok.body['internet'] as Map)['available'], isTrue);
-    expect(ok.body['setup_link'], contains('/#/setup/${s.own.setupCode}/${s.own.den.deviceId}'));
+    expect(ok.body['setup_link'], contains('/setup/${s.own.setupCode}/${s.own.den.deviceId}'));
   });
 
   test('the tunnel token goes to the connector, is never said back, and the address comes from the tunnel', () async {
@@ -69,7 +71,7 @@ void main() {
     final now = await s.withCode('GET', '/api/v1/hub/first-boot');
     expect((now.body['internet'] as Map)['connected'], isTrue);
     expect(now.body['address'], 'https://den.rivera.test');
-    expect(now.body['setup_link'], startsWith('https://den.rivera.test/#/setup/'));
+    expect(now.body['setup_link'], startsWith('https://den.rivera.test/setup/'));
     expect(s.own.config.publicUrl, Uri.parse('https://den.rivera.test'));
     expect(File('${s.dir}/hub/$addressFile').readAsStringSync().trim(), 'https://den.rivera.test');
     expect(now.text, isNot(contains(token)));
@@ -159,9 +161,13 @@ void main() {
     });
     tearDown(() => phone.close());
 
-    Future<http.Response> upload(ServerFixture s, List<int> bytes, {String? code}) => http.post(
+    Future<http.Response> upload(ServerFixture s, List<int> bytes, {String? code, bool outside = false}) async => http.post(
           s.base.resolve('/api/v1/hub/first-boot/upload'),
-          headers: {HubSetup.codeHeader: code ?? s.own.setupCode!, 'content-type': 'application/octet-stream'},
+          headers: {
+            HubSetup.codeHeader: code ?? s.own.setupCode!,
+            'content-type': 'application/octet-stream',
+            if (outside) ...await s.outsideHeaders(),
+          },
           body: bytes,
         );
 
@@ -169,7 +175,7 @@ void main() {
       final s = await fresh();
       addTearDown(s.stop);
       await s.withCode('PUT', '/api/v1/hub/first-boot/internet', body: {'token': fakeTunnelToken()});
-      final wrongCode = await upload(s, sealed, code: 'AAAA-AAAA');
+      final wrongCode = await upload(s, sealed, code: 'AAAA-AAAA', outside: true);
       expect(wrongCode.statusCode, 403);
       final up = await upload(s, sealed);
       expect(up.statusCode, 200, reason: up.body);

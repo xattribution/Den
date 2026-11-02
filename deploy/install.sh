@@ -36,7 +36,25 @@ COMPOSE_FALLBACK=v5.6.0    # the Compose plugin, when a Docker without it is alr
 HEALTH_WAIT=${DEN_HEALTH_WAIT:-240}            # seconds an update has to come up healthy before it's undone
 
 # Where things are. Tests point these somewhere else; nobody else needs to.
-DEN_DIR=${DEN_DIR:-/opt/den}
+DEN_ETC=${DEN_ETC:-/etc/den}
+
+# Den's folder: the one this computer's install remembers; an older install's in /opt/den; or
+# den in the home folder of whoever ran sudo (den-server when ~/den holds Den's source).
+home_den_dir() {
+  hd_user=${SUDO_USER:-$(id -un 2>/dev/null)}
+  hd_home=$(getent passwd "$hd_user" 2>/dev/null | cut -d: -f6)
+  [ -n "$hd_home" ] || hd_home=${HOME:-/root}
+  if [ -d "$hd_home/den/.git" ]; then printf '%s/den-server' "$hd_home"; else printf '%s/den' "$hd_home"; fi
+}
+if [ -z "${DEN_DIR:-}" ]; then
+  if [ -s "$DEN_ETC/dir" ]; then
+    DEN_DIR=$(head -n 1 "$DEN_ETC/dir")
+  elif [ -f /opt/den/compose.yaml ]; then
+    DEN_DIR=/opt/den
+  else
+    DEN_DIR=$(home_den_dir)
+  fi
+fi
 DEN_OS_RELEASE=${DEN_OS_RELEASE:-/etc/os-release}
 DEN_MEMINFO=${DEN_MEMINFO:-/proc/meminfo}
 DEN_DMI_VENDOR=${DEN_DMI_VENDOR:-/sys/class/dmi/id/sys_vendor}
@@ -573,6 +591,9 @@ write_files() {
   run chown -R "$DEN_UID:$DEN_UID" "$DATA_DIR"
   run chmod 700 "$DATA_DIR" "$HUB_DIR"
   compose_text | put "$COMPOSE_FILE" 644
+  # So the den command, and the nightly update, find this folder whoever runs them.
+  run mkdir -p "$DEN_ETC"
+  printf '%s\n' "$DEN_DIR" | put "$DEN_ETC/dir" 644
 }
 
 install_units() {
@@ -875,6 +896,39 @@ wait_address() {
   done
 }
 
+# --- Tailscale ------------------------------------------------------------------------------
+
+# tailscale_serve: when this computer is on a tailnet, Den answers there too, at
+# https://<this computer>.<tailnet>.ts.net with a real certificate (Tailscale Serve), so every
+# phone with Tailscale on reaches it from anywhere, and counts as home. Sets TS_URL.
+tailscale_serve() {
+  TS_URL=
+  command -v tailscale > /dev/null 2>&1 || return 0
+  tailscale status > /dev/null 2>&1 || return 0
+  ts_name=$(tailscale status --json 2>/dev/null | grep -m 1 '"DNSName"' | sed -e 's/.*"DNSName": *"//' -e 's/\.*",*$//')
+  [ -n "$ts_name" ] || return 0
+  ts_port=$(cat "$STATE_DIR/tailscale-port" 2>/dev/null)
+  if [ -z "$ts_port" ]; then
+    ts_status=$(tailscale serve status 2>/dev/null)
+    ts_port=443
+    # 443 serves something else already: the next port Tailscale offers.
+    if printf '%s\n' "$ts_status" | grep -q "^https://$ts_name "; then ts_port=8443; fi
+    if [ "$ts_port" = 8443 ] && printf '%s\n' "$ts_status" | grep -q "^https://$ts_name:8443 "; then ts_port=10000; fi
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    note "would serve Den on the tailnet at https://$ts_name (Tailscale Serve)"
+    return 0
+  fi
+  if tailscale serve --bg --https="$ts_port" "http://127.0.0.1:$DEN_PORT" > /dev/null 2>&1; then
+    printf '%s\n' "$ts_port" | put "$STATE_DIR/tailscale-port" 600
+    if [ "$ts_port" = 443 ]; then TS_URL=https://$ts_name; else TS_URL=https://$ts_name:$ts_port; fi
+    note "on your tailnet: $TS_URL"
+  else
+    note "Tailscale is here, but it didn't take Den. Turn on HTTPS Certificates on the DNS page of"
+    note "Tailscale's admin console, then run sudo den again."
+  fi
+}
+
 # --- the setup link -------------------------------------------------------------------------
 
 hub_paired() {
@@ -897,11 +951,22 @@ print_setup() {
     [ -n "$TUNNEL_HOST" ] && say "The family opens it at https://$TUNNEL_HOST"
     return 0
   fi
+  # Run on its own (sudo den setup-link): the tailnet address Den was given at install.
+  if [ -z "${TS_URL:-}" ] && [ -s "$STATE_DIR/tailscale-port" ] && command -v tailscale > /dev/null 2>&1; then
+    ps_ts=$(tailscale status --json 2>/dev/null | grep -m 1 '"DNSName"' | sed -e 's/.*"DNSName": *"//' -e 's/\.*",*$//')
+    ps_tp=$(cat "$STATE_DIR/tailscale-port")
+    if [ -n "$ps_ts" ]; then
+      if [ "$ps_tp" = 443 ]; then TS_URL=https://$ps_ts; else TS_URL=https://$ps_ts:$ps_tp; fi
+    fi
+  fi
   ps_local_url=http://localhost:$DEN_PORT
   ps_qr=
   ps_link=
   ps_lan_link=
-  if [ -n "$TUNNEL_HOST" ] && [ "$TUNNEL_STATE" = connected ]; then
+  if [ -n "$TS_URL" ]; then
+    ps_qr=$(bare_link "$TS_URL")
+    ps_link=$(printf '%s\n' "$ps_qr" | head -n 1)
+  elif [ -n "$TUNNEL_HOST" ] && [ "$TUNNEL_STATE" = connected ]; then
     ps_qr=$(bare_link "https://$TUNNEL_HOST")
     ps_link=$(printf '%s\n' "$ps_qr" | head -n 1)
   fi
@@ -920,6 +985,8 @@ print_setup() {
   say "Next: make your family. Open this link on your phone or computer"
   if [ "$ps_link" = "$ps_lan_link" ] && [ -n "$ps_lan_link" ]; then
     say "(on the same Wi-Fi as this computer), or scan the code with your phone's camera:"
+  elif [ -n "$TS_URL" ] && [ -n "$ps_link" ]; then
+    say "(with Tailscale on), or scan the code with your phone's camera:"
   elif [ -n "$ps_link" ]; then
     say "(from anywhere), or scan the code with your phone's camera:"
   fi
@@ -942,9 +1009,8 @@ print_setup() {
       say ""
       say "    sudo den setup-link"
     else
-      say "(it opens only once the tunnel is set up):"
-      say ""
-      say "    sudo den tunnel        (then paste your tunnel token from Cloudflare)"
+      say "(it opens only once Den can be reached: put Tailscale on this computer, or give it a"
+      say "Cloudflare Tunnel's token with sudo den tunnel, then type sudo den setup-link)."
     fi
     say ""
     say "On this computer itself it's already: $ps_any"
@@ -975,7 +1041,7 @@ cmd_install() {
   check_resources
   detect_network
   ci_kind="home network"
-  [ "$NETWORK_MODE" = local ] && ci_kind="internet server: Den will answer this computer and the tunnel only"
+  [ "$NETWORK_MODE" = local ] && ci_kind="internet server: Den answers this computer, your tailnet and the tunnel; nobody else"
   say ""
   say "This computer: $OS_NAME, $( [ "$ARCH" = amd64 ] && echo "64-bit Intel/AMD" || echo "64-bit ARM" ), $MEM_TEXT memory, $DISK_TEXT free"
   say "Network: ${LAN_IP:-no home network address} ($ci_kind)"
@@ -1037,28 +1103,16 @@ cmd_install() {
   install_units
   note "on: around 3:30 every night; if an update doesn't start, Den goes back by itself"
 
+  # Reaching Den from away is set up on Den's own page (a Cloudflare Tunnel's token pasted there),
+  # or is already done here when this computer is on a tailnet.
+  tailscale_serve
   if [ -n "$TOKEN_ARG" ]; then
     save_token "$TOKEN"
-  elif ! has_token && can_ask; then
-    say ""
-    say "The family reaches Den from anywhere through your Cloudflare Tunnel (step 1 of the guide)."
-    ask "Paste your tunnel token (or the whole command from Cloudflare), then press Enter (or just Enter to do it later): "
-    TOKEN=$(clean_token "$ANSWER")
-    if [ -n "$TOKEN" ]; then save_token "$TOKEN"; elif [ -n "$ANSWER" ]; then
-      say "That doesn't look like a tunnel token (they start with eyJ). Later: sudo den tunnel"
-    fi
   fi
   if has_token; then
     say ""
     say "Connecting the tunnel..."
     wait_tunnel 45
-    if [ "$TUNNEL_STATE" = connected ] && [ -z "$TUNNEL_HOST" ] && can_ask; then
-      say "The tunnel is connected."
-      say ""
-      say "Now give Den its address in Cloudflare: Step 3 of the guide."
-      say "This waits here until that's done (or press Ctrl-C, and afterwards type: sudo den setup-link)..."
-      wait_address 1800
-    fi
     case "$TUNNEL_STATE" in
       connected) if [ -n "$TUNNEL_HOST" ]; then say "Reachable from anywhere at https://$TUNNEL_HOST."; else say "The tunnel is connected."; fi ;;
       error) say "The tunnel didn't connect: $(json_get "$HUB_DIR/tunnel-status.json" message)" ;;
@@ -1225,11 +1279,14 @@ cmd_uninstall() {
     try docker image rm "$cu_image"
   done
   run rm -f "$DEN_BIN_DIR/den"
+  cu_ts=$(cat "$STATE_DIR/tailscale-port" 2>/dev/null)
+  if [ -n "$cu_ts" ] && command -v tailscale > /dev/null 2>&1; then try tailscale serve --https="$cu_ts" off; fi
   if [ "$keep" = y ]; then
     run rm -rf "$STATE_DIR" "$COMPOSE_FILE" "$DEN_DIR/den" "$DEN_DIR/den.new"
     say "Den is removed. The family's data is still in $DATA_DIR; installing Den again picks it up."
   else
     run rm -rf "$DEN_DIR"
+    run rm -f "$DEN_ETC/dir"
     say "Den and the family's data on this computer are removed (the phones keep their copy)."
   fi
   say "Docker stays installed; other programs may use it."

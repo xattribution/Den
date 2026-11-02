@@ -17,6 +17,7 @@ import 'device_auth.dart';
 import 'edge.dart';
 import 'http_util.dart';
 import 'log.dart';
+import 'server/outside.dart' show fromInside;
 
 /// Letters for setup codes: no 0, 1, I, L, O or U, so a code read off a log can't be misread.
 const String setupAlphabet = '23456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -84,8 +85,12 @@ enum SetupStage {
 /// (the hub's proof that it's the phone the link went to) and takes in only the hub whose device
 /// id the link names, the hash of its key, so there are no words to compare. In the fragment,
 /// which browsers never send to the server.
-Uri setupLink(Uri base, String code, String hubDevice) =>
-    base.replace(path: '/', fragment: '/setup/${HubSetup.display(HubSetup.normalize(code))}/$hubDevice');
+Uri setupLink(Uri base, String code, String hubDevice) => Uri(
+      scheme: base.scheme,
+      host: base.host,
+      port: base.hasPort ? base.port : null,
+      path: '/setup/${HubSetup.display(HubSetup.normalize(code))}/$hubDevice',
+    );
 
 String _newCode(Random random) =>
     List.generate(8, (_) => setupAlphabet[random.nextInt(setupAlphabet.length)]).join();
@@ -225,7 +230,13 @@ class HubSetup {
         'matching_words': ?matchingWords,
         if (_lastError != null && !hub.ready) 'last_error': _lastError,
         if (!hub.ready && _stage == SetupStage.waitingForCode) 'first_boot': ?firstBoot?.call(),
+        // On the home network a fresh hub is anyone's to claim, with no code to type.
+        if (!hub.ready && _stage == SetupStage.waitingForCode && _code != null && _claimable(request)) 'open': true,
       });
+
+  /// Whether [request] may claim this fresh hub without its setup code: it came from inside the
+  /// home ([fromInside]), the way a router or a speaker is set up.
+  bool _claimable(Request request) => fromInside(request, hub.config.trustedProxies);
 
   /// A setup code as typed: upper case, no spaces or dashes.
   static String normalize(String text) => text.toUpperCase().replaceAll(RegExp(r'[\s\-]'), '');
@@ -293,6 +304,7 @@ class HubSetup {
     }
     final key = hub.clientOf(request);
     _checkWaiting(key);
+    if (_code != null && _claimable(request)) return;
     final given = request.headers[codeHeader] ?? '';
     if (given.isEmpty || !_codeMatches(given)) {
       final left = given.isEmpty ? setupTries : _wrongCode(key);
@@ -319,10 +331,11 @@ class HubSetup {
       throw ApiError(409, 'busy', 'This hub is already joining a family. Approve it in the Den app.');
     }
     final b = Body(await readJsonObject(request, required: true));
-    final given = b.string('code', required: true, min: 1, max: 40)!;
+    final open = _code != null && _claimable(request);
+    final given = b.string('code', required: !open, min: 0, max: 40) ?? '';
     final inviteUrl = b.string('invite', required: true, min: 1, max: 4000)!;
     final direct = b.flag('direct', fallback: false)!;
-    if (!_codeMatches(given)) {
+    if (!open && !_codeMatches(given)) {
       final left = _wrongCode(key);
       throw ApiError(
         403,

@@ -7,6 +7,7 @@ import 'package:den_net/den_net.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'hub_api.dart';
 import 'local_hub.dart';
 import 'local_stub.dart' if (dart.library.io) 'local_io.dart' as local;
 import '../capabilities.dart';
@@ -203,6 +204,16 @@ class DenNetwork extends ChangeNotifier {
       return;
     }
     _run(SyncClient(node: node, endpoints: endpoints));
+    _renewDoorPass();
+  }
+
+  /// In a browser at the hub's https address, asks the hub (signed with this device's key) to
+  /// renew this browser's door pass, which lets the app load from outside the home. Nothing
+  /// happens when the hub is older or can't be reached; the app still runs from its cache.
+  void _renewDoorPass() {
+    if (!Capabilities.web || Uri.base.scheme != 'https' || Uri.base.host.isEmpty) return;
+    final at = Uri(scheme: 'https', host: Uri.base.host, port: Uri.base.hasPort ? Uri.base.port : null);
+    unawaited(HubApi(this).send('POST', '/api/v1/door/pass', at: at).then((_) {}, onError: (Object _) {}));
   }
 
   void _run(SyncClient client) {
