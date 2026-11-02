@@ -81,7 +81,7 @@ enum SetupStage {
 }
 
 /// The link that starts a family on this hub with no typing (`den_hub setup-link`):
-/// `https://<hub>/#/setup/<code>/<hub device id>`. The phone that opens it sends the setup code
+/// `https://<hub>/setup/<code>/<hub device id>`. The phone that opens it sends the setup code
 /// (the hub's proof that it's the phone the link went to) and takes in only the hub whose device
 /// id the link names, the hash of its key, so there are no words to compare. In the fragment,
 /// which browsers never send to the server.

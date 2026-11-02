@@ -152,7 +152,7 @@ void main() {
     final (status, out, err) = await run(['setup-link', '--data', dir.path, '--port', '${hub.port}'],
         env: {'DEN_PUBLIC_URL': 'https://den.example.com'});
     expect(status, 0, reason: err);
-    expect(out, contains('  https://den.example.com/#/setup/$code/${den.deviceId}'));
+    expect(out, contains('  https://den.example.com/setup/$code/${den.deviceId}'));
     expect(out, contains('If Den asks for the setup code, it is: $code'));
     expect(out, contains('▀'), reason: 'a QR code drawn in half blocks');
     // Without the hub's address, the code alone and how to get the link.
@@ -161,12 +161,12 @@ void main() {
     expect(plain, contains('--url'));
     // An address given on the command line wins.
     final (_, given, _) = await run(['setup-link', '--data', dir.path, '--port', '${hub.port}', '--url', 'https://den.smith.family']);
-    expect(given, contains('https://den.smith.family/#/setup/$code/${den.deviceId}'));
+    expect(given, contains('https://den.smith.family/setup/$code/${den.deviceId}'));
     // --bare, for deploy/install.sh: the link alone on the first line, then the QR code.
     final (bareStatus, bare, _) =
         await run(['setup-link', '--data', dir.path, '--port', '${hub.port}', '--url', 'http://192.168.1.50:47733', '--bare']);
     expect(bareStatus, 0);
-    expect(bare.split('\n').first, 'http://192.168.1.50:47733/#/setup/$code/${den.deviceId}');
+    expect(bare.split('\n').first, 'http://192.168.1.50:47733/setup/$code/${den.deviceId}');
     expect(bare, contains('▀'));
     expect(bare, isNot(contains('iPhone')));
     final (noUrl, _, _) = await run(['setup-link', '--data', dir.path, '--port', '${hub.port}', '--bare']);

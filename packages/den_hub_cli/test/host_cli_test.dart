@@ -88,7 +88,7 @@ void main() {
     try {
       final (code, out, err) = await run(['add-family', '--hostname', 'den-smith.test', ...args]);
       expect(code, 0, reason: err);
-      final link = RegExp(r'https://den-smith\.test/#/setup/([A-Z0-9]{4}-[A-Z0-9]{4})/([A-Za-z0-9]+)').firstMatch(out);
+      final link = RegExp(r'https://den-smith\.test/setup/([A-Z0-9]{4}-[A-Z0-9]{4})/([A-Za-z0-9]+)').firstMatch(out);
       expect(link, isNotNull, reason: out);
       expect(out, contains('▀'), reason: 'the QR code');
       final smith = host.tenants.singleWhere((t) => t.config.publicUrl?.host == 'den-smith.test');
@@ -385,7 +385,7 @@ void main() {
 
       final (again, againOut, againErr) = await run(['add-family', '--hostname', 'den-smith.test', ...args]);
       expect(again, 0, reason: againErr);
-      expect(againOut, contains('https://den-smith.test/#/setup/'), reason: 'a new family at the freed address');
+      expect(againOut, contains('https://den-smith.test/setup/'), reason: 'a new family at the freed address');
     } finally {
       await host.stop();
     }
