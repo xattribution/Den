@@ -1,5 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'page_keychain_stub.dart' if (dart.library.js_interop) 'page_keychain_web.dart';
+
 /// This device's keychain, set up so a background refresh can read it while the phone is
 /// locked: on iPhone and Mac, items are readable after the first unlock since the device
 /// started, and never leave this device (no iCloud Keychain, no backup restore onto another
@@ -22,6 +24,7 @@ class DeviceKeychain {
 
   /// Reads [key], moving an item an earlier version wrote over to the current settings.
   Future<String?> read(String key) async {
+    if (pageKeychainOnly) return pageRead(key);
     final value = await _storage.read(key: key);
     if (value != null) return value;
     final String? old;
@@ -41,6 +44,7 @@ class DeviceKeychain {
   }
 
   Future<void> write(String key, String value) async {
+    if (pageKeychainOnly) return pageWrite(key, value);
     try {
       await _earlier.delete(key: key);
     } on Object {
@@ -50,6 +54,7 @@ class DeviceKeychain {
   }
 
   Future<void> delete(String key) async {
+    if (pageKeychainOnly) return pageDelete(key);
     await _storage.delete(key: key);
     try {
       await _earlier.delete(key: key);
