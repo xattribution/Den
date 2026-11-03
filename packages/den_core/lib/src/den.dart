@@ -1859,9 +1859,13 @@ class Den {
     String? space,
     EventSource? source,
     CaptureOrigin? from,
+    String? link,
   }) async {
     final id = newId();
     _checkDrivers(rides, const []);
+    if (link != null && familyLink(link)?.status != LinkStatus.linked) {
+      throw const InvalidInput('That family isn\'t linked');
+    }
     await _commit([
       _Draft(RecordType.event, id, space ?? _spaceFor(audience), {
         'title': title,
@@ -1881,6 +1885,7 @@ class Den {
         if (rides.isEmpty) 'rides': const <Object?>[] else ...eventRideFields(rides),
         'countdown': countdown,
         '_from': ?from?.toJson(),
+        'link': ?link,
       }),
     ]);
     return id;
@@ -3280,6 +3285,92 @@ class Den {
   Future<void> setSubscriptionStatus(String id, String status) async {
     _requireLive(RecordType.subscription, id, 'That calendar feed doesn\'t exist');
     await _commit([_Draft(RecordType.subscription, id, Space.parents, {'status': status})]);
+  }
+
+  // ---------------------------------------------------------------- family links
+
+  /// Every link with another family, ended ones too, oldest first.
+  List<FamilyLink> get familyLinks => _memo('familyLinks', const {RecordType.familyLink}, () {
+        return [
+          for (final e in _mat.store.liveOfType(RecordType.familyLink))
+            if (e.space == Space.family) FamilyLink(e.rec),
+        ]..sort((a, b) => a.rec.created.compareTo(b.rec.created));
+      });
+
+  /// The family link [id], or null.
+  FamilyLink? familyLink(String id) {
+    final e = _mat.store.liveAt(Space.family, RecordType.familyLink, id);
+    return e == null ? null : FamilyLink(e.rec);
+  }
+
+  /// A parent, on their own device, links with another family: a new link the other family's
+  /// parent accepts, or, with [id], theirs being accepted here. The hub does the rest.
+  Future<String> addFamilyLink({String? id}) async {
+    final linkId = id ?? newId();
+    if (_mat.store.at(Space.family, RecordType.familyLink, linkId) != null) {
+      throw const InvalidInput('That family link is here already');
+    }
+    await _commit([
+      _Draft(RecordType.familyLink, linkId, Space.family, {'status': LinkStatus.waiting.name, 'share': <String, Object?>{}}),
+    ]);
+    return linkId;
+  }
+
+  /// Shares [what] ([Shared.calendar] or a list's id) with the family of link [id] at [level],
+  /// or stops sharing it (null). Parents, on their own device.
+  Future<void> shareWithFamily(String id, String what, ShareLevel? level) async {
+    _requireLive(RecordType.familyLink, id, 'That family link doesn\'t exist');
+    await _commit([
+      _Draft(RecordType.familyLink, id, Space.family, {'share.$what': level?.name}),
+    ]);
+  }
+
+  /// Ends link [id]: nothing is shared either way any more, and what came through it goes.
+  Future<void> endFamilyLink(String id) async {
+    _requireLive(RecordType.familyLink, id, 'That family link doesn\'t exist');
+    await _commit([
+      _Draft(RecordType.familyLink, id, Space.family, {'status': LinkStatus.ended.name}),
+    ]);
+  }
+
+  /// What the hub learned about link [id]: `name`, `peer`, `status`, `theirs`, `problem`.
+  Future<void> noteFamilyLink(String id, Map<String, Object?> patch) async {
+    _requireLive(RecordType.familyLink, id, 'That family link doesn\'t exist');
+    final fields = _cleanPatch(patch, {'name', 'peer', 'status', 'theirs', 'problem'});
+    if (fields.isEmpty) return;
+    await _commit([_Draft(RecordType.familyLink, id, Space.family, fields)]);
+  }
+
+  /// How much the family of link [linkId] lets this family do with [what] ([Shared.calendar] or
+  /// one of their lists' ids): null while it doesn't share it, or the link isn't linked.
+  ShareLevel? theirShare(String? linkId, String what) {
+    if (linkId == null) return null;
+    final link = familyLink(linkId);
+    if (link == null || link.status != LinkStatus.linked) return null;
+    return link.theirs[what];
+  }
+
+  /// Whether [event] is another family's that this family may only look at.
+  bool seeOnlyEvent(Event event) => event.link != null && theirShare(event.link, Shared.calendar) != ShareLevel.edit;
+
+  /// Whether [list] is another family's that this family may only look at.
+  bool seeOnlyList(DenList list) => list.link != null && theirShare(list.link, list.id) != ShareLevel.edit;
+
+  /// Every record of [type] this device holds, in every space it reads, removed ones too: for
+  /// the hub keeping what families share with each other in step.
+  Iterable<Rec> recordsOf(String type) => _mat.store.ofType(type).map((e) => e.rec);
+
+  /// Record [id] of [type] in [space], removed or not, or null.
+  Rec? recordAt(String space, String type, String id) => _mat.store.at(space, type, id)?.rec;
+
+  /// Writes [fields] to record [id] of [type] in [space] as they are, and returns the change: the
+  /// hub keeping another family's shared events and lists in step with theirs.
+  Future<Change> writeLinked(String type, String id, String space, Map<String, Object?> fields) async {
+    if (!const {RecordType.event, RecordType.eventException, RecordType.list, RecordType.item}.contains(type)) {
+      throw InvalidInput('Families don\'t share records of type "$type"');
+    }
+    final made = await _commit([_Draft(type, id, space, fields)]);
+    return made.last;
   }
 
   // ---------------------------------------------------------------- views

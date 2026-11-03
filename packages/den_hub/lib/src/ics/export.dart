@@ -87,7 +87,8 @@ class IcsExport {
     });
   }
 
-  /// The shared feed: Everyone events, none copied in from a Den feed, read as the family.
+  /// The shared feed: Everyone events, none copied in from a Den feed or a linked family, read as
+  /// the family.
   Future<String> _shared() => hub.gate.asHub(() {
         final den = hub.den;
         return _write(
@@ -127,7 +128,7 @@ class IcsExport {
       for (final e in den.events)
         if (spaces.contains(e.space) &&
             (person == null || e.assignees.contains(person) || (everyone && e.assignees.isEmpty)) &&
-            !(shared && e.source.kind == 'ics' && isDenUid(e.source.ref)))
+            !(shared && ((e.source.kind == 'ics' && isDenUid(e.source.ref)) || e.link != null)))
           IcsExportEvent(
             e,
             zone: zoneOfEvent(e, hub.zone),

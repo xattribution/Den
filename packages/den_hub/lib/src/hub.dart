@@ -22,6 +22,7 @@ import 'host_state.dart';
 import 'http_util.dart';
 import 'ics/export.dart';
 import 'ics/feeds.dart';
+import 'family_links.dart';
 import 'feed_links.dart';
 import 'invites.dart';
 import 'log.dart';
@@ -260,12 +261,14 @@ class DenHub implements RoutableLog {
     _reminders = ReminderService(_ctx);
     _push = WebPushService(_ctx, _auth);
     _reminders.sinks.add(_push);
+    final families = FamilyLinks(_ctx, _auth)..register(_routes);
     _services
+      ..add(families)
       ..add(_feeds)
       ..add(_reminders)
       ..add(_oauth)
       ..add(_push);
-    _writers.addAll([_feeds, _oauth]);
+    _writers.addAll([_feeds, _oauth, families]);
     if (_ctx.catchingUp) {
       log.warn('Restored from a backup: this hub writes nothing of its own until a phone or tablet in the family '
           'has synced with it. Open Den on one.');

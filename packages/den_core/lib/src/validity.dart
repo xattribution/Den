@@ -449,6 +449,16 @@ class Validator {
         return null;
       case RecordType.inviteKey:
         return checkInviteKeyWrite(c, x.existing, store, ownDevice: x.ownDevice, actor: x.actor);
+      case RecordType.familyLink:
+        // Linking with another family, and what goes to it, is a parent's decision on their own
+        // device. The hub then says how it went: whether the other family accepted, their name,
+        // what they share back.
+        if (x.hub && !c.fields.containsKey('_via') && !x.creating && !c.isDelete &&
+            x.only({'name', 'peer', 'status', 'theirs', 'problem'})) {
+          return null;
+        }
+        if (!x.has(DenAction.manageFamily)) return _deny('Only parents can link with another family');
+        return x.ownDevice ? null : _deny(_ownDeviceOnly);
       case RecordType.photo:
         final member = c.fields['member'] ?? x.existing?.fields['member'];
         if (member is! String || store.liveAt(Space.family, RecordType.member, member) == null) {

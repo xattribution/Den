@@ -25,10 +25,12 @@ abstract final class RecordType {
   static const photo = 'photo';
   static const signInTries = 'signInTries';
   static const inviteKey = 'inviteKey';
+  static const familyLink = 'familyLink';
 
   static const all = {
     family, member, device, category, event, eventException, chore, completion, adjustment,
     goal, reward, redemption, list, item, subscription, connection, photo, signInTries, inviteKey,
+    familyLink,
   };
 }
 
@@ -586,6 +588,10 @@ class Event extends RecordView {
   String? get rrule => rec.strOrNull('rrule');
   List<String> get assignees => rec.strings('assignees');
   List<int> get reminders => [...?(rec.fields['reminders'] as List?)?.map((e) => (e as num).toInt())];
+
+  /// The family link this event came through: another family's, kept here by the hub; null for
+  /// the family's own.
+  String? get link => rec.strOrNull('link');
   EventSource get source {
     final raw = rec.map('source');
     return EventSource(raw['kind'] as String? ?? 'manual', raw['ref'] as String?, raw['label'] as String?);
@@ -835,6 +841,10 @@ class DenList extends RecordView {
   String? get event => rec.strOrNull('event');
   bool get pinned => rec.flag('pinned');
   String get order => rec.str('order', 'm');
+
+  /// The family link this list came through: another family's, kept here by the hub; null for
+  /// the family's own.
+  String? get link => rec.strOrNull('link');
 }
 
 class Item extends RecordView {
@@ -879,6 +889,62 @@ class Connection extends RecordView {
   ConnectionStatus get status =>
       _enum(ConnectionStatus.values, rec.fields['status']) ?? ConnectionStatus.pending;
   int? get expires => rec.intOrNull('expires');
+}
+
+/// How much another family may do with something shared with it.
+enum ShareLevel {
+  /// They see it.
+  see,
+
+  /// They see it and change it, as the family does.
+  edit,
+}
+
+/// What a family link shares: the family's calendar (its Everyone events), or one list.
+abstract final class Shared {
+  /// The key for the calendar in [FamilyLink.share] and [FamilyLink.theirs]; any other key is a
+  /// list's id.
+  static const calendar = 'calendar';
+}
+
+/// Where a family link stands.
+enum LinkStatus {
+  /// Made, and waiting for the other family to accept it.
+  waiting,
+
+  /// Both families' hubs know each other and keep what's shared in step.
+  linked,
+
+  /// A parent of either family ended it; nothing is shared any more.
+  ended,
+}
+
+/// A link with another family: made by a parent, accepted by a parent of the other family. The
+/// two families' hubs then keep what each shares with the other in step, over whatever address
+/// reaches the other hub (the home network, a VPN, the internet).
+class FamilyLink extends RecordView {
+  const FamilyLink(super.rec);
+
+  /// The other family's name, once they accepted.
+  String get name => rec.str('name');
+
+  /// The other family's id, once they accepted.
+  String? get peer => rec.strOrNull('peer');
+
+  LinkStatus get status => _enum(LinkStatus.values, rec.fields['status']) ?? LinkStatus.waiting;
+
+  /// What this family shares with them: [Shared.calendar] or a list id, and how much.
+  Map<String, ShareLevel> get share => _levels(rec.map('share'));
+
+  /// What they share with this family, as their hub says.
+  Map<String, ShareLevel> get theirs => _levels(rec.map('theirs'));
+
+  /// What went wrong reaching their hub last time, or null.
+  String? get problem => rec.strOrNull('problem');
+
+  static Map<String, ShareLevel> _levels(Map<String, Object?> raw) => {
+        for (final e in raw.entries) e.key: ?_enum(ShareLevel.values, e.value),
+      };
 }
 
 class Subscription extends RecordView {

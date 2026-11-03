@@ -54,6 +54,7 @@ export 'src/server/updater.dart';
 export 'src/capture.dart' show HubCapture;
 export 'src/config.dart';
 export 'src/edge.dart' show IpNetwork;
+export 'src/family_links.dart' show FamilyLinks;
 export 'src/host.dart' show DenHost, HostConfig, HostedTenant;
 export 'src/host_state.dart'
     show HostState, HostedLog, hostCliFile, hostLogsDir, hostPushFile, hostStateDir, normalizeHostname, requestHostname;

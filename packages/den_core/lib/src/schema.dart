@@ -200,6 +200,7 @@ final Map<String, FieldCheck> eventFields = {
   'rides': _rides,
   'drivers': _drivers,
   'countdown': flag(),
+  'link': id(nullable: true),
 };
 
 /// Event fields an occurrence may override on its own.
@@ -543,6 +544,7 @@ final Map<String, TypeSpec> typeSpecs = {
     'event': id(nullable: true),
     'pinned': flag(),
     'order': orderKey(),
+    'link': id(nullable: true),
   }, required: {'title'}),
   RecordType.item: TypeSpec({
     'list': id(),
@@ -576,6 +578,17 @@ final Map<String, TypeSpec> typeSpecs = {
     'expires': number(min: 0, nullable: true),
     'tz': zoneName(nullable: true),
   }, required: {'label', 'kind', 'scopes', 'status'}, space: Space.parents),
+  // A link with another family (FamilyLink).
+  RecordType.familyLink: TypeSpec({
+    'name': text(max: maxName),
+    'peer': id(nullable: true),
+    'status': names(LinkStatus.values),
+    'share': dict(names(ShareLevel.values)),
+    'theirs': dict(names(ShareLevel.values)),
+    'problem': text(max: 500, nullable: true),
+  }, required: {'status'}, space: Space.family, entries: {
+    'share': (key, v) => names(ShareLevel.values, nullable: true)('Share', v),
+  }),
   RecordType.photo: TypeSpec({
     'member': id(),
     'mime': oneOf(const [Photo.jpeg, Photo.webp]),

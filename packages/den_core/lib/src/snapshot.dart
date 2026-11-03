@@ -14,7 +14,7 @@ import 'validity.dart';
 /// merging made of the log, so bump this whenever either changes (the rules in validity.dart,
 /// how [RecordStore.apply] merges fields, the verbs and titles History shows): snapshots in any
 /// other format are discarded and the log is replayed from scratch.
-const int snapshotFormat = 6;
+const int snapshotFormat = 7;
 
 /// The digest hash of one change: SHA-256 over the bytes its author signed and the signature.
 Uint8List changeHash(Change c, [List<int>? signedBytes]) {
