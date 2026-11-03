@@ -11,6 +11,7 @@ import '../../design/widgets.dart';
 import '../../platform/sync/hub_client.dart' show HubException;
 import '../../platform/web/web_app.dart';
 import 'linked_families.dart';
+import 'state/link_actions.dart';
 
 /// Settings → Linked families: the families this one is linked with, each opening its page; for
 /// parents, Link a family (the address to send the other family's parent) and Paste a family
@@ -53,7 +54,7 @@ class _LinkedFamiliesScreenState extends State<LinkedFamiliesScreen> {
     });
     final den = DenScope.read(context).den;
     String? id;
-    final problem = await tryWrite(() async => id = await den.addFamilyLink());
+    final problem = await tryWrite(() async => id = await LinkActions(den).add());
     String? url;
     String? failed = problem;
     if (problem == null) {
@@ -110,7 +111,7 @@ class _LinkedFamiliesScreenState extends State<LinkedFamiliesScreen> {
     });
     final den = DenScope.read(context).den;
     String? failed;
-    if (den.familyLink(id) == null) failed = await tryWrite(() => den.addFamilyLink(id: id));
+    if (den.familyLink(id) == null) failed = await tryWrite(() => LinkActions(den).add(id: id));
     String? name;
     if (failed == null) {
       try {

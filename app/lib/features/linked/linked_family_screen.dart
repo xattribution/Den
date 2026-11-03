@@ -12,6 +12,7 @@ import '../../design/widgets.dart';
 import '../../platform/sync/hub_client.dart' show HubException;
 import '../family/family.dart' show ConfirmPanel;
 import 'linked_families.dart';
+import 'state/link_actions.dart';
 
 /// One linked family (`/settings/linked/:id`): what they share with this family (their
 /// calendar's next events and their lists, each opening where it lives), and, for parents, what
@@ -40,14 +41,14 @@ class _LinkedFamilyScreenState extends State<LinkedFamilyScreen> {
 
   Future<void> _share(String what, ShareLevel? level) async {
     final den = DenScope.read(context).den;
-    final problem = await tryWrite(() => den.shareWithFamily(widget.id, what, level));
+    final problem = await tryWrite(() => LinkActions(den).share(widget.id, what, level));
     if (mounted) setState(() => _error = problem);
   }
 
   Future<void> _end() async {
     setState(() => _busy = true);
     final den = DenScope.read(context).den;
-    final problem = await tryWrite(() => den.endFamilyLink(widget.id));
+    final problem = await tryWrite(() => LinkActions(den).end(widget.id));
     if (!mounted) return;
     setState(() {
       _busy = false;

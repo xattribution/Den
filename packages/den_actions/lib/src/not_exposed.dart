@@ -21,6 +21,12 @@ const Map<String, String> notExposed = {
   'noteSignInTries': 'A shared screen tells the parents that someone kept getting a PIN wrong there; nothing acting '
       'for the family can say that',
   'setThisDeviceMode': 'What a device is for is set on that device by a parent',
+  // Linked families (family_links.dart on the hub).
+  'addFamilyLink': '$_trust: linking with another family decides what leaves this one',
+  'shareWithFamily': '$_trust: what goes to a linked family',
+  'endFamilyLink': _trust,
+  'noteFamilyLink': 'Only the family\'s hub says how a link with another family stands',
+  'writeLinked': 'Only the family\'s hub keeps what a linked family shares in step with theirs',
   // Trust: people's roles and sign-in, devices, AI access.
   'removeMember': '$_trust; removing someone also revokes their devices and rotates keys',
   'setSignIn': _trust,

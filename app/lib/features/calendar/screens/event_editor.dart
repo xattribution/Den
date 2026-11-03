@@ -12,6 +12,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../words/block_words.dart';
 import '../state/calendar_models.dart';
+import '../../linked/state/link_actions.dart';
 import '../state/event_actions.dart';
 import '../words/calendar_time.dart';
 import '../widgets/calendar_parts.dart';
@@ -102,7 +103,8 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
     final link = widget.link;
     final error = await tryWrite(
       () => link != null
-          ? app.den.addEvent(
+          ? LinkActions(app.den).addEvent(
+              link: link,
               title: _title.text.trim(),
               start: _start,
               end: _end,
@@ -112,7 +114,6 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
               location: _place.text.trim(),
               notes: _notes.text.trim(),
               reminders: _reminders,
-              link: link,
             )
           : events.create({
         'title': _title.text.trim(),

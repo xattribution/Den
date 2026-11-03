@@ -62,6 +62,10 @@ const Set<String> trust = {
   // Which Google or Apple account signs in as a parent: bound by that parent on their own phone,
   // from a sign-in it read back from the hub itself (phase 1 of the account-first plan).
   'setAccount',
+  // Linking with another family, and what goes to it.
+  'addFamilyLink',
+  'shareWithFamily',
+  'endFamilyLink',
 };
 
 /// Writes in one file each, with why.
@@ -78,6 +82,9 @@ const Map<String, Set<String>> perFile = {
   'lib/platform/sync/net_pairing.dart': {'ingest'},
   // Mirroring this phone's own calendars is a sync, not something a person does.
   'lib/platform/calendars/phone_calendars.dart': {'addEvent', 'updateEvent', 'deleteEvent'},
+  // An event on a linked family's calendar: theirs once their hub has it, so it isn't one of
+  // this family's events an action would add.
+  'lib/features/linked/state/link_actions.dart': {'addEvent'},
 };
 
 void main() {
