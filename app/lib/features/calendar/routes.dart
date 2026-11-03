@@ -57,6 +57,7 @@ final List<RouteBase> calendarRoutes = [
         date: s.uri.queryParameters['date'],
         time: s.uri.queryParameters['time'],
         who: s.uri.queryParameters['who'],
+        link: s.uri.queryParameters['link'],
       ),
     ),
   ),

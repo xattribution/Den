@@ -1928,6 +1928,66 @@ client (see [Limits per client](#limits-per-client)).
 Redeeming needs no open "Add a device" window in the public posture: the invite is a parent's
 consent already.
 
+## Linked families
+
+Two families link their hubs; each then shares its calendar (its Everyone events) and lists it
+picks, for the other family to see (`see`) or to change too (`edit`). Code: `family_links.dart`;
+the records are `familyLink` (ARCHITECTURE.md, "Record types and fields").
+
+1. A parent makes a link on their own phone (`familyLink` {id} with `status: waiting`), then asks
+   for its address:
+
+   `POST /api/v1/families/{id}/offer`, signed by a parent's own device: `{"id", "url"}`, where
+   `url` is `<hub address>/family-link/<id>/<secret>`. The hub address is the family's address
+   when it has one, else the one the phone reached the hub at. Asked again before it is
+   accepted, it answers the same address.
+
+2. A parent of the other family adds the link on their own phone (`familyLink` with the same id),
+   then their hub accepts it:
+
+   `POST /api/v1/families/accept` `{"url"}`, signed by a parent's own device: the hub calls the
+   first hub (below) and answers `{"id", "name"}`, the other family's name. Both hubs then write
+   `status: linked`, `name` and `peer` (the other family's id) on their family's link.
+
+Between the hubs, with the link's secret as `Authorization: Bearer <secret>` (any other secret
+gets the same `404`):
+
+- `POST /api/v1/families/peer/{id}/accept` `{"family", "name", "addresses"}`: once, for one
+  family. Answers the same about this one. `addresses` are the ones each hub answers at: its
+  family address and the one its parent's phone used, on the home network or a VPN.
+- `POST /api/v1/families/peer/{id}/sync` with the sender's state; answers this hub's, after
+  taking the sender's in. One request does both directions, so a link works while only one of
+  the two hubs can reach the other. Each hub sends one every 15 seconds, and a second after
+  anything shared changes. `410` once the link was ended here.
+- `POST /api/v1/families/peer/{id}/end`: the other family ended it.
+
+A state is `{"family", "name", "shares": {"calendar"|<listId>: "see"|"edit"}, "records": [...]}`.
+Each record is `{"type", "id", "owner", "fields", "at"}`: `type` one of `list`, `event`, `item`,
+`eventException`; `owner` the family whose it is; `at` when each field last changed, as an HLC
+in the family that changed it. The records are the family's own shared ones (live ones only),
+and the copies it keeps of the other family's (removed ones too, so a removal travels back).
+Fields that name people or categories never travel: an event's title, notes, place, times,
+time zone, repeat and countdown; an occurrence's own title, notes, place and times, and whether
+it's cancelled; a list's title, icon, kind, lifecycle and date; an item's text, quantity,
+store, whether it's checked, and its place in the list.
+
+Taking a state in:
+
+- A record of the other family's, while they share it, is kept in this family's `f` space,
+  written by the hub. Their lists and events carry `link` (the link's id); their items and
+  occurrences belong to those. Shared to see, it follows theirs exactly. Shared to change, each
+  field takes the later of the two times. A copy they no longer send (they removed it, or stopped
+  sharing it) is removed here. An event this family adds to their calendar is a new event with
+  `link`; their hub makes it theirs.
+- A record of this family's own counts only where this family lets them change it, field by
+  field, when their time is later. A new item in a list, or a new event on the calendar, is
+  added.
+
+The hub keeps, in `<data>/hub/family_links.json` (owner-only): each link's secret, the other
+hub's addresses, the last one that answered, the records the other hub sent last time, and,
+for each field it wrote from the other family, its time there. A family's shared calendar link
+(`shared.ics`, below) never holds another family's events that came through a link.
+
 ## Kitchen screens that join with a code
 
 A tablet or old laptop opened at the family's address shows a short code; a parent types it on

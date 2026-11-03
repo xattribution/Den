@@ -1,3 +1,4 @@
+import 'package:den_core/den_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -11,6 +12,7 @@ import '../../../design/sheet.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../platform/web/web_app.dart';
+import '../../linked/linked_families.dart' show linkedFamilyName;
 import '../../today/today.dart' show NeedsModel;
 import '../state/membership_actions.dart';
 
@@ -118,7 +120,19 @@ class _FamiliesSheetState extends State<FamiliesSheet> {
               chosen: home.showingAll,
               onTap: () => _choose(home.chooseAll),
             ),
-          // Phase 3 adds "Shared with other families" (the groups) here, each opening its page.
+          // The families this one is linked with, each opening what they share.
+          for (final l in home.active.den.familyLinks)
+            if (l.status == LinkStatus.linked)
+              _ChoiceRow(
+                leading: Icon(PhosphorIconsRegular.handshake, size: 24, color: c.ink),
+                label: linkedFamilyName(l.name),
+                detail: 'Linked with ${home.active.name}',
+                chosen: false,
+                onTap: () {
+                  Navigator.of(context).maybePop();
+                  widget.router?.push('/settings/linked/${l.id}');
+                },
+              ),
         ];
         // Scrolls when large text makes it taller than the sheet may be.
         return SingleChildScrollView(
@@ -286,6 +300,11 @@ class NeedsDot extends StatelessWidget {
 /// The family the device shows, at the top of Today on a phone ("Kotvas ▾", or "All my
 /// families ▾"), and as the sidebar's title on iPad ([large]). Only on a device in several
 /// families; it opens the switcher. A dot says another family has something in Needs you.
+/// Whether the family showing is a switch: on a device in several families, or in a family
+/// linked with another, whose page it opens.
+bool showsSwitch(Household? home) =>
+    home != null && (home.several || home.active.den.familyLinks.any((l) => l.status == LinkStatus.linked));
+
 class FamilySwitch extends StatelessWidget {
   const FamilySwitch({super.key, this.large = false});
 
@@ -295,7 +314,7 @@ class FamilySwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final home = Household.maybeOf(context);
-    if (home == null || !home.several) return const SizedBox.shrink();
+    if (home == null || !showsSwitch(home)) return const SizedBox.shrink();
     // The dot follows what every family needs, not only the one showing.
     return ListenableBuilder(
       listenable: Listenable.merge([for (final l in home.families) l.state]),

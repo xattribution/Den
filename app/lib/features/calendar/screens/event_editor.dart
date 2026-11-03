@@ -23,12 +23,15 @@ import '../widgets/field_editors.dart';
 /// event" sits at the bottom, in reach of the thumb. Changing an event happens on its own page,
 /// in place.
 class EventEditorScreen extends StatefulWidget {
-  const EventEditorScreen({super.key, this.date, this.time, this.who, this.moreOptions = false});
+  const EventEditorScreen({super.key, this.date, this.time, this.who, this.link, this.moreOptions = false});
 
   /// Local date `YYYY-MM-DD`, time `HH:mm`, and a member id.
   final String? date;
   final String? time;
   final String? who;
+
+  /// A linked family whose calendar the new event goes on (they let this family change it).
+  final String? link;
 
   /// Opens with More options showing (screenshots).
   final bool moreOptions;
@@ -96,8 +99,22 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
     final app = DenScope.read(context);
     final events = EventActions(app.actions);
     setState(() => _saving = true);
+    final link = widget.link;
     final error = await tryWrite(
-      () => events.create({
+      () => link != null
+          ? app.den.addEvent(
+              title: _title.text.trim(),
+              start: _start,
+              end: _end,
+              allDay: _allDay,
+              tz: app.den.family?.timezone,
+              rrule: _rrule,
+              location: _place.text.trim(),
+              notes: _notes.text.trim(),
+              reminders: _reminders,
+              link: link,
+            )
+          : events.create({
         'title': _title.text.trim(),
         'start': _start,
         'end': _end,
@@ -163,6 +180,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
           decoration: InputDecoration(hintText: 'Add a place', fillColor: c.bg),
         ),
       ),
+      if (widget.link == null) ...[
       rule(),
       row(
         PhosphorIconsBold.car,
@@ -189,12 +207,14 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
           ],
         ),
       ),
+      ],
       rule(),
       row(
         PhosphorIconsBold.bellSimple,
         'Reminder',
         ReminderChips(value: _reminders, onChanged: (v) => setState(() => _reminders = v)),
       ),
+      if (widget.link == null) ...[
       rule(),
       row(
         PhosphorIconsBold.eye,
@@ -216,6 +236,7 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
           ],
         ),
       ),
+      ],
       rule(),
       row(
         PhosphorIconsBold.notepad,
@@ -267,16 +288,18 @@ class _EventEditorScreenState extends State<EventEditorScreen> {
                     }),
                   ),
                 ),
-                rule(),
-                row(
-                  PhosphorIconsBold.usersThree,
-                  'Who',
-                  PeopleToggles(
-                    people: app.den.members,
-                    selected: _who,
-                    onChanged: (ids) => setState(() => _who = ids),
+                if (widget.link == null) ...[
+                  rule(),
+                  row(
+                    PhosphorIconsBold.usersThree,
+                    'Who',
+                    PeopleToggles(
+                      people: app.den.members,
+                      selected: _who,
+                      onChanged: (ids) => setState(() => _who = ids),
+                    ),
                   ),
-                ),
+                ],
                 rule(),
                 row(
                   PhosphorIconsBold.repeat,

@@ -52,8 +52,10 @@ class _ListMenuState extends State<_ListMenu> {
     final lv = widget.lv;
     final text = shareText(lv);
     final empty = lv.open == 0;
-    final canEdit = app.allows(DenAction.editLists);
-    final canMove = app.canChangeItems && lv.open > 1;
+    // Another family's list: theirs to rename or delete; one shared only to see, theirs to sort.
+    final seeOnly = app.den.seeOnlyList(lv.list);
+    final canEdit = app.allows(DenAction.editLists) && lv.list.link == null;
+    final canMove = app.canChangeItems && lv.open > 1 && !seeOnly;
     return Padding(
       padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.xl),
       child: Column(

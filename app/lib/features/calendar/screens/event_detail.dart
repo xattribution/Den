@@ -15,6 +15,7 @@ import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../design/words.dart';
 import '../../../platform/capabilities.dart';
+import '../../linked/linked_families.dart' show linkedFamilyName;
 import '../state/calendar_models.dart';
 import '../state/event_actions.dart';
 import '../state/event_lookup.dart';
@@ -459,7 +460,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
   void _leave(BuildContext context) => closePage(context);
 
-  static bool _canEdit(AppState app, Occurrence occ) => app.allows(DenAction.editEvents) && !occ.event.source.readOnly;
+  static bool _canEdit(AppState app, Occurrence occ) =>
+      app.allows(DenAction.editEvents) && !occ.event.source.readOnly && !app.den.seeOnlyEvent(occ.event);
 
   List<Widget> _content(BuildContext context, AppState app, Occurrence occ) {
     final f = app.formats;
@@ -493,8 +495,16 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         : f.occurrenceSpan(shown, today: today);
 
     final notes = <Widget>[
-      if (event.source.readOnly) _sourceNote(context, app, event.source),
-      if (!event.source.readOnly && !app.allows(DenAction.editEvents))
+      if (event.link case final link?)
+        NoticeLine(
+          message: app.den.seeOnlyEvent(event)
+              ? 'From ${linkedFamilyName(app.den.familyLink(link)?.name ?? '')}\'s calendar. Change it there.'
+              : 'On ${linkedFamilyName(app.den.familyLink(link)?.name ?? '')}\'s calendar, shared with you.',
+          icon: PhosphorIconsBold.usersThree,
+        )
+      else if (event.source.readOnly)
+        _sourceNote(context, app, event.source),
+      if (!event.source.readOnly && event.link == null && !app.allows(DenAction.editEvents))
         const NoticeLine(
           message: 'Changing events needs calendar access. A parent can turn it on for you in Family.',
           icon: PhosphorIconsBold.lockSimple,
@@ -1237,8 +1247,8 @@ class _RideLine extends StatelessWidget {
     final t = context.text;
     final me = app.me;
     final driver = app.memberById(ride.driver);
-    final canChange = canTakeRide(app) && !occ.event.source.readOnly;
-    final canPick = app.allows(DenAction.editEvents) && !occ.event.source.readOnly;
+    final canChange = canTakeRide(app) && !occ.event.source.readOnly && occ.event.link == null;
+    final canPick = app.allows(DenAction.editEvents) && !occ.event.source.readOnly && occ.event.link == null;
     final there = ride.leg != 'from';
     final label = there ? 'There' : 'Home';
 

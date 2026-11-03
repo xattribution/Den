@@ -11,6 +11,7 @@ import '../../../design/sheet.dart';
 import '../../../design/tokens.dart';
 import '../../../design/widgets.dart';
 import '../../../design/words.dart';
+import '../../linked/linked_families.dart' show linkedFamilyName;
 import '../state/list_actions.dart';
 import '../state/lists_model.dart';
 import '../words/list_words.dart';
@@ -131,8 +132,10 @@ class _ListContentState extends State<ListContent> {
     final lv = app.den.list(widget.list.list.id) ?? widget.list;
     final kind = lv.list.kind;
     final shopping = kind == ListKind.shopping;
-    final canEdit = app.canChangeItems;
-    final canCheck = app.allows(DenAction.checkItems);
+    // Another family's list they share only to see: theirs to change.
+    final seeOnly = app.den.seeOnlyList(lv.list);
+    final canEdit = app.canChangeItems && !seeOnly;
+    final canCheck = app.allows(DenAction.checkItems) && !seeOnly;
 
     // Every item where it is, checked or not; removed ones keep their place for their note.
     final shown = [
@@ -198,6 +201,16 @@ class _ListContentState extends State<ListContent> {
 
     final children = <Widget>[];
 
+    if (lv.list.link case final link?) {
+      final from = app.den.familyLink(link)?.name ?? '';
+      children.add(Padding(
+        padding: const EdgeInsets.only(bottom: Sp.m),
+        child: NoticeLine(
+          icon: PhosphorIconsRegular.usersThree,
+          message: '${linkedFamilyName(from)}\'s list${seeOnly ? ', to see' : ', shared with you'}',
+        ),
+      ));
+    }
     if (listTiming(app, lv) case final timing?) {
       children.add(Padding(
         padding: const EdgeInsets.only(bottom: Sp.m),
@@ -208,7 +221,8 @@ class _ListContentState extends State<ListContent> {
       ));
     }
 
-    children.add(DisabledReason(
+    if (!seeOnly) {
+      children.add(DisabledReason(
       disabled: !canEdit,
       reason: '${app.me?.name ?? 'You'} can check things off here, but adding needs the lists permission. A parent can turn it on in Family.',
       child: AddItemRow(
@@ -227,6 +241,7 @@ class _ListContentState extends State<ListContent> {
         onStore: (store) => setState(() => _addTo = store),
       ),
     ));
+    }
     final added = _added;
     children.add(DenReveal(
       visible: added != null,

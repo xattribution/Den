@@ -5,7 +5,7 @@ library;
 export 'screens/access_ended_screen.dart' show accessEndedHere;
 export 'screens/missing_family_screen.dart' show MissingFamilyScreen;
 export 'screens/families_sheet.dart'
-    show FamiliesSheet, FamilySwitch, NeedsDot, needsSomeone, pasteAnotherFamily, showFamiliesSheet;
+    show FamiliesSheet, FamilySwitch, NeedsDot, needsSomeone, pasteAnotherFamily, showFamiliesSheet, showsSwitch;
 export 'state/family_actions.dart';
 export 'state/family_needs.dart' show devicesOf, sharedDisplays;
 export 'state/invites.dart';

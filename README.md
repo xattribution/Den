@@ -124,6 +124,23 @@ That's your family's address: `den.` plus your domain, like `den.smithfamily.com
 Paste the token on Den's setup page (**Connect Den to the internet**), or later in Den on your
 phone: **Settings**, **Advanced**, **Server**.
 
+## Link with another family
+
+Two families can share their calendar and lists with each other, like two households that share
+carpools or a grandparent's family.
+
+1. In Den, a parent goes to **Settings**, **Linked families**, **Link a family**, then copies the
+   link and sends it to a parent in the other family.
+2. That parent copies it, then in their Den goes to **Settings**, **Linked families**, **Paste a
+   family link**.
+3. Each family picks what to share in **Settings**, **Linked families**: the calendar, and each
+   list, with **See** (they see it) or **Change** (they can add to it and change it too).
+
+What the other family shares shows in your calendar and Lists, and on their page in **Linked
+families**. Each family's Den keeps it up to date over whatever connects the two Dens: your home
+network, a VPN like Tailscale, or each family's address from [Reach Den from away](#reach-den-from-away).
+A parent ends a link on the family's page, with **End link**.
+
 ## Backups, and your NAS
 
 Den backs up your family **every night** on its own, and keeps the newest 14. You don't need to do

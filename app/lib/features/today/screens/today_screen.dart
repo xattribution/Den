@@ -12,7 +12,7 @@ import '../../../design/widgets.dart';
 import '../../../platform/sync/den_network.dart';
 import '../../../app/household.dart';
 import '../../assistant/assistant.dart' show AskSetUpLine, AskTodayEntry;
-import '../../family/family.dart' show FamilySwitch;
+import '../../family/family.dart' show FamilySwitch, showsSwitch;
 import '../../settings/state/server_watch.dart';
 import '../state/today_model.dart';
 import '../widgets/needs_you_card.dart';
@@ -110,7 +110,7 @@ class _TodayScreenState extends State<TodayScreen> {
         );
         final notice = _SyncNotice(network: app.network);
         // On a phone in several families, the family showing is a switch at the top.
-        final several = compact && (Household.maybeOf(context)?.several ?? false);
+        final several = compact && showsSwitch(Household.maybeOf(context));
         if (!two) {
           return ListView(
             padding: EdgeInsets.fromLTRB(side, several ? Sp.xs : Sp.l, side, Sp.xxl),

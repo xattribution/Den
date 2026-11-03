@@ -140,7 +140,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch(const {RecordType.subscription, RecordType.member, Changes.prefs, Changes.server});
+    final app = context.watch(const {RecordType.subscription, RecordType.member, RecordType.familyLink, Changes.prefs, Changes.server});
     final den = app.den;
     final parent = app.allows(DenAction.manageFamily);
     final web = widget.web ?? Capabilities.web;
@@ -156,6 +156,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final account = app.me?.account;
 
     final displays = sharedDisplays(den).length;
+    final linked = den.familyLinks.where((l) => l.status == LinkStatus.linked).length;
     final newer = _hub?.differsFrom(DenBuild.commit) ?? false;
 
     return DenPage(
@@ -180,6 +181,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 value: calendars == 0 ? null : '$calendars',
                 onTap: () => context.push('/settings/calendars'),
               ),
+              if (parent || linked > 0)
+                NavRow(
+                  icon: PhosphorIconsRegular.handshake,
+                  label: 'Linked families',
+                  value: linked == 0 ? null : '$linked',
+                  onTap: () => context.push('/settings/linked'),
+                ),
               if (parent)
                 NavRow(
                   icon: PhosphorIconsRegular.monitor,

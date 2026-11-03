@@ -369,6 +369,7 @@ class _DayViewState extends State<DayView> {
         final editable =
             app.allows(DenAction.editEvents) &&
             !occ.event.source.readOnly &&
+            !app.den.seeOnlyEvent(occ.event) &&
             occ.start >= dayStart &&
             occ.end <= dayEnd;
         children.add(

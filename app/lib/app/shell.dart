@@ -11,7 +11,7 @@ import '../design/tokens.dart';
 import '../design/widgets.dart';
 import '../features/add/add.dart';
 import '../features/assistant/assistant.dart' show askPlace, askShortcutOn, openAsk;
-import '../features/family/family.dart' show AccessWatch, FamilySwitch, showInviteSheet;
+import '../features/family/family.dart' show AccessWatch, FamilySwitch, showInviteSheet, showsSwitch;
 import 'app_state.dart';
 import 'household.dart';
 
@@ -97,7 +97,7 @@ class AppShell extends StatelessWidget {
             DenSidebar(
               title: app.den.family?.name ?? 'Den',
               // With several families, the title is the switcher.
-              heading: (Household.maybeOf(context)?.several ?? false) ? const FamilySwitch(large: true) : null,
+              heading: showsSwitch(Household.maybeOf(context)) ? const FamilySwitch(large: true) : null,
               places: [
                 ...places,
                 NavPlace(
