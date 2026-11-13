@@ -855,12 +855,19 @@ class Den {
     final id = familyId;
     if (id == null || family == null) throw const InvalidInput('There is no family yet');
     final fields = _cleanPatch(patch, {
-      'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'colors', 'oversight', 'assistant',
+      'name', 'timezone', 'weekStart', 'capture', 'pointsEnabled', 'colors', 'oversight', 'assistant', 'groups',
       // One person's entry, `oversight.<memberId>`, so parents changing different people merge.
       for (final k in patch.keys) if (k.startsWith('oversight.')) k,
     });
     final tz = fields['timezone'];
     if (tz is String && !isKnownZone(tz)) throw InvalidInput('Den doesn\'t know the time zone "$tz"');
+    final groups = fields['groups'];
+    if (groups is Map) {
+      final little = groups['little'], big = groups['big'], teen = groups['teen'];
+      if (little is int && big is int && teen is int && !(little < big && big < teen)) {
+        throw const InvalidInput('Each age group has to start older than the one before it');
+      }
+    }
     await _commit([_Draft(RecordType.family, id, Space.family, fields)]);
   }
 

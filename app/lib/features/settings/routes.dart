@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../linked/linked_families_screen.dart';
 import '../linked/linked_family_screen.dart';
 import 'screens/about_screen.dart';
+import 'screens/age_groups_screen.dart';
 import 'screens/appearance_screen.dart';
 import 'screens/assistant_screen.dart';
 import 'screens/backups_screen.dart';
@@ -22,7 +23,10 @@ GoRoute settingsRoute({List<RouteBase> more = const []}) => GoRoute(
         GoRoute(
           path: 'family',
           builder: (_, _) => const FamilySettingsScreen(),
-          routes: [GoRoute(path: 'colors', builder: (_, _) => const FamilyColorsScreen())],
+          routes: [
+            GoRoute(path: 'colors', builder: (_, _) => const FamilyColorsScreen()),
+            GoRoute(path: 'ages', builder: (_, _) => const AgeGroupsScreen()),
+          ],
         ),
         GoRoute(path: 'appearance', builder: (_, _) => const AppearanceScreen()),
         GoRoute(path: 'about', builder: (_, _) => const AboutScreen()),

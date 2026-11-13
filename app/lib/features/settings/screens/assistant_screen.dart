@@ -108,6 +108,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
         members: members ?? p.members,
         kidDailyLimit: limit ?? p.kidDailyLimit,
         budgetCents: budget ?? p.budgetCents,
+        from: p.from,
       );
 
   Future<void> _saveProvider() async {
@@ -166,9 +167,10 @@ class _AssistantScreenState extends State<AssistantScreen> {
                 ),
         );
 
+    final groups = app.den.family?.groups ?? const AgeGroups();
     final eligible = [
       for (final m in app.den.members)
-        if (!m.isParent && m.tier != Tier.preReader && m.tier != Tier.little) m,
+        if (!m.isParent && (!m.isKid || AgeGroups.reaches(m.tier, groups.assistantFrom))) m,
     ];
 
     return DenPage(
@@ -253,7 +255,12 @@ class _AssistantScreenState extends State<AssistantScreen> {
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: DenLayout.headingInset),
-            child: Text("Kids under 9 don't get the AI helper.", style: t.meta(c.ink2)),
+            child: Text(
+              groups.assistantFrom == Tier.preReader
+                  ? 'Every kid can get the AI helper.'
+                  : "Kids under ${groups.label(groups.assistantFrom).split(' ').first} don't get the AI helper. Change it in Settings, Family, Age groups.",
+              style: t.meta(c.ink2),
+            ),
           ),
           DenSection(
             title: 'Limits',

@@ -56,7 +56,9 @@ bool kidSwitchOn(KidSwitch which, Member kid, Family? family) => switch (which) 
 /// has it, so it can be turned off); the AI helper never for a little kid or a pre-reader.
 List<KidSwitchView> kidSwitches(Member kid, Family? family) {
   final name = kid.name;
-  final little = kid.tier == Tier.preReader || kid.tier == Tier.little;
+  final groups = family?.groups ?? const AgeGroups();
+  // The family's ages decide who may have the AI helper, and keep things private.
+  final little = !AgeGroups.reaches(kid.tier, groups.assistantFrom);
   final out = <KidSwitchView>[];
   bool on(KidSwitch s) => kidSwitchOn(s, kid, family);
 
@@ -97,7 +99,7 @@ List<KidSwitchView> kidSwitches(Member kid, Family? family) {
   }
 
   final private = on(KidSwitch.private);
-  if (kid.tier == Tier.teen || private) {
+  if (AgeGroups.reaches(kid.tier, groups.privateFrom) || private) {
     out.add(KidSwitchView(
       KidSwitch.private,
       on: private,

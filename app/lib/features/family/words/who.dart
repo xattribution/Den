@@ -20,11 +20,12 @@ enum Who {
 
   bool get kid => role == Role.kid;
 
-  /// What a chip says: "Under 6", "Grown-up".
-  String get chip => kid ? FamilyWords.tier(tier!) : FamilyWords.role(role);
+  /// What a chip says, by the family's ages: "Under 6", "Grown-up".
+  String chip([AgeGroups groups = const AgeGroups()]) => kid ? FamilyWords.tier(tier!, groups) : FamilyWords.role(role);
 
-  /// What a row in a list of roles says: "Kid, under 6", "Parent".
-  String get label => kid ? (this == teen ? 'Teen' : 'Kid, ${FamilyWords.tier(tier!).toLowerCase()}') : FamilyWords.role(role);
+  /// What a row in a list of roles says, by the family's ages: "Kid, under 6", "Parent".
+  String label([AgeGroups groups = const AgeGroups()]) =>
+      kid ? (this == teen ? 'Teen' : 'Kid, ${FamilyWords.tier(tier!, groups).toLowerCase()}') : FamilyWords.role(role);
 
   /// Who [m] is now.
   static Who of(Member m) {

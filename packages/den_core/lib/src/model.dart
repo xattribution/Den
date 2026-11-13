@@ -353,8 +353,94 @@ class Family extends RecordView {
     return setting(member.id, OversightSetting.ownPicture) ?? member.tier == Tier.teen;
   }
 
-  /// Who may use the in-app assistant; off until a parent turns it on.
-  AssistantPolicy get assistant => AssistantPolicy.parse(rec.map('assistant'));
+  /// Who may use the in-app assistant; off until a parent turns it on. Kids younger than
+  /// [AgeGroups.assistantFrom] never do.
+  AssistantPolicy get assistant => AssistantPolicy.parse(rec.map('assistant'), from: groups.assistantFrom);
+
+  /// The family's age groups: where each starts, and from which one a kid may have the AI
+  /// helper or keep things private. Parents set them.
+  AgeGroups get groups => AgeGroups.parse(rec.map('groups'));
+}
+
+/// A family's age groups (`family.groups`), which parents set: the age each group starts at, and
+/// the groups that rules start from. A kid's group is a parent's choice too; the ages say what
+/// each group is for, and which one a kid with a birthday starts in.
+class AgeGroups {
+  const AgeGroups({
+    this.little = defaultLittle,
+    this.big = defaultBig,
+    this.teen = defaultTeen,
+    this.assistantFrom = Tier.big,
+    this.privateFrom = Tier.teen,
+  });
+
+  static const int defaultLittle = 6, defaultBig = 9, defaultTeen = 13;
+
+  /// The youngest and oldest a group may start at.
+  static const int youngest = 2, oldest = 21;
+
+  /// The age [Tier.little] starts at; younger is [Tier.preReader].
+  final int little;
+
+  /// The age [Tier.big] starts at.
+  final int big;
+
+  /// The age [Tier.teen] starts at.
+  final int teen;
+
+  /// The youngest group that may have the AI helper.
+  final Tier assistantFrom;
+
+  /// The youngest group that may keep things private from parents.
+  final Tier privateFrom;
+
+  /// The groups stored as [raw]; anything missing, malformed or out of order is its default.
+  static AgeGroups parse(Map<String, Object?> raw) {
+    int at(String key, int fallback) {
+      final v = raw[key];
+      return v is int && v >= youngest && v <= oldest ? v : fallback;
+    }
+
+    var little = at('little', defaultLittle), big = at('big', defaultBig), teen = at('teen', defaultTeen);
+    if (!(little < big && big < teen)) (little, big, teen) = (defaultLittle, defaultBig, defaultTeen);
+    Tier tier(String key, Tier fallback) => Tier.values.firstWhere((t) => t.name == raw[key], orElse: () => fallback);
+    return AgeGroups(
+      little: little,
+      big: big,
+      teen: teen,
+      assistantFrom: tier('assistant', Tier.big),
+      privateFrom: tier('private', Tier.teen),
+    );
+  }
+
+  /// "Under 6", "6 to 8", "9 to 12", "13 or older".
+  String label(Tier t) => switch (t) {
+        Tier.preReader => 'Under $little',
+        Tier.little => big - 1 == little ? '$little' : '$little to ${big - 1}',
+        Tier.big => teen - 1 == big ? '$big' : '$big to ${teen - 1}',
+        Tier.teen => '$teen or older',
+      };
+
+  /// The group a kid of [age] starts in.
+  Tier forAge(int age) => age < little
+      ? Tier.preReader
+      : age < big
+          ? Tier.little
+          : age < teen
+              ? Tier.big
+              : Tier.teen;
+
+  /// Whether a kid in [tier] is in [from] or older. A kid with no group counts as [Tier.big].
+  static bool reaches(Tier? tier, Tier from) => (tier ?? Tier.big).index >= from.index;
+
+  /// As `family.groups` stores it.
+  Map<String, Object?> toJson() => {
+        'little': little,
+        'big': big,
+        'teen': teen,
+        'assistant': assistantFrom.name,
+        'private': privateFrom.name,
+      };
 }
 
 /// The per-person settings a parent keeps in `family.oversight` besides privacy, each written
@@ -380,6 +466,7 @@ class AssistantPolicy {
     this.members = const {},
     this.kidDailyLimit = defaultKidDailyLimit,
     this.budgetCents = defaultBudgetCents,
+    this.from = Tier.big,
   });
 
   /// Requests a day for a kid, unless a parent sets another number.
@@ -388,8 +475,9 @@ class AssistantPolicy {
   /// A month's budget in US cents ($5), unless a parent sets another.
   static const int defaultBudgetCents = 500;
 
-  /// The policy stored as [raw]; anything missing or malformed is its default.
-  static AssistantPolicy parse(Map<String, Object?> raw) {
+  /// The policy stored as [raw], for kids from group [from] up; anything missing or malformed is
+  /// its default.
+  static AssistantPolicy parse(Map<String, Object?> raw, {Tier from = Tier.big}) {
     final members = raw['members'];
     final limit = raw['kidDailyLimit'];
     final budget = raw['budgetCents'];
@@ -398,8 +486,12 @@ class AssistantPolicy {
       members: {if (members is List) ...members.whereType<String>()},
       kidDailyLimit: limit is int ? limit : defaultKidDailyLimit,
       budgetCents: budget is int ? budget : defaultBudgetCents,
+      from: from,
     );
   }
+
+  /// The youngest group that may have it (the family's [AgeGroups.assistantFrom]).
+  final Tier from;
 
   /// Whether a parent turned the assistant on.
   final bool enabled;
@@ -417,7 +509,7 @@ class AssistantPolicy {
   bool allows(Member m) {
     if (!enabled) return false;
     if (m.isParent) return true;
-    if (m.tier == Tier.preReader || m.tier == Tier.little) return false;
+    if (m.isKid && !AgeGroups.reaches(m.tier, from)) return false;
     return members.contains(m.id);
   }
 

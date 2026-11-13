@@ -31,12 +31,8 @@ abstract final class FamilyWords {
         Role.guest => "$name will see the family's plans and check things off, but won't add or change anything.",
       };
 
-  static String tier(Tier t) => switch (t) {
-        Tier.preReader => 'Under 6',
-        Tier.little => '6 to 8',
-        Tier.big => '9 to 12',
-        Tier.teen => '13 or older',
-      };
+  /// An age group as the family's ages say it: "Under 6", "6 to 8", "9 to 12", "13 or older".
+  static String tier(Tier t, [AgeGroups groups = const AgeGroups()]) => groups.label(t);
 
   /// What a kid of [t] gets, in one line.
   static String tierMeans(Tier t) => switch (t) {
@@ -94,13 +90,8 @@ abstract final class FamilyWords {
   /// "Leo's iPad".
   static String possessive(String name) => "$name's";
 
-  /// The tier a kid of [age] usually starts on; parents can change it.
-  static Tier tierForAge(int age) {
-    if (age <= 5) return Tier.preReader;
-    if (age <= 8) return Tier.little;
-    if (age <= 12) return Tier.big;
-    return Tier.teen;
-  }
+  /// The tier a kid of [age] usually starts on, by the family's ages; parents can change it.
+  static Tier tierForAge(int age, [AgeGroups groups = const AgeGroups()]) => groups.forAge(age);
 
   /// Whole years from a `YYYY-MM-DD` birthday to [today], or null when either doesn't parse.
   static int? ageOn(String? birthday, String today) {
@@ -125,15 +116,15 @@ abstract final class FamilyWords {
 
   /// Who someone is, as Family.dc.html says it: "Parent", "Grown-up", "Kid, 11", "Teen, 14",
   /// or for a kid with no birthday their age group, "Kid, 6 to 8".
-  static String memberLine(Member m, String today) {
+  static String memberLine(Member m, String today, [AgeGroups groups = const AgeGroups()]) {
     if (m.role != Role.kid) return role(m.role);
     final age = ageOn(m.birthday, today);
-    final teen = m.tier == Tier.teen || (age != null && age >= 13);
+    final teen = m.tier == Tier.teen || (age != null && age >= groups.teen);
     if (age != null) return '${teen ? 'Teen' : 'Kid'}, $age';
     return switch (m.tier) {
       null => 'Kid',
       Tier.teen => 'Teen',
-      final t => 'Kid, ${tier(t).toLowerCase()}',
+      final t => 'Kid, ${tier(t, groups).toLowerCase()}',
     };
   }
 

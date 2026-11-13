@@ -114,6 +114,15 @@ class _FamilySettingsScreenState extends State<FamilySettingsScreen> {
                 value: familyPack(family, context.colors.palette).label,
                 onTap: () => context.push('/settings/family/colors'),
               ),
+              NavRow(
+                icon: PhosphorIconsRegular.cake,
+                label: 'Age groups',
+                value: () {
+                  final g = family.groups;
+                  return '${g.little}, ${g.big}, ${g.teen}';
+                }(),
+                onTap: () => context.push('/settings/family/ages'),
+              ),
             ], indent: 36),
           ),
         ),

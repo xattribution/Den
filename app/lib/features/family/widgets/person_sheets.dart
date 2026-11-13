@@ -257,6 +257,7 @@ class _RoleSheetState extends State<_RoleSheet> {
   @override
   Widget build(BuildContext context) {
     final changed = _who != _was;
+    final groups = DenScope.read(context).den.family?.groups ?? const AgeGroups();
     return SingleChildScrollView(
       padding: sheetPadding,
       child: Column(
@@ -265,7 +266,7 @@ class _RoleSheetState extends State<_RoleSheet> {
           SheetHeader(title: 'Who is $_name?'),
           GroupCard(
             child: ChoiceRows<Who>(
-              choices: [for (final w in Who.values) Choice(w, w.label)],
+              choices: [for (final w in Who.values) Choice(w, w.label(groups))],
               value: _who,
               onChanged: (w) => setState(() {
                 _who = w;

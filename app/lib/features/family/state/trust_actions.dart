@@ -69,6 +69,10 @@ class TrustActions {
   /// The family's rules for the AI helper (`family.assistant`).
   Future<void> setAssistant(AssistantPolicy policy) => _den.updateFamily({'assistant': policy.toJson()});
 
+  /// The family's age groups: where each starts, and which group the AI helper and keeping
+  /// things private start from.
+  Future<void> setAgeGroups(AgeGroups groups) => _den.updateFamily({'groups': groups.toJson()});
+
   /// Lets [member] use the AI helper, or not.
   Future<void> setAssistantFor(String member, bool on) {
     final policy = _den.family?.assistant ?? const AssistantPolicy();

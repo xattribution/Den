@@ -402,6 +402,14 @@ final Map<String, TypeSpec> typeSpecs = {
       'budgetCents': number(min: 0, max: 100000),
     }, required: {'enabled'}),
     'recovery': _recoveryKey('serverKey'),
+    // The family's age groups (AgeGroups): where each starts, and which group rules start from.
+    'groups': shape({
+      'little': number(min: AgeGroups.youngest, max: AgeGroups.oldest),
+      'big': number(min: AgeGroups.youngest, max: AgeGroups.oldest),
+      'teen': number(min: AgeGroups.youngest, max: AgeGroups.oldest),
+      'assistant': names(Tier.values),
+      'private': names(Tier.values),
+    }),
   }, required: {'name', 'timezone', 'founderDevice'}, space: Space.family, entries: {
     'oversight': _oversightEntry,
   }),

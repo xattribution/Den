@@ -90,12 +90,13 @@ class _QuickAddSheetState extends State<QuickAddSheet> {
     final name = _name.text.trim();
     final shown = name.isEmpty ? 'They' : name;
     final who = _who;
+    final groups = DenScope.read(context).den.family?.groups ?? const AgeGroups();
     Widget chips(List<Who> options) => Wrap(
           spacing: Sp.s,
           runSpacing: Sp.s,
           children: [
             for (final w in options)
-              TagChip(label: w.chip, selected: w == who, onTap: () => setState(() => _who = w)),
+              TagChip(label: w.chip(groups), selected: w == who, onTap: () => setState(() => _who = w)),
           ],
         );
     return SingleChildScrollView(
