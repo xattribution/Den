@@ -16,6 +16,7 @@ import '../../../design/widgets.dart';
 import '../../../platform/capabilities.dart';
 import '../../../platform/notifications/reminder_scheduler.dart';
 import '../../advanced/advanced.dart';
+import '../../advanced/screens/computer_link_screen.dart' show onComputer;
 import '../../family/family.dart' show ConfirmPanel, MembershipActions, pasteAnotherFamily, sharedDisplays;
 import '../../onboarding/onboarding.dart';
 import '../../../platform/sync/server_setup.dart';
@@ -181,6 +182,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 value: calendars == 0 ? null : '$calendars',
                 onTap: () => context.push('/settings/calendars'),
               ),
+              if (app.allowsTrust(DenAction.manageFamily) && app.network != null && !DemoSession.active)
+                NavRow(
+                  icon: onComputer(context) ? PhosphorIconsRegular.deviceMobile : PhosphorIconsRegular.laptop,
+                  label: onComputer(context) ? 'Open Den on your phone' : 'Open Den on your computer',
+                  onTap: () => context.push('/settings/advanced/hub/computer'),
+                ),
               if (parent || linked > 0)
                 NavRow(
                   icon: PhosphorIconsRegular.handshake,

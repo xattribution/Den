@@ -8,6 +8,7 @@ import '../../../design/widgets.dart';
 import '../../../platform/capabilities.dart';
 import '../widgets/device_sync.dart';
 import '../widgets/hubs_section.dart';
+import 'computer_link_screen.dart' show onComputer;
 
 /// Advanced → Hub and sync: how this device syncs, the family's hubs (with Remove), and adding
 /// devices: a hub with its setup code, Den on your computer (your own link), a device in the
@@ -39,9 +40,9 @@ class HubScreen extends StatelessWidget {
                 onTap: trust ? () => context.push('/settings/advanced/hub/add') : null,
               ),
               NavRow(
-                icon: PhosphorIconsRegular.laptop,
-                label: 'Open Den on your computer',
-                detail: 'A link that lets your browser in as you',
+                icon: onComputer(context) ? PhosphorIconsRegular.deviceMobile : PhosphorIconsRegular.laptop,
+                label: onComputer(context) ? 'Open Den on your phone' : 'Open Den on your computer',
+                detail: 'A code or link that lets it in as you',
                 onTap: trust ? () => context.push('/settings/advanced/hub/computer') : null,
               ),
               if (!Capabilities.web)

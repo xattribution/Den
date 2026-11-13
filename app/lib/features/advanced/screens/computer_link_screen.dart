@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/app_state.dart';
 import '../../../design/tokens.dart';
@@ -13,12 +14,32 @@ import '../../../platform/capabilities.dart';
 import '../../../platform/sync/pairing.dart';
 import '../../../platform/web/web_app.dart';
 
-/// Advanced → Hub and sync → Open Den on your computer: a link for a browser on the parent's own
-/// computer, made on their phone. It is their own invite (it carries an invite key, good for a
+/// Open Den on your phone (on a computer) or on your computer (on a phone): a link for the
+/// parent's own other device, with a code to scan and where to get the apps. It is their own invite (it carries an invite key, good for a
 /// day, for one browser), so the browser is let in as them as soon as it opens the link, with
 /// nothing to scan or approve. The link is short enough to type; Send hands it to the share
 /// sheet (AirDrop to a Mac, a message to themselves), and the QR code suits a tablet's camera.
 /// Showing a code on the computer to scan from here stays as the other way.
+/// Whether this is a computer (its phone scans a code) rather than a phone or small tablet.
+bool onComputer(BuildContext context) =>
+    Capabilities.desktop || (Capabilities.web && MediaQuery.sizeOf(context).shortestSide >= 600);
+
+/// The apps, from the newest release: each opens its download, or says how to add Den.
+final List<({IconData icon, String label, String detail, String? url})> appDownloads = [
+  (
+    icon: PhosphorIconsRegular.appleLogo,
+    label: 'iPhone and iPad',
+    detail: 'Open the link in Safari, then Share, Add to Home Screen',
+    url: null,
+  ),
+  (icon: PhosphorIconsRegular.androidLogo, label: 'Android', detail: 'Den-android.apk', url: '$_releases/Den-android.apk'),
+  (icon: PhosphorIconsRegular.windowsLogo, label: 'Windows', detail: 'Den-windows.zip', url: '$_releases/Den-windows.zip'),
+  (icon: PhosphorIconsRegular.appleLogo, label: 'Mac', detail: 'Den-macos.zip', url: '$_releases/Den-macos.zip'),
+  (icon: PhosphorIconsRegular.linuxLogo, label: 'Linux', detail: 'Den-linux.tar.gz', url: '$_releases/Den-linux.tar.gz'),
+];
+
+const String _releases = 'https://github.com/xattribution/Den/releases/latest/download';
+
 class ComputerLinkScreen extends StatefulWidget {
   const ComputerLinkScreen({super.key, this.now});
 
@@ -94,16 +115,49 @@ class _ComputerLinkScreenState extends State<ComputerLinkScreen> {
         ? null
         : DateFormat(until.day == now.day ? "'today at' h:mm a" : "'tomorrow at' h:mm a").format(until);
 
+    // On a computer the phone scans the code, so it comes first; on a phone the computer types
+    // the link.
+    final computer = onComputer(context);
+    final code = link == null
+        ? null
+        : GroupCard(
+            padding: const EdgeInsets.all(Sp.l),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(Sp.m),
+                  decoration: BoxDecoration(color: day.card, borderRadius: BorderRadius.circular(Radii.tile)),
+                  child: QrImageView(
+                    data: text!,
+                    size: qr,
+                    padding: EdgeInsets.zero,
+                    backgroundColor: day.card,
+                    eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.square, color: day.ink),
+                    dataModuleStyle: QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: day.ink),
+                    semanticsLabel: 'Your link, as a code',
+                  ),
+                ),
+                const SizedBox(height: Sp.m),
+                Text(
+                  computer ? "Scan it with your phone's camera" : 'Or scan it with a tablet or a computer that has a camera',
+                  style: t.meta(c.ink2),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          );
+
     return DenPage(
-      title: 'Open Den on your computer',
+      title: computer ? 'Open Den on your phone' : 'Open Den on your computer',
       children: [
         if (_error != null)
           GroupCard(child: ErrorState(message: _error!, actionLabel: 'Try again', onAction: _make))
         else if (link == null)
           NoticeLine(icon: PhosphorIconsRegular.hourglass, message: 'Making your link')
         else ...[
+          if (computer) code!,
           DenSection(
-            title: 'On your computer, open',
+            title: computer ? 'Or open this on your phone' : 'On your computer, open',
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: Sp.l),
               child: Column(
@@ -135,39 +189,35 @@ class _ComputerLinkScreenState extends State<ComputerLinkScreen> {
             ),
           ),
           Text(
-            "It lets one browser in as you, until $when. It's in as soon as it opens the link, and Today says so.",
+            "It lets one device in as you, until $when. It's in as soon as it opens the link, and Today says so.",
             style: t.body(c.ink2),
           ),
-          GroupCard(
-            padding: const EdgeInsets.all(Sp.l),
+          if (!computer) code!,
+          DenSection(
+            title: 'Get the app',
             child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(Sp.m),
-                  decoration: BoxDecoration(color: day.card, borderRadius: BorderRadius.circular(Radii.tile)),
-                  child: QrImageView(
-                    data: text!,
-                    size: qr,
-                    padding: EdgeInsets.zero,
-                    backgroundColor: day.card,
-                    eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.square, color: day.ink),
-                    dataModuleStyle: QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: day.ink),
-                    semanticsLabel: 'Your link, as a code',
+              children: ruled([
+                for (final a in appDownloads)
+                  NavRow(
+                    icon: a.icon,
+                    label: a.label,
+                    detail: a.detail,
+                    onTap: a.url == null
+                        ? null
+                        : () => launchUrl(Uri.parse(a.url!), mode: LaunchMode.externalApplication, webOnlyWindowName: '_blank'),
                   ),
-                ),
-                const SizedBox(height: Sp.m),
-                Text('Or scan it with a tablet or a computer that has a camera', style: t.meta(c.ink2), textAlign: TextAlign.center),
-              ],
+              ], indent: 36),
             ),
           ),
         ],
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(
-            onPressed: () => context.push('/settings/advanced/hub/browser'),
-            child: const Text('Show a code on the computer instead'),
+        if (!computer)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () => context.push('/settings/advanced/hub/browser'),
+              child: const Text('Show a code on the computer instead'),
+            ),
           ),
-        ),
       ],
     );
   }

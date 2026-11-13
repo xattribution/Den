@@ -327,6 +327,15 @@ class _RecoveryWordsViewState extends State<RecoveryWordsView> {
     if (mounted) setState(() => _note = 'Copied. Paste them into Passwords or Notes.');
   }
 
+  /// Straight from the tap: browsers copy only for a user gesture.
+  Future<void> _copy() async {
+    final text = _text(DenScope.read(context).den.family?.name);
+    final copied = Capabilities.web ? await WebApp.copy(text) : await Clipboard.setData(ClipboardData(text: text)).then((_) => true);
+    if (mounted) {
+      setState(() => _note = copied ? 'Copied. Paste them into Passwords or Notes.' : "Couldn't copy them. Write them down instead.");
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -387,18 +396,26 @@ class _RecoveryWordsViewState extends State<RecoveryWordsView> {
           ),
         ),
         const SizedBox(height: Sp.m),
-        Builder(
-          builder: (button) => Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed: () {
-                final box = button.findRenderObject() as RenderBox?;
-                _share(box == null ? null : box.localToGlobal(Offset.zero) & box.size);
-              },
-              icon: Icon(PhosphorIconsRegular.key, size: 20, color: c.ink),
-              label: const Text('Save to Passwords', maxLines: 1, softWrap: false),
+        Wrap(
+          spacing: Sp.s,
+          runSpacing: Sp.s,
+          children: [
+            Builder(
+              builder: (button) => OutlinedButton.icon(
+                onPressed: () {
+                  final box = button.findRenderObject() as RenderBox?;
+                  _share(box == null ? null : box.localToGlobal(Offset.zero) & box.size);
+                },
+                icon: Icon(PhosphorIconsRegular.key, size: 20, color: c.ink),
+                label: const Text('Save to Passwords', maxLines: 1, softWrap: false),
+              ),
             ),
-          ),
+            OutlinedButton.icon(
+              onPressed: _copy,
+              icon: Icon(PhosphorIconsRegular.copy, size: 20, color: c.ink),
+              label: const Text('Copy', maxLines: 1, softWrap: false),
+            ),
+          ],
         ),
         if (_note != null) ...[
           const SizedBox(height: Sp.s),
