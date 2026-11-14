@@ -2741,7 +2741,7 @@ above, and a fresh hub is open to claim: `GET /api/v1/hub/status` says `"open": 
 first-boot endpoints and `POST /api/v1/hub/setup` take no setup code.
 
 **Outside** is everything else: anything with a `CF-*` or `CDN-Loop` header (a Cloudflare tunnel),
-a public address, or no address at all (the relay's tunnel). From outside the hub answers only:
+a public address, or no address at all (the relay's tunnel). From outside the hub answers:
 
 | What | Why it's safe |
 | --- | --- |
@@ -2752,15 +2752,21 @@ a public address, or no address at all (the relay's tunnel). From outside the hu
 | `POST /api/v1/invites`, `/invites/redeem`, `/recovery/redeem`, `/api/v1/link/*` | Each needs its words or code, counted when wrong |
 | `/manifest.json`, `/favicon.png`, `/icons/*` | Fetched without cookies when someone adds Den to their Home Screen |
 
-Everything else, the app itself included, gets an empty `404` unless the browser holds a **door
-pass**: the cookie `__Host-den_pass`, an expiry signed with the host's key (`host/door.key`).
+At an address a family lives at, the app itself and `GET /api/v1/hub/status` load for anyone: the
+app opens on its welcome page, where a person joins with an invite, signs in with a passkey or
+their recovery words, or links the browser with their phone. The family's data still needs a
+device's signature.
+
+Everything else gets an empty `404`, and so does every address no family is at yet (a fresh hub),
+unless the browser holds a **door pass**: the cookie `__Host-den_pass`, an expiry signed with the
+host's key (`host/door.key`).
 
 - `GET /join/<w>-<w>-<w>-<w>` and `GET /setup/<code>/<hub device>` (the links Den sends) check the
   invite or setup code without using it, set a pass for a day, and redirect to the app's route
-  (`/#/join/...`). A link that doesn't work gets the empty `404` from outside, and is counted as a
-  failed try.
+  (`/#/join/...`). A link that doesn't work is counted as a failed try; at a family's address it
+  still opens the app, which says so, and anywhere else it gets the empty `404`.
 - `POST /api/v1/door/pass`, signed by a device of the family, sets a pass for 90 days. The app
   asks for it each time it starts syncing in a browser at an `https` address.
 
-A pass only loads the app (and `GET /api/v1/hub/status`); the family's data still needs a device's
-signature.
+A pass loads the app and a fresh hub's setup (which still needs its setup code); the family's data
+still needs a device's signature.

@@ -659,6 +659,10 @@ class DenHost implements HostLink {
   /// Whether [request] came from inside the home ([fromInside]).
   bool inside(Request request) => fromInside(request, config.trustedProxies);
 
+  /// Whether a family lives at the address [request] came to: one set up, not a fresh hub
+  /// waiting to be claimed.
+  bool _familyAt(Request request) => router.forHostname(_hostname(request))?.ready ?? false;
+
   FutureOr<Response> _route(Request request) async {
     final segments = request.url.pathSegments.where((s) => s.isNotEmpty).toList();
     final first = segments.isEmpty ? '' : segments.first;
@@ -666,9 +670,11 @@ class DenHost implements HostLink {
     if (request.method == 'GET' && (first == 'join' && segments.length == 2 || first == 'setup' && segments.length == 3)) {
       return _door(request, segments);
     }
-    // From outside, only the family: everyone else gets nothing at all.
+    // From outside, an address a family lives at loads the app for anyone: the family's data
+    // still needs a device of theirs, and the app says how to join or sign in. Anything else from
+    // outside (a fresh hub's setup, an address no family is at) needs a door pass.
     if (!inside(request) && !outsideMayAsk(request, segments) && !anyoneMayLoad(segments)) {
-      if (!passMayLoad(request, segments) || !await door.admits(request, _now())) {
+      if (!passMayLoad(request, segments) || !(appForAnyone(request, segments) && _familyAt(request) || await door.admits(request, _now()))) {
         _anonymous(request);
         return nothingHere();
       }
@@ -807,7 +813,9 @@ class DenHost implements HostLink {
     }
     if (!works) {
       _failed(request);
-      if (!home) return nothingHere();
+      // A stranger at an address no family is at learns nothing; at a family's address the app
+      // opens and says the link has run out, as it does at home.
+      if (!home && !_familyAt(request)) return nothingHere();
     }
     final route = '/${segments.map(Uri.encodeComponent).join('/')}';
     return Response.found('/#$route', headers: {

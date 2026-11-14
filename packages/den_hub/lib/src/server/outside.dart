@@ -87,6 +87,15 @@ bool passMayLoad(Request request, List<String> segments) {
   return path == 'api/v1/hub/setup' || path == 'api/v1/hub/setup/ws' || path.startsWith('api/v1/hub/first-boot');
 }
 
+/// What anyone may load from outside at an address a family lives at: the app itself and the
+/// hub's status the app asks for before it knows the family. Joining, signing in and every bit
+/// of the family's data still need their words, a device of the family or a token.
+bool appForAnyone(Request request, List<String> segments) {
+  if (segments.isEmpty) return true;
+  if (!DenHost.reserved.contains(segments.first)) return true;
+  return request.method == 'GET' && segments.join('/') == 'api/v1/hub/status';
+}
+
 /// What anyone may load from outside: the Home Screen icon and its manifest, which iOS and
 /// Android fetch without cookies when someone adds Den to their Home Screen.
 bool anyoneMayLoad(List<String> segments) {

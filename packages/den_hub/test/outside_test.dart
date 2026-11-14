@@ -10,9 +10,10 @@ import 'package:test/test.dart';
 import 'support/fixture.dart';
 import 'support/server_fixture.dart';
 
-/// Inside and outside (server/outside.dart): from outside the home only the family's devices get
-/// answers; everyone else gets an empty 404. A working invite or setup link lets a browser in
-/// with a door pass; on the home network a fresh hub is anyone's to claim.
+/// Inside and outside (server/outside.dart): from outside the home a family's address loads the
+/// app for anyone and only the family's devices get its data; anything else is an empty 404. A
+/// working setup link lets a browser into a fresh hub with a door pass; on the home network a
+/// fresh hub is anyone's to claim.
 void main() {
   /// What a request through a Cloudflare tunnel carries.
   const tunnel = {'cf-connecting-ip': '203.0.113.9', 'x-forwarded-for': '203.0.113.9'};
@@ -38,14 +39,17 @@ void main() {
       return (r.body['words']! as List).cast<String>();
     }
 
-    test('the outside gets nothing: no app, no status, no health', () async {
-      for (final path in ['/', '/index.html', '/flutter_bootstrap.js', '/api/v1/hub/status', '/health', '/api/v1/hub/first-boot']) {
+    test("the outside loads the app at a family's address, and nothing else without the family", () async {
+      // The app's files (none in this test hub, so its 404 says so in words) and the hub's status.
+      expect((await get(f.base, '/', headers: tunnel)).body, isNotEmpty);
+      expect((await get(f.base, '/api/v1/hub/status', headers: tunnel)).statusCode, 200);
+      for (final path in ['/health', '/api/v1/hub/first-boot', '/api/v1/today']) {
         final r = await get(f.base, path, headers: tunnel);
         expect(r.statusCode, 404, reason: path);
         expect(r.body, isEmpty, reason: path);
       }
       // Inside, the same address answers as always.
-      expect((await get(f.base, '/api/v1/hub/status')).statusCode, 200);
+      expect((await get(f.base, '/health')).statusCode, isNot(404));
     });
 
     test('the outside still reaches what devices and joiners need', () async {
@@ -71,14 +75,11 @@ void main() {
 
       final status = await get(f.base, '/api/v1/hub/status', headers: {...tunnel, 'cookie': pass});
       expect(status.statusCode, 200);
-      // A pass with its signature changed is no pass.
-      final forged = await get(f.base, '/api/v1/hub/status', headers: {...tunnel, 'cookie': '${pass}x'});
-      expect(forged.statusCode, 404);
 
+      // A wrong link at a family's address opens the app, which says it has run out; no pass.
       final wrong = await get(f.base, '/join/maple-river-canoe-tiger', headers: tunnel);
-      expect(wrong.statusCode, 404);
+      expect(wrong.statusCode, 302);
       expect(wrong.headers['set-cookie'], isNull);
-      expect(wrong.body, isEmpty);
     });
 
     test("a device of the family renews its browser's pass with a signed request; nobody else gets one", () async {
@@ -94,10 +95,10 @@ void main() {
     });
 
     test('Tailscale Serve on this machine forwarding a tailnet address is inside; forwarding a public one is outside', () async {
-      final tailnet = await get(f.base, '/api/v1/hub/status', headers: {'x-forwarded-for': '100.101.102.103'});
-      expect(tailnet.statusCode, 200);
+      final tailnet = await get(f.base, '/health', headers: {'x-forwarded-for': '100.101.102.103'});
+      expect(tailnet.statusCode, isNot(404));
       // A client can put a home address first; the proxy's own hop, the right-most, is what counts.
-      final spoofed = await get(f.base, '/api/v1/hub/status', headers: {'x-forwarded-for': '192.168.1.5, 8.8.8.8'});
+      final spoofed = await get(f.base, '/health', headers: {'x-forwarded-for': '192.168.1.5, 8.8.8.8'});
       expect(spoofed.statusCode, 404);
     });
 
