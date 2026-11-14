@@ -229,10 +229,12 @@ void main() {
       familyName: 'The Riveras',
       forName: 'Grandma',
     );
-    expect(message.text, startsWith('Grandma, join The Riveras on Den: https://den.example.com/#/join/maple-river-candle-tiger'));
-    expect(message.text, contains('Open the link on your iPhone or iPad'));
-    expect(message.text, contains('If Den asks for words, they are: maple river candle tiger'));
-    expect(message.text, endsWith('This invite works until Friday, October 30, for one phone or tablet.'));
+    expect(message.text, startsWith("Grandma, you're invited to The Riveras on Den."));
+    expect(message.text, contains('Open it on your phone'));
+    expect(message.text, contains('If Den asks for words: maple river candle tiger'));
+    // The link sits on a line of its own.
+    expect(message.text.split('\n'), contains(message.link.toString()));
+    expect(message.text, contains('It works until Friday, October 30.'));
     expect(message.text, isNot(contains('!')));
     // An invite that lets them in at once lasts a day: it says the time.
     final soon = InviteMessage(
@@ -242,6 +244,6 @@ void main() {
       familyName: 'The Riveras',
       letsIn: true,
     );
-    expect(soon.text, endsWith('This invite works until Friday at 6:00 PM, for one phone or tablet.'));
+    expect(soon.text, contains('It works until Friday at 6:00 PM.'));
   });
 }

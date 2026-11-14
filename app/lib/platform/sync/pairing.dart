@@ -100,11 +100,14 @@ class InviteMessage {
   /// device's time zone).
   String get text {
     final until = DateFormat(letsIn ? "EEEE 'at' h:mm a" : 'EEEE, MMMM d').format(DateTime.fromMillisecondsSinceEpoch(expires));
-    final greeting = forName == null ? 'Join' : '$forName, join';
-    return '$greeting $familyName on Den: $link\n\n'
-        'Open the link on your iPhone or iPad and follow what it shows. '
-        'If Den asks for words, they are: $code\n\n'
-        'This invite works until $until, for one phone or tablet.';
+    final who = forName == null ? "You're" : '$forName, you\'re';
+    // The link on a line of its own, so every messaging app shows it whole and taps open it.
+    return '$who invited to $familyName on Den.\n'
+        '\n'
+        '$link\n'
+        '\n'
+        'Open it on your phone. It works until $until.\n'
+        'If Den asks for words: $code';
   }
 }
 

@@ -28,7 +28,7 @@ List<ActionSpec> undoActions() => [
         mcpName: 'undo',
         title: 'Undo',
         description: 'Takes back a change this connection made: give the "receipt" id a change returned, or nothing '
-            'for the last one. Or puts back something removed: give its "type" and "id" (and for an event, the '
+            'for the last one (right after an undo, that puts the change back). Or puts back something removed: give its "type" and "id" (and for an event, the '
             '"occurrence" to put back one removed occurrence). Fields someone changed since are left as they are.',
         input: S.input({
           'receipt': S.string('The receipt id a change returned (default the last one).'),

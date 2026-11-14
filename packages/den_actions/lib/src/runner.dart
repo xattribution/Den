@@ -259,10 +259,11 @@ class ActionRunner {
     return kept == null || kept.caller != c.caller || kept.undone ? null : kept.receipt;
   }
 
-  /// [c]'s caller's newest receipt that undo can still take back, other than an undo's own.
+  /// [c]'s caller's newest receipt that undo can still take back. After an undo that is the
+  /// undo's own, so undoing again puts the change back, as its receipt says.
   Receipt? lastReceipt(ActionContext c) {
     for (final kept in _receipts.values.toList().reversed) {
-      if (kept.caller == c.caller && !kept.undone && kept.receipt.tool != 'undo' && kept.receipt.undoable) return kept.receipt;
+      if (kept.caller == c.caller && !kept.undone && kept.receipt.undoable) return kept.receipt;
     }
     return null;
   }

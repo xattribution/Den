@@ -127,8 +127,29 @@
       if (reloadOnChange) window.location.reload();
     });
     sw.ready.then(function (r) { registration = r; });
+    var opened = Date.now();
+    /** Lets a newer installed version take over now, with a fresh page. */
+    function takeOver(waiting) {
+      reloadOnChange = true;
+      waiting.postMessage({ type: 'den-skip-waiting' });
+    }
+    // A reload is a fresh start: a version that finished installing takes over now, so a plain
+    // reload shows it (no hard refresh).
+    sw.getRegistration().then(function (r) {
+      if (r && r.waiting && sw.controller) takeOver(r.waiting);
+    }).catch(function () {});
     function registerNow() {
-      register(version).then(checkForUpdate, function () {});
+      register(version).then(function (r) {
+        // A version that finishes installing while Den is just opening takes over at once.
+        r.addEventListener('updatefound', function () {
+          var next = r.installing;
+          if (!next) return;
+          next.addEventListener('statechange', function () {
+            if (next.state === 'installed' && sw.controller && Date.now() - opened < 30 * 1000) takeOver(next);
+          });
+        });
+        checkForUpdate();
+      }, function () {});
     }
     // After the page's own downloads, so the worker's copies don't compete with them.
     if (document.readyState === 'complete') registerNow();

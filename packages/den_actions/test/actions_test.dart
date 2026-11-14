@@ -100,6 +100,11 @@ void main() {
     expect(twice.code, 'not_found');
     final redo = await runner.run(app, 'undo', {'receipt': undone.receipt!.id});
     expect(redo.isError, isFalse, reason: redo.text);
+    // Undo with no receipt right after an undo puts the change back too, as the receipt says.
+    final again = await runner.run(app, 'undo', {});
+    expect(again.isError, isFalse, reason: again.text);
+    final back = await runner.run(app, 'undo', {});
+    expect(back.isError, isFalse, reason: back.text);
     expect(list('Groceries').items.map((i) => i.text), contains('Butter'));
     final notMine = await runner.run(on(Surface.app, 'another app'), 'undo', {'receipt': redo.receipt!.id});
     expect(notMine.code, 'not_found');
