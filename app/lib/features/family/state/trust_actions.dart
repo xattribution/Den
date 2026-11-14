@@ -37,6 +37,8 @@ class TrustActions {
         KidSwitch.rewardsOk => _setRewardsOk(kid, on),
         KidSwitch.private => setParentsSeePrivate(kid.id, !on),
         KidSwitch.ownPicture => _setSetting(kid.id, OversightSetting.ownPicture, on),
+        KidSwitch.reminders => _setSetting(kid.id, OversightSetting.reminders, on),
+        KidSwitch.parentsReminded => _setSetting(kid.id, OversightSetting.parentsReminded, on),
         KidSwitch.assistant => setAssistantFor(kid.id, on),
       };
 

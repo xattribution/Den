@@ -11,6 +11,8 @@
 /// | Can keep things private from parents | `family.oversight.<id>.parentsSeePrivate` false |
 /// | Can change their own picture | `family.oversight.<id>.ownPicture` (default: teens on) |
 /// | Can use the AI helper | the kid's id in `family.assistant.members` |
+/// | Gets reminders | `family.oversight.<id>.reminders` (default on) |
+/// | I get their reminders too | `family.oversight.<id>.parentsReminded` (default off) |
 library;
 
 import 'package:den_core/den_core.dart';
@@ -18,7 +20,7 @@ import 'package:den_core/den_core.dart';
 import 'family_words.dart';
 
 /// The switches on a kid's page, in the order they show.
-enum KidSwitch { lists, plans, rewardsOk, private, ownPicture, assistant }
+enum KidSwitch { lists, plans, rewardsOk, private, ownPicture, reminders, parentsReminded, assistant }
 
 /// One switch as a kid's page shows it.
 class KidSwitchView {
@@ -49,6 +51,8 @@ bool kidSwitchOn(KidSwitch which, Member kid, Family? family) => switch (which) 
       KidSwitch.rewardsOk => !kid.grants.contains(Grant.points) && (family?.rewardsNeedOk(kid.id) ?? true),
       KidSwitch.private => !(family?.parentsSeePrivate(kid.id) ?? true),
       KidSwitch.ownPicture => family?.ownsPicture(kid) ?? kid.tier == Tier.teen,
+      KidSwitch.reminders => family?.getsReminders(kid.id) ?? true,
+      KidSwitch.parentsReminded => family?.parentsReminded(kid.id) ?? false,
       KidSwitch.assistant => family?.assistant.members.contains(kid.id) ?? false,
     };
 
@@ -116,6 +120,21 @@ List<KidSwitchView> kidSwitches(Member kid, Family? family) {
     detail: ownPicture ? 'A photo from the camera too' : 'Only parents change it',
   ));
 
+  final reminded = on(KidSwitch.reminders);
+  out.add(KidSwitchView(
+    KidSwitch.reminders,
+    on: reminded,
+    label: 'Gets reminders',
+    detail: reminded ? "For events and chores given to $name, on $name's own devices" : "$name's devices stay quiet",
+  ));
+  final parents = on(KidSwitch.parentsReminded);
+  out.add(KidSwitchView(
+    KidSwitch.parentsReminded,
+    on: parents,
+    label: 'Parents get them too',
+    detail: parents ? "Reminders for what's given to $name go to parents as well" : 'Only $name gets them',
+  ));
+
   final assistant = on(KidSwitch.assistant);
   if (!little || assistant) {
     final helperOn = family?.assistant.enabled ?? false;
@@ -143,7 +162,7 @@ Set<Grant> grantsWith(KidSwitch which, bool on, Set<Grant> current) {
       // On means parents decide: the kid loses the points grant. Off keeps the grants as they
       // are: the kid trades their own stars without asking, and gives nobody any.
       if (on) next.remove(Grant.points);
-    case KidSwitch.private || KidSwitch.ownPicture || KidSwitch.assistant:
+    case KidSwitch.private || KidSwitch.ownPicture || KidSwitch.reminders || KidSwitch.parentsReminded || KidSwitch.assistant:
       break;
   }
   return next;
@@ -164,6 +183,10 @@ String kidSwitchChange(KidSwitch which, String name, {required bool on}) => swit
           'until now. $name will see that you changed this.',
       (KidSwitch.ownPicture, true) => '$name can choose their own picture, or take a photo for it.',
       (KidSwitch.ownPicture, false) => 'Only parents will change $name\'s picture.',
+      (KidSwitch.reminders, true) => '$name\'s own devices will remind $name of events and chores given to $name.',
+      (KidSwitch.reminders, false) => '$name\'s devices won\'t remind $name of anything.',
+      (KidSwitch.parentsReminded, true) => 'Parents will get the reminders for events and chores given to $name too.',
+      (KidSwitch.parentsReminded, false) => 'Only $name will get the reminders for what\'s given to $name.',
       (KidSwitch.assistant, true) =>
         '$name can ask the AI helper to add and find things, up to the daily limit you set. What $name asks goes to '
             'the company that runs it.',

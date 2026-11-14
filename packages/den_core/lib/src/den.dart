@@ -51,7 +51,8 @@ class ReminderDue {
   final String title;
   final String body;
 
-  /// Who it is for; empty means everyone who can see the item.
+  /// Who it goes to: the people it's given to (everyone, for something given to nobody) whose
+  /// reminders are on, and the parents of a kid whose parents a parent set to get them too.
   final List<String> members;
 }
 
@@ -3767,6 +3768,23 @@ class Den {
   }
 
   /// Reminders that fire in [from, to) (UTC ms) for [memberId] (null: for anyone).
+  /// Who a reminder for something given to [assignees] goes to: each of them (everyone, when
+  /// it's given to nobody) whose reminders a parent left on, and every parent when it's given to
+  /// a kid whose parents get theirs too. In family order.
+  List<String> _remindedFor(List<String> assignees) {
+    final family = this.family;
+    final given = assignees.isEmpty ? members.map((m) => m.id).toList() : assignees;
+    final out = <String>{
+      for (final id in given)
+        if (family?.getsReminders(id) ?? true) id,
+    };
+    if (assignees.any((id) => family?.parentsReminded(id) ?? false)) {
+      out.addAll([for (final m in members) if (m.isParent) m.id]);
+    }
+    final known = {for (final m in members) m.id};
+    return [for (final m in members) if (out.contains(m.id)) m.id, for (final id in out) if (!known.contains(id)) id];
+  }
+
   List<ReminderDue> remindersDue(int from, int to, {String? memberId}) {
     final out = <ReminderDue>[];
     final zoneName = _zone;
@@ -3782,7 +3800,8 @@ class Den {
       }
     }
     for (final o in _occurrencesIn(from, to + maxLead * 60000 + 1)) {
-      if (memberId != null && o.assignees.isNotEmpty && !o.assignees.contains(memberId)) continue;
+      final who = _remindedFor(o.assignees);
+      if (who.isEmpty || (memberId != null && !who.contains(memberId))) continue;
       for (final minutes in o.reminders.toSet()) {
         final at = o.start - minutes * 60000;
         if (at < from || at >= to) continue;
@@ -3793,7 +3812,7 @@ class Den {
           at: at,
           title: o.title,
           body: o.location.isEmpty ? when : '$when at ${o.location}',
-          members: o.assignees,
+          members: who,
         ));
       }
     }
@@ -3811,7 +3830,8 @@ class Den {
         final due = cd.chore.dueTime;
         if (cd.done || due == null || !isLocalTime(due) || cd.chore.reminders.isEmpty) continue;
         if (!seen.add('${cd.chore.id}@${cd.date}')) continue;
-        if (memberId != null && cd.owner != null && cd.owner != memberId) continue;
+        final who = _remindedFor(cd.owner == null ? const [] : [cd.owner!]);
+        if (who.isEmpty || (memberId != null && !who.contains(memberId))) continue;
         final dueAt = dateTimeIn(zoneName, cd.date, due);
         for (final minutes in cd.chore.reminders.toSet()) {
           final at = dueAt - minutes * 60000;
@@ -3821,7 +3841,7 @@ class Den {
             at: at,
             title: cd.chore.title,
             body: 'Due at ${clockText(wallTime(zoneName, dueAt))}',
-            members: cd.owner == null ? const [] : [cd.owner!],
+            members: who,
           ));
         }
       }

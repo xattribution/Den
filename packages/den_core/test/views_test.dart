@@ -257,5 +257,26 @@ void main() {
       await den.setChoreDone(trash, '2026-10-15', true);
       expect(den.remindersDue(at('2026-10-15', '18:00'), at('2026-10-15', '19:00')), isEmpty);
     });
+
+    test("parents decide whose devices get a kid's reminders", () async {
+      await den.addEvent(
+        title: 'Soccer',
+        start: at('2026-10-15', '17:00'),
+        end: at('2026-10-15', '18:00'),
+        assignees: [leo],
+        reminders: [15],
+      );
+      List<String> who() => den.remindersDue(at('2026-10-15', '00:00'), at('2026-10-16', '00:00')).single.members;
+      final parents = [for (final m in den.members) if (m.isParent) m.id];
+      expect(who(), [leo]);
+      await den.updateFamily({'oversight.$leo.parentsReminded': true});
+      expect(who(), unorderedEquals([...parents, leo]));
+      expect(den.remindersDue(at('2026-10-15', '00:00'), at('2026-10-16', '00:00'), memberId: parents.first), hasLength(1));
+      await den.updateFamily({'oversight.$leo.reminders': false});
+      expect(who(), unorderedEquals(parents));
+      expect(den.remindersDue(at('2026-10-15', '00:00'), at('2026-10-16', '00:00'), memberId: leo), isEmpty);
+      await den.updateFamily({'oversight.$leo.parentsReminded': false});
+      expect(den.remindersDue(at('2026-10-15', '00:00'), at('2026-10-16', '00:00')), isEmpty, reason: 'nobody is left to remind');
+    });
   });
 }

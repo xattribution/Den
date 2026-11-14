@@ -345,6 +345,14 @@ class Family extends RecordView {
   /// can turn it off for one kid, and then a reward they can afford is theirs at once.
   bool rewardsNeedOk(String memberId) => setting(memberId, OversightSetting.rewardsNeedOk) ?? true;
 
+  /// Whether reminders for what's given to [memberId], or to everyone, reach their own devices.
+  /// On unless a parent turned it off for them.
+  bool getsReminders(String memberId) => setting(memberId, OversightSetting.reminders) ?? true;
+
+  /// Whether parents also get the reminders for what's given to [memberId]. Off unless a parent
+  /// turned it on.
+  bool parentsReminded(String memberId) => setting(memberId, OversightSetting.parentsReminded) ?? false;
+
   /// Whether [member] may change their own picture, a photo too. Parents, grown-ups and
   /// sitters always may; a kid when a parent allows it, which a teen starts out with and a
   /// younger kid doesn't.
@@ -452,7 +460,13 @@ abstract final class OversightSetting {
   /// Whether a kid may change their own picture (default: teens yes, younger kids no).
   static const ownPicture = 'ownPicture';
 
-  static const all = {rewardsNeedOk, ownPicture};
+  /// Whether reminders for what's given to a person reach their own devices (default true).
+  static const reminders = 'reminders';
+
+  /// Whether parents also get the reminders for what's given to a kid (default false).
+  static const parentsReminded = 'parentsReminded';
+
+  static const all = {rewardsNeedOk, ownPicture, reminders, parentsReminded};
 }
 
 /// The family's rules for the in-app assistant (`family.assistant`), set by a parent on their

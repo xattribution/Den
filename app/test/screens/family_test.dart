@@ -3,6 +3,7 @@ import 'package:den_app/design/pickers/pattern_pad.dart';
 import 'package:den_app/design/pickers/pin_pad.dart';
 import 'package:den_app/design/widgets.dart';
 import 'package:den_app/features/family/screens/family_screen.dart';
+import 'package:den_app/features/family/state/trust_actions.dart';
 import 'package:den_app/features/family/widgets/invite_sheet.dart';
 import 'package:den_app/features/family/widgets/quick_add_sheet.dart';
 import 'package:den_app/features/family/words/oversight.dart';
@@ -303,6 +304,20 @@ void main() {
       expect(grantsWith(KidSwitch.plans, false, {Grant.lists, Grant.events, Grant.chores}), {Grant.lists});
       expect(grantsWith(KidSwitch.rewardsOk, true, {Grant.points, Grant.lists}), {Grant.lists});
       expect(grantsWith(KidSwitch.rewardsOk, false, {Grant.lists}), {Grant.lists}, reason: 'Manage points is never given');
+    });
+
+    testWidgets("a parent turns a kid's reminders off, and gets them instead", (tester) async {
+      final state = await demo(tester);
+      final kid = state.den.members.firstWhere((m) => m.isKid);
+      bool on(KidSwitch s) => kidSwitches(state.den.member(kid.id)!, state.den.family).firstWhere((v) => v.which == s).on;
+      expect(on(KidSwitch.reminders), isTrue);
+      expect(on(KidSwitch.parentsReminded), isFalse);
+      await tester.runAsync(() async {
+        await TrustActions(state.den).setKidSwitch(kid, KidSwitch.reminders, false);
+        await TrustActions(state.den).setKidSwitch(kid, KidSwitch.parentsReminded, true);
+      });
+      expect(on(KidSwitch.reminders), isFalse);
+      expect(on(KidSwitch.parentsReminded), isTrue);
     });
   });
 

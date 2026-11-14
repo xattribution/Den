@@ -423,6 +423,14 @@ HistoryLine? _controlsLine(FamilyReads app, HistoryEntry e) {
         );
       case OversightSetting.ownPicture:
         return HistoryLine('changed this:', on ? '$name can change their own picture' : "only parents change $name's picture", const []);
+      case OversightSetting.reminders:
+        return HistoryLine('changed this:', on ? '$name gets reminders' : "$name's devices stay quiet", const []);
+      case OversightSetting.parentsReminded:
+        return HistoryLine(
+          'changed this:',
+          on ? "parents get $name's reminders too" : "only $name gets $name's reminders",
+          const [],
+        );
     }
   }
   return null;
