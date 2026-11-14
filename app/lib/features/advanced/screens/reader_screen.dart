@@ -13,7 +13,7 @@ import '../../../platform/capabilities.dart';
 import '../../../platform/capture/platform_capture.dart';
 import '../../add/add.dart';
 
-/// Advanced → AI and automations → Reading photos and messages: who reads what this device
+/// Advanced → AI and assistants → Reading photos and messages: who reads what this device
 /// shares (this device, a model at home, Claude with a key kept on this device), and the reader
 /// a parent sets up on the family's hub for every device. Whether what Den reads is added at once
 /// or shown first is the family's, in Settings → Family.

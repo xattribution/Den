@@ -50,7 +50,7 @@ configuration (so you have `config/custom_components/den/manifest.json`), or unz
 
 Home Assistant signs in to the hub with an API token that a parent creates:
 
-1. In the Den app, open **Settings → Advanced → Home Assistant** and make a token.
+1. In the Den app, open **Settings → Advanced → Home Assistant** and tap **Connect Home Assistant**. Den makes the token.
 2. Call it something like "Home Assistant". It's shown in Den's History next to everything Home
    Assistant changes.
 3. Choose its scopes:
@@ -236,7 +236,7 @@ actions:
 The hub also serves Den's tools (today's plan, the week, adding events, chores and list items,
 points) over MCP at `http://<hub>:47733/mcp`. Home Assistant's own **Model Context Protocol**
 integration can connect to it: add that integration with the hub's `/mcp` address and approve the
-request in the Den app under **Settings → Advanced → AI and automations** when asked. Then, in the options of
+request in the Den app under **Settings → AI and assistants** when asked. Then, in the options of
 your conversation agent (an AI one, such as OpenAI, Anthropic, Google or Ollama), turn on the Den
 tools, and Assist can answer "what's on tomorrow?" or "add diapers to the Costco list" with
 Den itself.

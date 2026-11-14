@@ -1,9 +1,8 @@
 import 'package:den_app/app/app_state.dart';
 import 'package:den_app/design/widgets.dart' show DenSwitch, NavRow;
 import 'package:den_app/features/advanced/screens/advanced_screen.dart';
-import 'package:den_app/features/advanced/screens/connect_guide_screen.dart';
+import 'package:den_app/features/advanced/screens/connect_assistant_screen.dart';
 import 'package:den_app/features/advanced/screens/connections_screen.dart';
-import 'package:den_app/features/advanced/screens/create_token_screen.dart';
 import 'package:den_app/features/advanced/screens/data_screen.dart';
 import 'package:den_app/features/advanced/screens/displays_screen.dart';
 import 'package:den_app/features/advanced/screens/home_assistant_screen.dart';
@@ -198,7 +197,7 @@ void main() {
       final state = await littleKidTablet(tester);
       await pumpScreen(tester, const SettingsScreen(version: '1.0.0'), state: state, size: _tall);
       expect(find.text('Family'), findsNothing);
-      expect(find.text('AI helper'), findsNothing);
+      expect(find.text('AI and assistants'), findsNothing);
       expect(find.text('Advanced'), findsNothing);
     });
   });
@@ -413,7 +412,7 @@ void main() {
     });
   });
 
-  group('AI and automations', () {
+  group('AI and assistants', () {
     testWidgets('phone', (tester) async {
       final state = await connected(tester);
       await shootWith(
@@ -472,27 +471,43 @@ void main() {
       await matchShot('settings_hub_app_secret_phone');
     });
 
-    testWidgets('connecting an assistant: the address and the steps for each', (tester) async {
+    testWidgets('connecting one that signs in: the address and its steps', (tester) async {
       final state = await connected(tester);
       await shootWith(
         tester,
-        'settings_connect_guide_phone',
-        const ConnectGuideScreen(address: 'https://den.example.com/mcp'),
+        'settings_connect_claude_phone',
+        const ConnectAssistantScreen(label: 'Claude', address: 'https://den.example.com/mcp'),
         state: state,
-        size: const Size(390, 3200),
+        size: _tall,
         pushed: true,
       );
-      for (final name in ['Claude', 'ChatGPT', 'Gemini', 'Grok', 'Siri', 'Alexa+']) {
-        expect(find.text(name), findsOneWidget);
-      }
+      expect(find.text('https://den.example.com/mcp'), findsOneWidget);
+      expect(find.text('Connect Claude'), findsNothing, reason: 'Claude signs in; it needs no token');
     });
 
-    testWidgets('make a token', (tester) async {
-      final state = await demo(tester);
-      await pumpScreen(tester, const CreateTokenScreen(), state: state, pushed: true);
-      await tester.enterText(find.byType(TextField), 'Home Assistant');
+    testWidgets('connecting Grok makes its token in one tap, shown with the address', (tester) async {
+      final state = await connected(tester);
+      await pumpScreen(
+        tester,
+        const ConnectAssistantScreen(address: 'https://den.example.com/mcp'),
+        state: state,
+        size: _tall,
+        pushed: true,
+      );
+      for (final name in ['Claude', 'ChatGPT', 'Gemini', 'Grok', 'Siri', 'Home Assistant', 'Alexa+', 'Something else']) {
+        expect(find.text(name), findsOneWidget);
+      }
+      await tester.tap(find.text('Grok'));
       await tester.pumpAndSettle();
-      await matchShot('settings_create_token_phone');
+      await matchShot('settings_connect_grok_phone');
+      await tester.tap(find.text('Connect Grok'));
+      for (var i = 0; i < 3; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+        await tester.pumpAndSettle();
+      }
+      expect(findWords('Grok is connected'), findsOneWidget);
+      expect(find.text('Copy both'), findsOneWidget);
+      expect(state.den.connections.where((x) => x.label == 'Grok' && x.status == ConnectionStatus.active), hasLength(1));
     });
 
     testWidgets('a token, shown once', (tester) async {
@@ -500,8 +515,13 @@ void main() {
       await shootWith(
         tester,
         'settings_token_once_phone',
-        const CreateTokenScreen(token: 'den_7Kq2mX9vB4nR8wT1pL6sY3hF0cJ5gD2a', label: 'Home Assistant'),
+        const ConnectAssistantScreen(
+          token: 'den_7Kq2mX9vB4nR8wT1pL6sY3hF0cJ5gD2a',
+          label: 'Home Assistant',
+          address: 'https://den.example.com/mcp',
+        ),
         state: state,
+        size: _tall,
       );
     });
 

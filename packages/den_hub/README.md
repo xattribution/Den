@@ -208,7 +208,7 @@ A Shortcut on an iPhone can add to Den by voice ("Hey Siri, add to Den: milk and
 `POST /api/v1/actions/add_from_text`. It runs on the phone, so it works through the private
 proxy too; the hub needn't be on the public internet.
 
-1. A parent makes a token in the Den app under Settings → Advanced → AI and automations → Make a token: label it "Siri",
+1. A parent makes a token in the Den app under Settings → AI and assistants → Connect an assistant: pick Siri,
    choose whose it is (so History says who added things, and the person's own permissions apply),
    and give it the `lists`, `calendar` and `chores` scopes (or only `lists` for a shopping-only
    Shortcut). Copy the token; it's shown once.

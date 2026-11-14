@@ -86,7 +86,7 @@ feed), and the mDNS advertisement.
 `https://` and says so in its mDNS TXT record (`tls=1`).
 
 **Authentication.** Every `/api/v1` request carries `Authorization: Bearer <token>`. Tokens are
-created by a parent in the Den app under **Settings → Advanced → AI and automations**, shown once, and stored by
+created by a parent in the Den app under **Settings → AI and assistants**, shown once, and stored by
 the hub as SHA-256 hashes (the `connection` record). The hub resolves the bearer token with
 `Den.connectionForToken`; a missing, unknown, revoked or expired token gets `401`.
 

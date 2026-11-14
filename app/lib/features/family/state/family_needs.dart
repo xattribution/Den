@@ -29,7 +29,7 @@ final class JoinAsk extends FamilyNeed {
   String get key => 'device:$device';
 }
 
-/// An assistant or automation asking to connect: Review in AI and automations.
+/// An assistant or automation asking to connect: Review in AI and assistants.
 final class ConnectionAsk extends FamilyNeed {
   const ConnectionAsk(this.connection);
   final Connection connection;

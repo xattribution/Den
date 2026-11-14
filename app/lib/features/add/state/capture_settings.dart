@@ -57,7 +57,7 @@ class MemoryCaptureSecrets implements CaptureSecrets {
   Future<void> writeKey(String? key) async => this.key = key?.trim().isEmpty ?? true ? null : key!.trim();
 }
 
-/// This device's capture settings, set by a parent under Settings, AI and automations. The
+/// This device's capture settings, set by a parent under Settings, AI and assistants. The
 /// family-wide choice of adding right away or showing first is the family record's `capture`.
 class CaptureSettings extends ChangeNotifier {
   CaptureSettings({

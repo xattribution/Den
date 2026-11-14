@@ -4,9 +4,8 @@ import '../kitchen_screen/kitchen_screen.dart' show AddScreenScreen;
 import 'screens/add_hub_screen.dart';
 import 'screens/advanced_screen.dart';
 import 'screens/computer_link_screen.dart';
-import 'screens/connect_guide_screen.dart';
+import 'screens/connect_assistant_screen.dart';
 import 'screens/connections_screen.dart';
-import 'screens/create_token_screen.dart';
 import 'screens/data_screen.dart';
 import 'screens/displays_screen.dart';
 import 'screens/history_screen.dart';
@@ -56,8 +55,8 @@ final List<RouteBase> advancedSettingsRoutes = [
     path: 'connections',
     builder: (_, _) => const ConnectionsScreen(),
     routes: [
-      GoRoute(path: 'new', builder: (_, s) => CreateTokenScreen(label: s.uri.queryParameters['label'])),
-      GoRoute(path: 'guide', builder: (_, _) => const ConnectGuideScreen()),
+      GoRoute(path: 'new', builder: (_, s) => ConnectAssistantScreen(label: s.uri.queryParameters['label'])),
+      GoRoute(path: 'guide', redirect: (_, _) => '/settings/connections/new'),
       GoRoute(path: 'reader', builder: (_, _) => const ReaderScreen()),
     ],
   ),

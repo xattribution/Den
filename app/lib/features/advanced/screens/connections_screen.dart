@@ -19,10 +19,11 @@ import '../state/connection_actions.dart';
 import '../widgets/hub_apps_section.dart';
 import '../widgets/scope_picker.dart';
 
-/// Advanced → AI and automations: assistants signing in to the hub, each let in by the code its
-/// screen shows and then approved with what it may do and as whom; everything connected, each
-/// with Remove; how to connect an assistant; tokens; the apps a parent set up for assistants
-/// that can't register themselves (Alexa+); and who reads photos and messages.
+/// Settings → AI and assistants, everything AI in one place: Den's own AI helper; assistants
+/// signing in to the hub, each let in by the code its screen shows and then approved with what it
+/// may do and as whom; everything connected, each with Remove; Connect an assistant, which makes
+/// a token for any that can't sign in; who reads photos and messages; and the apps a parent set
+/// up for assistants that can't register themselves (Alexa+).
 class ConnectionsScreen extends StatelessWidget {
   const ConnectionsScreen({super.key, this.signIns, this.apps});
 
@@ -39,13 +40,14 @@ class ConnectionsScreen extends StatelessWidget {
     // Letting an app in and approving it are trust decisions: a parent's own device only.
     final trusted = app.allowsTrust(DenAction.manageFamily);
     if (!parent) {
-      return const DenPage(title: 'AI and automations', children: [EmptyState(message: 'Only parents can manage AI and automations.')]);
+      return const DenPage(title: 'AI and assistants', children: [EmptyState(message: 'Only parents can manage AI and assistants.')]);
     }
     final all = app.den.connections;
     final pending = all.where((x) => x.status == ConnectionStatus.pending).toList();
     final active = all.where((x) => x.status == ConnectionStatus.active).toList();
+    final helper = app.den.family?.assistant.enabled ?? false;
     return DenPage(
-      title: 'AI and automations',
+      title: 'AI and assistants',
       children: [
         if (!trusted)
           const NoticeLine(
@@ -53,6 +55,15 @@ class ConnectionsScreen extends StatelessWidget {
             message: "Assistants are let in and removed only on a parent's own phone.",
           ),
         if (trusted) Ungapped(_Waiting(signIns: signIns, pending: pending)),
+        GroupCard(
+          child: NavRow(
+            icon: PhosphorIconsRegular.chatCircle,
+            label: "Den's AI helper",
+            detail: 'Ask Den anything, and add by talking',
+            value: helper ? 'On' : 'Off',
+            onTap: () => context.push('/settings/assistant'),
+          ),
+        ),
         DenSection(
           title: 'Connected',
           trailing: active.isEmpty ? null : SectionCount('${active.length}'),
@@ -65,16 +76,10 @@ class ConnectionsScreen extends StatelessWidget {
           child: Column(
             children: ruled([
               NavRow(
-                icon: PhosphorIconsRegular.chatCircleText,
+                icon: PhosphorIconsRegular.plus,
                 label: 'Connect an assistant',
-                detail: 'Claude, ChatGPT, Gemini, Grok, Siri and Alexa+',
-                onTap: () => context.push('/settings/connections/guide'),
-              ),
-              NavRow(
-                icon: PhosphorIconsRegular.key,
-                label: 'Make a token',
-                detail: 'For Home Assistant, a script or a Shortcut',
-                onTap: trusted ? () => context.push('/settings/connections/new') : null,
+                detail: 'Claude, ChatGPT, Gemini, Grok, Siri, Home Assistant or any other',
+                onTap: () => context.push('/settings/connections/new'),
               ),
               NavRow(
                 icon: PhosphorIconsRegular.image,

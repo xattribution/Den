@@ -141,11 +141,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch(const {RecordType.subscription, RecordType.member, RecordType.familyLink, Changes.prefs, Changes.server});
+    final app = context.watch(const {RecordType.subscription, RecordType.member, RecordType.connection, RecordType.familyLink, Changes.prefs, Changes.server});
     final den = app.den;
     final parent = app.allows(DenAction.manageFamily);
     final web = widget.web ?? Capabilities.web;
     final helper = den.family?.assistant.enabled ?? false;
+    final waiting = den.connections.where((x) => x.status == ConnectionStatus.pending).length;
     final calendars = den.subscriptions.length + (app.phoneCalendars?.picks.length ?? 0);
     final thing = web ? 'this browser' : 'this device';
     // Which Google or Apple account signs in as them: a parent's own, set on their own phone, in a
@@ -205,9 +206,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               if (parent)
                 NavRow(
                   icon: PhosphorIconsRegular.chatCircle,
-                  label: 'AI helper',
-                  value: helper ? 'On' : 'Off',
-                  onTap: () => context.push('/settings/assistant'),
+                  label: 'AI and assistants',
+                  value: waiting > 0 ? '$waiting waiting' : (helper ? 'Helper on' : null),
+                  onTap: () => context.push('/settings/connections'),
                 ),
               // The server's backups, for a parent of its own family on their own phone; a failed one
               // said here plainly.

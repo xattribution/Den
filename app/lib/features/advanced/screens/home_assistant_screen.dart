@@ -42,7 +42,7 @@ class _HomeAssistantScreenState extends State<HomeAssistantScreen> {
           child: const NumberedSteps(steps: [
             'In Home Assistant, install the Den integration from HACS.',
             'Add the Den integration. It finds the hub on your network, or you type the hub address below.',
-            'Paste a token made for Home Assistant.',
+            'Paste the token Den makes when you tap Connect Home Assistant.',
           ]),
         ),
         DenSection(
@@ -59,7 +59,7 @@ class _HomeAssistantScreenState extends State<HomeAssistantScreen> {
           child: EmptyState(
             compact: true,
             message: hasToken ? 'Home Assistant has a token.' : 'Home Assistant needs a token to sign in.',
-            actionLabel: hasToken ? 'Make another token' : 'Make a token for Home Assistant',
+            actionLabel: hasToken ? 'Connect again' : 'Connect Home Assistant',
             onAction: () => context.push('/settings/connections/new?label=Home%20Assistant'),
           ),
         ),

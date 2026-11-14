@@ -23,14 +23,11 @@ class AdvancedScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch(const {RecordType.connection, Changes.prefs});
+    final app = context.watch(const {Changes.prefs});
     final web = this.web ?? Capabilities.web;
-    final den = app.den;
     if (!app.allows(DenAction.manageFamily)) {
       return const DenPage(title: 'Advanced', children: [EmptyState(message: 'Only parents can open Advanced.')]);
     }
-    final connected = den.connections.where((x) => x.status == ConnectionStatus.active).length;
-    final waiting = den.connections.where((x) => x.status == ConnectionStatus.pending).length;
     return DenPage(
       title: 'Advanced',
       children: [
@@ -47,12 +44,6 @@ class AdvancedScreen extends StatelessWidget {
                 label: 'Hub and sync',
                 detail: 'Keeping every device up to date',
                 onTap: () => context.push('/settings/advanced/hub'),
-              ),
-              NavRow(
-                icon: PhosphorIconsRegular.plugsConnected,
-                label: 'AI and automations',
-                value: waiting > 0 ? '$waiting waiting' : (connected == 0 ? 'None' : '$connected connected'),
-                onTap: () => context.push('/settings/connections'),
               ),
               NavRow(
                 icon: PhosphorIconsRegular.houseLine,
