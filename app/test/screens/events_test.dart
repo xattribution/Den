@@ -353,5 +353,26 @@ void main() {
         act: () => tester.tap(find.text('Add event')),
       );
     });
+
+    testWidgets('a time is picked from a list, and the end from times after it, with how long', (tester) async {
+      final state = await demo(tester);
+      await pumpAt(tester, state: state, location: '/event/new?date=${state.today}&time=15:30', base: '/calendar');
+      final starts = find.bySemanticsLabel(RegExp(r'^Starts, 3:30'));
+      expect(starts, findsOneWidget);
+      await tester.tap(starts);
+      await tester.pumpAndSettle();
+      // Opened at the start it had, so 3:30 is on screen without scrolling.
+      expect(find.textContaining('3:30'), findsWidgets);
+      await tester.tap(find.textContaining('4:00').last);
+      await tester.pumpAndSettle();
+      expect(find.bySemanticsLabel(RegExp(r'^Starts, 4:00')), findsOneWidget);
+
+      await tester.tap(find.bySemanticsLabel(RegExp(r'^Ends, ')));
+      await tester.pumpAndSettle();
+      expect(find.text('1 hr 30 min'), findsOneWidget);
+      await tester.tap(find.text('1 hr 30 min'));
+      await tester.pumpAndSettle();
+      expect(find.bySemanticsLabel(RegExp(r'^Ends, 5:30')), findsOneWidget);
+    });
   });
 }

@@ -1,5 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../layout.dart';
 import '../sheet.dart';
@@ -39,7 +42,8 @@ Future<T?> showChoiceSheet<T>(
 
 /// A day, from a month calendar: [initial] picked, from [first] to [last]; Done keeps the day
 /// last tapped (a year or a month only moves the calendar). [yearFirst] opens on the years, for
-/// a birthday. Null when closed without Done.
+/// a birthday. With [pickCloses], tapping a day picks it and closes, with no Done. Null when closed
+/// without a pick.
 Future<DateTime?> showDayPicker(
   BuildContext context, {
   required String title,
@@ -47,14 +51,15 @@ Future<DateTime?> showDayPicker(
   required DateTime first,
   required DateTime last,
   bool yearFirst = false,
+  bool pickCloses = false,
 }) {
   var picked = initial;
   return showDenSheet<DateTime>(
     context,
     builder: (sheet) => _SheetFrame(
       title: title,
-      action: 'Done',
-      onAction: () => Navigator.of(sheet).pop(picked),
+      action: pickCloses ? null : 'Done',
+      onAction: pickCloses ? null : () => Navigator.of(sheet).pop(picked),
       child: GroupCard(
         padding: const EdgeInsets.symmetric(horizontal: Sp.s),
         child: CalendarDatePicker(
@@ -62,7 +67,11 @@ Future<DateTime?> showDayPicker(
           firstDate: first,
           lastDate: last,
           initialCalendarMode: yearFirst ? DatePickerMode.year : DatePickerMode.day,
-          onDateChanged: (day) => picked = day,
+          onDateChanged: (day) {
+            picked = day;
+            // A tap on a day is the pick, with [pickCloses]; a year or a month only moves the calendar.
+            if (pickCloses) Navigator.of(sheet).pop(day);
+          },
         ),
       ),
     ),
@@ -97,6 +106,77 @@ Future<TimeOfDay?> showTimeWheel(BuildContext context, {required String title, r
               ),
             ),
           ),
+        ),
+      );
+    },
+  );
+}
+
+/// One of a long run of [choices] (the times of a day), opened scrolled to [value] and checked
+/// there; a tap picks and closes. Null when closed without a pick.
+Future<T?> showLongChoiceSheet<T>(
+  BuildContext context, {
+  required String title,
+  required List<Choice<T>> choices,
+  required T value,
+}) {
+  const rowHeight = 52.0;
+  final at = choices.indexWhere((c) => c.value == value);
+  return showDenSheet<T>(
+    context,
+    builder: (sheet) {
+      final c = sheet.colors;
+      final t = sheet.text;
+      final height = (MediaQuery.sizeOf(sheet).height * 0.6).clamp(240.0, 520.0);
+      final controller = ScrollController(initialScrollOffset: math.max(0, at * rowHeight - height / 2 + rowHeight / 2));
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(DenLayout.gutter, 0, DenLayout.gutter, Sp.l),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SheetHeader(title: title, actionLabel: 'Close'),
+            GroupCard(
+              padding: EdgeInsets.zero,
+              child: SizedBox(
+                height: height,
+                child: ListView.builder(
+                  controller: controller,
+                  itemExtent: rowHeight,
+                  itemCount: choices.length,
+                  itemBuilder: (context, i) {
+                    final choice = choices[i];
+                    final chosen = i == at;
+                    return Semantics(
+                      inMutuallyExclusiveGroup: true,
+                      checked: chosen,
+                      button: true,
+                      child: InkWell(
+                        onTap: () => Navigator.of(sheet).pop(choice.value),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: Sp.m),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 22,
+                                child: chosen ? Icon(PhosphorIconsBold.check, size: 22, color: c.ink) : null,
+                              ),
+                              const SizedBox(width: Sp.m),
+                              Text(choice.label, style: t.body(c.ink)),
+                              if (choice.detail != null) ...[
+                                const SizedBox(width: Sp.s),
+                                Text(choice.detail!, style: t.meta(c.ink2)),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
         ),
       );
     },

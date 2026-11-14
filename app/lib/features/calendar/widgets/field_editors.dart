@@ -9,7 +9,9 @@ import '../../../app/format.dart';
 import '../../../app/words.dart';
 import '../../../design/avatar.dart';
 import '../../../design/motion.dart';
+import '../../../design/pickers/sheet_pickers.dart';
 import '../../../design/tokens.dart';
+import '../../../design/widgets/choices.dart' show Choice;
 import '../../../design/widgets/switch_line.dart' show DenSwitch;
 import '../../../design/words.dart';
 import '../state/calendar_models.dart';
@@ -89,6 +91,13 @@ class StepButton extends StatelessWidget {
 /// When something happens, changed in place: the day, the start and the end, each with a step
 /// back and a step forward (a day; 15 minutes), and all day. The start keeps the length; the
 /// end never goes before the start.
+/// "15 min", "1 hr", "1 hr 30 min".
+String _length(int minutes) {
+  final h = minutes ~/ 60, m = minutes % 60;
+  if (h == 0) return '$m min';
+  return m == 0 ? '$h hr' : '$h hr $m min';
+}
+
 class WhenEditor extends StatelessWidget {
   const WhenEditor({super.key, required this.start, required this.end, required this.allDay, required this.onChanged});
 
@@ -120,17 +129,6 @@ class WhenEditor extends StatelessWidget {
       }
     }
 
-    void moveStart(int minutes) {
-      final s = f.msAt(date, (f.minuteOfDay(start) + minutes).clamp(0, 24 * 60 - _step));
-      onChanged(s, s + length, false);
-    }
-
-    void moveEnd(int minutes) {
-      final e = end + minutes * 60000;
-      if (e <= start) return;
-      onChanged(start, e, false);
-    }
-
     void setAllDay(bool on) {
       if (on) {
         onChanged(f.startOf(date), f.startOf(f.addDays(date, 1)), true);
@@ -140,63 +138,86 @@ class WhenEditor extends StatelessWidget {
       }
     }
 
-    // A label, then − value +. The label sits beside the stepper while both fit and above it at
-    // large text; the value takes what room is left and wraps at a space ("Tue, Oct" / "20")
-    // before anything overflows.
-    Widget line(
-      String label,
-      String value,
-      String what,
-      VoidCallback? back,
-      VoidCallback? forward, {
-      bool days = false,
-    }) {
+    Future<void> pickDay() async {
+      final picked = await showDayPicker(
+        context,
+        title: 'Day',
+        initial: DateTime.parse(date),
+        first: DateTime(2000),
+        last: DateTime(2100),
+        pickCloses: true,
+      );
+      if (picked == null) return;
+      final to = '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+      final by = f.daysFrom(date, to);
+      if (by != 0) moveDays(by);
+    }
+
+    // Every quarter hour of the day; the end's run starts after the start and says how long.
+    Future<void> pickStart() async {
+      final picked = await showLongChoiceSheet<int>(
+        context,
+        title: 'Starts',
+        value: f.minuteOfDay(start) - f.minuteOfDay(start) % _step,
+        choices: [
+          for (var m = 0; m < 24 * 60; m += _step) Choice(m, f.time(f.msAt(date, m))),
+        ],
+      );
+      if (picked == null) return;
+      final s = f.msAt(date, picked);
+      onChanged(s, s + length, false);
+    }
+
+    Future<void> pickEnd() async {
+      final choices = <Choice<int>>[
+        for (var mins = _step; mins <= 24 * 60; mins += _step)
+          Choice(start + mins * 60000, f.time(start + mins * 60000), detail: _length(mins)),
+      ];
+      final current = end - (end - start) % (_step * 60000);
+      final picked = await showLongChoiceSheet<int>(context, title: 'Ends', value: current, choices: choices);
+      if (picked != null && picked > start) onChanged(start, picked, false);
+    }
+
+    // A label, then the value to tap: Day opens a calendar, a time a list of the day's times.
+    Widget line(String label, String value, String what, VoidCallback onTap) {
       final scaler = MediaQuery.textScalerOf(context);
       final labelWidth = math.max(56.0, scaler.scale(56));
-      final wanted = scaler.scale(days ? 136 : 96);
-      return LayoutBuilder(
-        builder: (context, box) {
-          final inline = labelWidth + Sp.s + Targets.adult * 2 + wanted <= box.maxWidth;
-          final valueWidth = inline ? wanted : math.min(wanted, box.maxWidth - Targets.adult * 2);
-          final stepper = Row(
+      final name = Text(label, style: context.text.meta(c.ink2));
+      final field = DenPressable(
+        onTap: onTap,
+        semanticLabel: '$what, $value',
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.tile)),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: Targets.adult),
+          padding: const EdgeInsets.symmetric(horizontal: Sp.m),
+          decoration: BoxDecoration(
+            border: Border.all(color: c.line),
+            borderRadius: BorderRadius.circular(Radii.tile),
+          ),
+          child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              StepButton(
-                icon: days ? PhosphorIconsBold.caretLeft : PhosphorIconsBold.minus,
-                label: days ? 'A day earlier' : '$what 15 minutes earlier',
-                onTap: back,
-              ),
-              SizedBox(
-                width: valueWidth,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: Sp.s),
-                  child: Text(keepUnits(value), textAlign: TextAlign.center, style: context.text.rowTitle(c.ink)),
-                ),
-              ),
-              StepButton(
-                icon: days ? PhosphorIconsBold.caretRight : PhosphorIconsBold.plus,
-                label: days ? 'A day later' : '$what 15 minutes later',
-                onTap: forward,
-              ),
+              Flexible(child: Text(keepUnits(value), style: context.text.rowTitle(c.ink))),
+              const SizedBox(width: Sp.s),
+              Icon(PhosphorIconsBold.caretDown, size: 16, color: c.ink2),
             ],
-          );
-          final name = Text(label, style: context.text.meta(c.ink2));
-          if (inline) {
+          ),
+        ),
+      );
+      return LayoutBuilder(
+        builder: (context, box) {
+          if (labelWidth + Sp.s + scaler.scale(150) <= box.maxWidth) {
             return Row(
               children: [
                 SizedBox(width: labelWidth, child: name),
                 const SizedBox(width: Sp.s),
-                stepper,
+                Flexible(child: field),
               ],
             );
           }
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              name,
-              const SizedBox(height: Sp.xs),
-              stepper,
-            ],
+            children: [name, const SizedBox(height: Sp.xs), field],
           );
         },
       );
@@ -205,18 +226,12 @@ class WhenEditor extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        line('Day', f.shortWithYear(date, relativeTo: today), 'Day', () => moveDays(-1), () => moveDays(1), days: true),
+        line('Day', f.shortWithYear(date, relativeTo: today), 'Day', pickDay),
         if (!allDay) ...[
           const SizedBox(height: Sp.s),
-          line('Starts', f.time(start), 'Start', () => moveStart(-_step), () => moveStart(_step)),
+          line('Starts', f.time(start), 'Starts', pickStart),
           const SizedBox(height: Sp.s),
-          line(
-            'Ends',
-            f.time(end),
-            'End',
-            end - _step * 60000 > start ? () => moveEnd(-_step) : null,
-            () => moveEnd(_step),
-          ),
+          line('Ends', f.time(end), 'Ends', pickEnd),
         ],
         const SizedBox(height: Sp.xs),
         MergeSemantics(
