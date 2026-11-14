@@ -113,7 +113,7 @@ class _LinkBrowserScreenState extends State<LinkBrowserScreen> {
             ),
       children: [
         Text(
-          "On the computer, open the hub's address in a browser and choose Link with a parent's phone.",
+          "On the computer, open the family's address in a browser and choose Already in the family? Link this browser.",
           style: t.body(c.ink),
         ),
         if (_scanning)

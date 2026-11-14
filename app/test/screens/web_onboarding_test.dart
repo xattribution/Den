@@ -58,7 +58,7 @@ void main() {
     );
     expect(find.text('Start a family'), findsOneWidget);
     expect(find.text('Join your family'), findsNothing, reason: 'a hub waiting for its setup code holds no family');
-    expect(find.text("Link with a parent's phone"), findsNothing);
+    expect(find.text('Already in the family? Link this browser'), findsNothing);
   });
 
   testWidgets('A hub already in a family: the browser joins it', (tester) async {
@@ -66,7 +66,7 @@ void main() {
     await pumpScreen(tester, WelcomeScreen(browser: true, hub: familyHub, web: iPhoneHomeScreen), state: state);
     expect(find.text('Start a family'), findsNothing);
     expect(find.text('Join your family'), findsOneWidget);
-    expect(find.text("Link with a parent's phone"), findsNothing, reason: 'no camera to scan with in this family');
+    expect(find.text('Already in the family? Link this browser'), findsNothing, reason: 'no camera to scan with in this family');
   });
 
   testWidgets('Safari on an iPhone shows how to add Den to the Home Screen first', (tester) async {

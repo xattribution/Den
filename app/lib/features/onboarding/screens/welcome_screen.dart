@@ -233,7 +233,8 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     final canJoin = !_browser || hub == null || hub.paired;
     final passkey = !steps && _offersPasskey(hub) && _hubOffers != false;
     return DenPage(
-      title: 'Set up Den',
+      // A family's own address: someone here to join it or to get back in, not to set Den up.
+      title: _browser && hub != null && hub.paired ? 'Welcome to Den' : 'Set up Den',
       back: false,
       trailing: const DenMark(size: 44),
       bottom: passkey
@@ -286,11 +287,11 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                   chevron: false,
                   onTap: _paste,
                 ),
-                if (_browser && !web.ios && hub != null && hub.paired)
+                if (_browser && (!web.ios || web.ipad) && hub != null && hub.paired)
                   NavRow(
                     icon: PhosphorIconsRegular.browser,
-                    label: "Link with a parent's phone",
-                    detail: 'Show a code to scan, for a computer in the house',
+                    label: 'Already in the family? Link this browser',
+                    detail: "Scan the code it shows with a parent's phone",
                     onTap: () => context.go('/welcome/link'),
                   ),
               ], indent: 36),
